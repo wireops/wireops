@@ -1,0 +1,301 @@
+# wireops Technical Manifesto
+
+## 1. Vision
+
+wireops is a declarative control plane for Docker Compose.
+
+It brings GitOps principles to environments that are too small, too simple, or too pragmatic for Kubernetes — but too serious for manual SSH and `docker compose up`.
+
+wireops exists to make multi-host Docker Compose:
+
+- Predictable
+- Idempotent
+- Versioned
+- Recoverable
+- Simple
+
+Without turning into a container orchestration platform.
+
+---
+
+## 2. Philosophy
+
+### 2.1 Declarative Over Imperative
+
+The desired state lives in Git.
+
+wireops does not execute arbitrary commands.
+It reconciles reality to match a declared specification.
+
+---
+
+### 2.2 Control Plane + Agents
+
+wireops follows a strict separation:
+
+- **Server (Control Plane)** decides.
+- **Agent** executes.
+- **Docker Engine** runs containers.
+
+Agents are not autonomous schedulers.
+They are deterministic executors.
+
+---
+
+### 2.3 Idempotency Is Non-Negotiable
+
+Every reconciliation cycle must be safe to repeat.
+
+If the desired version has not changed:
+Nothing happens.
+
+If the system restarts:
+It converges.
+
+---
+
+### 2.4 Versioned Everything
+
+Each stack has a strictly increasing version number.
+
+- New commit → new version
+- Rollback → new version
+- Structural change → new version
+
+Rollback is not "going back".
+It is declaring a new desired state.
+
+---
+
+### 2.5 Git Is the Source of Truth
+
+wireops does not edit compose files.
+wireops does not persist mutable runtime configurations.
+
+The compose file in Git is authoritative.
+The server renders it.
+The agent applies it.
+
+---
+
+### 2.6 Labels Are Contracts
+
+All managed resources are explicitly labeled.
+
+Labels define ownership, version, and provenance.
+
+Without labels, reconciliation is unsafe.
+
+---
+
+## 3. What wireops Is
+
+wireops is:
+
+- A Git-driven deployment controller
+- A multi-host Docker Compose reconciler
+- A versioned stack manager
+- A lightweight GitOps engine
+- A control loop around Docker
+
+---
+
+## 4. What wireops Is Not
+
+wireops is not:
+
+- Kubernetes or Docker Swarm replacement
+- A container scheduler
+- A cluster manager
+- A service mesh
+- A PaaS
+- An auto-scaler
+- A secrets vault
+
+When complexity begins to resemble Kubernetes,
+we stop.
+
+---
+
+## 5. Architectural Principles
+
+### 5.1 Single Source of Decision
+
+Only the server determines:
+
+- Desired commit
+- Desired version
+- Whether reconciliation is required
+- Rollback decisions
+
+Agents do not consult Git.
+Agents do not decide strategy.
+
+---
+
+### 5.2 Deterministic Reconciliation
+
+If:
+
+```
+desired_version > applied_version
+```
+
+Then reconcile.
+
+Otherwise, do nothing.
+
+This is the core contract.
+
+---
+
+### 5.3 Immutable History
+
+Every rendered compose version can be stored as a revision.
+
+History is append-only.
+
+No silent mutations.
+No hidden state.
+
+---
+
+### 5.4 Explicit Ownership
+
+All managed containers must contain labels such as:
+
+- wireops.managed=true
+- wireops.stack_id
+- wireops.version
+- wireops.commit
+- wireops.checksum
+- wireops.agent_id
+
+If it is not labeled, it is not managed.
+
+---
+
+### 5.5 Safety First
+
+- No mutation of original compose files
+- Override files instead of edits
+- Garbage collection must be explicit
+- Orphans must be detectable
+- Disaster recovery must converge cleanly
+
+---
+
+## 6. Operational Guarantees (v1)
+
+wireops v1 guarantees:
+
+- Declarative convergence
+- Version-based reconciliation
+- Deterministic rollback
+- Drift detection
+- Orphan detection
+- Multi-agent consistency
+- Idempotent restart behavior
+- Safe disaster recovery via re-bootstrap
+
+It does not guarantee:
+
+- Rolling upgrades
+- Zero-downtime orchestration
+- Automatic scaling
+- Cross-node scheduling
+
+---
+
+## 7. Disaster Recovery Philosophy
+
+Disaster recovery is not state resurrection.
+
+In homelab and small-scale environments:
+
+- A new CA may be generated
+- Agents may re-bootstrap
+- State converges from Git
+
+The system must always converge from declared intent.
+
+---
+
+## 8. Simplicity as a Constraint
+
+Every feature must pass this test:
+
+Does this increase declarative clarity?
+Or does it introduce orchestration complexity?
+
+If it introduces orchestration complexity,
+it likely does not belong in wireops v1.
+
+---
+
+## 9. Scope Discipline
+
+wireops must stop at:
+
+- Versioned Docker Compose reconciliation
+- Multi-host Git-driven deployment
+- Lightweight control loop
+
+Anything beyond that belongs in:
+
+- Kubernetes
+- Nomad
+- Swarm
+- Or another class of system
+
+---
+
+## 10. Long-Term Direction
+
+wireops may evolve toward:
+
+- Improved observability
+- Diff previews
+- Optional health-based reconciliation
+- Safer garbage collection
+- Better UX
+
+But it must never lose:
+
+- Determinism
+- Declarative clarity
+- Simplicity
+- Predictability
+
+---
+
+## 11. Core Identity
+
+wireops is:
+
+> GitOps for Docker Compose — without Kubernetes.
+
+It exists for engineers who want:
+
+- Control without complexity
+- Automation without orchestration overhead
+- Multi-host without cluster madness
+- Versioned deployments without YAML ecosystems exploding
+
+---
+
+## 12. Final Principle
+
+wireops does not aim to compete with Kubernetes.
+
+It aims to eliminate the gap between:
+
+“docker compose up”
+and
+“full cluster orchestration”
+
+With discipline.
+With clarity.
+With versioned reconciliation.
+
+That is wireops.

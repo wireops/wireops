@@ -1,0 +1,181 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  GO_VERSION: '1.25.3'
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: Cache Go modules
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+
+    - name: Download dependencies
+      run: go mod download
+
+    - name: Run backend tests
+      env:
+        CGO_ENABLED: 0
+      run: go test -v ./...
+
+    - name: Build backend
+      env:
+        CGO_ENABLED: 0
+      run: |
+        mkdir -p dist
+        go build -o dist/wireops .
+
+  agent:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: Download dependencies
+      run: go mod download
+
+    - name: Run agent tests
+      env:
+        CGO_ENABLED: 0
+      run: go test -v ./agent/...
+
+    - name: Build agent
+      env:
+        CGO_ENABLED: 0
+      run: |
+        mkdir -p dist
+        go build -o dist/wireops-agent ./agent/main.go
+
+  frontend:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+        cache-dependency-path: frontend/package-lock.json
+
+    - name: Install dependencies
+      working-directory: ./frontend
+      run: npm ci
+
+    - name: Run frontend tests
+      working-directory: ./frontend
+      run: npm run test
+
+    - name: Run frontend linter
+      working-directory: ./frontend
+      run: npm run lint
+      continue-on-error: true
+
+    - name: Build frontend
+      working-directory: ./frontend
+      run: npm run generate
+
+    - name: Upload frontend artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: frontend-dist
+        path: frontend/.output/public/
+        retention-days: 7
+
+  build:
+    runs-on: ubuntu-latest
+    needs: [backend, agent, frontend]
+    permissions:
+      contents: read
+    
+    strategy:
+      matrix:
+        os: [linux]
+        arch: [amd64]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: Download frontend artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: frontend-dist
+        path: pb_public/
+
+    - name: Build server binary
+      run: |
+        export GOOS=${{ matrix.os }}
+        export GOARCH=${{ matrix.arch }}
+        export CGO_ENABLED=0
+        
+        go build -ldflags "-s -w" -o dist/wireops-${{ matrix.os }}-${{ matrix.arch }} .
+
+    - name: Build agent binary
+      run: |
+        export GOOS=${{ matrix.os }}
+        export GOARCH=${{ matrix.arch }}
+        export CGO_ENABLED=0
+        
+        go build -ldflags "-s -w" -o dist/wireops-agent-${{ matrix.os }}-${{ matrix.arch }} ./agent/main.go
+
+    - name: Upload server artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: wireops-${{ matrix.os }}-${{ matrix.arch }}
+        path: dist/wireops-${{ matrix.os }}-${{ matrix.arch }}
+        retention-days: 30
+
+    - name: Upload agent artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: wireops-agent-${{ matrix.os }}-${{ matrix.arch }}
+        path: dist/wireops-agent-${{ matrix.os }}-${{ matrix.arch }}
+        retention-days: 30

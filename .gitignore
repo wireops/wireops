@@ -30,3 +30,15 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# wireops build artifacts
+wireops
+pb_data/
+pb_public/
+frontend/.output/
+frontend/.nuxt/
+frontend/node_modules/
+data/
+pki_data/
+agent_pki/
+repos/

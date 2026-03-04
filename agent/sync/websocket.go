@@ -1,0 +1,66 @@
+package sync
+
+import (
+	"crypto/tls"
+	"crypto/x509"
+	"fmt"
+	"log"
+	"net/url"
+	"os"
+	"path/filepath"
+
+	"github.com/gorilla/websocket"
+)
+
+// Connect establishes an mTLS-secured WebSocket connection to the server.
+func Connect(mtlsServerURL, pkiDir string) (*websocket.Conn, error) {
+	agentCertPath := filepath.Join(pkiDir, "agent.crt")
+	agentKeyPath := filepath.Join(pkiDir, "agent.key")
+	caCertPath := filepath.Join(pkiDir, "ca.crt")
+
+	cert, err := tls.LoadX509KeyPair(agentCertPath, agentKeyPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load agent certs: %w", err)
+	}
+
+	caCertPEM, err := os.ReadFile(caCertPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load CA cert: %w", err)
+	}
+
+	caCertPool := x509.NewCertPool()
+	caCertPool.AppendCertsFromPEM(caCertPEM)
+
+	tlsConfig := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      caCertPool,
+	}
+
+	dialer := websocket.Dialer{
+		TLSClientConfig: tlsConfig,
+	}
+
+	u, err := url.Parse(mtlsServerURL)
+	if err != nil {
+		return nil, err
+	}
+
+	scheme := "wss"
+	if u.Scheme == "http" {
+		scheme = "ws" // Only for purely local/insecure dev without TLS if configured
+	}
+	u.Scheme = scheme
+	u.Path = "/agent/ws"
+
+	log.Printf("[AGENT] Dialing WebSocket %s...", u.String())
+	conn, resp, err := dialer.Dial(u.String(), nil)
+	if err != nil {
+		if resp != nil {
+			return nil, fmt.Errorf("websocket dial failed (status %d): %w", resp.StatusCode, err)
+		}
+		return nil, fmt.Errorf("websocket dial failed: %w", err)
+	}
+
+	log.Printf("[AGENT] Completed WebSocket connection establishment.")
+	return conn, nil
+}

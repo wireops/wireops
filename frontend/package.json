@@ -1,0 +1,25 @@
+{
+  "name": "wireops-frontend",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "nuxt build",
+    "dev": "nuxt dev",
+    "generate": "nuxt generate",
+    "test": "vitest run",
+    "preview": "nuxt preview",
+    "postinstall": "nuxt prepare"
+  },
+  "dependencies": {
+    "@nuxt/ui": "^3.0.0",
+    "nuxt": "^3.16.0",
+    "pocketbase": "^0.25.0"
+  },
+  "devDependencies": {
+    "@nuxt/eslint": "^1.0.0",
+    "@vue/test-utils": "^2.4.6",
+    "happy-dom": "^20.8.3",
+    "typescript": "^5.7.0",
+    "vitest": "^4.0.18"
+  }
+}
