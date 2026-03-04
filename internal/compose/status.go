@@ -11,7 +11,7 @@ import (
 	dockernetwork "github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
 	dockerclient "github.com/docker/docker/client"
-	"github.com/jfxdev/wireops/internal/protocol"
+	"github.com/wireops/wireops/internal/protocol"
 )
 
 type ServiceStatus struct {

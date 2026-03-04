@@ -22,14 +22,14 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/router"
 
-	"github.com/jfxdev/wireops/internal/compose"
-	"github.com/jfxdev/wireops/internal/config"
-	"github.com/jfxdev/wireops/internal/docker"
-	"github.com/jfxdev/wireops/internal/git"
-	"github.com/jfxdev/wireops/internal/notify"
-	"github.com/jfxdev/wireops/internal/protocol"
-	"github.com/jfxdev/wireops/internal/safepath"
-	"github.com/jfxdev/wireops/internal/sync"
+	"github.com/wireops/wireops/internal/compose"
+	"github.com/wireops/wireops/internal/config"
+	"github.com/wireops/wireops/internal/docker"
+	"github.com/wireops/wireops/internal/git"
+	"github.com/wireops/wireops/internal/notify"
+	"github.com/wireops/wireops/internal/protocol"
+	"github.com/wireops/wireops/internal/safepath"
+	"github.com/wireops/wireops/internal/sync"
 )
 
 func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *sync.Scheduler, dockerClient *docker.Client, agentSvc sync.AgentDispatcher) {

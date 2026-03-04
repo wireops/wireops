@@ -11,7 +11,7 @@
 
 services:
   wireops-agent:
-    image: ghcr.io/jfxdev/wireops:latest
+    image: ghcr.io/wireops/wireops:latest
     restart: unless-stopped
     environment:
       # Address of the wireops server HTTP API (used for bootstrap)

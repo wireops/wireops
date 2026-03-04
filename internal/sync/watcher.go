@@ -9,7 +9,7 @@ import (
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 
-	"github.com/jfxdev/wireops/internal/compose"
+	"github.com/wireops/wireops/internal/compose"
 )
 
 type StatusWatcher struct {

@@ -9,8 +9,8 @@ import (
 
 	"github.com/pocketbase/pocketbase/core"
 
-	"github.com/jfxdev/wireops/internal/docker"
-	"github.com/jfxdev/wireops/internal/notify"
+	"github.com/wireops/wireops/internal/docker"
+	"github.com/wireops/wireops/internal/notify"
 )
 
 type Scheduler struct {

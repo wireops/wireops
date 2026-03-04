@@ -36,7 +36,7 @@ function formatBytes(bytes: number): string {
 
       <div class="flex flex-wrap items-center justify-center gap-3">
         <UButton
-          to="https://github.com/jfxdev/wireops"
+          to="https://github.com/wireops/wireops"
           target="_blank"
           icon="i-lucide-github"
           label="GitHub"
@@ -45,7 +45,7 @@ function formatBytes(bytes: number): string {
           size="md"
         />
         <UButton
-          to="https://github.com/sponsors/jfxdev"
+          to="https://github.com/sponsors/wireops"
           target="_blank"
           icon="i-lucide-heart"
           label="Sponsor"
@@ -54,7 +54,7 @@ function formatBytes(bytes: number): string {
           size="md"
         />
         <UButton
-          to="https://www.buymeacoffee.com/jfxdev"
+          to="https://www.buymeacoffee.com/wireops"
           target="_blank"
           icon="i-lucide-coffee"
           label="Buy me a coffee"
@@ -63,7 +63,7 @@ function formatBytes(bytes: number): string {
           size="md"
         />
         <UButton
-          to="https://github.com/jfxdev/wireops/blob/main/docs/DEVELOPMENT.md"
+          to="https://github.com/wireops/wireops/blob/main/docs/DEVELOPMENT.md"
           target="_blank"
           icon="i-lucide-book"
           label="Docs"
@@ -140,7 +140,7 @@ function formatBytes(bytes: number): string {
     </UCard>
 
     <div class="text-center text-sm text-wire-200/30">
-      <p>Made with ❤️ by jfxdev</p>
+      <p>Made with ❤️ by wireops</p>
     </div>
   </div>
 </template>

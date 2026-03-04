@@ -131,7 +131,7 @@ onUnmounted(() => {
   -e WIREOPS_MTLS_SERVER=https://your-wireops-server:8443 \
   -e WIREOPS_BOOTSTRAP_TOKEN={{ seatToken }} \
   -v /var/lib/wireops/agent_pki:/var/lib/wireops/pki \
-  ghcr.io/jfxdev/wireops-agent:latest</pre>
+  ghcr.io/wireops/wireops-agent:latest</pre>
       </div>
     </UCard>
 

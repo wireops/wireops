@@ -17,17 +17,17 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/plugins/migratecmd"
 
-	"github.com/jfxdev/wireops/internal/agent"
-	"github.com/jfxdev/wireops/internal/config"
-	"github.com/jfxdev/wireops/internal/docker"
-	"github.com/jfxdev/wireops/internal/hooks"
-	"github.com/jfxdev/wireops/internal/jobscheduler"
-	"github.com/jfxdev/wireops/internal/pki"
-	"github.com/jfxdev/wireops/internal/protocol"
-	"github.com/jfxdev/wireops/internal/routes"
-	"github.com/jfxdev/wireops/internal/sync"
+	"github.com/wireops/wireops/internal/agent"
+	"github.com/wireops/wireops/internal/config"
+	"github.com/wireops/wireops/internal/docker"
+	"github.com/wireops/wireops/internal/hooks"
+	"github.com/wireops/wireops/internal/jobscheduler"
+	"github.com/wireops/wireops/internal/pki"
+	"github.com/wireops/wireops/internal/protocol"
+	"github.com/wireops/wireops/internal/routes"
+	"github.com/wireops/wireops/internal/sync"
 
-	_ "github.com/jfxdev/wireops/pb_migrations"
+	_ "github.com/wireops/wireops/pb_migrations"
 )
 
 // getAllowedOrigins returns the list of allowed CORS origins based on APP_URL

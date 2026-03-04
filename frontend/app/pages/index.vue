@@ -164,7 +164,7 @@ onMounted(() => {
               block
             />
             <UButton
-              to="https://github.com/jfxdev/wireops"
+              to="https://github.com/wireops/wireops"
               target="_blank"
               icon="i-lucide-github"
               label="Documentation"

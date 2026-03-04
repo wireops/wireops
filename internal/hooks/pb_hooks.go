@@ -13,11 +13,11 @@ import (
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 
-	"github.com/jfxdev/wireops/internal/config"
-	"github.com/jfxdev/wireops/internal/crypto"
-	"github.com/jfxdev/wireops/internal/git"
-	"github.com/jfxdev/wireops/internal/jobscheduler"
-	"github.com/jfxdev/wireops/internal/sync"
+	"github.com/wireops/wireops/internal/config"
+	"github.com/wireops/wireops/internal/crypto"
+	"github.com/wireops/wireops/internal/git"
+	"github.com/wireops/wireops/internal/jobscheduler"
+	"github.com/wireops/wireops/internal/sync"
 )
 
 func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Scheduler) {

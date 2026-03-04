@@ -18,10 +18,10 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/robfig/cron/v3"
 
-	"github.com/jfxdev/wireops/internal/crypto"
-	"github.com/jfxdev/wireops/internal/git"
-	"github.com/jfxdev/wireops/internal/job"
-	"github.com/jfxdev/wireops/internal/protocol"
+	"github.com/wireops/wireops/internal/crypto"
+	"github.com/wireops/wireops/internal/git"
+	"github.com/wireops/wireops/internal/job"
+	"github.com/wireops/wireops/internal/protocol"
 )
 
 // AgentDispatcher is the subset of agent.MTLSServer used by the scheduler.

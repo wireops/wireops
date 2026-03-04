@@ -1,4 +1,4 @@
-module github.com/jfxdev/wireops
+module github.com/wireops/wireops
 
 go 1.25.3
 

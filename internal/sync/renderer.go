@@ -12,8 +12,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/jfxdev/wireops/internal/compose"
 	"github.com/pocketbase/pocketbase/core"
+	"github.com/wireops/wireops/internal/compose"
 )
 
 // RenderResult represents the result of the label injection process.

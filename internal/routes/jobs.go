@@ -7,8 +7,8 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/router"
 
-	"github.com/jfxdev/wireops/internal/job"
-	"github.com/jfxdev/wireops/internal/jobscheduler"
+	"github.com/wireops/wireops/internal/job"
+	"github.com/wireops/wireops/internal/jobscheduler"
 )
 
 // jobListItem is the enriched job record returned by the list endpoint.

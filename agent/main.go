@@ -14,11 +14,11 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/jfxdev/wireops/agent/api"
-	"github.com/jfxdev/wireops/agent/executor"
-	"github.com/jfxdev/wireops/agent/pki"
-	"github.com/jfxdev/wireops/agent/sync"
-	"github.com/jfxdev/wireops/internal/protocol"
+	"github.com/wireops/wireops/agent/api"
+	"github.com/wireops/wireops/agent/executor"
+	"github.com/wireops/wireops/agent/pki"
+	"github.com/wireops/wireops/agent/sync"
+	"github.com/wireops/wireops/internal/protocol"
 )
 
 // activeJobs tracks job_run IDs whose containers are still running on this agent.

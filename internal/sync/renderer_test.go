@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jfxdev/wireops/internal/sync"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
+	"github.com/wireops/wireops/internal/sync"
 )
 
 func TestRenderer_GenerateRevision(t *testing.T) {

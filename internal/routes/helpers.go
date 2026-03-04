@@ -11,8 +11,8 @@ import (
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 
-	"github.com/jfxdev/wireops/internal/crypto"
-	"github.com/jfxdev/wireops/internal/git"
+	"github.com/wireops/wireops/internal/crypto"
+	"github.com/wireops/wireops/internal/git"
 )
 
 // stackWorkDir returns the working directory for docker compose operations.

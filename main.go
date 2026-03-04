@@ -3,7 +3,7 @@ package main
 import (
 	"log"
 
-	"github.com/jfxdev/wireops/cmd"
+	"github.com/wireops/wireops/cmd"
 )
 
 func main() {

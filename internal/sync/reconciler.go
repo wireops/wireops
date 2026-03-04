@@ -18,13 +18,13 @@ import (
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 
-	"github.com/jfxdev/wireops/internal/compose"
-	"github.com/jfxdev/wireops/internal/crypto"
-	"github.com/jfxdev/wireops/internal/docker"
-	gitpkg "github.com/jfxdev/wireops/internal/git"
-	"github.com/jfxdev/wireops/internal/notify"
-	"github.com/jfxdev/wireops/internal/protocol"
-	"github.com/jfxdev/wireops/internal/safepath"
+	"github.com/wireops/wireops/internal/compose"
+	"github.com/wireops/wireops/internal/crypto"
+	"github.com/wireops/wireops/internal/docker"
+	gitpkg "github.com/wireops/wireops/internal/git"
+	"github.com/wireops/wireops/internal/notify"
+	"github.com/wireops/wireops/internal/protocol"
+	"github.com/wireops/wireops/internal/safepath"
 )
 
 // AgentDispatcher defines how the reconciler sends compose commands to agents.

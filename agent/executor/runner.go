@@ -15,9 +15,9 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
-	"github.com/jfxdev/wireops/internal/compose"
-	"github.com/jfxdev/wireops/internal/docker"
-	"github.com/jfxdev/wireops/internal/protocol"
+	"github.com/wireops/wireops/internal/compose"
+	"github.com/wireops/wireops/internal/docker"
+	"github.com/wireops/wireops/internal/protocol"
 )
 
 // tempDir is where the agent writes transient rendered compose files.

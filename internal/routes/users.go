@@ -14,7 +14,7 @@ import (
 	"github.com/pocketbase/pocketbase/tools/mailer"
 	"github.com/pocketbase/pocketbase/tools/router"
 
-	"github.com/jfxdev/wireops/internal/config"
+	"github.com/wireops/wireops/internal/config"
 )
 
 func RegisterUserRoutes(r *router.Router[*core.RequestEvent], app core.App) {

@@ -9,9 +9,9 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/router"
 
-	"github.com/jfxdev/wireops/internal/agent"
-	"github.com/jfxdev/wireops/internal/pki"
-	"github.com/jfxdev/wireops/internal/sync"
+	"github.com/wireops/wireops/internal/agent"
+	"github.com/wireops/wireops/internal/pki"
+	"github.com/wireops/wireops/internal/sync"
 )
 
 func RegisterAgentRoutes(r *router.Router[*core.RequestEvent], app core.App, agentSvc *agent.Service, pkiSvc *pki.Service, dispatcher sync.AgentDispatcher, mtlsServer *agent.MTLSServer) {

@@ -16,9 +16,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
-	"github.com/jfxdev/wireops/internal/pki"
-	"github.com/jfxdev/wireops/internal/protocol"
 	"github.com/pocketbase/pocketbase/core"
+	"github.com/wireops/wireops/internal/pki"
+	"github.com/wireops/wireops/internal/protocol"
 )
 
 // pendingResult holds the channel to send a CommandResult back to the waiting caller.
