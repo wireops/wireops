@@ -39,8 +39,23 @@ func NewMTLSClient(pkiDir string) (*http.Client, error) {
 	caCertPool.AppendCertsFromPEM(caCertPEM)
 
 	tlsConfig := &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		RootCAs:      caCertPool,
+		Certificates:       []tls.Certificate{cert},
+		RootCAs:            caCertPool,
+		// InsecureSkipVerify is enabled to ignore hostname/SAN mismatches since agents
+		// connect via dynamic IPs. The custom VerifyConnection below strictly ensures
+		// the certificate is signed by our unique CA, maintaining cryptographic security.
+		InsecureSkipVerify: true,
+		VerifyConnection: func(cs tls.ConnectionState) error {
+			opts := x509.VerifyOptions{
+				Roots:         caCertPool,
+				Intermediates: x509.NewCertPool(),
+			}
+			for _, cert := range cs.PeerCertificates[1:] {
+				opts.Intermediates.AddCert(cert)
+			}
+			_, err := cs.PeerCertificates[0].Verify(opts)
+			return err
+		},
 	}
 
 	transport := &http.Transport{TLSClientConfig: tlsConfig}

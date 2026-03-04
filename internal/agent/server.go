@@ -171,14 +171,22 @@ func (s *MTLSServer) IsEmbedded(agentID string) bool {
 func (s *MTLSServer) DisconnectAgent(agentID string) {
 	s.connMu.Lock()
 	conn, ok := s.connections[agentID]
+	writeMu := s.connWriteMu[agentID]
 	if ok {
+		if writeMu != nil {
+			writeMu.Lock()
+		}
 		// Send a close frame so the agent knows why it is being disconnected.
 		_ = conn.WriteMessage(
 			websocket.CloseMessage,
 			websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "agent revoked"),
 		)
+		if writeMu != nil {
+			writeMu.Unlock()
+		}
 		conn.Close()
 		delete(s.connections, agentID)
+		delete(s.connWriteMu, agentID)
 	}
 	delete(s.agentTags, agentID)
 	s.connMu.Unlock()
@@ -462,7 +470,11 @@ func (s *MTLSServer) handleWebSocket(c *gin.Context) {
 				pr, hasPending := s.pending[result.CommandID]
 				s.connMu.RUnlock()
 				if hasPending {
-					pr.ch <- result
+					select {
+					case pr.ch <- result:
+					default:
+						log.Printf("[AGENT] Dropped duplicate/late result for command %s from %s", result.CommandID, agentID)
+					}
 				} else {
 					log.Printf("[AGENT] Received result for unknown command %s from %s", result.CommandID, agentID)
 				}
@@ -481,11 +493,14 @@ func (s *MTLSServer) Start(addr string) error {
 	}
 
 	caCertPool := x509.NewCertPool()
-	caCertPool.AppendCertsFromPEM(caCertPEM)
+	if !caCertPool.AppendCertsFromPEM(caCertPEM) {
+		return fmt.Errorf("failed to parse CA certs from PEM (length: %d)", len(caCertPEM))
+	}
 
 	tlsConfig := &tls.Config{
 		ClientCAs:  caCertPool,
 		ClientAuth: tls.RequireAndVerifyClientCert,
+		MinVersion: tls.VersionTLS13,
 	}
 
 	serverCert, err := s.pkiSvc.GetServerTLSCert()
