@@ -45,18 +45,16 @@ func (s *Service) GenerateSeat() (string, error) {
 
 // ValidateAndConsumeSeat checks if the token is valid, not expired, and consumes it.
 func (s *Service) ValidateAndConsumeSeat(token string) bool {
-	val, ok := s.seats.Load(token)
+	val, ok := s.seats.LoadAndDelete(token)
 	if !ok {
 		return false
 	}
 
 	seat := val.(Seat)
 	if time.Now().After(seat.ExpiresAt) {
-		s.seats.Delete(token)
 		return false
 	}
 
-	s.seats.Delete(token) // single use
 	return true
 }
 

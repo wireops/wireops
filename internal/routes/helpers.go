@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	gogithttp "github.com/go-git/go-git/v5/plumbing/transport/http"
@@ -29,7 +30,13 @@ func stackWorkDir(app core.App, stack *core.Record) string {
 	base := filepath.Join(workspace, repoID)
 	composePath := stack.GetString("compose_path")
 	if composePath != "" && composePath != "." {
-		return filepath.Join(base, composePath)
+		cleaned := filepath.Clean(composePath)
+		if !filepath.IsAbs(cleaned) && !strings.HasPrefix(cleaned, "/") {
+			finalPath := filepath.Join(base, cleaned)
+			if rel, err := filepath.Rel(base, finalPath); err == nil && !strings.HasPrefix(rel, "..") {
+				return finalPath
+			}
+		}
 	}
 	return base
 }

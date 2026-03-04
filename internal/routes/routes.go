@@ -298,11 +298,23 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		if dockerClient == nil {
 			return e.JSON(http.StatusServiceUnavailable, map[string]string{"error": "docker not available"})
 		}
+		stackID := e.Request.PathValue("id")
 		containerID := e.Request.PathValue("containerId")
 		if containerID == "" {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "missing containerId"})
 		}
-		stats, err := compose.GetContainerStats(context.Background(), dockerClient.Raw(), containerID)
+
+		stack, err := app.FindRecordById("stacks", stackID)
+		if err != nil {
+			return e.JSON(http.StatusNotFound, map[string]string{"error": "stack not found"})
+		}
+		projectName := compose.ProjectName(stackWorkDir(app, stack))
+		belongs, err := compose.ContainerBelongsToProject(e.Request.Context(), dockerClient.Raw(), containerID, projectName)
+		if err != nil || !belongs {
+			return e.JSON(http.StatusForbidden, map[string]string{"error": "container does not belong to stack"})
+		}
+
+		stats, err := compose.GetContainerStats(e.Request.Context(), dockerClient.Raw(), containerID)
 		if err != nil {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
@@ -314,15 +326,27 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		if dockerClient == nil {
 			return e.JSON(http.StatusServiceUnavailable, map[string]string{"error": "docker not available"})
 		}
+		stackID := e.Request.PathValue("id")
 		containerID := e.Request.PathValue("containerId")
 		if containerID == "" {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "missing containerId"})
 		}
+
+		stack, err := app.FindRecordById("stacks", stackID)
+		if err != nil {
+			return e.JSON(http.StatusNotFound, map[string]string{"error": "stack not found"})
+		}
+		projectName := compose.ProjectName(stackWorkDir(app, stack))
+		belongs, err := compose.ContainerBelongsToProject(e.Request.Context(), dockerClient.Raw(), containerID, projectName)
+		if err != nil || !belongs {
+			return e.JSON(http.StatusForbidden, map[string]string{"error": "container does not belong to stack"})
+		}
+
 		tail := e.Request.URL.Query().Get("tail")
 		if tail == "" {
 			tail = "100"
 		}
-		reader, err := dockerClient.Raw().ContainerLogs(context.Background(), containerID, container.LogsOptions{
+		reader, err := dockerClient.Raw().ContainerLogs(e.Request.Context(), containerID, container.LogsOptions{
 			ShowStdout: true,
 			ShowStderr: true,
 			Tail:       tail,
@@ -636,14 +660,26 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		if dockerClient == nil {
 			return e.JSON(http.StatusServiceUnavailable, map[string]string{"error": "docker not available"})
 		}
+		stackID := e.Request.PathValue("id")
 		var body struct {
 			ContainerID string `json:"container_id"`
 		}
 		if err := json.NewDecoder(e.Request.Body).Decode(&body); err != nil || body.ContainerID == "" {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "container_id required"})
 		}
+
+		stack, err := app.FindRecordById("stacks", stackID)
+		if err != nil {
+			return e.JSON(http.StatusNotFound, map[string]string{"error": "stack not found"})
+		}
+		projectName := compose.ProjectName(stackWorkDir(app, stack))
+		belongs, err := compose.ContainerBelongsToProject(e.Request.Context(), dockerClient.Raw(), body.ContainerID, projectName)
+		if err != nil || !belongs {
+			return e.JSON(http.StatusForbidden, map[string]string{"error": "container does not belong to stack"})
+		}
+
 		timeout := 10
-		if err := dockerClient.Raw().ContainerStop(context.Background(), body.ContainerID, container.StopOptions{Timeout: &timeout}); err != nil {
+		if err := dockerClient.Raw().ContainerStop(e.Request.Context(), body.ContainerID, container.StopOptions{Timeout: &timeout}); err != nil {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
 		return e.JSON(http.StatusOK, map[string]string{"status": "stopped"})
@@ -654,14 +690,26 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		if dockerClient == nil {
 			return e.JSON(http.StatusServiceUnavailable, map[string]string{"error": "docker not available"})
 		}
+		stackID := e.Request.PathValue("id")
 		var body struct {
 			ContainerID string `json:"container_id"`
 		}
 		if err := json.NewDecoder(e.Request.Body).Decode(&body); err != nil || body.ContainerID == "" {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "container_id required"})
 		}
+
+		stack, err := app.FindRecordById("stacks", stackID)
+		if err != nil {
+			return e.JSON(http.StatusNotFound, map[string]string{"error": "stack not found"})
+		}
+		projectName := compose.ProjectName(stackWorkDir(app, stack))
+		belongs, err := compose.ContainerBelongsToProject(e.Request.Context(), dockerClient.Raw(), body.ContainerID, projectName)
+		if err != nil || !belongs {
+			return e.JSON(http.StatusForbidden, map[string]string{"error": "container does not belong to stack"})
+		}
+
 		timeout := 10
-		if err := dockerClient.Raw().ContainerRestart(context.Background(), body.ContainerID, container.StopOptions{Timeout: &timeout}); err != nil {
+		if err := dockerClient.Raw().ContainerRestart(e.Request.Context(), body.ContainerID, container.StopOptions{Timeout: &timeout}); err != nil {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
 		return e.JSON(http.StatusOK, map[string]string{"status": "restarted"})

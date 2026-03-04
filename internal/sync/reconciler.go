@@ -60,17 +60,16 @@ func NewReconciler(app core.App, dockerClient *docker.Client, notifier *notify.N
 }
 
 // resolveAgent returns the agent record for a stack, plus whether it's embedded.
-func (r *Reconciler) resolveAgent(stack *core.Record) (agentID, fingerprint string) {
+func (r *Reconciler) resolveAgent(stack *core.Record) (agentID, fingerprint string, err error) {
 	agentID = stack.GetString("agent")
 	if agentID == "" {
-		return "", "embedded"
+		return "", "embedded", nil
 	}
 	agent, err := r.app.FindRecordById("agents", agentID)
 	if err != nil {
-		log.Printf("[reconciler] failed to find agent %s: %v", agentID, err)
-		return agentID, "embedded"
+		return "", "", fmt.Errorf("failed to find agent %s: %w", agentID, err)
 	}
-	return agentID, agent.GetString("fingerprint")
+	return agentID, agent.GetString("fingerprint"), nil
 }
 
 // ReconcileStack fetches the repo, checks for changes, and deploys the compose stack.
@@ -152,7 +151,13 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	repo.Set("status", "connected")
 	_ = r.app.Save(repo)
 
-	agentID, agentFingerprint := r.resolveAgent(stack)
+	agentID, agentFingerprint, err := r.resolveAgent(stack)
+	if err != nil {
+		errMsg := fmt.Sprintf("agent resolution failed: %v", err)
+		r.logFailure(stackID, trigger, "", errMsg)
+		r.markError(stack, "stacks")
+		return fmt.Errorf("%s", errMsg)
+	}
 	isOnline := agentFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsConnected(agentID)
 
 	neverSynced := stack.GetString("last_synced_at") == ""
@@ -427,7 +432,13 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 		log.Printf("[reconciler] failed to load env vars for stack %s: %v", stackID, envErr)
 	}
 
-	agentID, agentFingerprint := r.resolveAgent(stack)
+	agentID, agentFingerprint, err := r.resolveAgent(stack)
+	if err != nil {
+		errMsg := fmt.Sprintf("agent resolution failed: %v", err)
+		r.logFailure(stackID, "manual", commitSHA, errMsg)
+		r.markError(stack, "stacks")
+		return fmt.Errorf("%s", errMsg)
+	}
 
 	renderRes, err := r.renderer.GenerateRevision(ctx, stack, repo, workDir, composeFile, envVars, commitSHA, true, agentFingerprint)
 	if err != nil {
@@ -582,7 +593,13 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 		log.Printf("[reconciler] failed to load env vars for stack %s: %v", stackID, envErr)
 	}
 
-	agentID, agentFingerprint := r.resolveAgent(stack)
+	agentID, agentFingerprint, err := r.resolveAgent(stack)
+	if err != nil {
+		errMsg := fmt.Sprintf("agent resolution failed: %v", err)
+		r.logFailure(stackID, "redeploy", lastSHA, errMsg)
+		r.markError(stack, "stacks")
+		return fmt.Errorf("%s", errMsg)
+	}
 
 	renderRes, err := r.renderer.GenerateRevision(ctx, stack, repo, workDir, composeFile, envVars, lastSHA, true, agentFingerprint)
 	if err != nil {
@@ -731,7 +748,13 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 		return fmt.Errorf("%s", errMsg)
 	}
 
-	agentID, agentFingerprint := r.resolveAgent(stack)
+	agentID, agentFingerprint, err := r.resolveAgent(stack)
+	if err != nil {
+		errMsg := fmt.Sprintf("agent resolution failed: %v", err)
+		r.logFailure(stackID, trigger, "", errMsg)
+		r.markError(stack, "stacks")
+		return fmt.Errorf("%s", errMsg)
+	}
 	isOnline := agentFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsConnected(agentID)
 	if !isOnline {
 		log.Printf("[reconciler] agent %s is offline, queueing pending reconcile for local stack %s", agentID, stackID)
@@ -1243,7 +1266,9 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetAgentID s
 	if sourceAgentID == "" {
 		sourceFingerprint = "embedded"
 		sourceHostname = "Server (Embedded)"
-	} else if a, err := r.app.FindRecordById("agents", sourceAgentID); err == nil {
+	} else if a, err := r.app.FindRecordById("agents", sourceAgentID); err != nil {
+		return fmt.Errorf("failed to find source agent %s: %w", sourceAgentID, err)
+	} else {
 		sourceHostname = a.GetString("hostname")
 		sourceFingerprint = a.GetString("fingerprint")
 	}
@@ -1253,7 +1278,9 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetAgentID s
 	if targetAgentID == "" {
 		targetFingerprint = "embedded"
 		targetHostname = "Server (Embedded)"
-	} else if a, err := r.app.FindRecordById("agents", targetAgentID); err == nil {
+	} else if a, err := r.app.FindRecordById("agents", targetAgentID); err != nil {
+		return fmt.Errorf("failed to find target agent %s: %w", targetAgentID, err)
+	} else {
 		targetHostname = a.GetString("hostname")
 		targetFingerprint = a.GetString("fingerprint")
 	}

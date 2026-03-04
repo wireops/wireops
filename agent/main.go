@@ -24,6 +24,7 @@ import (
 // activeJobs tracks job_run IDs whose containers are still running on this agent.
 // Reported in each heartbeat so the server has a liveness view.
 var activeJobs gosync.Map
+var connWriteMu gosync.Mutex
 
 func main() {
 	serverURL := os.Getenv("WIREOPS_SERVER")
@@ -177,7 +178,10 @@ func main() {
 				Type:    protocol.MsgHeartbeat,
 				Payload: protocol.HeartbeatPayload{ActiveJobRunIDs: activeIDs},
 			})
-			if err := conn.WriteMessage(websocket.TextMessage, heartbeat); err != nil {
+			connWriteMu.Lock()
+			err := conn.WriteMessage(websocket.TextMessage, heartbeat)
+			connWriteMu.Unlock()
+			if err != nil {
 				log.Printf("[AGENT] Heartbeat failed: %v", err)
 			}
 		}
@@ -299,7 +303,10 @@ func handleRunJob(conn *websocket.Conn, payload interface{}) {
 			log.Printf("[AGENT] Failed to marshal job completion: %v", marshalErr)
 			return
 		}
-		if writeErr := conn.WriteMessage(websocket.TextMessage, msg); writeErr != nil {
+		connWriteMu.Lock()
+		writeErr := conn.WriteMessage(websocket.TextMessage, msg)
+		connWriteMu.Unlock()
+		if writeErr != nil {
 			log.Printf("[AGENT] Failed to send job completion for run %s: %v", cmd.JobRunID, writeErr)
 		}
 	})
@@ -325,7 +332,10 @@ func sendResult(conn *websocket.Conn, result protocol.CommandResult) {
 		log.Printf("[AGENT] Failed to marshal result: %v", err)
 		return
 	}
-	if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+	connWriteMu.Lock()
+	err = conn.WriteMessage(websocket.TextMessage, msg)
+	connWriteMu.Unlock()
+	if err != nil {
 		log.Printf("[AGENT] Failed to send result: %v", err)
 	}
 }

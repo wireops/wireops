@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -11,7 +12,15 @@ import (
 )
 
 func CloneOrFetch(repoID, gitURL, branch string, auth transport.AuthMethod, workspace string) (*gogit.Repository, error) {
-	repoDir := filepath.Join(workspace, repoID)
+	cleaned := filepath.Clean(repoID)
+	if filepath.IsAbs(cleaned) || strings.Contains(repoID, "..") || strings.Contains(repoID, string(os.PathSeparator)) {
+		return nil, fmt.Errorf("invalid repository ID: %s", repoID)
+	}
+
+	repoDir := filepath.Join(workspace, cleaned)
+	if rel, err := filepath.Rel(workspace, repoDir); err != nil || strings.HasPrefix(rel, "..") {
+		return nil, fmt.Errorf("invalid repository path traversal: %s", repoID)
+	}
 
 	if _, err := os.Stat(filepath.Join(repoDir, ".git")); os.IsNotExist(err) {
 		return cloneRepo(repoDir, gitURL, branch, auth)

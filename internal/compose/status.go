@@ -186,3 +186,12 @@ func mapStatus(state string) string {
 		return "missing"
 	}
 }
+
+// ContainerBelongsToProject checks if a container belongs to the specified compose project.
+func ContainerBelongsToProject(ctx context.Context, cli *dockerclient.Client, containerID string, projectName string) (bool, error) {
+	inspect, err := cli.ContainerInspect(ctx, containerID)
+	if err != nil {
+		return false, err
+	}
+	return inspect.Config.Labels["com.docker.compose.project"] == projectName, nil
+}

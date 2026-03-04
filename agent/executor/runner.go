@@ -411,9 +411,17 @@ func prepareComposeFile(commandID, b64Content string) (string, string, func(), e
 		return "", "", func() {}, fmt.Errorf("failed to decode compose file: %w", err)
 	}
 
-	dir := filepath.Join(tempDir, commandID)
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return "", "", func() {}, fmt.Errorf("failed to create work dir: %w", err)
+	// Ensure the parent temporary directory exists.
+	if err := os.MkdirAll(tempDir, 0700); err != nil {
+		return "", "", func() {}, fmt.Errorf("failed to create temp parent dir: %w", err)
+	}
+
+	// Create a unique temporary directory under tempDir.
+	// We sanitize commandID using filepath.Base to ensure it doesn't contain path separators,
+	// which MkdirTemp would reject.
+	dir, err := os.MkdirTemp(tempDir, "cmd-"+filepath.Base(commandID)+"-*")
+	if err != nil {
+		return "", "", func() {}, fmt.Errorf("failed to create secure work dir: %w", err)
 	}
 
 	filename := "docker-compose.yml"

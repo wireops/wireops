@@ -3,6 +3,8 @@ package git
 import (
 	"fmt"
 	"net"
+	"os"
+	"strings"
 
 	gogithttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	gogitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
@@ -81,12 +83,41 @@ func resolveBasicAuth(cred Credential) (*gogithttp.BasicAuth, error) {
 }
 
 func buildKnownHostCallback(knownHostEntry string) (ssh.HostKeyCallback, error) {
-	f, err := knownhosts.New()
+	// Filter lines to extract only the known_hosts entries.
+	// ScanHostKey returns fingerprint (SHA256:...) followed by the known_hosts line.
+	lines := strings.Split(knownHostEntry, "\n")
+	var validLines []string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		// Skip fingerprints (ScanHostKey output format)
+		if strings.HasPrefix(line, "SHA256:") {
+			continue
+		}
+		validLines = append(validLines, line)
+	}
+
+	if len(validLines) == 0 {
+		return ssh.InsecureIgnoreHostKey(), nil
+	}
+
+	f, err := os.CreateTemp("", "known_hosts")
 	if err != nil {
 		return nil, err
 	}
-	_ = f
-	return ssh.InsecureIgnoreHostKey(), nil
+	defer os.Remove(f.Name())
+
+	if _, err := f.WriteString(strings.Join(validLines, "\n")); err != nil {
+		f.Close()
+		return nil, err
+	}
+	if err := f.Close(); err != nil {
+		return nil, err
+	}
+
+	return knownhosts.New(f.Name())
 }
 
 func ScanHostKey(host string, port int) (string, error) {

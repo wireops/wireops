@@ -25,12 +25,16 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 
 	// Encrypt credential fields on create/update
 	app.OnRecordCreate("repository_keys").BindFunc(func(e *core.RecordEvent) error {
-		encryptSensitiveFields(e.Record, secretKey)
+		if err := encryptSensitiveFields(e.Record, secretKey); err != nil {
+			return err
+		}
 		return e.Next()
 	})
 
 	app.OnRecordUpdate("repository_keys").BindFunc(func(e *core.RecordEvent) error {
-		encryptSensitiveFields(e.Record, secretKey)
+		if err := encryptSensitiveFields(e.Record, secretKey); err != nil {
+			return err
+		}
 		return e.Next()
 	})
 
@@ -140,14 +144,18 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 	// Encrypt stack env var values on create/update only when secret=true
 	app.OnRecordCreate("stack_env_vars").BindFunc(func(e *core.RecordEvent) error {
 		if e.Record.GetBool("secret") {
-			encryptField(e.Record, "value", secretKey)
+			if err := encryptField(e.Record, "value", secretKey); err != nil {
+				return err
+			}
 		}
 		return e.Next()
 	})
 
 	app.OnRecordUpdate("stack_env_vars").BindFunc(func(e *core.RecordEvent) error {
 		if e.Record.GetBool("secret") {
-			encryptField(e.Record, "value", secretKey)
+			if err := encryptField(e.Record, "value", secretKey); err != nil {
+				return err
+			}
 		}
 		return e.Next()
 	})
@@ -213,14 +221,18 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 	// Encrypt job env var values on create/update when secret=true
 	app.OnRecordCreate("job_env_vars").BindFunc(func(e *core.RecordEvent) error {
 		if e.Record.GetBool("secret") {
-			encryptField(e.Record, "value", secretKey)
+			if err := encryptField(e.Record, "value", secretKey); err != nil {
+				return err
+			}
 		}
 		return e.Next()
 	})
 
 	app.OnRecordUpdate("job_env_vars").BindFunc(func(e *core.RecordEvent) error {
 		if e.Record.GetBool("secret") {
-			encryptField(e.Record, "value", secretKey)
+			if err := encryptField(e.Record, "value", secretKey); err != nil {
+				return err
+			}
 		}
 		return e.Next()
 	})
@@ -271,31 +283,33 @@ func buildPasswordResetEmailHTML(actionURL string) string {
 </body></html>`, actionURL)
 }
 
-func encryptSensitiveFields(record *core.Record, key []byte) {
+func encryptSensitiveFields(record *core.Record, key []byte) error {
 	if len(key) != 32 {
-		log.Printf("[hooks] WARNING: SECRET_KEY is not 32 bytes, skipping encryption")
-		return
+		return fmt.Errorf("SECRET_KEY must be exactly 32 bytes (got %d)", len(key))
 	}
 	for _, field := range []string{"ssh_private_key", "ssh_passphrase", "git_password"} {
-		encryptField(record, field, key)
+		if err := encryptField(record, field, key); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
-func encryptField(record *core.Record, field string, key []byte) {
+func encryptField(record *core.Record, field string, key []byte) error {
 	if len(key) != 32 {
-		return
+		return fmt.Errorf("SECRET_KEY must be exactly 32 bytes (got %d)", len(key))
 	}
 	val := record.GetString(field)
 	if val == "" || val == "••••••••" {
-		return
+		return nil
 	}
 	if crypto.IsEncrypted(val) {
-		return
+		return nil
 	}
 	encrypted, err := crypto.Encrypt([]byte(val), key)
 	if err != nil {
-		log.Printf("[hooks] failed to encrypt field %s: %v", field, err)
-		return
+		return fmt.Errorf("failed to encrypt field %s: %w", field, err)
 	}
 	record.Set(field, encrypted)
+	return nil
 }

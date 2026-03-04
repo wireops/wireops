@@ -127,8 +127,8 @@ func createJobRuns(app core.App) error {
 
 	col.ListRule = strPtr("@request.auth.id != ''")
 	col.ViewRule = strPtr("@request.auth.id != ''")
-	col.CreateRule = strPtr("")
-	col.UpdateRule = strPtr("")
+	col.CreateRule = strPtr("@request.auth.id != ''")
+	col.UpdateRule = strPtr("@request.auth.id != ''")
 	col.DeleteRule = strPtr("@request.auth.id != ''")
 
 	return app.Save(col)

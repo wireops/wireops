@@ -34,9 +34,10 @@ type MTLSServer struct {
 	engine   *gin.Engine
 	upgrader websocket.Upgrader
 
-	// connMu protects connections, pending, and agentTags maps.
+	// connMu protects connections, connWriteMu, pending, and agentTags maps.
 	connMu      sync.RWMutex
 	connections map[string]*websocket.Conn // agentID → conn
+	connWriteMu map[string]*sync.Mutex     // agentID → write mutex
 	pending     map[string]*pendingResult  // commandID → pending
 	agentTags   map[string][]string        // agentID → tags declared via WIREOPS_AGENT_TAGS
 
@@ -138,6 +139,7 @@ func NewMTLSServer(app core.App, pkiSvc *pki.Service, agentSvc *Service) *MTLSSe
 			},
 		},
 		connections: make(map[string]*websocket.Conn),
+		connWriteMu: make(map[string]*sync.Mutex),
 		pending:     make(map[string]*pendingResult),
 		agentTags:   make(map[string][]string),
 	}
@@ -202,6 +204,7 @@ func (s *MTLSServer) IsConnected(agentID string) bool {
 func (s *MTLSServer) Dispatch(ctx context.Context, agentID string, cmd interface{}) (protocol.CommandResult, error) {
 	s.connMu.RLock()
 	conn, ok := s.connections[agentID]
+	writeMu := s.connWriteMu[agentID]
 	s.connMu.RUnlock()
 
 	if !ok {
@@ -262,7 +265,10 @@ func (s *MTLSServer) Dispatch(ctx context.Context, agentID string, cmd interface
 		return protocol.CommandResult{}, fmt.Errorf("failed to marshal command: %w", err)
 	}
 
-	if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+	writeMu.Lock()
+	err = conn.WriteMessage(websocket.TextMessage, msg)
+	writeMu.Unlock()
+	if err != nil {
 		return protocol.CommandResult{}, fmt.Errorf("failed to send command to agent %s: %w", agentID, err)
 	}
 
@@ -358,17 +364,25 @@ func (s *MTLSServer) handleWebSocket(c *gin.Context) {
 		return
 	}
 	defer func() {
-		conn.Close()
 		s.connMu.Lock()
-		delete(s.connections, agentID)
-		delete(s.agentTags, agentID)
-		s.connMu.Unlock()
-		log.Printf("[AGENT] Agent %s disconnected", agentID)
+		if s.connections[agentID] == conn {
+			conn.Close()
+			delete(s.connections, agentID)
+			delete(s.connWriteMu, agentID)
+			delete(s.agentTags, agentID)
+			s.connMu.Unlock()
+			log.Printf("[AGENT] Agent %s disconnected", agentID)
+		} else {
+			s.connMu.Unlock()
+			conn.Close() // Always close the local connection to avoid FD leaks
+			log.Printf("[AGENT] Ignoring stale connection cleanup for agent %s", agentID)
+		}
 	}()
 
 	// Register connection
 	s.connMu.Lock()
 	s.connections[agentID] = conn
+	s.connWriteMu[agentID] = &sync.Mutex{}
 	s.connMu.Unlock()
 
 	// Initial online event

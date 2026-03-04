@@ -128,7 +128,11 @@ func (r *Renderer) GenerateRevision(
 		labelsRaw, hasLabels := svc["labels"]
 		var labels map[string]interface{}
 		if hasLabels && labelsRaw != nil {
-			labels, _ = labelsRaw.(map[string]interface{})
+			var ok bool
+			labels, ok = labelsRaw.(map[string]interface{})
+			if !ok {
+				continue // skip service with malformed labels
+			}
 		} else {
 			labels = make(map[string]interface{})
 		}
@@ -159,8 +163,14 @@ func (r *Renderer) GenerateRevision(
 
 	// Inject checksum and generated_at AFTER hashing
 	for serviceName, svcRaw := range services {
-		svc := svcRaw.(map[string]interface{})
-		labels := svc["labels"].(map[string]interface{})
+		svc, ok := svcRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		labels, ok := svc["labels"].(map[string]interface{})
+		if !ok {
+			continue
+		}
 		labels["wireops.checksum"] = checksum
 		labels["wireops.generated_at"] = generatedAt
 		svc["labels"] = labels
@@ -176,10 +186,17 @@ func (r *Renderer) GenerateRevision(
 			nextVersion++
 			// Need to re-inject version and re-calculate checksum
 			for serviceName, svcRaw := range services {
-				svc := svcRaw.(map[string]interface{})
-				labels := svc["labels"].(map[string]interface{})
+				svc, ok := svcRaw.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				labels, ok := svc["labels"].(map[string]interface{})
+				if !ok {
+					continue
+				}
 				labels["wireops.version"] = strconv.Itoa(nextVersion)
-				delete(labels, "wireops.checksum") // remove old
+				delete(labels, "wireops.checksum")     // remove old
+				delete(labels, "wireops.generated_at") // remove time-dependent metadata for deterministic checksum
 				svc["labels"] = labels
 				services[serviceName] = svc
 			}
@@ -189,9 +206,16 @@ func (r *Renderer) GenerateRevision(
 			checksum = computeSHA256(normalizedYAML)
 
 			for serviceName, svcRaw := range services {
-				svc := svcRaw.(map[string]interface{})
-				labels := svc["labels"].(map[string]interface{})
+				svc, ok := svcRaw.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				labels, ok := svc["labels"].(map[string]interface{})
+				if !ok {
+					continue
+				}
 				labels["wireops.checksum"] = checksum
+				labels["wireops.generated_at"] = generatedAt // re-inject after checksum
 				svc["labels"] = labels
 				services[serviceName] = svc
 			}

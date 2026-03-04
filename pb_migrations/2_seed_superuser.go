@@ -17,12 +17,10 @@ func init() {
 		}
 
 		email := os.Getenv("PB_ADMIN_EMAIL")
-		if email == "" {
-			email = "admin@wireops.local"
-		}
 		password := os.Getenv("PB_ADMIN_PASSWORD")
-		if password == "" {
-			password = "admin12345"
+
+		if email == "" || password == "" {
+			return fmt.Errorf("migration failed: PB_ADMIN_EMAIL and PB_ADMIN_PASSWORD environment variables must be set")
 		}
 		if len(password) < 8 {
 			log.Printf("[migration] WARNING: PB_ADMIN_PASSWORD must be at least 8 characters (got %d)", len(password))

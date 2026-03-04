@@ -222,7 +222,7 @@ async function sendTestWebhook() {
       secret: secretToSend,
       events: webhookForm.value.events,
       headers: headersToSend,
-      enabled: webhookForm.value.enabled,
+      enabled: notificationsEnabled.value,
       ntfy_user: isNtfy ? webhookForm.value.ntfy.user : '',
       ntfy_topic: isNtfy ? webhookForm.value.ntfy.topic : '',
       ntfy_template: isNtfy ? webhookForm.value.ntfy.template : '',
