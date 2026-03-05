@@ -200,8 +200,8 @@ const statusColor = (s: string) => {
               variant="ghost" 
               size="xs" 
               :loading="testingConnection" 
-              @click="testConnection"
               title="Test Connection"
+              @click="testConnection"
             />
             <UButton v-if="!editingCred" icon="i-lucide-pencil" variant="ghost" size="xs" @click="startEditCred" />
           </div>
@@ -219,7 +219,8 @@ const statusColor = (s: string) => {
 
       <form v-else class="flex flex-col gap-4" @submit.prevent="saveCred">
         <UFormField label="Auth Type">
-          <USelect v-model="credForm.auth_type" :items="[
+          <USelect
+v-model="credForm.auth_type" :items="[
             { label: 'None', value: 'none' },
             { label: 'SSH Key', value: 'ssh_key' },
             { label: 'Username / Password', value: 'basic' },
@@ -269,9 +270,9 @@ const statusColor = (s: string) => {
           <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
             <div class="flex items-center gap-2 min-w-0">
               <button 
-                @click="copy(c.sha, 'Commit SHA')"
                 class="font-mono text-xs bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded shrink-0 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors cursor-pointer"
                 :title="`Copy ${c.sha}`"
+                @click="copy(c.sha, 'Commit SHA')"
               >
                 {{ c.sha.slice(0, 7) }}
               </button>

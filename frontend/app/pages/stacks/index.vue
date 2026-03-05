@@ -270,7 +270,7 @@ async function handlePurge(dirName: string) {
       </div>
       <div class="flex items-center gap-2">
         <UButton icon="i-lucide-package-plus" label="Import" variant="outline" @click="showImport = true" />
-        <UButton icon="i-lucide-plus" label="Add Stack" @click="openCreate()" class="shadow-[0_0_16px_rgba(255,198,0,0.35)] hover:shadow-[0_0_24px_rgba(255,198,0,0.55)] transition-shadow" />
+        <UButton icon="i-lucide-plus" label="Add Stack" class="shadow-[0_0_16px_rgba(255,198,0,0.35)] hover:shadow-[0_0_24px_rgba(255,198,0,0.55)] transition-shadow" @click="openCreate()" />
       </div>
     </div>
 
@@ -282,7 +282,7 @@ async function handlePurge(dirName: string) {
             <span v-if="stacks?.length" class="ml-1.5 text-yellow-400">({{ stacks.length }})</span>
           </h3>
           <div class="flex items-center gap-3">
-            <UButton icon="i-lucide-package-search" label="Manage Orphans" variant="outline" color="warning" size="xs" @click="openOrphans" class="hidden sm:inline-flex" />
+            <UButton icon="i-lucide-package-search" label="Manage Orphans" variant="outline" color="warning" size="xs" class="hidden sm:inline-flex" @click="openOrphans" />
             <UTooltip text="Refresh">
               <UButton icon="i-lucide-refresh-cw" variant="ghost" size="xs" color="neutral" @click="refresh()" />
             </UTooltip>

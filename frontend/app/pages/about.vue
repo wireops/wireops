@@ -79,7 +79,7 @@ function formatBytes(bytes: number): string {
       <template #header>
         <div class="flex items-center justify-between">
           <h3 class="font-semibold text-wire-200">System Information</h3>
-          <UButton icon="i-lucide-refresh-cw" variant="ghost" color="neutral" size="xs" @click="refreshSystemInfo()" title="Refresh" />
+          <UButton icon="i-lucide-refresh-cw" variant="ghost" color="neutral" size="xs" title="Refresh" @click="refreshSystemInfo()" />
         </div>
       </template>
       <div v-if="systemInfo" class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">

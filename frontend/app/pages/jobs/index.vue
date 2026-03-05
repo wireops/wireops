@@ -77,8 +77,8 @@ function formatRelative(dateStr: string) {
       <UButton
         icon="i-lucide-plus"
         label="New Job"
-        @click="refreshRepos().then(() => { showCreate = true })"
         class="shadow-[0_0_16px_rgba(255,198,0,0.35)] hover:shadow-[0_0_24px_rgba(255,198,0,0.55)] transition-shadow"
+        @click="refreshRepos().then(() => { showCreate = true })"
       />
     </div>
 

@@ -97,7 +97,7 @@ const highlightedCode = computed(() => highlightYaml(props.code))
 </script>
 
 <template>
-  <pre :class="['yaml-highlighter', colorMode.value === 'dark' ? 'dark-mode' : 'light-mode', props.class]"><code v-html="highlightedCode"></code></pre>
+  <pre :class="['yaml-highlighter', colorMode.value === 'dark' ? 'dark-mode' : 'light-mode', props.class]"><code v-html="highlightedCode"/></pre>
 </template>
 
 <style scoped>

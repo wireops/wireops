@@ -100,7 +100,7 @@ onUnmounted(() => {
         </div>
         Agents
       </h1>
-      <UButton icon="i-lucide-zap" label="Add Agent" @click="generateSeat" :loading="isGenerating" class="shadow-[0_0_16px_rgba(255,198,0,0.35)] hover:shadow-[0_0_24px_rgba(255,198,0,0.55)] transition-shadow" />
+      <UButton icon="i-lucide-zap" label="Add Agent" :loading="isGenerating" class="shadow-[0_0_16px_rgba(255,198,0,0.35)] hover:shadow-[0_0_24px_rgba(255,198,0,0.55)] transition-shadow" @click="generateSeat" />
     </div>
 
     <!-- New Seat Token Card -->
@@ -165,7 +165,7 @@ onUnmounted(() => {
       </template>
 
       <div v-if="pending && !agents" class="space-y-4">
-        <USkeleton class="h-16 w-full" v-for="i in 3" :key="i" />
+        <USkeleton v-for="i in 3" :key="i" class="h-16 w-full" />
       </div>
 
       <div v-else-if="!agents || agents.length === 0" class="text-center py-12">

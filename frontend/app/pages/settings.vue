@@ -378,7 +378,7 @@ watch(activeTab, (val) => {
       Settings
     </h1>
 
-    <UTabs :items="tabs" v-model="activeTab" />
+    <UTabs v-model="activeTab" :items="tabs" />
 
     <!-- General -->
     <div v-if="activeTab === 'general'" class="space-y-6">

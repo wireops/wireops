@@ -148,12 +148,12 @@ onMounted(() => {
               block
             />
             <UButton
-              @click="showCreateRepo = true"
               icon="i-lucide-plus"
               label="Create Repository"
               color="primary"
               variant="soft"
               block
+              @click="showCreateRepo = true"
             />
             <UButton
               to="/settings"
@@ -194,7 +194,7 @@ onMounted(() => {
                 class="py-2 flex items-center justify-between"
               >
                 <div class="flex items-center gap-2">
-                  <div class="w-2 h-2 rounded-full bg-red-400"></div>
+                  <div class="w-2 h-2 rounded-full bg-red-400"/>
                   <span class="text-sm font-medium">{{ stack.name }}</span>
                 </div>
                 <UButton

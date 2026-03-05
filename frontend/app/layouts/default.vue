@@ -56,8 +56,8 @@ watch(() => route.fullPath, () => {
               variant="ghost"
               color="neutral"
               size="sm"
-              @click="colorMode.preference = colorMode.value === 'dark' ? 'light' : 'dark'"
               :title="colorMode.value === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'"
+              @click="colorMode.preference = colorMode.value === 'dark' ? 'light' : 'dark'"
             />
             <UButton
               icon="i-lucide-log-out"

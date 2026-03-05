@@ -149,7 +149,7 @@ function cancel() {
             </UFormField>
           </div>
 
-          <hr class="border-gray-200 dark:border-carbon-700" />
+          <hr class="border-gray-200 dark:border-carbon-700" >
 
           <!-- Private Repository Toggle -->
           <div class="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-900/50 rounded-lg border border-gray-200 dark:border-gray-800">

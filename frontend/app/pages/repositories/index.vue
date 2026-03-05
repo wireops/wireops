@@ -76,7 +76,7 @@ const statusColor = (s: string) => {
         </div>
         Repositories
       </h1>
-      <UButton icon="i-lucide-plus" label="Add Repository" @click="showCreate = true" class="shadow-[0_0_16px_rgba(255,198,0,0.35)] hover:shadow-[0_0_24px_rgba(255,198,0,0.55)] transition-shadow" />
+      <UButton icon="i-lucide-plus" label="Add Repository" class="shadow-[0_0_16px_rgba(255,198,0,0.35)] hover:shadow-[0_0_24px_rgba(255,198,0,0.55)] transition-shadow" @click="showCreate = true" />
     </div>
 
     <UCard>

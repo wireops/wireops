@@ -211,7 +211,7 @@ async function confirmImport() {
       <!-- Recreate volumes option -->
       <div class="rounded-lg border border-warning-500/30 bg-warning-500/10 p-4 space-y-3">
         <div class="flex items-start gap-3">
-          <UCheckbox v-model="recreateVolumes" id="recreate-volumes" />
+          <UCheckbox id="recreate-volumes" v-model="recreateVolumes" />
           <div>
             <label for="recreate-volumes" class="text-sm font-medium cursor-pointer">
               Recreate named volumes
@@ -227,7 +227,7 @@ async function confirmImport() {
       <!-- Explicit consent -->
       <div class="rounded-lg border border-default p-4">
         <div class="flex items-start gap-3">
-          <UCheckbox v-model="acknowledgedRestart" id="ack-restart" />
+          <UCheckbox id="ack-restart" v-model="acknowledgedRestart" />
           <label for="ack-restart" class="text-sm cursor-pointer">
             I understand that containers will restart and data in anonymous volumes may be lost.
           </label>

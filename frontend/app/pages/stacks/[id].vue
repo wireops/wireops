@@ -433,11 +433,11 @@ onMounted(() => {
           @click="togglePause"
         />
         <UButton icon="i-lucide-recycle" label="Redeploy" variant="outline" block @click="showForceRedeploy = true" />
-        <UButton icon="i-lucide-refresh-cw" label="Sync Now" block @click="handleSync" class="shadow-[0_0_16px_rgba(255,198,0,0.35)] hover:shadow-[0_0_24px_rgba(255,198,0,0.55)] transition-shadow" />
+        <UButton icon="i-lucide-refresh-cw" label="Sync Now" block class="shadow-[0_0_16px_rgba(255,198,0,0.35)] hover:shadow-[0_0_24px_rgba(255,198,0,0.55)] transition-shadow" @click="handleSync" />
       </div>
     </div>
 
-    <UTabs :items="tabs" v-model="activeTab" />
+    <UTabs v-model="activeTab" :items="tabs" />
 
     <!-- Overview -->
     <div v-if="activeTab === 'overview'" class="space-y-4">
@@ -478,9 +478,9 @@ onMounted(() => {
             <span class="text-gray-500">Revision:</span>
             <button 
               v-if="stack?.expand?.repository?.last_commit_sha"
-              @click="copy(stack.expand.repository.last_commit_sha, 'Commit SHA')"
               class="font-mono text-sm hover:bg-gray-100 dark:hover:bg-gray-800 px-1.5 py-0.5 rounded transition-colors cursor-pointer"
               :title="`Copy ${stack.expand.repository.last_commit_sha}`"
+              @click="copy(stack.expand.repository.last_commit_sha, 'Commit SHA')"
             >
               {{ stack.expand.repository.last_commit_sha.slice(0, 7) }}
             </button>
@@ -524,8 +524,8 @@ onMounted(() => {
                 variant="outline" 
                 size="sm" 
                 :disabled="!webhookUrl"
-                @click="webhookUrl && copy(webhookUrl, 'Webhook URL')"
                 title="Copy webhook URL"
+                @click="webhookUrl && copy(webhookUrl, 'Webhook URL')"
               />
             </div>
           </div>
@@ -572,9 +572,9 @@ onMounted(() => {
                     <span class="text-sm font-medium truncate">{{ c.container_name || c.container_id }}</span>
                     <button 
                       v-if="c.container_name"
-                      @click="copy(c.container_id, 'Container ID')"
                       class="text-xs text-gray-400 font-mono hover:bg-gray-100 dark:hover:bg-gray-800 px-1 py-0.5 rounded transition-colors cursor-pointer shrink-0"
                       :title="`Copy ${c.container_id}`"
+                      @click="copy(c.container_id, 'Container ID')"
                     >
                       {{ c.container_id.slice(0, 12) }}
                     </button>
@@ -714,7 +714,7 @@ onMounted(() => {
               @click="showTransferModal = true"
             />
           </div>
-          <hr class="border-gray-200 dark:border-carbon-700" />
+          <hr class="border-gray-200 dark:border-carbon-700" >
           <!-- Remove Stack -->
           <div class="flex items-center justify-between">
             <div>
@@ -793,9 +793,9 @@ onMounted(() => {
                 <SyncLogBadge :status="log.status" :trigger="log.trigger" />
                 <button 
                   v-if="log.commit_sha"
-                  @click="copy(log.commit_sha, 'Commit SHA')"
                   class="font-mono text-xs hover:bg-gray-100 dark:hover:bg-gray-800 px-1 py-0.5 rounded transition-colors cursor-pointer"
                   :title="`Copy ${log.commit_sha}`"
+                  @click="copy(log.commit_sha, 'Commit SHA')"
                 >
                   {{ log.commit_sha.slice(0, 7) }}
                 </button>
@@ -810,8 +810,8 @@ onMounted(() => {
               v-if="log.status === 'error' && log.output" 
               :error="log.output"
               :show-retry="true"
-              @retry="handleSync"
               class="mt-2"
+              @retry="handleSync"
             />
             <UAlert
               v-else-if="log.status === 'queued'"
@@ -976,10 +976,10 @@ onMounted(() => {
               <UInput v-model="rollbackSha" placeholder="Or paste a commit SHA" class="font-mono w-full" />
               <button
                 v-if="rollbackSha"
-                @click="copy(rollbackSha, 'Commit SHA')"
                 class="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
                 title="Copy SHA"
                 type="button"
+                @click="copy(rollbackSha, 'Commit SHA')"
               >
                 <UIcon name="i-lucide-copy" class="w-4 h-4 text-gray-400" />
               </button>

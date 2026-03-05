@@ -240,7 +240,8 @@ function formatRelative(d: string) {
             @click="expandedRun = expandedRun === run.id ? null : run.id"
           >
             <div class="flex items-center gap-3">
-              <UIcon :name="runStatusIcon(run.status)" class="w-4 h-4" :class="{
+              <UIcon
+:name="runStatusIcon(run.status)" class="w-4 h-4" :class="{
                 'text-green-500': run.status === 'success',
                 'text-red-500': run.status === 'error',
                 'text-yellow-400 animate-spin': run.status === 'running',
