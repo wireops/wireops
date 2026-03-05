@@ -2,6 +2,7 @@ package routes
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -74,12 +75,16 @@ func loadRepositoryCredential(app core.App, repoID string) (*git.Credential, err
 		if keyEnc != "" && len(secretKey) == 32 {
 			if keyBytes, err := crypto.Decrypt(keyEnc, secretKey); err == nil {
 				cred.SSHPrivateKey = keyBytes
+			} else {
+				log.Printf("Warning: failed to decrypt ssh_private_key for auth_type %s: %v", authType, err)
 			}
 		}
 		ppEnc := rec.GetString("ssh_passphrase")
 		if ppEnc != "" && len(secretKey) == 32 {
 			if ppBytes, err := crypto.Decrypt(ppEnc, secretKey); err == nil {
 				cred.SSHPassphrase = ppBytes
+			} else {
+				log.Printf("Warning: failed to decrypt ssh_passphrase for auth_type %s: %v", authType, err)
 			}
 		}
 		cred.SSHKnownHost = rec.GetString("ssh_known_host")
@@ -90,6 +95,8 @@ func loadRepositoryCredential(app core.App, repoID string) (*git.Credential, err
 		if pwdEnc != "" && len(secretKey) == 32 {
 			if pwdBytes, err := crypto.Decrypt(pwdEnc, secretKey); err == nil {
 				cred.GitPassword = string(pwdBytes)
+			} else {
+				log.Printf("Warning: failed to decrypt git_password for auth_type %s: %v", authType, err)
 			}
 		}
 	}

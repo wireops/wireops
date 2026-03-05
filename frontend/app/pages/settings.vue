@@ -9,8 +9,16 @@ const { keyscan, getSyncEventsWebhook, setSyncEventsWebhook, setNotificationsEna
 const { data: pkiDetails, pending: pkiPending } = useAsyncData('pki_details', getPKIDetails)
 
 function copyToClipboard(text: string) {
-  navigator.clipboard.writeText(text)
-  toast.add({ title: 'Copied!', color: 'success' })
+  if (!navigator?.clipboard?.writeText) {
+    toast.add({ title: 'Clipboard API not available', color: 'error' })
+    return
+  }
+  try {
+    navigator.clipboard.writeText(text)
+    toast.add({ title: 'Copied!', color: 'success' })
+  } catch (e) {
+    toast.add({ title: 'Failed to copy', color: 'error' })
+  }
 }
 
 function formatDatetime(dateStr: string) {
@@ -125,6 +133,27 @@ function toggleEvent(event: string) {
   }
 }
 
+function prepareWebhookPayload() {
+  const isNtfy = webhookForm.value.provider === 'ntfy'
+  let secretToSend = ''
+  let urlToSend = ''
+  let headersToSend = '[]'
+  
+  if (isNtfy) {
+     secretToSend = ntfyHasSecret.value && webhookForm.value.ntfy.password === '••••••••'
+      ? '••••••••'
+      : webhookForm.value.ntfy.password
+     urlToSend = webhookForm.value.ntfy.url
+  } else {
+     secretToSend = webhookHasSecret.value && webhookForm.value.webhook.secret === '••••••••'
+      ? '••••••••'
+      : webhookForm.value.webhook.secret
+     urlToSend = webhookForm.value.webhook.url
+     headersToSend = JSON.stringify(webhookForm.value.webhook.headers.filter((h: any) => h.key))
+  }
+  return { isNtfy, secretToSend, urlToSend, headersToSend }
+}
+
 async function saveWebhook() {
   const isNtfy = webhookForm.value.provider === 'ntfy'
   if (!isNtfy && !webhookForm.value.webhook.url) {
@@ -137,22 +166,7 @@ async function saveWebhook() {
   }
   webhookLoading.value = true
   try {
-    let secretToSend = ''
-    let urlToSend = ''
-    let headersToSend = '[]'
-    
-    if (isNtfy) {
-       secretToSend = ntfyHasSecret.value && webhookForm.value.ntfy.password === '••••••••'
-        ? '••••••••'
-        : webhookForm.value.ntfy.password
-       urlToSend = webhookForm.value.ntfy.url
-    } else {
-       secretToSend = webhookHasSecret.value && webhookForm.value.webhook.secret === '••••••••'
-        ? '••••••••'
-        : webhookForm.value.webhook.secret
-       urlToSend = webhookForm.value.webhook.url
-       headersToSend = JSON.stringify(webhookForm.value.webhook.headers.filter(h => h.key))
-    }
+    const { secretToSend, urlToSend, headersToSend } = prepareWebhookPayload()
 
     await setSyncEventsWebhook({
       provider: webhookForm.value.provider,
@@ -199,22 +213,7 @@ async function sendTestWebhook() {
   webhookTestLoading.value = true
   try {
     const isNtfy = webhookForm.value.provider === 'ntfy'
-    let secretToSend = ''
-    let urlToSend = ''
-    let headersToSend = '[]'
-    
-    if (isNtfy) {
-       secretToSend = ntfyHasSecret.value && webhookForm.value.ntfy.password === '••••••••'
-        ? '••••••••'
-        : webhookForm.value.ntfy.password
-       urlToSend = webhookForm.value.ntfy.url
-    } else {
-       secretToSend = webhookHasSecret.value && webhookForm.value.webhook.secret === '••••••••'
-        ? '••••••••'
-        : webhookForm.value.webhook.secret
-       urlToSend = webhookForm.value.webhook.url
-       headersToSend = JSON.stringify(webhookForm.value.webhook.headers.filter(h => h.key))
-    }
+    const { secretToSend, urlToSend, headersToSend } = prepareWebhookPayload()
 
     await testSyncEventsWebhook({
       provider: webhookForm.value.provider,
@@ -260,6 +259,20 @@ async function onEnabledChange(val: boolean) {
 const keyscanLoading = ref(false)
 const keyscanResult = ref('')
 
+function onWebhookSecretFocus() {
+  if (webhookHasSecret.value && webhookForm.value.webhook.secret === '••••••••') {
+    webhookForm.value.webhook.secret = ''
+    webhookHasSecret.value = false
+  }
+}
+
+function onNtfyPasswordFocus() {
+  if (ntfyHasSecret.value && webhookForm.value.ntfy.password === '••••••••') {
+    webhookForm.value.ntfy.password = ''
+    ntfyHasSecret.value = false
+  }
+}
+
 // --- Change Password ---
 const changePasswordForm = ref({ oldPassword: '', password: '', passwordConfirm: '' })
 const changePasswordLoading = ref(false)
@@ -272,6 +285,10 @@ async function handleChangePassword() {
   changePasswordLoading.value = true
   try {
     const userId = $pb.authStore.record?.id
+    if (!userId) {
+      toast.add({ title: 'Session invalid', description: 'Please log in again.', color: 'error' })
+      return
+    }
     await $pb.collection('_superusers').update(userId, {
       oldPassword: changePasswordForm.value.oldPassword,
       password: changePasswordForm.value.password,
@@ -326,9 +343,12 @@ async function sendInvite() {
   }
 }
 
-async function deleteUser(id: string) {
+async function deleteUser(user: any) {
+  if (!window.confirm(`Are you sure you want to remove user ${user.email}?`)) {
+    return
+  }
   try {
-    await $pb.collection('_superusers').delete(id)
+    await $pb.collection('_superusers').delete(user.id)
     await loadUsers()
     toast.add({ title: 'User removed', color: 'success' })
   } catch (e: any) {
@@ -415,22 +435,22 @@ watch(activeTab, (val) => {
         </p>
         <div v-if="pkiPending" class="text-sm text-gray-500">Loading...</div>
         <div v-else-if="pkiDetails" class="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div class="space-y-2">
+          <div v-if="pkiDetails.ca" class="space-y-2">
             <h4 class="font-medium text-sm text-primary">Root CA</h4>
             <div class="bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-3 text-xs font-mono space-y-1.5">
-              <div><span class="text-gray-500 mr-2">Issuer:</span> {{ pkiDetails.ca.issuer }}</div>
-              <div><span class="text-gray-500 mr-2">Subject:</span> {{ pkiDetails.ca.subject }}</div>
-              <div><span class="text-gray-500 mr-2">Expires:</span> {{ formatDatetime(pkiDetails.ca.expiration_date) }}</div>
-              <div><span class="text-gray-500 mr-2">Fingerprint:</span> <span class="break-all">{{ pkiDetails.ca.fingerprint }}</span></div>
+              <div><span class="text-gray-500 mr-2">Issuer:</span> {{ pkiDetails.ca?.issuer }}</div>
+              <div><span class="text-gray-500 mr-2">Subject:</span> {{ pkiDetails.ca?.subject }}</div>
+              <div><span class="text-gray-500 mr-2">Expires:</span> {{ formatDatetime(pkiDetails.ca?.expiration_date) }}</div>
+              <div><span class="text-gray-500 mr-2">Fingerprint:</span> <span class="break-all">{{ pkiDetails.ca?.fingerprint }}</span></div>
             </div>
           </div>
-          <div class="space-y-2">
+          <div v-if="pkiDetails.server" class="space-y-2">
             <h4 class="font-medium text-sm text-primary">Server Certificate</h4>
             <div class="bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-3 text-xs font-mono space-y-1.5">
-              <div><span class="text-gray-500 mr-2">Issuer:</span> {{ pkiDetails.server.issuer }}</div>
-              <div><span class="text-gray-500 mr-2">Subject:</span> {{ pkiDetails.server.subject }}</div>
-              <div><span class="text-gray-500 mr-2">Expires:</span> {{ formatDatetime(pkiDetails.server.expiration_date) }}</div>
-              <div><span class="text-gray-500 mr-2">Fingerprint:</span> <span class="break-all">{{ pkiDetails.server.fingerprint }}</span></div>
+              <div><span class="text-gray-500 mr-2">Issuer:</span> {{ pkiDetails.server?.issuer }}</div>
+              <div><span class="text-gray-500 mr-2">Subject:</span> {{ pkiDetails.server?.subject }}</div>
+              <div><span class="text-gray-500 mr-2">Expires:</span> {{ formatDatetime(pkiDetails.server?.expiration_date) }}</div>
+              <div><span class="text-gray-500 mr-2">Fingerprint:</span> <span class="break-all">{{ pkiDetails.server?.fingerprint }}</span></div>
             </div>
           </div>
         </div>
@@ -472,7 +492,7 @@ watch(activeTab, (val) => {
               size="xs"
               variant="ghost"
               color="error"
-              @click="deleteUser(u.id)"
+              @click="deleteUser(u)"
             />
           </li>
         </ul>
@@ -544,7 +564,7 @@ watch(activeTab, (val) => {
                   :type="webhookHasSecret && webhookForm.webhook.secret === '••••••••' ? 'password' : 'text'"
                   placeholder="Leave empty to skip signature"
                   class="w-full font-mono text-sm"
-                  @focus="if (webhookHasSecret && webhookForm.webhook.secret === '••••••••') { webhookForm.webhook.secret = ''; webhookHasSecret = false }"
+                  @focus="onWebhookSecretFocus"
                 />
                 <p class="text-xs text-gray-400 mt-1">Used to compute <code>X-wireops-Signature: sha256=&lt;hmac&gt;</code> header.</p>
               </div>
@@ -585,7 +605,7 @@ watch(activeTab, (val) => {
                     :type="ntfyHasSecret && webhookForm.ntfy.password === '••••••••' ? 'password' : 'text'"
                     placeholder="password"
                     class="w-full font-mono text-sm"
-                    @focus="if (ntfyHasSecret && webhookForm.ntfy.password === '••••••••') { webhookForm.ntfy.password = ''; ntfyHasSecret = false }"
+                    @focus="onNtfyPasswordFocus"
                   />
                 </div>
               </div>

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -361,7 +362,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		// Docker multiplexed stream: 8-byte header per frame
 		header := make([]byte, 8)
 		for {
-			_, err := reader.Read(header)
+			_, err := io.ReadFull(reader, header)
 			if err != nil {
 				break
 			}
@@ -370,8 +371,8 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 				continue
 			}
 			payload := make([]byte, size)
-			n, err := reader.Read(payload)
-			buf.Write(payload[:n])
+			_, err = io.ReadFull(reader, payload)
+			buf.Write(payload)
 			if err != nil {
 				break
 			}
@@ -387,8 +388,13 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "missing id"})
 		}
 
+		cleaned := filepath.Clean(repoID)
+		if filepath.IsAbs(cleaned) || strings.Contains(repoID, "..") || strings.Contains(repoID, string(os.PathSeparator)) {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
+		}
+
 		workspace := filepath.Join(app.DataDir(), "repositories")
-		repoDir := filepath.Join(workspace, repoID)
+		repoDir := filepath.Join(workspace, cleaned)
 
 		gitRepo, err := gogit.PlainOpen(repoDir)
 		if err != nil {

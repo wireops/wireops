@@ -161,9 +161,10 @@ func (s *MTLSServer) IsEmbedded(agentID string) bool {
 	}
 	agent, err := s.app.FindRecordById("agents", agentID)
 	if err != nil {
-		return true // safe default
+		log.Printf("[AGENT] IsEmbedded: failed to look up agent %s: %v", agentID, err)
+		return false // fail-safe: not embedded on lookup failure
 	}
-	return agent.GetString("fingerprint") == "embedded"
+	return agent != nil && agent.GetString("fingerprint") == "embedded"
 }
 
 // DisconnectAgent forcefully closes the active WebSocket connection for the given agentID, if any.
@@ -389,6 +390,9 @@ func (s *MTLSServer) handleWebSocket(c *gin.Context) {
 
 	// Register connection
 	s.connMu.Lock()
+	if oldConn, exists := s.connections[agentID]; exists && oldConn != conn {
+		oldConn.Close()
+	}
 	s.connections[agentID] = conn
 	s.connWriteMu[agentID] = &sync.Mutex{}
 	s.connMu.Unlock()

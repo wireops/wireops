@@ -13,8 +13,10 @@ import (
 	"fmt"
 	"log"
 	"math/big"
+	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -110,8 +112,14 @@ func (s *Service) generateCA(certPath, keyPath string) error {
 		return err
 	}
 
+	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 128)
+	serialNumber, err := rand.Int(rand.Reader, serialNumberLimit)
+	if err != nil {
+		return err
+	}
+
 	template := x509.Certificate{
-		SerialNumber: big.NewInt(1),
+		SerialNumber: serialNumber,
 		Subject: pkix.Name{
 			Organization: []string{"wireops"},
 			CommonName:   "wireops Root CA",
@@ -169,7 +177,20 @@ func (s *Service) generateServerCert(certPath, keyPath string) error {
 		NotAfter:    time.Now().AddDate(1, 0, 0), // 1 year
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		KeyUsage:    x509.KeyUsageDigitalSignature,
-		DNSNames:    []string{"localhost", "server"},
+	}
+
+	sans := os.Getenv("WIREOPS_SERVER_SANS")
+	if sans != "" {
+		for _, san := range strings.Split(sans, ",") {
+			san = strings.TrimSpace(san)
+			if ip := net.ParseIP(san); ip != nil {
+				template.IPAddresses = append(template.IPAddresses, ip)
+			} else {
+				template.DNSNames = append(template.DNSNames, san)
+			}
+		}
+	} else {
+		template.DNSNames = []string{"localhost", "server"}
 	}
 
 	derBytes, err := x509.CreateCertificate(rand.Reader, &template, s.caCert, &priv.PublicKey, s.caPriv)

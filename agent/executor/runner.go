@@ -368,9 +368,16 @@ func RunJob(cmd protocol.RunJobCommand, send JobSendFunc) protocol.CommandResult
 // JobCompletedMessage. This command returns immediately after issuing docker stop.
 func KillJob(cmd protocol.KillJobCommand) protocol.CommandResult {
 	containerName := "wireops-job-" + cmd.JobRunID
-	out, err := exec.Command("docker", "stop", containerName).CombinedOutput()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	out, err := exec.CommandContext(ctx, "docker", "stop", containerName).CombinedOutput()
 	if err != nil {
 		output := string(out)
+		if ctx.Err() == context.DeadlineExceeded {
+			output += "\nTimeout reached stopping container " + containerName
+		}
 		if output != "" {
 			output += "\n"
 		}

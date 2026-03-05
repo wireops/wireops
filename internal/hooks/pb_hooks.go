@@ -1,7 +1,9 @@
 package hooks
 
 import (
+	"context"
 	"fmt"
+	"html"
 	"log"
 	"os"
 	"path/filepath"
@@ -65,11 +67,15 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 					if enc := rec.GetString("ssh_private_key"); enc != "" {
 						if dec, err := crypto.Decrypt(enc, secretKey); err == nil {
 							cred.SSHPrivateKey = dec
+						} else {
+							log.Printf("failed to decrypt ssh_private_key: %v", err)
 						}
 					}
 					if enc := rec.GetString("ssh_passphrase"); enc != "" {
 						if dec, err := crypto.Decrypt(enc, secretKey); err == nil {
 							cred.SSHPassphrase = dec
+						} else {
+							log.Printf("failed to decrypt ssh_passphrase: %v", err)
 						}
 					}
 					cred.SSHKnownHost = rec.GetString("ssh_known_host")
@@ -78,6 +84,8 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 					if enc := rec.GetString("git_password"); enc != "" {
 						if dec, err := crypto.Decrypt(enc, secretKey); err == nil {
 							cred.GitPassword = string(dec)
+						} else {
+							log.Printf("failed to decrypt git_password: %v", err)
 						}
 					}
 				}
@@ -91,10 +99,24 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 				}
 			}
 
-			if _, err := git.CloneOrFetch(repoID, gitURL, branch, auth, workspace); err != nil {
-				log.Printf("[hooks] background clone failed for repo %s: %v", repoID, err)
-			} else {
-				log.Printf("[hooks] background clone success for repo %s", repoID)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer cancel()
+
+			done := make(chan error, 1)
+			go func() {
+				_, err := git.CloneOrFetch(repoID, gitURL, branch, auth, workspace)
+				done <- err
+			}()
+			
+			select {
+			case <-ctx.Done():
+				log.Printf("[hooks] background clone timed out for repo %s", repoID)
+			case err := <-done:
+				if err != nil {
+					log.Printf("[hooks] background clone failed for repo %s: %v", repoID, err)
+				} else {
+					log.Printf("[hooks] background clone success for repo %s", repoID)
+				}
 			}
 		}()
 
@@ -185,14 +207,22 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 		runs, err := app.FindAllRecords("job_runs", dbx.HashExp{"job": jobID})
 		if err == nil {
 			for _, r := range runs {
-				_ = app.Delete(r)
+				if err := app.Delete(r); err != nil {
+					return fmt.Errorf("failed to delete job_runs %s for job %s: %w", r.Id, jobID, err)
+				}
 			}
+		} else {
+			return fmt.Errorf("failed to list job_runs for job %s: %w", jobID, err)
 		}
 		envVars, err := app.FindAllRecords("job_env_vars", dbx.HashExp{"job": jobID})
 		if err == nil {
 			for _, r := range envVars {
-				_ = app.Delete(r)
+				if err := app.Delete(r); err != nil {
+					return fmt.Errorf("failed to delete job_env_vars %s for job %s: %w", r.Id, jobID, err)
+				}
 			}
+		} else {
+			return fmt.Errorf("failed to list job_env_vars for job %s: %w", jobID, err)
 		}
 		return e.Next()
 	})
@@ -260,6 +290,7 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 }
 
 func buildPasswordResetEmailHTML(actionURL string) string {
+	escapedURL := html.EscapeString(actionURL)
 	return fmt.Sprintf(`<!DOCTYPE html>
 <html><head><meta charset="UTF-8"></head>
 <body style="font-family:sans-serif;background:#0f1117;color:#e1e4e8;padding:40px 20px;margin:0">
@@ -280,7 +311,7 @@ func buildPasswordResetEmailHTML(actionURL string) string {
       If you didn't request a password reset, you can safely ignore this email.
     </p>
   </div>
-</body></html>`, actionURL)
+</body></html>`, escapedURL)
 }
 
 func encryptSensitiveFields(record *core.Record, key []byte) error {

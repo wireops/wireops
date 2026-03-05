@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"strings"
 
 	"github.com/docker/docker/api/types/container"
@@ -40,16 +41,22 @@ func GetStackStatus(ctx context.Context, cli *dockerclient.Client, projectName s
 		return nil, err
 	}
 
-	var statuses []ServiceStatus
+	statuses := make([]ServiceStatus, 0, len(containers))
 	for _, c := range containers {
 		serviceName := c.Labels["com.docker.compose.service"]
 		name := ""
 		if len(c.Names) > 0 {
 			name = strings.TrimPrefix(c.Names[0], "/")
 		}
+
+		cID := c.ID
+		if len(cID) > 12 {
+			cID = cID[:12]
+		}
+
 		statuses = append(statuses, ServiceStatus{
 			ServiceName:   serviceName,
-			ContainerID:   c.ID[:12],
+			ContainerID:   cID,
 			ContainerName: name,
 			Status:        mapStatus(c.State),
 		})
@@ -106,6 +113,9 @@ func GetContainerStats(ctx context.Context, cli *dockerclient.Client, containerI
 	}
 
 	inspect, err := cli.ContainerInspect(ctx, containerID)
+	if err != nil {
+		log.Printf("failed to inspect container %s: %v", containerID, err)
+	}
 	var startedAt string
 	if err == nil && inspect.State != nil {
 		startedAt = inspect.State.StartedAt
@@ -174,13 +184,18 @@ func GetStackNetworks(ctx context.Context, cli *dockerclient.Client, projectName
 	return infos, nil
 }
 
+// mapStatus translates Docker container states into normalized application statuses.
 func mapStatus(state string) string {
 	switch strings.ToLower(state) {
 	case "running":
 		return "running"
 	case "exited", "dead":
 		return "exited"
-	case "created", "paused", "restarting":
+	case "paused":
+		return "paused"
+	case "created":
+		return "created"
+	case "restarting":
 		return "error"
 	default:
 		return "missing"

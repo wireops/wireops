@@ -1,6 +1,8 @@
 package pb_migrations
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -28,7 +30,10 @@ func init() {
 		}
 
 		// skip if already exists
-		existing, _ := app.FindAuthRecordByEmail(core.CollectionNameSuperusers, email)
+		existing, err := app.FindAuthRecordByEmail(core.CollectionNameSuperusers, email)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("failed to check existing superuser: %w", err)
+		}
 		if existing != nil {
 			return nil
 		}
@@ -40,9 +45,12 @@ func init() {
 	}, func(app core.App) error {
 		email := os.Getenv("PB_ADMIN_EMAIL")
 		if email == "" {
-			email = "admin@wireops.local"
+			return fmt.Errorf("rollback failed: PB_ADMIN_EMAIL environment variable must be set")
 		}
-		record, _ := app.FindAuthRecordByEmail(core.CollectionNameSuperusers, email)
+		record, err := app.FindAuthRecordByEmail(core.CollectionNameSuperusers, email)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("failed to lookup superuser for deletion: %w", err)
+		}
 		if record == nil {
 			return nil
 		}
