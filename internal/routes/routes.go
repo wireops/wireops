@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/docker/docker/api/types/container"
@@ -588,6 +590,56 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		}
 		if err := json.NewDecoder(e.Request.Body).Decode(&body); err != nil {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		}
+
+		if body.Host == "" {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "host is required"})
+		}
+
+		var ips []net.IP
+		if ip := net.ParseIP(body.Host); ip != nil {
+			ips = append(ips, ip)
+		} else {
+			if !regexp.MustCompile(`^[a-zA-Z0-9.-]+$`).MatchString(body.Host) {
+				return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid host format"})
+			}
+			resolved, err := net.LookupIP(body.Host)
+			if err != nil {
+				return e.JSON(http.StatusBadRequest, map[string]string{"error": "failed to resolve host"})
+			}
+			ips = resolved
+		}
+
+		allowedRanges := os.Getenv("ALLOWED_PRIVATE_IP_RANGES")
+		isIPAllowed := func(ip net.IP) bool {
+			if allowedRanges == "" {
+				return false
+			}
+			for _, part := range strings.Split(allowedRanges, ",") {
+				part = strings.TrimSpace(part)
+				if part == "" {
+					continue
+				}
+				if _, ipNet, err := net.ParseCIDR(part); err == nil {
+					if ipNet.Contains(ip) {
+						return true
+					}
+				} else if parsedIP := net.ParseIP(part); parsedIP != nil {
+					if parsedIP.Equal(ip) {
+						return true
+					}
+				}
+			}
+			return false
+		}
+
+		for _, ip := range ips {
+			if isIPAllowed(ip) {
+				continue // Skip restrictions for explicitly allowed IPs
+			}
+			if ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() || ip.IsLinkLocalMulticast() || ip.IsLinkLocalUnicast() {
+				return e.JSON(http.StatusForbidden, map[string]string{"error": "scanning private or loopback addresses is not allowed"})
+			}
 		}
 		result, err := git.ScanHostKey(body.Host, body.Port)
 		if err != nil {

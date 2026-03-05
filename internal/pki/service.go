@@ -149,7 +149,12 @@ func (s *Service) generateCA(certPath, keyPath string) error {
 		return err
 	}
 
-	s.caCert = &template
+	cert, err := x509.ParseCertificate(derBytes)
+	if err != nil {
+		return err
+	}
+
+	s.caCert = cert
 	s.caPriv = priv
 
 	return nil

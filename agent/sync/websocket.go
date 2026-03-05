@@ -3,6 +3,7 @@ package sync
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"log"
 	"net/url"
@@ -29,9 +30,12 @@ func Connect(mtlsServerURL, pkiDir string) (*websocket.Conn, error) {
 	}
 
 	caCertPool := x509.NewCertPool()
-	caCertPool.AppendCertsFromPEM(caCertPEM)
+	if ok := caCertPool.AppendCertsFromPEM(caCertPEM); !ok {
+		return nil, errors.New("failed to parse CA certificate PEM")
+	}
 
 	tlsConfig := &tls.Config{
+		MinVersion:         tls.VersionTLS13,
 		Certificates:       []tls.Certificate{cert},
 		RootCAs:            caCertPool,
 		// InsecureSkipVerify is enabled to ignore hostname/SAN mismatches since agents
@@ -51,9 +55,8 @@ func Connect(mtlsServerURL, pkiDir string) (*websocket.Conn, error) {
 		},
 	}
 
-	dialer := websocket.Dialer{
-		TLSClientConfig: tlsConfig,
-	}
+	dialer := *websocket.DefaultDialer
+	dialer.TLSClientConfig = tlsConfig
 
 	u, err := url.Parse(mtlsServerURL)
 	if err != nil {

@@ -11,6 +11,8 @@ function escapeHtml(text: string): string {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
 }
 
 function highlightYaml(code: string): string {
@@ -34,7 +36,8 @@ function highlightYaml(code: string): string {
       )
       
       // Check for values after colon
-      const afterColon = line.split(':')[1]
+      const colonIndex = line.indexOf(':')
+      const afterColon = colonIndex !== -1 ? line.substring(colonIndex + 1) : undefined
       if (afterColon) {
         const trimmed = afterColon.trim()
         

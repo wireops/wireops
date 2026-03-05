@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // ErrRevoked is returned when the server explicitly rejects the agent as revoked (HTTP 403).
@@ -39,6 +40,7 @@ func NewMTLSClient(pkiDir string) (*http.Client, error) {
 	caCertPool.AppendCertsFromPEM(caCertPEM)
 
 	tlsConfig := &tls.Config{
+		MinVersion:         tls.VersionTLS13,
 		Certificates:       []tls.Certificate{cert},
 		RootCAs:            caCertPool,
 		// InsecureSkipVerify is enabled to ignore hostname/SAN mismatches since agents
@@ -58,8 +60,13 @@ func NewMTLSClient(pkiDir string) (*http.Client, error) {
 		},
 	}
 
-	transport := &http.Transport{TLSClientConfig: tlsConfig}
-	return &http.Client{Transport: transport}, nil
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = tlsConfig
+
+	return &http.Client{
+		Transport: transport,
+		Timeout:   30 * time.Second,
+	}, nil
 }
 
 // Register sends the agent's initial metadata to the server using the mTLS connection.

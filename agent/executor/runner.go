@@ -184,6 +184,7 @@ func Inspect(ctx context.Context, cmd protocol.InspectCommand) protocol.CommandR
 		// log.Printf("[executor] inspect error initializing docker client stack=%s: %v", cmd.StackID, err)
 		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
 	}
+	defer client.Close()
 
 	result, err := client.GetRunningStackCommit(ctx, cmd.StackID)
 
