@@ -46,23 +46,23 @@ function highlightYaml(code: string): string {
           )
         }
         // Numbers
-        else if (/^-?\d+\.?\d*$/.test(trimmed)) {
+        else if (/^-?\d+(?:\.\d*)?$/.test(trimmed)) {
           highlightedLine = highlightedLine.replace(
-            /:(\s*)(.+)$/,
+            /:(\s*)(\S.*)$/,
             ':$1<span class="yaml-number">$2</span>'
           )
         }
         // Booleans
         else if (/^(true|false|yes|no|on|off)$/i.test(trimmed)) {
           highlightedLine = highlightedLine.replace(
-            /:(\s*)(.+)$/,
+            /:(\s*)(\S.*)$/,
             ':$1<span class="yaml-boolean">$2</span>'
           )
         }
         // Null
         else if (/^(null|~)$/i.test(trimmed)) {
           highlightedLine = highlightedLine.replace(
-            /:(\s*)(.+)$/,
+            /:(\s*)(\S.*)$/,
             ':$1<span class="yaml-null">$2</span>'
           )
         }
