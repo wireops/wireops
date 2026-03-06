@@ -334,9 +334,12 @@ func RunJob(cmd protocol.RunJobCommand, send JobSendFunc) protocol.CommandResult
 	log.Printf("[executor] run_job dispatched job_run=%s image=%s command=%s", cmd.JobRunID, cmd.Image, cmd.CommandID)
 
 	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+
 		start := time.Now()
 		args := buildDockerRunArgs(cmd)
-		out, runErr := exec.Command("docker", args...).CombinedOutput()
+		out, runErr := exec.CommandContext(ctx, "docker", args...).CombinedOutput()
 		output := string(out)
 
 		elapsed := time.Since(start).Milliseconds()

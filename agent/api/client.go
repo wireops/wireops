@@ -40,27 +40,15 @@ func NewMTLSClient(pkiDir string) (*http.Client, error) {
 	caCertPool.AppendCertsFromPEM(caCertPEM)
 
 	tlsConfig := &tls.Config{
-		MinVersion:         tls.VersionTLS13,
-		Certificates:       []tls.Certificate{cert},
-		RootCAs:            caCertPool,
-		// InsecureSkipVerify is enabled to ignore hostname/SAN mismatches since agents
-		// connect via dynamic IPs. The custom VerifyConnection below strictly ensures
-		// the certificate is signed by our unique CA, maintaining cryptographic security.
-		InsecureSkipVerify: true,
-		VerifyConnection: func(cs tls.ConnectionState) error {
-			if len(cs.PeerCertificates) == 0 {
-				return errors.New("no peer certificates presented")
-			}
-			opts := x509.VerifyOptions{
-				Roots:         caCertPool,
-				Intermediates: x509.NewCertPool(),
-			}
-			for _, cert := range cs.PeerCertificates[1:] {
-				opts.Intermediates.AddCert(cert)
-			}
-			_, err := cs.PeerCertificates[0].Verify(opts)
-			return err
-		},
+		MinVersion:   tls.VersionTLS13,
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      caCertPool,
+		// We override the ServerName to "server" to match the hardcoded SAN 
+		// in the server's generated certificate. This allows standard Go TLS
+		// to securely verify the connection without throwing Hostname mismatches
+		// when agents connect via dynamic IPs, completely removing the need for
+		// the insecure InsecureSkipVerify: true flag.
+		ServerName:   "server",
 	}
 
 	transport := http.DefaultTransport.(*http.Transport).Clone()

@@ -208,5 +208,8 @@ func ContainerBelongsToProject(ctx context.Context, cli *dockerclient.Client, co
 	if err != nil {
 		return false, err
 	}
+	if inspect.Config == nil {
+		return false, nil
+	}
 	return inspect.Config.Labels["com.docker.compose.project"] == projectName, nil
 }

@@ -8,13 +8,13 @@ const { keyscan, getSyncEventsWebhook, setSyncEventsWebhook, setNotificationsEna
 
 const { data: pkiDetails, pending: pkiPending } = useAsyncData('pki_details', getPKIDetails)
 
-function copyToClipboard(text: string) {
+async function copyToClipboard(text: string) {
   if (!navigator?.clipboard?.writeText) {
     toast.add({ title: 'Clipboard API not available', color: 'error' })
     return
   }
   try {
-    navigator.clipboard.writeText(text)
+    await navigator.clipboard.writeText(text)
     toast.add({ title: 'Copied!', color: 'success' })
   } catch (e) {
     toast.add({ title: 'Failed to copy', color: 'error' })
@@ -554,12 +554,13 @@ watch(activeTab, (val) => {
 
             <div v-if="webhookForm.provider === 'webhook'" class="space-y-4 pt-4 border-t border-gray-100 dark:border-gray-800">
               <div>
-                <label class="block text-sm font-medium mb-1">URL <span class="text-red-500">*</span></label>
-                <UInput v-model="webhookForm.webhook.url" placeholder="https://hooks.example.com/wireops" class="w-full font-mono text-sm" />
+                <label for="webhook-url" class="block text-sm font-medium mb-1">URL <span class="text-red-500">*</span></label>
+                <UInput id="webhook-url" v-model="webhookForm.webhook.url" placeholder="https://hooks.example.com/wireops" class="w-full font-mono text-sm" />
               </div>
               <div>
-                <label class="block text-sm font-medium mb-1">HMAC Secret <span class="text-xs text-gray-400 font-normal">(optional)</span></label>
+                <label for="webhook-secret" class="block text-sm font-medium mb-1">HMAC Secret <span class="text-xs text-gray-400 font-normal">(optional)</span></label>
                 <UInput
+                  id="webhook-secret"
                   v-model="webhookForm.webhook.secret"
                   :type="webhookHasSecret && webhookForm.webhook.secret === '••••••••' ? 'password' : 'text'"
                   placeholder="Leave empty to skip signature"
@@ -585,22 +586,23 @@ watch(activeTab, (val) => {
             <div v-if="webhookForm.provider === 'ntfy'" class="space-y-4 pt-4 border-t border-gray-100 dark:border-gray-800">
               <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label class="block text-sm font-medium mb-1">Server URL <span class="text-red-500">*</span></label>
-                  <UInput v-model="webhookForm.ntfy.url" placeholder="https://ntfy.sh" class="w-full font-mono text-sm" />
+                  <label for="ntfy-url" class="block text-sm font-medium mb-1">Server URL <span class="text-red-500">*</span></label>
+                  <UInput id="ntfy-url" v-model="webhookForm.ntfy.url" placeholder="https://ntfy.sh" class="w-full font-mono text-sm" />
                 </div>
                 <div>
-                  <label class="block text-sm font-medium mb-1">Topic <span class="text-red-500">*</span></label>
-                  <UInput v-model="webhookForm.ntfy.topic" placeholder="my-topic" class="w-full font-mono text-sm" />
+                  <label for="ntfy-topic" class="block text-sm font-medium mb-1">Topic <span class="text-red-500">*</span></label>
+                  <UInput id="ntfy-topic" v-model="webhookForm.ntfy.topic" placeholder="my-topic" class="w-full font-mono text-sm" />
                 </div>
               </div>
               <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label class="block text-sm font-medium mb-1">Username <span class="text-xs text-gray-400 font-normal">(optional)</span></label>
-                  <UInput v-model="webhookForm.ntfy.user" placeholder="user" class="w-full font-mono text-sm" />
+                  <label for="ntfy-user" class="block text-sm font-medium mb-1">Username <span class="text-xs text-gray-400 font-normal">(optional)</span></label>
+                  <UInput id="ntfy-user" v-model="webhookForm.ntfy.user" placeholder="user" class="w-full font-mono text-sm" />
                 </div>
                 <div>
-                  <label class="block text-sm font-medium mb-1">Password <span class="text-xs text-gray-400 font-normal">(optional)</span></label>
+                  <label for="ntfy-password" class="block text-sm font-medium mb-1">Password <span class="text-xs text-gray-400 font-normal">(optional)</span></label>
                   <UInput
+                    id="ntfy-password"
                     v-model="webhookForm.ntfy.password"
                     :type="ntfyHasSecret && webhookForm.ntfy.password === '••••••••' ? 'password' : 'text'"
                     placeholder="password"
@@ -610,8 +612,9 @@ watch(activeTab, (val) => {
                 </div>
               </div>
               <div>
-                <label class="block text-sm font-medium mb-1">Custom Template <span class="text-xs text-gray-400 font-normal">(optional)</span></label>
+                <label for="ntfy-template" class="block text-sm font-medium mb-1">Custom Template <span class="text-xs text-gray-400 font-normal">(optional)</span></label>
                 <UTextarea
+                  id="ntfy-template"
                   v-model="webhookForm.ntfy.template"
                   placeholder="Event: {{.Event}}
 Stack: {{.StackName}}
