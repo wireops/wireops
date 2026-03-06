@@ -51,22 +51,22 @@ function highlightYaml(code: string): string {
         // Numbers
         else if (/^-?\d+(?:\.\d*)?$/.test(trimmed)) {
           highlightedLine = highlightedLine.replace(
-            /:(\s*)(\S.*)$/,
-            ':$1<span class="yaml-number">$2</span>'
+            /:(\s*)([-0-9.]+)(\s*)$/,
+            ':$1<span class="yaml-number">$2</span>$3'
           )
         }
         // Booleans
         else if (/^(true|false|yes|no|on|off)$/i.test(trimmed)) {
           highlightedLine = highlightedLine.replace(
-            /:(\s*)(\S.*)$/,
-            ':$1<span class="yaml-boolean">$2</span>'
+            /:(\s*)([a-zA-Z]+)(\s*)$/,
+            ':$1<span class="yaml-boolean">$2</span>$3'
           )
         }
         // Null
         else if (/^(null|~)$/i.test(trimmed)) {
           highlightedLine = highlightedLine.replace(
-            /:(\s*)(\S.*)$/,
-            ':$1<span class="yaml-null">$2</span>'
+            /:(\s*)(null|~)(\s*)$/i,
+            ':$1<span class="yaml-null">$2</span>$3'
           )
         }
       }
