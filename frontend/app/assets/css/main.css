@@ -1,0 +1,12 @@
+@import "tailwindcss";
+@import "@nuxt/ui";
+
+@theme {
+  --color-carbon-950: #202032;
+  --color-carbon-900: #262643;
+  --color-carbon-800: #2e2e52;
+  --color-carbon-700: #363665;
+  --color-wire-200: #c1d1db;
+  --color-wire-400: #5da8ff;
+  --color-wire-700: #256d85;
+}

@@ -1,0 +1,17 @@
+services:
+  wireops:
+    image: ghcr.io/wireops/wireops:latest
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8090}:8090"
+      - "${MTLS_PORT:-8443}:8443"
+    volumes:
+      - ./data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - SECRET_KEY=${SECRET_KEY}
+      - APP_URL=${APP_URL:-http://localhost:8090}
+      - PB_DATA_DIR=${PB_DATA_DIR:-/data/pb_data}
+      - REPOS_WORKSPACE=${REPOS_WORKSPACE:-/data/repos}
+    env_file:
+      - .env
