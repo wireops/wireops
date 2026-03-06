@@ -7,7 +7,6 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -19,6 +18,7 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/wireops/wireops/internal/pki"
 	"github.com/wireops/wireops/internal/protocol"
+	"github.com/wireops/wireops/pkg/logger"
 )
 
 // pendingResult holds the channel to send a CommandResult back to the waiting caller.
@@ -161,7 +161,7 @@ func (s *MTLSServer) IsEmbedded(agentID string) bool {
 	}
 	agent, err := s.app.FindRecordById("agents", agentID)
 	if err != nil {
-		log.Printf("[AGENT] IsEmbedded: failed to look up agent %s: %v", agentID, err)
+		logger.SafeLogf("[AGENT] IsEmbedded: failed to look up agent %s: %v", agentID, err)
 		return false // fail-safe: not embedded on lookup failure
 	}
 	return agent != nil && agent.GetString("fingerprint") == "embedded"
@@ -192,7 +192,7 @@ func (s *MTLSServer) DisconnectAgent(agentID string) {
 	delete(s.agentTags, agentID)
 	s.connMu.Unlock()
 	if ok {
-		log.Printf("[AGENT] Forcefully disconnected revoked agent: %s", agentID)
+		logger.SafeLogf("[AGENT] Forcefully disconnected revoked agent: %s", agentID)
 	}
 }
 
@@ -334,14 +334,14 @@ func (s *MTLSServer) handleRegister(c *gin.Context) {
 	record.Set("fingerprint", certHash)
 
 	if err := s.app.Save(record); err != nil {
-		log.Printf("[AGENT] Failed to update agent registration %s: %v", agentID, err)
+		logger.SafeLogf("[AGENT] Failed to update agent registration %s: %v", agentID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
 		return
 	}
 
 	s.agentSvc.UpdateLastSeen(agentID)
 	s.SetAgentTags(agentID, req.Tags)
-	log.Printf("[AGENT] Initial registration completed for Agent: %s (%s) tags=%v", req.Hostname, agentID, req.Tags)
+	logger.SafeLogf("[AGENT] Initial registration completed for Agent: %s (%s) tags=%v", req.Hostname, agentID, req.Tags)
 
 	c.JSON(http.StatusOK, gin.H{"status": "registered"})
 }
@@ -365,11 +365,11 @@ func (s *MTLSServer) handleWebSocket(c *gin.Context) {
 	}
 
 	s.agentSvc.UpdateLastSeen(agentID)
-	log.Printf("[AGENT] Agent connected via WebSocket: %s", agentID)
+	logger.SafeLogf("[AGENT] Agent connected via WebSocket: %s", agentID)
 
 	conn, err := s.upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
-		log.Printf("[AGENT] Failed to upgrade websocket for %s: %v", agentID, err)
+		logger.SafeLogf("[AGENT] Failed to upgrade websocket for %s: %v", agentID, err)
 		return
 	}
 	defer func() {
@@ -380,11 +380,11 @@ func (s *MTLSServer) handleWebSocket(c *gin.Context) {
 			delete(s.connWriteMu, agentID)
 			delete(s.agentTags, agentID)
 			s.connMu.Unlock()
-			log.Printf("[AGENT] Agent %s disconnected", agentID)
+			logger.SafeLogf("[AGENT] Agent %s disconnected", agentID)
 		} else {
 			s.connMu.Unlock()
 			conn.Close() // Always close the local connection to avoid FD leaks
-			log.Printf("[AGENT] Ignoring stale connection cleanup for agent %s", agentID)
+			logger.SafeLogf("[AGENT] Ignoring stale connection cleanup for agent %s", agentID)
 		}
 	}()
 
@@ -421,7 +421,7 @@ func (s *MTLSServer) handleWebSocket(c *gin.Context) {
 	for {
 		messageType, p, err := conn.ReadMessage()
 		if err != nil {
-			log.Printf("[AGENT] Agent %s disconnected: %v", agentID, err)
+			logger.SafeLogf("[AGENT] Agent %s disconnected: %v", agentID, err)
 			_ = s.agentSvc.RecordHealthEvent(agentID, "offline")
 			break
 		}
@@ -437,7 +437,7 @@ func (s *MTLSServer) handleWebSocket(c *gin.Context) {
 
 		var env protocol.Envelope
 		if jsonErr := json.Unmarshal(p, &env); jsonErr != nil {
-			log.Printf("[AGENT] Failed to parse message from %s: %v", agentID, jsonErr)
+			logger.SafeLogf("[AGENT] Failed to parse message from %s: %v", agentID, jsonErr)
 			continue
 		}
 
@@ -450,19 +450,19 @@ func (s *MTLSServer) handleWebSocket(c *gin.Context) {
 			payloadBytes, _ := json.Marshal(env.Payload)
 			var hb protocol.HeartbeatPayload
 			if jsonErr := json.Unmarshal(payloadBytes, &hb); jsonErr == nil && len(hb.ActiveJobRunIDs) > 0 {
-				log.Printf("[AGENT] %s heartbeat: %d active job(s) %v", agentID, len(hb.ActiveJobRunIDs), hb.ActiveJobRunIDs)
+				logger.SafeLogf("[AGENT] %s heartbeat: %d active job(s) %v", agentID, len(hb.ActiveJobRunIDs), hb.ActiveJobRunIDs)
 			}
 
 		case protocol.MsgJobCompleted:
 			payloadBytes, _ := json.Marshal(env.Payload)
 			var msg protocol.JobCompletedMessage
 			if jsonErr := json.Unmarshal(payloadBytes, &msg); jsonErr == nil {
-				log.Printf("[AGENT] job_completed from %s run=%s success=%v elapsed=%dms", agentID, msg.JobRunID, msg.Success, msg.DurationMs)
+				logger.SafeLogf("[AGENT] job_completed from %s run=%s success=%v elapsed=%dms", agentID, msg.JobRunID, msg.Success, msg.DurationMs)
 				if s.onJobCompleted != nil {
 					go s.onJobCompleted(msg)
 				}
 			} else {
-				log.Printf("[AGENT] Failed to parse job_completed from %s: %v", agentID, jsonErr)
+				logger.SafeLogf("[AGENT] Failed to parse job_completed from %s: %v", agentID, jsonErr)
 			}
 
 		case protocol.MsgResult:
@@ -477,15 +477,15 @@ func (s *MTLSServer) handleWebSocket(c *gin.Context) {
 					select {
 					case pr.ch <- result:
 					default:
-						log.Printf("[AGENT] Dropped duplicate/late result for command %s from %s", result.CommandID, agentID)
+						logger.SafeLogf("[AGENT] Dropped duplicate/late result for command %s from %s", result.CommandID, agentID)
 					}
 				} else {
-					log.Printf("[AGENT] Received result for unknown command %s from %s", result.CommandID, agentID)
+					logger.SafeLogf("[AGENT] Received result for unknown command %s from %s", result.CommandID, agentID)
 				}
 			}
 
 		default:
-			log.Printf("[AGENT] Unknown message type '%s' from %s", env.Type, agentID)
+			logger.SafeLogf("[AGENT] Unknown message type '%s' from %s", env.Type, agentID)
 		}
 	}
 }
@@ -520,6 +520,7 @@ func (s *MTLSServer) Start(addr string) error {
 		TLSConfig: tlsConfig,
 	}
 
-	log.Printf("[AGENT] Starting mTLS server on %s", addr)
+	logger.SafeLogf("[AGENT] Starting mTLS server on %s", addr)
 	return server.ListenAndServeTLS("", "")
 }
+

@@ -43,6 +43,9 @@ func Connect(mtlsServerURL, pkiDir string) (*websocket.Conn, error) {
 		// the certificate is signed by our unique CA, maintaining cryptographic security.
 		InsecureSkipVerify: true,
 		VerifyConnection: func(cs tls.ConnectionState) error {
+			if len(cs.PeerCertificates) == 0 {
+				return errors.New("no peer certificates presented")
+			}
 			opts := x509.VerifyOptions{
 				Roots:         caCertPool,
 				Intermediates: x509.NewCertPool(),
