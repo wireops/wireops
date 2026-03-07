@@ -12,11 +12,16 @@ import (
 	"github.com/wireops/wireops/internal/sync"
 )
 
-func TestRenderer_GenerateRevision(t *testing.T) {
+const (
+	errCreateTestApp    = "failed to create test app: %v"
+	errWriteComposeFile = "failed to write compose file: %v"
+)
+
+func TestRendererGenerateRevision(t *testing.T) {
 	// Setup PocketBase test app
 	app, err := tests.NewTestApp()
 	if err != nil {
-		t.Fatalf("failed to create test app: %v", err)
+		t.Fatalf(errCreateTestApp, err)
 	}
 	defer app.Cleanup()
 
@@ -35,7 +40,7 @@ services:
       user.label: "value"
 `
 	if err := os.WriteFile(composePath, []byte(composeContent), 0644); err != nil {
-		t.Fatalf("failed to write compose file: %v", err)
+		t.Fatalf(errWriteComposeFile, err)
 	}
 
 	// Create Stack and Repo records
@@ -93,7 +98,7 @@ services:
       user.label: "value"
 `
 	if err := os.WriteFile(composePath, []byte(composeContent2), 0644); err != nil {
-		t.Fatalf("failed to update compose file: %v", err)
+		t.Fatalf(errWriteComposeFile, err)
 	}
 
 	res4, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitC", false, "embedded")
@@ -128,10 +133,10 @@ services:
 	}
 }
 
-func TestRenderer_GenerateRevision_StripReservedLabels(t *testing.T) {
+func TestRendererStripReservedLabels(t *testing.T) {
 	app, err := tests.NewTestApp()
 	if err != nil {
-		t.Fatalf("failed to create test app: %v", err)
+		t.Fatalf(errCreateTestApp, err)
 	}
 	defer app.Cleanup()
 
@@ -152,7 +157,7 @@ services:
       user.safe.label: "keep-me"
 `
 	if err := os.WriteFile(composePath, []byte(composeContent), 0644); err != nil {
-		t.Fatalf("failed to write compose file: %v", err)
+		t.Fatalf(errWriteComposeFile, err)
 	}
 
 	repo := createTestRepo(t, app, "Sanitize Repo", "main")
@@ -190,10 +195,10 @@ services:
 	}
 }
 
-func TestRenderer_GenerateRevision_NoSecrets(t *testing.T) {
+func TestRendererNoSecrets(t *testing.T) {
 	app, err := tests.NewTestApp()
 	if err != nil {
-		t.Fatalf("failed to create test app: %v", err)
+		t.Fatalf(errCreateTestApp, err)
 	}
 	defer app.Cleanup()
 

@@ -24,6 +24,13 @@ type RenderResult struct {
 	RenderedPath string // e.g., v5.yml
 }
 
+// Label key constants for the internally-managed metadata labels.
+// These keys are reserved; user-supplied labels with these names are stripped before injection.
+const (
+	labelChecksum    = "dev.wireops.checksum"
+	labelGeneratedAt = "dev.wireops.generated_at"
+)
+
 // Renderer is responsible for intercepting compose files and injecting deterministic labels
 type Renderer struct {
 	app          core.App
@@ -138,10 +145,12 @@ func (r *Renderer) GenerateRevision(
 			labels = make(map[string]interface{})
 		}
 
-		// Strip any user-supplied labels using the reserved dev.wireops prefix
+		// Strip any user-supplied labels using the reserved dev.wireops namespace
 		// to prevent git-sourced files from spoofing or overriding system labels.
+		// Only exact "dev.wireops" or "dev.wireops." prefix matches are rejected;
+		// adjacent namespaces like "dev.wireopslab.*" are left untouched.
 		for k := range labels {
-			if strings.HasPrefix(k, "dev.wireops") {
+			if k == "dev.wireops" || strings.HasPrefix(k, "dev.wireops.") {
 				delete(labels, k)
 			}
 		}
@@ -181,8 +190,8 @@ func (r *Renderer) GenerateRevision(
 		if !ok {
 			continue
 		}
-		labels["dev.wireops.checksum"] = checksum
-		labels["dev.wireops.generated_at"] = generatedAt
+		labels[labelChecksum] = checksum
+		labels[labelGeneratedAt] = generatedAt
 		svc["labels"] = labels
 		services[serviceName] = svc
 	}
@@ -205,8 +214,8 @@ func (r *Renderer) GenerateRevision(
 					continue
 				}
 				labels["dev.wireops.version"] = strconv.Itoa(nextVersion)
-				delete(labels, "dev.wireops.checksum")     // remove old
-				delete(labels, "dev.wireops.generated_at") // remove time-dependent metadata for deterministic checksum
+				delete(labels, labelChecksum)    // remove old
+				delete(labels, labelGeneratedAt) // remove time-dependent metadata for deterministic checksum
 				svc["labels"] = labels
 				services[serviceName] = svc
 			}
@@ -224,8 +233,8 @@ func (r *Renderer) GenerateRevision(
 				if !ok {
 					continue
 				}
-				labels["dev.wireops.checksum"] = checksum
-				labels["dev.wireops.generated_at"] = generatedAt // re-inject after checksum
+				labels[labelChecksum] = checksum
+				labels[labelGeneratedAt] = generatedAt // re-inject after checksum
 				svc["labels"] = labels
 				services[serviceName] = svc
 			}
