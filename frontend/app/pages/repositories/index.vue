@@ -1,5 +1,6 @@
 <script setup lang="ts">
 const { $pb } = useNuxtApp()
+const { platformIconUrl } = useRepositoryPlatform()
 
 const { data: repos, refresh } = useAsyncData('repos_list', () =>
   $pb.collection('repositories').getFullList({ sort: '-updated' })
@@ -134,6 +135,17 @@ const statusColor = (s: string) => {
             :key="repo.id"
             class="flex items-center justify-between p-4 bg-gray-50 dark:bg-carbon-800/40 rounded-xl border border-gray-200 dark:border-carbon-700 hover:shadow-[0_0_0_2px_rgba(255,198,0,0.35),0_0_20px_rgba(255,198,0,0.12)] transition-all"
           >
+            <!-- Platform icon — left, separated -->
+            <div class="mr-2 border-r border-gray-200 dark:border-carbon-700 pr-4 flex items-center">
+              <img
+                v-if="platformIconUrl(repo.platform)"
+                :src="platformIconUrl(repo.platform)!"
+                class="w-5 h-5 object-contain"
+                alt=""
+              >
+              <UIcon v-else name="i-lucide-git-branch" class="w-5 h-5 text-gray-400" />
+            </div>
+
             <NuxtLink :to="`/repositories/${repo.id}`" class="flex-1 min-w-0">
               <div class="flex items-center gap-2 mb-1">
                 <h3 class="font-semibold truncate text-gray-900 dark:text-wire-200">{{ repo.name }}</h3>
