@@ -20,6 +20,7 @@ function formatUptime(startedAt: string): string {
 }
 const { validateComposePath, validateComposeFile } = useValidation()
 const toast = useToast()
+const { platformIconUrl } = useRepositoryPlatform()
 
 const stackId = route.params.id as string
 
@@ -454,8 +455,15 @@ onMounted(() => {
             <NuxtLink
               v-if="stack?.expand?.repository"
               :to="`/repositories/${stack.expand.repository.id}`"
-              class="text-primary hover:underline ml-1"
+              class="inline-flex items-center gap-1.5 text-primary hover:underline ml-1"
             >
+              <img
+                v-if="platformIconUrl(stack.expand.repository.platform)"
+                :src="platformIconUrl(stack.expand.repository.platform)!"
+                class="w-3.5 h-3.5 object-contain shrink-0"
+                alt=""
+              />
+              <UIcon v-else name="i-lucide-git-branch" class="w-3.5 h-3.5 shrink-0" />
               {{ stack.expand.repository.name }}
             </NuxtLink>
           </div>

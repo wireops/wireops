@@ -4,6 +4,7 @@ const { triggerSync, listOrphans, purgeOrphan, getRepoFiles } = useApi()
 const { validateComposePath, validateComposeFile } = useValidation()
 const { subscribe } = useRealtime()
 const toast = useToast()
+const { platformIconUrl } = useRepositoryPlatform()
 
 const { data: stacks, refresh } = useAsyncData('stacks_list', () =>
   $pb.collection('stacks').getFullList({ sort: '-updated', expand: 'repository,agent' })
@@ -347,7 +348,13 @@ async function handlePurge(dirName: string) {
                   {{ stack.import_path || 'local import' }}
                 </template>
                 <template v-else>
-                  <UIcon name="i-lucide-git-branch" class="w-3 h-3 inline" />
+                  <img
+                    v-if="platformIconUrl(stack.expand?.repository?.platform)"
+                    :src="platformIconUrl(stack.expand?.repository?.platform)!"
+                    class="w-3 h-3 object-contain inline shrink-0"
+                    alt=""
+                  />
+                  <UIcon v-else name="i-lucide-git-branch" class="w-3 h-3 inline shrink-0" />
                   {{ stack.expand?.repository?.name || 'Unknown repo' }}
                 </template>
               </p>
