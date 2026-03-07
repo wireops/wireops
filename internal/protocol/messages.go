@@ -224,6 +224,45 @@ type RunJobCommand struct {
 	Network string `json:"network,omitempty"`
 }
 
+// BuildDockerRunArgs assembles the docker run argument list for this job command.
+func (cmd *RunJobCommand) BuildDockerRunArgs() []string {
+	args := []string{"run"}
+	// Force ephemeral containers: always remove after execution.
+	args = append(args, "--rm")
+	args = append(args, "--name", "wireops-job-"+cmd.JobRunID)
+
+	// Inject standard labels
+	args = append(args, "-l", "dev.wireops.managed=true")
+	if cmd.RepositoryID != "" {
+		args = append(args, "-l", "dev.wireops.repository.id="+cmd.RepositoryID)
+	}
+	if cmd.RepositoryBranch != "" {
+		args = append(args, "-l", "dev.wireops.repository.branch="+cmd.RepositoryBranch)
+	}
+	if cmd.RepositoryFile != "" {
+		args = append(args, "-l", "dev.wireops.repository.file="+cmd.RepositoryFile)
+	}
+	if cmd.CommitSHA != "" {
+		args = append(args, "-l", "dev.wireops.repository.commit_sha="+cmd.CommitSHA)
+	}
+	if cmd.JobName != "" {
+		args = append(args, "-l", "dev.wireops.job.name="+cmd.JobName)
+	}
+
+	for k, v := range cmd.Env {
+		args = append(args, "-e", k+"="+v)
+	}
+	for _, v := range cmd.Volumes {
+		args = append(args, "-v", v)
+	}
+	if cmd.Network != "" {
+		args = append(args, "--network", cmd.Network)
+	}
+	args = append(args, cmd.Image)
+	args = append(args, cmd.Command...)
+	return args
+}
+
 // KillJobCommand tells the agent to stop a running job container.
 // The agent runs `docker stop wireops-job-<JobRunID>`. The container exit will
 // trigger the existing RunJob completion flow and send JobCompletedMessage.

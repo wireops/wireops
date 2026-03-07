@@ -338,7 +338,7 @@ func RunJob(cmd protocol.RunJobCommand, send JobSendFunc) protocol.CommandResult
 		defer cancel()
 
 		start := time.Now()
-		args := buildDockerRunArgs(cmd)
+		args := cmd.BuildDockerRunArgs()
 		out, runErr := exec.CommandContext(ctx, "docker", args...).CombinedOutput()
 		output := string(out)
 
@@ -393,44 +393,7 @@ func KillJob(cmd protocol.KillJobCommand) protocol.CommandResult {
 	return protocol.CommandResult{CommandID: cmd.CommandID, Output: "stopped"}
 }
 
-// buildDockerRunArgs assembles the docker run argument list for a RunJobCommand.
-func buildDockerRunArgs(cmd protocol.RunJobCommand) []string {
-	args := []string{"run"}
-	// Force ephemeral containers: always remove after execution.
-	args = append(args, "--rm")
-	args = append(args, "--name", "wireops-job-"+cmd.JobRunID)
 
-	// Inject standard labels
-	args = append(args, "-l", "dev.wireops.managed=true")
-	if cmd.RepositoryID != "" {
-		args = append(args, "-l", "dev.wireops.repository.id="+cmd.RepositoryID)
-	}
-	if cmd.RepositoryBranch != "" {
-		args = append(args, "-l", "dev.wireops.repository.branch="+cmd.RepositoryBranch)
-	}
-	if cmd.RepositoryFile != "" {
-		args = append(args, "-l", "dev.wireops.repository.file="+cmd.RepositoryFile)
-	}
-	if cmd.CommitSHA != "" {
-		args = append(args, "-l", "dev.wireops.repository.commit_sha="+cmd.CommitSHA)
-	}
-	if cmd.JobName != "" {
-		args = append(args, "-l", "dev.wireops.job.name="+cmd.JobName)
-	}
-
-	for k, v := range cmd.Env {
-		args = append(args, "-e", k+"="+v)
-	}
-	for _, v := range cmd.Volumes {
-		args = append(args, "-v", v)
-	}
-	if cmd.Network != "" {
-		args = append(args, "--network", cmd.Network)
-	}
-	args = append(args, cmd.Image)
-	args = append(args, cmd.Command...)
-	return args
-}
 
 // prepareComposeFile decodes the base64 YAML, writes it to a temporary directory,
 // and returns (workDir, filename, cleanupFn, error).
