@@ -280,15 +280,35 @@ func (s *Scheduler) dispatchToAgent(ctx context.Context, jobID, trigger, agentID
 	commitSHA := s.repoHeadSHA(repoID)
 	s.patchJobRunMeta(runID, containerName, commitSHA)
 
+	repoBranch := func() string {
+		rec, _ := s.app.FindRecordById("repositories", repoID)
+		if rec != nil {
+			return rec.GetString("branch")
+		}
+		return ""
+	}()
+
+	jobFile := func() string {
+		rec, _ := s.app.FindRecordById("scheduled_jobs", jobID)
+		if rec != nil {
+			return rec.GetString("job_file")
+		}
+		return ""
+	}()
+
 	cmd := protocol.RunJobCommand{
-		CommandID: fmt.Sprintf("job-%s", runID),
-		JobRunID:  runID,
-		Image:     def.Image,
-		Command:   []string(def.Command),
-		Env:       envMap,
-		Remove:    def.Remove,
-		Volumes:   def.Volumes,
-		Network:   def.Network,
+		CommandID:        fmt.Sprintf("job-%s", runID),
+		JobRunID:         runID,
+		JobName:          def.Title,
+		Image:            def.Image,
+		Command:          []string(def.Command),
+		Env:              envMap,
+		RepositoryID:     repoID,
+		RepositoryBranch: repoBranch,
+		RepositoryFile:   jobFile,
+		CommitSHA:        commitSHA,
+		Volumes:          def.Volumes,
+		Network:          def.Network,
 	}
 
 	if s.dispatcher.IsEmbedded(agentID) {
@@ -347,10 +367,28 @@ func (s *Scheduler) runJobEmbedded(ctx context.Context, runID string, cmd protoc
 // buildDockerRunArgs assembles the docker run argument list (shared with agent executor).
 func buildDockerRunArgs(cmd protocol.RunJobCommand) []string {
 	args := []string{"run"}
-	if cmd.Remove {
-		args = append(args, "--rm")
-	}
+	// Force ephemeral containers: always remove after execution.
+	args = append(args, "--rm")
 	args = append(args, "--name", "wireops-job-"+cmd.JobRunID)
+
+	// Inject standard labels
+	args = append(args, "-l", "dev.wireops.managed=true")
+	if cmd.RepositoryID != "" {
+		args = append(args, "-l", "dev.wireops.repository.id="+cmd.RepositoryID)
+	}
+	if cmd.RepositoryBranch != "" {
+		args = append(args, "-l", "dev.wireops.repository.branch="+cmd.RepositoryBranch)
+	}
+	if cmd.RepositoryFile != "" {
+		args = append(args, "-l", "dev.wireops.repository.file="+cmd.RepositoryFile)
+	}
+	if cmd.CommitSHA != "" {
+		args = append(args, "-l", "dev.wireops.repository.commit_sha="+cmd.CommitSHA)
+	}
+	if cmd.JobName != "" {
+		args = append(args, "-l", "dev.wireops.job.name="+cmd.JobName)
+	}
+
 	for k, v := range cmd.Env {
 		args = append(args, "-e", k+"="+v)
 	}

@@ -1222,7 +1222,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 
 		projects := make(map[string]*protocol.DiscoveredProject)
 		for _, cnt := range containers {
-			if cnt.Labels["wireops.managed"] == "true" {
+			if cnt.Labels["dev.wireops.managed"] == "true" {
 				continue
 			}
 			projectName := cnt.Labels["com.docker.compose.project"]

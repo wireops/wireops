@@ -173,7 +173,7 @@ func Probe(ctx context.Context, cmd protocol.ProbeCommand) protocol.CommandResul
 	return protocol.CommandResult{CommandID: cmd.CommandID, Output: string(encoded)}
 }
 
-// Inspect runs `docker ps --filter label=wireops.stack_id=<StackID> --format '{{.Label "wireops.commit"}}'`
+// Inspect runs `docker ps --filter label=dev.wireops.stack_id=<StackID> --format '{{.Label "dev.wireops.repository.commit_sha"}}'`
 // and extract the running commit SHA directly from the container label.
 func Inspect(ctx context.Context, cmd protocol.InspectCommand) protocol.CommandResult {
 	// log.Printf("[executor] inspect start stack=%s command=%s", cmd.StackID, cmd.CommandID)
@@ -259,7 +259,7 @@ func DiscoverProjects(ctx context.Context, cmd protocol.DiscoverProjectsCommand)
 
 	projects := make(map[string]*protocol.DiscoveredProject)
 	for _, cnt := range containers {
-		if cnt.Labels["wireops.managed"] == "true" {
+		if cnt.Labels["dev.wireops.managed"] == "true" {
 			continue
 		}
 		projectName := cnt.Labels["com.docker.compose.project"]
@@ -396,10 +396,28 @@ func KillJob(cmd protocol.KillJobCommand) protocol.CommandResult {
 // buildDockerRunArgs assembles the docker run argument list for a RunJobCommand.
 func buildDockerRunArgs(cmd protocol.RunJobCommand) []string {
 	args := []string{"run"}
-	if cmd.Remove {
-		args = append(args, "--rm")
-	}
+	// Force ephemeral containers: always remove after execution.
+	args = append(args, "--rm")
 	args = append(args, "--name", "wireops-job-"+cmd.JobRunID)
+
+	// Inject standard labels
+	args = append(args, "-l", "dev.wireops.managed=true")
+	if cmd.RepositoryID != "" {
+		args = append(args, "-l", "dev.wireops.repository.id="+cmd.RepositoryID)
+	}
+	if cmd.RepositoryBranch != "" {
+		args = append(args, "-l", "dev.wireops.repository.branch="+cmd.RepositoryBranch)
+	}
+	if cmd.RepositoryFile != "" {
+		args = append(args, "-l", "dev.wireops.repository.file="+cmd.RepositoryFile)
+	}
+	if cmd.CommitSHA != "" {
+		args = append(args, "-l", "dev.wireops.repository.commit_sha="+cmd.CommitSHA)
+	}
+	if cmd.JobName != "" {
+		args = append(args, "-l", "dev.wireops.job.name="+cmd.JobName)
+	}
+
 	for k, v := range cmd.Env {
 		args = append(args, "-e", k+"="+v)
 	}

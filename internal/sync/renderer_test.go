@@ -114,16 +114,16 @@ services:
 		t.Fatalf("failed to read written config: %v", err)
 	}
 	contentStr := string(content)
-	if !contains(contentStr, `wireops.managed: "true"`) {
-		t.Errorf("missing wireops.managed label")
+	if !contains(contentStr, `dev.wireops.managed: "true"`) {
+		t.Errorf("missing dev.wireops.managed label")
 	}
 	if !contains(contentStr, `user.label: value`) {
 		t.Errorf("missing original user label")
 	}
-	if !contains(contentStr, `wireops.version: "3"`) {
+	if !contains(contentStr, `dev.wireops.version: "3"`) {
 		t.Errorf("missing correct version label")
 	}
-	if !contains(contentStr, `wireops.commit: commitC`) {
+	if !contains(contentStr, `dev.wireops.repository.commit_sha: commitC`) {
 		t.Errorf("missing correct commit label")
 	}
 }

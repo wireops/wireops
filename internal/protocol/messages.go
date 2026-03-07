@@ -202,9 +202,20 @@ type RunJobCommand struct {
 	// Env holds KEY=VALUE pairs injected into the container environment.
 	Env map[string]string `json:"env,omitempty"`
 
-	// Remove, when true, passes --rm to docker run so the container is deleted
-	// automatically after it exits.
-	Remove bool `json:"remove"`
+	// RepositoryID is used to inject the dev.wireops.repository.id label.
+	RepositoryID string `json:"repository_id,omitempty"`
+
+	// RepositoryBranch is used to inject the dev.wireops.repository.branch label.
+	RepositoryBranch string `json:"repository_branch,omitempty"`
+
+	// RepositoryFile is used to inject the dev.wireops.repository.file label.
+	RepositoryFile string `json:"repository_file,omitempty"`
+
+	// CommitSHA is used to inject the dev.wireops.repository.commit_sha label.
+	CommitSHA string `json:"commit_sha,omitempty"`
+
+	// JobName is used to inject the dev.wireops.job.name label.
+	JobName string `json:"job_name,omitempty"`
 
 	// Volumes are passed as -v to docker run (e.g. host:container or host:container:ro).
 	Volumes []string `json:"volumes,omitempty"`

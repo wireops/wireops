@@ -193,6 +193,7 @@ function formatRelative(d: string) {
               {{ job?.expand?.repository?.name }} / {{ job?.job_file }}
             </span>
             <UBadge v-if="definition?.cron" :label="definition.cron" variant="subtle" color="neutral" size="xs" class="font-mono" />
+            <UBadge label="EPHEMERAL" variant="subtle" color="primary" size="xs" class="font-mono" />
           </div>
         </div>
       </div>
@@ -388,10 +389,6 @@ function formatRelative(d: string) {
           <div class="space-y-1">
             <p class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-wire-200/40">Mode</p>
             <UBadge :label="definition.mode || 'once'" variant="subtle" color="neutral" size="sm" />
-          </div>
-          <div class="space-y-1">
-            <p class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-wire-200/40">Remove container</p>
-            <UBadge :label="definition.remove ? 'yes (--rm)' : 'no'" :color="definition.remove ? 'success' : 'neutral'" variant="subtle" size="sm" />
           </div>
           <div class="space-y-1 sm:col-span-2">
             <p class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-wire-200/40">Command</p>

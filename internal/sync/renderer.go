@@ -137,16 +137,17 @@ func (r *Renderer) GenerateRevision(
 			labels = make(map[string]interface{})
 		}
 
-		labels["wireops.managed"] = "true"
-		labels["wireops.stack_id"] = stackID
-		labels["wireops.stack_name"] = stackName
-		labels["wireops.repository"] = repoName
-		labels["wireops.repository.url"] = repoURL
-		labels["wireops.branch"] = branch
-		labels["wireops.version"] = strconv.Itoa(nextVersion)
-		labels["wireops.commit"] = commitSHA
+		labels["dev.wireops.managed"] = "true"
+		labels["dev.wireops.stack_id"] = stackID
+		labels["dev.wireops.stack_name"] = stackName
+		labels["dev.wireops.repository"] = repoName
+		labels["dev.wireops.repository.url"] = repoURL
+		labels["dev.wireops.repository.branch"] = branch
+		labels["dev.wireops.repository.file"] = composeFile
+		labels["dev.wireops.version"] = strconv.Itoa(nextVersion)
+		labels["dev.wireops.repository.commit_sha"] = commitSHA
 		if agentFingerprint != "" {
-			labels["wireops.agent.fingerprint"] = agentFingerprint
+			labels["dev.wireops.agent.fingerprint"] = agentFingerprint
 		}
 
 		svc["labels"] = labels
@@ -171,8 +172,8 @@ func (r *Renderer) GenerateRevision(
 		if !ok {
 			continue
 		}
-		labels["wireops.checksum"] = checksum
-		labels["wireops.generated_at"] = generatedAt
+		labels["dev.wireops.checksum"] = checksum
+		labels["dev.wireops.generated_at"] = generatedAt
 		svc["labels"] = labels
 		services[serviceName] = svc
 	}
@@ -194,9 +195,9 @@ func (r *Renderer) GenerateRevision(
 				if !ok {
 					continue
 				}
-				labels["wireops.version"] = strconv.Itoa(nextVersion)
-				delete(labels, "wireops.checksum")     // remove old
-				delete(labels, "wireops.generated_at") // remove time-dependent metadata for deterministic checksum
+				labels["dev.wireops.version"] = strconv.Itoa(nextVersion)
+				delete(labels, "dev.wireops.checksum")     // remove old
+				delete(labels, "dev.wireops.generated_at") // remove time-dependent metadata for deterministic checksum
 				svc["labels"] = labels
 				services[serviceName] = svc
 			}
@@ -214,8 +215,8 @@ func (r *Renderer) GenerateRevision(
 				if !ok {
 					continue
 				}
-				labels["wireops.checksum"] = checksum
-				labels["wireops.generated_at"] = generatedAt // re-inject after checksum
+				labels["dev.wireops.checksum"] = checksum
+				labels["dev.wireops.generated_at"] = generatedAt // re-inject after checksum
 				svc["labels"] = labels
 				services[serviceName] = svc
 			}

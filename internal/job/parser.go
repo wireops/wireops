@@ -30,7 +30,6 @@ type Definition struct {
 	Mode        Mode     `yaml:"mode"        json:"mode"`
 	Image       string   `yaml:"image"       json:"image"`
 	Command     Command  `yaml:"command"     json:"command"`
-	Remove      bool     `yaml:"remove"      json:"remove"`
 	Volumes     []string `yaml:"volumes"     json:"volumes"`
 	Network     string   `yaml:"network"     json:"network"`
 }
