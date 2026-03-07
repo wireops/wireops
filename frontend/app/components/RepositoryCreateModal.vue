@@ -13,8 +13,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'created'): void
-  (e: 'updated'): void
+  (e: 'created' | 'updated'): void
 }>()
 
 const isEditMode = computed(() => !!props.repository)
@@ -80,7 +79,7 @@ watch(isOpen, async (val) => {
     form.value = { name: '', git_url: '', branch: 'main', platform: 'github' }
     isPrivate.value = false
     existingCredId.value = null
-    credForm.value = { auth_type: 'basic', ssh_private_key: '', ssh_passphrase: '', ssh_known_host: '', git_username: '', git_password: '' }
+    credForm.value = { auth_type: 'none', ssh_private_key: '', ssh_passphrase: '', ssh_known_host: '', git_username: '', git_password: '' }
   }
 })
 
@@ -95,7 +94,7 @@ watch(isPrivate, (val) => {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function isValidGitUrl(url: string): boolean {
-  return /^(https?:\/\/|git@[\w.-]+:[\w./-]+(\.git)?$|ssh:\/\/)/.test(url.trim())
+  return /^(https?:\/\/[\w.-]+(:\d+)?\/[\w./-]+(\.git)?$|git@[\w.-]+:[\w./-]+(\.git)?$|ssh:\/\/[\w.-]+(:\d+)?\/[\w./-]+(\.git)?$)/.test(url.trim())
 }
 
 // ── Actions ──────────────────────────────────────────────────────────────────
@@ -229,7 +228,7 @@ function cancel() {
                   :src="platformIconUrl(form.platform)!"
                   class="w-4 h-4 object-contain"
                   alt=""
-                />
+                >
               </template>
               <template #item-leading="{ item }">
                 <img
@@ -237,7 +236,7 @@ function cancel() {
                   :src="platformIconUrl(item.value)!"
                   class="w-4 h-4 object-contain"
                   alt=""
-                />
+                >
               </template>
             </USelectMenu>
           </UFormField>
@@ -263,11 +262,11 @@ function cancel() {
           <!-- Authentication Tabs -->
           <div v-if="isPrivate">
             <UTabs
+              v-model="credForm.auth_type"
               :items="[
                 { label: 'User / Pass', value: 'basic' },
                 { label: 'SSH Key', value: 'ssh_key' },
               ]"
-              v-model="credForm.auth_type"
               class="w-full"
             >
               <template #content="{ item }">
@@ -296,6 +295,14 @@ function cancel() {
                         : 'Paste your private key here'"
                       :rows="8"
                       class="font-mono text-xs w-full"
+                    />
+                  </UFormField>
+                  <UFormField label="Passphrase" class="w-full">
+                    <UInput
+                      v-model="credForm.ssh_passphrase"
+                      type="password"
+                      :placeholder="isEditMode ? 'Leave empty to keep current' : 'Optional passphrase for encrypted keys'"
+                      class="w-full"
                     />
                   </UFormField>
                 </div>

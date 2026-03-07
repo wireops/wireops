@@ -142,7 +142,7 @@ const statusColor = (s: string) => {
                 :src="platformIconUrl(repo.platform)!"
                 class="w-5 h-5 object-contain"
                 alt=""
-              />
+              >
               <UIcon v-else name="i-lucide-git-branch" class="w-5 h-5 text-gray-400" />
             </div>
 

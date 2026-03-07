@@ -58,7 +58,7 @@ onMounted(() => loadCommits())
             :src="platformIconUrl(repo.platform)!"
             class="w-4 h-4 object-contain shrink-0"
             alt=""
-          />
+          >
           <span>{{ repo?.platform ? platformLabel(repo.platform) : '-' }}</span>
         </div>
         <div><span class="text-gray-500">Git URL:</span> <span class="font-mono">{{ repo?.git_url }}</span></div>

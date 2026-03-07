@@ -1,12 +1,6 @@
 const CDN_BASE = 'https://cdn.jsdelivr.net/gh/selfhst/icons/svg'
 
-const PLATFORM_SLUGS: Record<string, string> = {
-    github: 'github',
-    gitlab: 'gitlab',
-    gitea: 'gitea',
-    forgejo: 'forgejo',
-    bitbucket: 'bitbucket',
-}
+const SUPPORTED_PLATFORMS = new Set(['github', 'gitlab', 'gitea', 'forgejo', 'bitbucket'])
 
 export const PLATFORM_OPTIONS = [
     { label: 'GitHub', value: 'github' },
@@ -17,10 +11,8 @@ export const PLATFORM_OPTIONS = [
 ]
 
 export function platformIconUrl(platform: string | undefined | null): string | null {
-    if (!platform) return null
-    const slug = PLATFORM_SLUGS[platform]
-    if (!slug) return null
-    return `${CDN_BASE}/${slug}.svg`
+    if (!platform || !SUPPORTED_PLATFORMS.has(platform)) return null
+    return `${CDN_BASE}/${platform}.svg`
 }
 
 export function useRepositoryPlatform() {

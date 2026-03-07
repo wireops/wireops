@@ -462,7 +462,7 @@ onMounted(() => {
                 :src="platformIconUrl(stack.expand.repository.platform)!"
                 class="w-3.5 h-3.5 object-contain shrink-0"
                 alt=""
-              />
+              >
               <UIcon v-else name="i-lucide-git-branch" class="w-3.5 h-3.5 shrink-0" />
               {{ stack.expand.repository.name }}
             </NuxtLink>

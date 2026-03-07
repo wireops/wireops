@@ -353,7 +353,7 @@ async function handlePurge(dirName: string) {
                     :src="platformIconUrl(stack.expand?.repository?.platform)!"
                     class="w-3 h-3 object-contain inline shrink-0"
                     alt=""
-                  />
+                  >
                   <UIcon v-else name="i-lucide-git-branch" class="w-3 h-3 inline shrink-0" />
                   {{ stack.expand?.repository?.name || 'Unknown repo' }}
                 </template>
