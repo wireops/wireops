@@ -12,11 +12,16 @@ import (
 	"github.com/wireops/wireops/internal/sync"
 )
 
-func TestRenderer_GenerateRevision(t *testing.T) {
+const (
+	errCreateTestApp    = "failed to create test app: %v"
+	errWriteComposeFile = "failed to write compose file: %v"
+)
+
+func TestRendererGenerateRevision(t *testing.T) {
 	// Setup PocketBase test app
 	app, err := tests.NewTestApp()
 	if err != nil {
-		t.Fatalf("failed to create test app: %v", err)
+		t.Fatalf(errCreateTestApp, err)
 	}
 	defer app.Cleanup()
 
@@ -35,7 +40,7 @@ services:
       user.label: "value"
 `
 	if err := os.WriteFile(composePath, []byte(composeContent), 0644); err != nil {
-		t.Fatalf("failed to write compose file: %v", err)
+		t.Fatalf(errWriteComposeFile, err)
 	}
 
 	// Create Stack and Repo records
@@ -93,7 +98,7 @@ services:
       user.label: "value"
 `
 	if err := os.WriteFile(composePath, []byte(composeContent2), 0644); err != nil {
-		t.Fatalf("failed to update compose file: %v", err)
+		t.Fatalf(errWriteComposeFile, err)
 	}
 
 	res4, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitC", false, "embedded")
@@ -114,24 +119,86 @@ services:
 		t.Fatalf("failed to read written config: %v", err)
 	}
 	contentStr := string(content)
-	if !contains(contentStr, `wireops.managed: "true"`) {
-		t.Errorf("missing wireops.managed label")
+	if !contains(contentStr, `dev.wireops.managed: "true"`) {
+		t.Errorf("missing dev.wireops.managed label")
 	}
 	if !contains(contentStr, `user.label: value`) {
 		t.Errorf("missing original user label")
 	}
-	if !contains(contentStr, `wireops.version: "3"`) {
+	if !contains(contentStr, `dev.wireops.version: "3"`) {
 		t.Errorf("missing correct version label")
 	}
-	if !contains(contentStr, `wireops.commit: commitC`) {
+	if !contains(contentStr, `dev.wireops.repository.commit_sha: commitC`) {
 		t.Errorf("missing correct commit label")
 	}
 }
 
-func TestRenderer_GenerateRevision_NoSecrets(t *testing.T) {
+func TestRendererStripReservedLabels(t *testing.T) {
 	app, err := tests.NewTestApp()
 	if err != nil {
-		t.Fatalf("failed to create test app: %v", err)
+		t.Fatalf(errCreateTestApp, err)
+	}
+	defer app.Cleanup()
+
+	createTestCollections(t, app)
+
+	workDir := t.TempDir()
+	composePath := filepath.Join(workDir, "docker-compose.yml")
+	// Service defines labels that use the reserved dev.wireops prefix —
+	// these must be stripped and replaced by system-injected values.
+	composeContent := `
+name: sanitize_stack
+services:
+  web:
+    image: nginx:latest
+    labels:
+      dev.wireops.managed: "hijack"
+      dev.wireops.stack_id: "spoofed-id"
+      user.safe.label: "keep-me"
+`
+	if err := os.WriteFile(composePath, []byte(composeContent), 0644); err != nil {
+		t.Fatalf(errWriteComposeFile, err)
+	}
+
+	repo := createTestRepo(t, app, "Sanitize Repo", "main")
+	stack := createTestStack(t, app, repo.Id, "sanitize_stack")
+
+	renderer := sync.NewRenderer(app)
+	ctx := context.Background()
+
+	res, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitX", false, "embedded")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	renderedFile := renderer.GetRevisionFilePath(stack.Id, res.Version)
+	content, err := os.ReadFile(renderedFile)
+	if err != nil {
+		t.Fatalf("failed to read rendered file: %v", err)
+	}
+	contentStr := string(content)
+
+	// System label must win — not the spoofed value.
+	if !contains(contentStr, `dev.wireops.managed: "true"`) {
+		t.Errorf("expected dev.wireops.managed to be 'true' (system value), got something else:\n%s", contentStr)
+	}
+	// Spoofed stack_id must not survive; system-injected value (stack.Id) must be present.
+	if contains(contentStr, `dev.wireops.stack_id: spoofed-id`) {
+		t.Errorf("spoofed dev.wireops.stack_id must be stripped, but it was found in output:\n%s", contentStr)
+	}
+	if !contains(contentStr, `dev.wireops.stack_id: `+stack.Id) {
+		t.Errorf("expected system dev.wireops.stack_id (%s) to be present:\n%s", stack.Id, contentStr)
+	}
+	// Normal user label must be preserved.
+	if !contains(contentStr, `user.safe.label: keep-me`) {
+		t.Errorf("expected user.safe.label to be preserved:\n%s", contentStr)
+	}
+}
+
+func TestRendererNoSecrets(t *testing.T) {
+	app, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatalf(errCreateTestApp, err)
 	}
 	defer app.Cleanup()
 

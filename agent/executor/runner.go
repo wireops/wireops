@@ -173,7 +173,7 @@ func Probe(ctx context.Context, cmd protocol.ProbeCommand) protocol.CommandResul
 	return protocol.CommandResult{CommandID: cmd.CommandID, Output: string(encoded)}
 }
 
-// Inspect runs `docker ps --filter label=wireops.stack_id=<StackID> --format '{{.Label "wireops.commit"}}'`
+// Inspect runs `docker ps --filter label=dev.wireops.stack_id=<StackID> --format '{{.Label "dev.wireops.repository.commit_sha"}}'`
 // and extract the running commit SHA directly from the container label.
 func Inspect(ctx context.Context, cmd protocol.InspectCommand) protocol.CommandResult {
 	// log.Printf("[executor] inspect start stack=%s command=%s", cmd.StackID, cmd.CommandID)
@@ -259,7 +259,7 @@ func DiscoverProjects(ctx context.Context, cmd protocol.DiscoverProjectsCommand)
 
 	projects := make(map[string]*protocol.DiscoveredProject)
 	for _, cnt := range containers {
-		if cnt.Labels["wireops.managed"] == "true" {
+		if cnt.Labels["dev.wireops.managed"] == "true" {
 			continue
 		}
 		projectName := cnt.Labels["com.docker.compose.project"]
@@ -338,7 +338,7 @@ func RunJob(cmd protocol.RunJobCommand, send JobSendFunc) protocol.CommandResult
 		defer cancel()
 
 		start := time.Now()
-		args := buildDockerRunArgs(cmd)
+		args := cmd.BuildDockerRunArgs()
 		out, runErr := exec.CommandContext(ctx, "docker", args...).CombinedOutput()
 		output := string(out)
 
@@ -393,26 +393,7 @@ func KillJob(cmd protocol.KillJobCommand) protocol.CommandResult {
 	return protocol.CommandResult{CommandID: cmd.CommandID, Output: "stopped"}
 }
 
-// buildDockerRunArgs assembles the docker run argument list for a RunJobCommand.
-func buildDockerRunArgs(cmd protocol.RunJobCommand) []string {
-	args := []string{"run"}
-	if cmd.Remove {
-		args = append(args, "--rm")
-	}
-	args = append(args, "--name", "wireops-job-"+cmd.JobRunID)
-	for k, v := range cmd.Env {
-		args = append(args, "-e", k+"="+v)
-	}
-	for _, v := range cmd.Volumes {
-		args = append(args, "-v", v)
-	}
-	if cmd.Network != "" {
-		args = append(args, "--network", cmd.Network)
-	}
-	args = append(args, cmd.Image)
-	args = append(args, cmd.Command...)
-	return args
-}
+
 
 // prepareComposeFile decodes the base64 YAML, writes it to a temporary directory,
 // and returns (workDir, filename, cleanupFn, error).

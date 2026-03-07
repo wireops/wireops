@@ -42,11 +42,11 @@ func (c *Client) Close() error {
 	return c.cli.Close()
 }
 
-// GetRunningStackCommit retrieves the wireops.commit label from a running container
+// GetRunningStackCommit retrieves the dev.wireops.repository.commit_sha label from a running container
 // belonging to the given stack ID.
 func (c *Client) GetRunningStackCommit(ctx context.Context, stackID string) (string, error) {
 	f := filters.NewArgs()
-	f.Add("label", "wireops.stack_id="+stackID)
+	f.Add("label", "dev.wireops.stack_id="+stackID)
 
 	containers, err := c.cli.ContainerList(ctx, container.ListOptions{
 		All:     true, // check all containers in case they are stopped
@@ -57,7 +57,7 @@ func (c *Client) GetRunningStackCommit(ctx context.Context, stackID string) (str
 	}
 
 	for _, cnt := range containers {
-		if val, ok := cnt.Labels["wireops.commit"]; ok && val != "" {
+		if val, ok := cnt.Labels["dev.wireops.repository.commit_sha"]; ok && val != "" {
 			return val, nil
 		}
 	}

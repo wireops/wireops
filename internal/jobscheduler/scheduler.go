@@ -32,6 +32,17 @@ type AgentDispatcher interface {
 	Dispatch(ctx context.Context, agentID string, cmd interface{}) (protocol.CommandResult, error)
 }
 
+// jobRunParams bundles repository/job metadata needed by dispatchToAgent.
+// Grouping these avoids exceeding the per-function parameter limit.
+type jobRunParams struct {
+	repoID     string
+	repoBranch string
+	jobFile    string
+	commitSHA  string
+	def        *job.Definition
+	envMap     map[string]string
+}
+
 // Scheduler manages cron entries for scheduled jobs and dispatches them to agents.
 type Scheduler struct {
 	app        core.App
@@ -241,15 +252,33 @@ func (s *Scheduler) executeJob(jobID, trigger string) {
 		return
 	}
 
+	repoBranch := func() string {
+		rec, _ := s.app.FindRecordById("repositories", repoID)
+		if rec != nil {
+			return rec.GetString("branch")
+		}
+		return ""
+	}()
+	commitSHA := s.repoHeadSHA(repoID)
+
+	params := jobRunParams{
+		repoID:     repoID,
+		repoBranch: repoBranch,
+		jobFile:    jobFile,
+		commitSHA:  commitSHA,
+		def:        def,
+		envMap:     envMap,
+	}
+
 	switch def.Mode {
 	case job.ModeOnceAll:
 		for _, agentID := range agents {
 			agentID := agentID
-			go s.dispatchToAgent(ctx, jobID, trigger, agentID, def, envMap)
+			go s.dispatchToAgent(ctx, jobID, trigger, agentID, params)
 		}
 	default: // ModeOnce
 		agentID := s.pickAgent(jobID, agents)
-		go s.dispatchToAgent(ctx, jobID, trigger, agentID, def, envMap)
+		go s.dispatchToAgent(ctx, jobID, trigger, agentID, params)
 	}
 
 	// Update last_run_at immediately; run completion is async.
@@ -261,15 +290,7 @@ func (s *Scheduler) executeJob(jobID, trigger string) {
 // For remote agents it only waits for the start ack (≤30s), not job completion.
 // Completion is delivered via HandleJobCompleted when the agent pushes MsgJobCompleted.
 // For the embedded agent the container runs in a goroutine inside this call.
-func (s *Scheduler) dispatchToAgent(ctx context.Context, jobID, trigger, agentID string, def *job.Definition, envMap map[string]string) {
-	repoID := func() string {
-		rec, _ := s.app.FindRecordById("scheduled_jobs", jobID)
-		if rec != nil {
-			return rec.GetString("repository")
-		}
-		return ""
-	}()
-
+func (s *Scheduler) dispatchToAgent(ctx context.Context, jobID, trigger, agentID string, p jobRunParams) {
 	runID, err := s.createJobRun(jobID, agentID, trigger, "pending")
 	if err != nil {
 		log.Printf("[jobscheduler] dispatchToAgent: failed to create job_run job=%s agent=%s: %v", jobID, agentID, err)
@@ -277,18 +298,21 @@ func (s *Scheduler) dispatchToAgent(ctx context.Context, jobID, trigger, agentID
 	}
 
 	containerName := "wireops-job-" + runID
-	commitSHA := s.repoHeadSHA(repoID)
-	s.patchJobRunMeta(runID, containerName, commitSHA)
+	s.patchJobRunMeta(runID, containerName, p.commitSHA)
 
 	cmd := protocol.RunJobCommand{
-		CommandID: fmt.Sprintf("job-%s", runID),
-		JobRunID:  runID,
-		Image:     def.Image,
-		Command:   []string(def.Command),
-		Env:       envMap,
-		Remove:    def.Remove,
-		Volumes:   def.Volumes,
-		Network:   def.Network,
+		CommandID:        fmt.Sprintf("job-%s", runID),
+		JobRunID:         runID,
+		JobName:          p.def.Title,
+		Image:            p.def.Image,
+		Command:          []string(p.def.Command),
+		Env:              p.envMap,
+		RepositoryID:     p.repoID,
+		RepositoryBranch: p.repoBranch,
+		RepositoryFile:   p.jobFile,
+		CommitSHA:        p.commitSHA,
+		Volumes:          p.def.Volumes,
+		Network:          p.def.Network,
 	}
 
 	if s.dispatcher.IsEmbedded(agentID) {
@@ -324,7 +348,7 @@ func (s *Scheduler) dispatchToAgent(ctx context.Context, jobID, trigger, agentID
 func (s *Scheduler) runJobEmbedded(ctx context.Context, runID string, cmd protocol.RunJobCommand) {
 	go func() {
 		start := time.Now()
-		args := buildDockerRunArgs(cmd)
+		args := cmd.BuildDockerRunArgs()
 		out, runErr := exec.Command("docker", args...).CombinedOutput()
 		elapsed := time.Since(start).Milliseconds()
 
@@ -344,26 +368,7 @@ func (s *Scheduler) runJobEmbedded(ctx context.Context, runID string, cmd protoc
 	}()
 }
 
-// buildDockerRunArgs assembles the docker run argument list (shared with agent executor).
-func buildDockerRunArgs(cmd protocol.RunJobCommand) []string {
-	args := []string{"run"}
-	if cmd.Remove {
-		args = append(args, "--rm")
-	}
-	args = append(args, "--name", "wireops-job-"+cmd.JobRunID)
-	for k, v := range cmd.Env {
-		args = append(args, "-e", k+"="+v)
-	}
-	for _, v := range cmd.Volumes {
-		args = append(args, "-v", v)
-	}
-	if cmd.Network != "" {
-		args = append(args, "--network", cmd.Network)
-	}
-	args = append(args, cmd.Image)
-	args = append(args, cmd.Command...)
-	return args
-}
+
 
 // HandleJobCompleted is called by the MTLSServer when a remote agent pushes
 // a MsgJobCompleted message. It updates the job_run record with the final result.

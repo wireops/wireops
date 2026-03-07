@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -22,6 +23,13 @@ type RenderResult struct {
 	Checksum     string
 	RenderedPath string // e.g., v5.yml
 }
+
+// Label key constants for the internally-managed metadata labels.
+// These keys are reserved; user-supplied labels with these names are stripped before injection.
+const (
+	labelChecksum    = "dev.wireops.checksum"
+	labelGeneratedAt = "dev.wireops.generated_at"
+)
 
 // Renderer is responsible for intercepting compose files and injecting deterministic labels
 type Renderer struct {
@@ -137,16 +145,27 @@ func (r *Renderer) GenerateRevision(
 			labels = make(map[string]interface{})
 		}
 
-		labels["wireops.managed"] = "true"
-		labels["wireops.stack_id"] = stackID
-		labels["wireops.stack_name"] = stackName
-		labels["wireops.repository"] = repoName
-		labels["wireops.repository.url"] = repoURL
-		labels["wireops.branch"] = branch
-		labels["wireops.version"] = strconv.Itoa(nextVersion)
-		labels["wireops.commit"] = commitSHA
+		// Strip any user-supplied labels using the reserved dev.wireops namespace
+		// to prevent git-sourced files from spoofing or overriding system labels.
+		// Only exact "dev.wireops" or "dev.wireops." prefix matches are rejected;
+		// adjacent namespaces like "dev.wireopslab.*" are left untouched.
+		for k := range labels {
+			if k == "dev.wireops" || strings.HasPrefix(k, "dev.wireops.") {
+				delete(labels, k)
+			}
+		}
+
+		labels["dev.wireops.managed"] = "true"
+		labels["dev.wireops.stack_id"] = stackID
+		labels["dev.wireops.stack_name"] = stackName
+		labels["dev.wireops.repository"] = repoName
+		labels["dev.wireops.repository.url"] = repoURL
+		labels["dev.wireops.repository.branch"] = branch
+		labels["dev.wireops.repository.file"] = composeFile
+		labels["dev.wireops.version"] = strconv.Itoa(nextVersion)
+		labels["dev.wireops.repository.commit_sha"] = commitSHA
 		if agentFingerprint != "" {
-			labels["wireops.agent.fingerprint"] = agentFingerprint
+			labels["dev.wireops.agent.fingerprint"] = agentFingerprint
 		}
 
 		svc["labels"] = labels
@@ -171,8 +190,8 @@ func (r *Renderer) GenerateRevision(
 		if !ok {
 			continue
 		}
-		labels["wireops.checksum"] = checksum
-		labels["wireops.generated_at"] = generatedAt
+		labels[labelChecksum] = checksum
+		labels[labelGeneratedAt] = generatedAt
 		svc["labels"] = labels
 		services[serviceName] = svc
 	}
@@ -194,9 +213,9 @@ func (r *Renderer) GenerateRevision(
 				if !ok {
 					continue
 				}
-				labels["wireops.version"] = strconv.Itoa(nextVersion)
-				delete(labels, "wireops.checksum")     // remove old
-				delete(labels, "wireops.generated_at") // remove time-dependent metadata for deterministic checksum
+				labels["dev.wireops.version"] = strconv.Itoa(nextVersion)
+				delete(labels, labelChecksum)    // remove old
+				delete(labels, labelGeneratedAt) // remove time-dependent metadata for deterministic checksum
 				svc["labels"] = labels
 				services[serviceName] = svc
 			}
@@ -214,8 +233,8 @@ func (r *Renderer) GenerateRevision(
 				if !ok {
 					continue
 				}
-				labels["wireops.checksum"] = checksum
-				labels["wireops.generated_at"] = generatedAt // re-inject after checksum
+				labels[labelChecksum] = checksum
+				labels[labelGeneratedAt] = generatedAt // re-inject after checksum
 				svc["labels"] = labels
 				services[serviceName] = svc
 			}
