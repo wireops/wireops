@@ -241,15 +241,24 @@ func (s *Scheduler) executeJob(jobID, trigger string) {
 		return
 	}
 
+	repoBranch := func() string {
+		rec, _ := s.app.FindRecordById("repositories", repoID)
+		if rec != nil {
+			return rec.GetString("branch")
+		}
+		return ""
+	}()
+	commitSHA := s.repoHeadSHA(repoID)
+
 	switch def.Mode {
 	case job.ModeOnceAll:
 		for _, agentID := range agents {
 			agentID := agentID
-			go s.dispatchToAgent(ctx, jobID, trigger, agentID, def, envMap)
+			go s.dispatchToAgent(ctx, jobID, trigger, agentID, repoID, repoBranch, jobFile, commitSHA, def, envMap)
 		}
 	default: // ModeOnce
 		agentID := s.pickAgent(jobID, agents)
-		go s.dispatchToAgent(ctx, jobID, trigger, agentID, def, envMap)
+		go s.dispatchToAgent(ctx, jobID, trigger, agentID, repoID, repoBranch, jobFile, commitSHA, def, envMap)
 	}
 
 	// Update last_run_at immediately; run completion is async.
@@ -261,15 +270,7 @@ func (s *Scheduler) executeJob(jobID, trigger string) {
 // For remote agents it only waits for the start ack (≤30s), not job completion.
 // Completion is delivered via HandleJobCompleted when the agent pushes MsgJobCompleted.
 // For the embedded agent the container runs in a goroutine inside this call.
-func (s *Scheduler) dispatchToAgent(ctx context.Context, jobID, trigger, agentID string, def *job.Definition, envMap map[string]string) {
-	repoID := func() string {
-		rec, _ := s.app.FindRecordById("scheduled_jobs", jobID)
-		if rec != nil {
-			return rec.GetString("repository")
-		}
-		return ""
-	}()
-
+func (s *Scheduler) dispatchToAgent(ctx context.Context, jobID, trigger, agentID, repoID, repoBranch, jobFile, commitSHA string, def *job.Definition, envMap map[string]string) {
 	runID, err := s.createJobRun(jobID, agentID, trigger, "pending")
 	if err != nil {
 		log.Printf("[jobscheduler] dispatchToAgent: failed to create job_run job=%s agent=%s: %v", jobID, agentID, err)
@@ -277,24 +278,7 @@ func (s *Scheduler) dispatchToAgent(ctx context.Context, jobID, trigger, agentID
 	}
 
 	containerName := "wireops-job-" + runID
-	commitSHA := s.repoHeadSHA(repoID)
 	s.patchJobRunMeta(runID, containerName, commitSHA)
-
-	repoBranch := func() string {
-		rec, _ := s.app.FindRecordById("repositories", repoID)
-		if rec != nil {
-			return rec.GetString("branch")
-		}
-		return ""
-	}()
-
-	jobFile := func() string {
-		rec, _ := s.app.FindRecordById("scheduled_jobs", jobID)
-		if rec != nil {
-			return rec.GetString("job_file")
-		}
-		return ""
-	}()
 
 	cmd := protocol.RunJobCommand{
 		CommandID:        fmt.Sprintf("job-%s", runID),

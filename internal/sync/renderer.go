@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -135,6 +136,14 @@ func (r *Renderer) GenerateRevision(
 			}
 		} else {
 			labels = make(map[string]interface{})
+		}
+
+		// Strip any user-supplied labels using the reserved dev.wireops prefix
+		// to prevent git-sourced files from spoofing or overriding system labels.
+		for k := range labels {
+			if strings.HasPrefix(k, "dev.wireops") {
+				delete(labels, k)
+			}
 		}
 
 		labels["dev.wireops.managed"] = "true"
