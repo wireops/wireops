@@ -293,7 +293,7 @@ function cancel() {
                       v-model="credForm.ssh_private_key"
                       :placeholder="isEditMode
                         ? 'Leave empty to keep current key'
-                        : '-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA...\n-----END OPENSSH PRIVATE KEY-----'"
+                        : 'Paste your private key here'"
                       :rows="8"
                       class="font-mono text-xs w-full"
                     />
