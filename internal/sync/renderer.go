@@ -24,10 +24,11 @@ type RenderResult struct {
 	RenderedPath string // e.g., v5.yml
 }
 
-// Label key constants for the internally-managed metadata labels.
-// These keys are reserved; user-supplied labels with these names are stripped before injection.
 const (
-	labelChecksum    = "dev.wireops.checksum"
+	labelManaged    = "dev.wireops.managed"
+	labelStackID    = "dev.wireops.stack_id"
+	labelCommitSHA  = "dev.wireops.repository.commit_sha"
+	labelChecksum   = "dev.wireops.checksum"
 	labelGeneratedAt = "dev.wireops.generated_at"
 )
 
@@ -133,66 +134,63 @@ func (r *Renderer) GenerateRevision(
 			continue // skip invalid
 		}
 
-		labelsRaw, hasLabels := svc["labels"]
-		var labels map[string]interface{}
-		if hasLabels && labelsRaw != nil {
-			var ok bool
-			labels, ok = labelsRaw.(map[string]interface{})
-			if !ok {
-				continue // skip service with malformed labels
-			}
-		} else {
-			labels = make(map[string]interface{})
-		}
+		// Prepare blocks (supporting both map and list formats)
+		labels := normalizeToMap(svc["labels"])
+		annotations := normalizeToMap(svc["annotations"])
 
-		// Strip any user-supplied labels using the reserved dev.wireops namespace
-		// to prevent git-sourced files from spoofing or overriding system labels.
-		// Only exact "dev.wireops" or "dev.wireops." prefix matches are rejected;
-		// adjacent namespaces like "dev.wireopslab.*" are left untouched.
-		for k := range labels {
-			if k == "dev.wireops" || strings.HasPrefix(k, "dev.wireops.") {
-				delete(labels, k)
-			}
-		}
+		// Scrub any user-supplied metadata using the reserved dev.wireops namespace
+		stripWireopsMetadata(labels)
+		stripWireopsMetadata(annotations)
 
-		labels["dev.wireops.managed"] = "true"
-		labels["dev.wireops.stack_id"] = stackID
-		labels["dev.wireops.stack_name"] = stackName
-		labels["dev.wireops.repository"] = repoName
-		labels["dev.wireops.repository.url"] = repoURL
-		labels["dev.wireops.repository.branch"] = branch
-		labels["dev.wireops.repository.file"] = composeFile
-		labels["dev.wireops.version"] = strconv.Itoa(nextVersion)
-		labels["dev.wireops.repository.commit_sha"] = commitSHA
+		// Identity Labels (Required for runtime filtering)
+		labels[labelManaged] = "true"
+		labels[labelStackID] = stackID
+
+		// Metadata Annotations
+		annotations["dev.wireops.stack_name"] = stackName
+		annotations["dev.wireops.repository"] = repoName
+		annotations["dev.wireops.repository.url"] = repoURL
+		annotations["dev.wireops.repository.branch"] = branch
+		annotations["dev.wireops.repository.file"] = composeFile
 		if agentFingerprint != "" {
-			labels["dev.wireops.agent.fingerprint"] = agentFingerprint
+			annotations["dev.wireops.agent.fingerprint"] = agentFingerprint
 		}
 
 		svc["labels"] = labels
+		svc["annotations"] = annotations
 		services[serviceName] = svc
 	}
 	configMap["services"] = services
 
-	// Calculate checksum WITHOUT generated_at
+	// Calculate checksum WITHOUT time-varying metadata (generated_at, commit_sha, version).
+	// This ensures the checksum reflects only the structural compose content, so that
+	// commits touching unrelated files (non-compose) do not trigger unnecessary redeploys.
 	normalizedYAML, err := normalizeYAML(configMap)
 	if err != nil {
 		return nil, fmt.Errorf("failed to normalize YAML for checksum: %w", err)
 	}
 	checksum := computeSHA256(normalizedYAML)
 
-	// Inject checksum and generated_at AFTER hashing
+	// Inject commit_sha, version, checksum, and generated_at AFTER hashing.
 	for serviceName, svcRaw := range services {
 		svc, ok := svcRaw.(map[string]interface{})
 		if !ok {
 			continue
 		}
-		labels, ok := svc["labels"].(map[string]interface{})
-		if !ok {
-			continue
-		}
-		labels[labelChecksum] = checksum
-		labels[labelGeneratedAt] = generatedAt
+		labels, _ := svc["labels"].(map[string]interface{})
+		annotations, _ := svc["annotations"].(map[string]interface{})
+
+		// Version-sensitive metadata as annotations
+		annotations["dev.wireops.repository.commit_sha"] = commitSHA
+		annotations["dev.wireops.version"] = strconv.Itoa(nextVersion)
+		annotations[labelChecksum] = checksum
+		annotations[labelGeneratedAt] = generatedAt
+
+		// Commit SHA is also kept as a label for easy container filtering/inspection
+		labels[labelCommitSHA] = commitSHA
+
 		svc["labels"] = labels
+		svc["annotations"] = annotations
 		services[serviceName] = svc
 	}
 	configMap["services"] = services
@@ -203,39 +201,26 @@ func (r *Renderer) GenerateRevision(
 		// Content changed, we need to bump the version
 		if stack.GetString("checksum") != "" {
 			nextVersion++
-			// Need to re-inject version and re-calculate checksum
+			// Bump version label and re-inject post-hash metadata.
+			// The structural checksum (without commit_sha/version/generated_at) doesn't
+			// change here — only the version counter and commit_sha are updated.
 			for serviceName, svcRaw := range services {
 				svc, ok := svcRaw.(map[string]interface{})
 				if !ok {
 					continue
 				}
-				labels, ok := svc["labels"].(map[string]interface{})
-				if !ok {
-					continue
-				}
-				labels["dev.wireops.version"] = strconv.Itoa(nextVersion)
-				delete(labels, labelChecksum)    // remove old
-				delete(labels, labelGeneratedAt) // remove time-dependent metadata for deterministic checksum
-				svc["labels"] = labels
-				services[serviceName] = svc
-			}
-			configMap["services"] = services
+				labels, _ := svc["labels"].(map[string]interface{})
+				annotations, _ := svc["annotations"].(map[string]interface{})
 
-			normalizedYAML, _ = normalizeYAML(configMap)
-			checksum = computeSHA256(normalizedYAML)
+				annotations["dev.wireops.repository.commit_sha"] = commitSHA
+				annotations["dev.wireops.version"] = strconv.Itoa(nextVersion)
+				annotations[labelChecksum] = checksum
+				annotations[labelGeneratedAt] = generatedAt
 
-			for serviceName, svcRaw := range services {
-				svc, ok := svcRaw.(map[string]interface{})
-				if !ok {
-					continue
-				}
-				labels, ok := svc["labels"].(map[string]interface{})
-				if !ok {
-					continue
-				}
-				labels[labelChecksum] = checksum
-				labels[labelGeneratedAt] = generatedAt // re-inject after checksum
+				labels[labelCommitSHA] = commitSHA
+
 				svc["labels"] = labels
+				svc["annotations"] = annotations
 				services[serviceName] = svc
 			}
 			configMap["services"] = services
@@ -338,4 +323,40 @@ func normalizeYAML(data map[string]interface{}) ([]byte, error) {
 	// We can trust yaml.Marshal to be deterministic for map[string]interface{}
 	// because go-yaml source code specifically sorts map keys before encoding.
 	return yaml.Marshal(data)
+}
+
+// stripWireopsMetadata removes any user-supplied metadata using the reserved dev.wireops namespace.
+func stripWireopsMetadata(m map[string]interface{}) {
+	for k := range m {
+		if k == "dev.wireops" || strings.HasPrefix(k, "dev.wireops.") {
+			delete(m, k)
+		}
+	}
+}
+
+// normalizeToMap converts a label/annotation block (which can be a map or a list) into a map.
+func normalizeToMap(input interface{}) map[string]interface{} {
+	if m, ok := input.(map[string]interface{}); ok {
+		// Return a copy to avoid mutating the original if shared (though unlikely here)
+		res := make(map[string]interface{})
+		for k, v := range m {
+			res[k] = v
+		}
+		return res
+	}
+
+	res := make(map[string]interface{})
+	if list, ok := input.([]interface{}); ok {
+		for _, item := range list {
+			if s, ok := item.(string); ok {
+				parts := strings.SplitN(s, "=", 2)
+				if len(parts) == 2 {
+					res[parts[0]] = parts[1]
+				} else {
+					res[parts[0]] = ""
+				}
+			}
+		}
+	}
+	return res
 }

@@ -1,9 +1,12 @@
 <script setup lang="ts">
+import type { IntegrationAction } from '~/composables/useIntegrations'
+
 const route = useRoute()
 const { $pb } = useNuxtApp()
 const { subscribe } = useRealtime()
 const { copy } = useCopy()
 const { triggerSync, triggerRollback, forceRedeploy, getServices, getStackResources, stopContainer, restartContainer, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, transferStack } = useApi()
+const { getStackIntegrationActions } = useIntegrations()
 
 function formatUptime(startedAt: string): string {
   if (!startedAt) return '-'
@@ -63,6 +66,10 @@ const { data: agents } = useAsyncData('agents_for_stacks', () =>
 
 const { data: webhookUrl } = useAsyncData(`webhook_url_${stackId}`, () => getWebhookUrl(stackId))
 
+const { data: integrationsList } = useAsyncData('enabled_integrations', () =>
+  $pb.collection('integrations').getFullList({ filter: 'enabled = true' })
+)
+
 const agentOptions = computed(() =>
   (agents.value || []).map((a: any) => ({ label: a.hostname, value: a.id }))
 )
@@ -85,7 +92,19 @@ async function loadServices() {
   try {
     services.value = await getServices(stackId) as any[]
     loadAllStats()
+    loadIntegrationActions()
   } catch { services.value = [] }
+}
+
+
+const integrationActions = ref<Record<string, IntegrationAction[]>>({})
+
+async function loadIntegrationActions() {
+  try {
+    integrationActions.value = await getStackIntegrationActions(stackId)
+  } catch {
+    integrationActions.value = {}
+  }
 }
 
 async function loadResources() {
@@ -112,9 +131,9 @@ async function loadAllStats() {
 
 const serviceTree = computed(() => {
   const map: Record<string, any[]> = {}
-  for (const s of services.value) {
+  for (const s of services.value || []) {
     if (!map[s.service_name]) map[s.service_name] = []
-    map[s.service_name].push(s)
+    map[s.service_name]?.push(s)
   }
   return Object.entries(map).map(([name, containers]) => ({ name, containers }))
 })
@@ -217,10 +236,10 @@ async function saveEdit() {
   refreshStack()
 }
 
-// Env var form
 const newEnvKey = ref('')
 const newEnvValue = ref('')
 const newEnvSecret = ref(false)
+
 async function addEnvVar() {
   if (!newEnvKey.value) return
   await $pb.collection('stack_env_vars').create({
@@ -238,6 +257,7 @@ const editingEnvId = ref<string | null>(null)
 const editEnvKey = ref('')
 const editEnvValue = ref('')
 const editEnvSecret = ref(false)
+
 function startEditEnv(ev: any) {
   editingEnvId.value = ev.id
   editEnvKey.value = ev.key
@@ -249,7 +269,10 @@ function cancelEditEnv() {
 }
 async function saveEditEnv(id: string) {
   if (!editEnvKey.value) return
-  const data: any = { key: editEnvKey.value, secret: editEnvSecret.value }
+  const data: any = {
+    key: editEnvKey.value,
+    secret: editEnvSecret.value,
+  }
   if (editEnvValue.value) data.value = editEnvValue.value
   await $pb.collection('stack_env_vars').update(id, data)
   editingEnvId.value = null
@@ -572,7 +595,7 @@ onMounted(() => {
               <div
                 v-for="c in svc.containers"
                 :key="c.container_id"
-                class="py-2 px-2 rounded-md transition-colors hover:bg-gray-100 dark:hover:bg-gray-800"
+                class="py-2 px-2 rounded-md transition-colors hover:bg-gray-100 dark:hover:bg-gray-800 group"
               >
                 <div class="flex items-center justify-between">
                   <div class="flex items-center gap-2 min-w-0">
@@ -620,12 +643,11 @@ onMounted(() => {
                     <UIcon name="i-lucide-clock" class="w-3 h-3" />
                     {{ formatUptime(containerStats[c.container_id].started_at) }}
                   </span>
-                  <UButton
-                    icon="i-lucide-scroll-text"
-                    variant="ghost"
-                    size="xs"
-                    title="View Logs"
-                    @click="openContainerLogs(c.container_id, c.container_name)"
+                  <ContainerIntegrationActions
+                    :actions="integrationActions[c.container_id] || []"
+                    :container-id="c.container_id"
+                    :container-name="c.container_name"
+                    @show-logs="openContainerLogs"
                   />
                 </div>
               </div>
@@ -751,11 +773,9 @@ onMounted(() => {
             <template v-if="editingEnvId === ev.id">
               <UInput v-model="editEnvKey" placeholder="KEY" class="font-mono" />
               <UInput v-model="editEnvValue" :placeholder="ev.secret ? '(unchanged if empty)' : 'value'" :type="editEnvSecret ? 'password' : 'text'" class="flex-1" />
-              <div class="flex items-center gap-2">
-                <USwitch v-model="editEnvSecret" label="Secret" />
-                <UButton icon="i-lucide-check" variant="ghost" color="success" size="xs" @click="saveEditEnv(ev.id)" />
+              <USwitch v-model="editEnvSecret" label="Secret" />
+              <UButton icon="i-lucide-check" variant="ghost" color="success" size="xs" @click="saveEditEnv(ev.id)" />
                 <UButton icon="i-lucide-x" variant="ghost" color="neutral" size="xs" @click="cancelEditEnv" />
-              </div>
             </template>
             <!-- Display row -->
             <template v-else>
@@ -774,12 +794,14 @@ onMounted(() => {
       </UCard>
       <UCard>
         <template #header><h3 class="font-semibold">Add Variable</h3></template>
-        <form class="flex flex-col sm:flex-row sm:items-center gap-2" @submit.prevent="addEnvVar">
-          <UInput v-model="newEnvKey" placeholder="KEY" class="font-mono" />
-          <UInput v-model="newEnvValue" placeholder="value" :type="newEnvSecret ? 'password' : 'text'" class="flex-1" />
-          <div class="flex items-center gap-2">
-            <USwitch v-model="newEnvSecret" label="Secret" />
+        <form class="flex flex-col gap-4" @submit.prevent="addEnvVar">
+          <div class="flex flex-col sm:flex-row sm:items-center gap-2">
+            <UInput v-model="newEnvKey" placeholder="KEY" class="font-mono" />
+            <UInput v-model="newEnvValue" placeholder="value" :type="newEnvSecret ? 'password' : 'text'" class="flex-1" />
             <UButton type="submit" icon="i-lucide-plus" label="Add" :disabled="!newEnvKey" />
+          </div>
+          <div class="flex items-center gap-4">
+            <USwitch v-model="newEnvSecret" label="Secret (Encrypted in DB)" />
           </div>
         </form>
       </UCard>

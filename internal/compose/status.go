@@ -20,6 +20,7 @@ type ServiceStatus struct {
 	ContainerID   string
 	ContainerName string
 	Status        string
+	Labels        map[string]string
 }
 
 type ContainerStats struct {
@@ -59,6 +60,7 @@ func GetStackStatus(ctx context.Context, cli *dockerclient.Client, projectName s
 			ContainerID:   cID,
 			ContainerName: name,
 			Status:        mapStatus(c.State),
+			Labels:        c.Labels,
 		})
 	}
 

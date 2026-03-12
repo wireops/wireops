@@ -27,6 +27,9 @@ import (
 	"github.com/wireops/wireops/internal/routes"
 	"github.com/wireops/wireops/internal/sync"
 
+	_ "github.com/wireops/wireops/internal/integrations/dozzle"
+	_ "github.com/wireops/wireops/internal/integrations/traefik"
+
 	_ "github.com/wireops/wireops/pb_migrations"
 )
 

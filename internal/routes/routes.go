@@ -29,6 +29,7 @@ import (
 	"github.com/wireops/wireops/internal/config"
 	"github.com/wireops/wireops/internal/docker"
 	"github.com/wireops/wireops/internal/git"
+	"github.com/wireops/wireops/internal/integrations"
 	"github.com/wireops/wireops/internal/notify"
 	"github.com/wireops/wireops/internal/protocol"
 	"github.com/wireops/wireops/internal/safepath"
@@ -1338,7 +1339,176 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		return e.JSON(http.StatusOK, map[string]string{"id": stack.Id, "status": "import_triggered"})
 	})
 
-	// POST /test: send a sync.test event to the configured URL
+	// API custom integrations
+	r.GET("/api/custom/integrations", func(e *core.RequestEvent) error {
+		// Pass an empty string query or dbx.NewExp("") rather than empty HashExp{} which fails parsing
+		recs, err := app.FindAllRecords("integrations", dbx.NewExp("1=1"))
+		if err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+		
+		saved := make(map[string]*core.Record)
+		for _, r := range recs {
+			saved[r.GetString("slug")] = r
+		}
+
+		type IntegrationOutput struct {
+			Slug     string                 `json:"slug"`
+			Name     string                 `json:"name"`
+			Category string                 `json:"category"`
+			Enabled  bool                   `json:"enabled"`
+			Config   map[string]interface{} `json:"config"`
+		}
+
+		var out []IntegrationOutput
+		for _, impl := range integrations.All() {
+			slug := impl.Slug()
+			item := IntegrationOutput{
+				Slug:     slug,
+				Name:     impl.Name(),
+				Category: impl.Category(),
+				Enabled:  false,
+				Config:   map[string]interface{}{},
+			}
+			if rec, exists := saved[slug]; exists {
+				item.Enabled = rec.GetBool("enabled")
+				
+				var cfg map[string]interface{}
+				if err := rec.UnmarshalJSONField("config", &cfg); err == nil && cfg != nil {
+					item.Config = cfg
+				}
+			}
+			out = append(out, item)
+		}
+		return e.JSON(http.StatusOK, out)
+	})
+
+	r.PUT("/api/custom/integrations/{slug}", func(e *core.RequestEvent) error {
+		slug := e.Request.PathValue("slug")
+		
+		var body struct {
+			Enabled bool                   `json:"enabled"`
+			Config  map[string]interface{} `json:"config"`
+		}
+		if err := json.NewDecoder(e.Request.Body).Decode(&body); err != nil {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		}
+
+		col, err := app.FindCollectionByNameOrId("integrations")
+		if err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+
+		var rec *core.Record
+		recs, err := app.FindAllRecords("integrations", dbx.HashExp{"slug": slug})
+		if err == nil && len(recs) > 0 {
+			rec = recs[0]
+		} else {
+			rec = core.NewRecord(col)
+			rec.Set("slug", slug)
+		}
+
+		rec.Set("enabled", body.Enabled)
+		rec.Set("config", body.Config)
+		
+		if err := app.Save(rec); err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+
+		return e.JSON(http.StatusOK, map[string]interface{}{
+			"slug":    slug,
+			"enabled": body.Enabled,
+			"config":  body.Config,
+		})
+	})
+
+	r.DELETE("/api/custom/integrations/{slug}", func(e *core.RequestEvent) error {
+		slug := e.Request.PathValue("slug")
+		recs, err := app.FindAllRecords("integrations", dbx.HashExp{"slug": slug})
+		if err != nil || len(recs) == 0 {
+			return e.JSON(http.StatusOK, map[string]string{"status": "deleted"})
+		}
+		if err := app.Delete(recs[0]); err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+		return e.JSON(http.StatusOK, map[string]string{"status": "deleted"})
+	})
+
+	r.GET("/api/custom/stacks/{id}/integration-actions", func(e *core.RequestEvent) error {
+		stackID := e.Request.PathValue("id")
+		
+		// 1. Get enabled integrations
+		recs, err := app.FindAllRecords("integrations", dbx.HashExp{"enabled": true})
+		if err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+		if len(recs) == 0 {
+			return e.JSON(http.StatusOK, map[string][]integrations.ContainerAction{})
+		}
+
+		activePlugins := make([]struct{
+			Plugin integrations.Integration
+			Config map[string]interface{}
+		}, 0)
+
+		for _, r := range recs {
+			slug := r.GetString("slug")
+			if plugin, exists := integrations.Get(slug); exists {
+				var cfg map[string]interface{}
+				_ = r.UnmarshalJSONField("config", &cfg)
+				if cfg == nil {
+					cfg = make(map[string]interface{})
+				}
+				activePlugins = append(activePlugins, struct{
+					Plugin integrations.Integration
+					Config map[string]interface{}
+				}{plugin, cfg})
+			}
+		}
+
+		// 2. Fetch live containers for the stack
+		stack, err := app.FindRecordById("stacks", stackID)
+		if err != nil {
+			return e.JSON(http.StatusNotFound, map[string]string{"error": "stack not found"})
+		}
+		
+		projectName := compose.ProjectName(stackWorkDir(app, stack))
+		var statuses []compose.ServiceStatus
+		
+		isOffline := false
+		if agentSvc != nil {
+			assignedAgentID := stack.GetString("agent")
+			if assignedAgentID != "" && !agentSvc.IsEmbedded(assignedAgentID) && !agentSvc.IsConnected(assignedAgentID) {
+				isOffline = true
+			}
+		}
+
+		if dockerClient != nil && !isOffline {
+			statuses, _ = compose.GetStackStatus(e.Request.Context(), dockerClient.Raw(), projectName)
+		} else {
+			return e.JSON(http.StatusOK, map[string][]integrations.ContainerAction{})
+		}
+
+		// 3. Resolve actions
+		result := make(map[string][]integrations.ContainerAction)
+		for _, s := range statuses {
+			ctx := integrations.ContainerContext{
+				ContainerID:   s.ContainerID,
+				ContainerName: s.ContainerName,
+				Labels:        s.Labels,
+			}
+			
+			for _, ap := range activePlugins {
+				actions := ap.Plugin.ResolveContainerActions(ap.Config, ctx)
+				if len(actions) > 0 {
+					result[s.ContainerID] = append(result[s.ContainerID], actions...)
+				}
+			}
+		}
+
+		return e.JSON(http.StatusOK, result)
+	})
+
 	RegisterUserRoutes(r, app)
 
 	// POST /test: send a sync.test event to the configured URL

@@ -178,6 +178,11 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	}
 
 	// Agent is online. Fetch the currently running commit SHA from the agent.
+	// This is used as a fast-path skip for the cron trigger: if the container is
+	// already running the expected commit AND the repo hasn't changed, we can skip
+	// without even running the renderer. However, this check can fail if docker
+	// compose didn't recreate the container (e.g. only wireops labels changed),
+	// leaving a stale commit_sha label. The renderer-based skip below handles that.
 	containerSHA := ""
 	if !neverSynced {
 		containerSHA = r.inspectStackCommit(ctx, agentID, agentFingerprint, stackID)
@@ -222,10 +227,19 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		return fmt.Errorf("%s", errMsg)
 	}
 
-	envVars, envErr := r.loadEnvVars(stackID)
+	envVars, envErr := r.loadEnvVars(ctx, stackID)
 	if envErr != nil {
 		log.Printf("[reconciler] failed to load env vars for stack %s: %v", stackID, envErr)
 	}
+
+	// Reload stack after possible checksum/version update by renderer setup.
+	// (stack record may have been modified above by markError etc.)
+	stack, err = r.app.FindRecordById("stacks", stackID)
+	if err != nil {
+		return fmt.Errorf("stack vanished mid-reconcile: %w", err)
+	}
+	prevChecksum := stack.GetString("checksum")
+	prevVersion := stack.GetInt("current_version")
 
 	renderRes, err := r.renderer.GenerateRevision(ctx, stack, repo, workDir, composeFile, envVars, remoteSHA, false, agentFingerprint)
 	if err != nil {
@@ -233,6 +247,19 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		r.logFailure(stackID, trigger, remoteSHA, errMsg)
 		r.markError(stack, "stacks")
 		return fmt.Errorf("%s", errMsg)
+	}
+
+	// If the renderer found no changes (same checksum → same version returned),
+	// the compose file content is identical to what's already deployed. Skip the
+	// deploy regardless of whether the commit SHA changed — a new commit may have
+	// only touched other files in the repo (e.g. README, job.yaml, etc.).
+	// The compose checksum is the definitive signal, not the commit SHA.
+	if trigger == "cron" && !neverSynced &&
+		renderRes.Checksum == prevChecksum && renderRes.Version == prevVersion {
+		log.Printf("[reconciler] cron skip: compose unchanged for stack %s (checksum=%s)", stackID, renderRes.Checksum)
+		stack.Set("status", prevStatus)
+		_ = r.app.Save(stack)
+		return nil
 	}
 
 	syncLog, err := r.createSyncLog(stackID, trigger, remoteSHA, commitMsg)
@@ -427,7 +454,7 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 		return fmt.Errorf("%s", errMsg)
 	}
 
-	envVars, envErr := r.loadEnvVars(stackID)
+	envVars, envErr := r.loadEnvVars(ctx, stackID)
 	if envErr != nil {
 		log.Printf("[reconciler] failed to load env vars for stack %s: %v", stackID, envErr)
 	}
@@ -588,7 +615,7 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 	}
 
 	lastSHA := repo.GetString("last_commit_sha")
-	envVars, envErr := r.loadEnvVars(stackID)
+	envVars, envErr := r.loadEnvVars(ctx, stackID)
 	if envErr != nil {
 		log.Printf("[reconciler] failed to load env vars for stack %s: %v", stackID, envErr)
 	}
@@ -834,7 +861,7 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 		return nil
 	}
 
-	envVars, envErr := r.loadEnvVars(stackID)
+	envVars, envErr := r.loadEnvVars(ctx, stackID)
 	if envErr != nil {
 		log.Printf("[reconciler] failed to load env vars for local stack %s: %v", stackID, envErr)
 	}
@@ -1079,7 +1106,7 @@ func (r *Reconciler) loadCredential(repoID string) (*gitpkg.Credential, error) {
 	return cred, nil
 }
 
-func (r *Reconciler) loadEnvVars(stackID string) ([]string, error) {
+func (r *Reconciler) loadEnvVars(ctx context.Context, stackID string) ([]string, error) {
 	records, err := r.app.FindAllRecords("stack_env_vars",
 		dbx.HashExp{"stack": stackID},
 	)
@@ -1094,11 +1121,14 @@ func (r *Reconciler) loadEnvVars(stackID string) ([]string, error) {
 		if key == "" {
 			continue
 		}
+
 		if rec.GetBool("secret") && len(r.secretKey) == 32 {
+			// Handle standard Wires encrypted secrets
 			if decrypted, err := crypto.Decrypt(val, r.secretKey); err == nil {
 				val = string(decrypted)
 			}
 		}
+
 		envVars = append(envVars, key+"="+val)
 	}
 	return envVars, nil
@@ -1253,7 +1283,7 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetAgentID s
 
 	workDir := filepath.Dir(composeFilePath)
 
-	envVars, envErr := r.loadEnvVars(stackID)
+	envVars, envErr := r.loadEnvVars(ctx, stackID)
 	if envErr != nil {
 		log.Printf("[reconciler] failed to load env vars for stack %s: %v", stackID, envErr)
 	}
