@@ -60,7 +60,7 @@ func GetStackStatus(ctx context.Context, cli *dockerclient.Client, projectName s
 			ContainerID:   cID,
 			ContainerName: name,
 			Status:        mapStatus(c.State),
-			Labels:        c.Labels,
+			Labels:        filterIntegrationLabels(c.Labels),
 		})
 	}
 
@@ -214,4 +214,22 @@ func ContainerBelongsToProject(ctx context.Context, cli *dockerclient.Client, co
 		return false, nil
 	}
 	return inspect.Config.Labels["com.docker.compose.project"] == projectName, nil
+}
+
+// filterIntegrationLabels restricts labels to only those relevant for integrations (e.g. traefik., dozzle.)
+func filterIntegrationLabels(labels map[string]string) map[string]string {
+	if labels == nil {
+		return nil
+	}
+	filtered := make(map[string]string)
+	for k, v := range labels {
+		lk := strings.ToLower(k)
+		if strings.HasPrefix(lk, "traefik.") || strings.HasPrefix(lk, "dozzle.") {
+			filtered[k] = v
+		}
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	return filtered
 }

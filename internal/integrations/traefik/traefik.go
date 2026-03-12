@@ -8,6 +8,8 @@ import (
 	"github.com/wireops/wireops/internal/integrations"
 )
 
+const u60 = "\x60"
+
 // TraefikIntegration extracts Traefik router rules to create links to the application
 type TraefikIntegration struct{}
 
@@ -38,19 +40,22 @@ func (t *TraefikIntegration) ResolveContainerActions(config map[string]interface
 	}
 
 	// Regex to match traefik.http.routers.<name>.rule=Host(`...`)
-	ruleRegex := regexp.MustCompile(`Host\(\x60([^\x60]+)\x60\)`)
+	// Regex to match backticked identities like `example.com` inside Host(...)
+	ruleRegex := regexp.MustCompile(u60 + "([^" + u60 + "]+)" + u60)
 
 	var actions []integrations.ContainerAction
 
-	// Find the first Host rule
+	// Find all Host(...) rules
 	for key, value := range ctx.Labels {
 		if strings.HasPrefix(key, "traefik.http.routers.") && strings.HasSuffix(key, ".rule") {
-			matches := ruleRegex.FindStringSubmatch(value)
-			if len(matches) > 1 {
-				hostsStr := matches[1]
-				// Host(`a.com`, `b.com`) -> take the first one or just return the exact match
-				// Submatch 1 will have the content inside the backticks, e.g. "example.com"
-				host := strings.Split(hostsStr, "`")[0] // simplistic split if there are multiple
+			// FindAllStringSubmatch to capture all backticked tokens in Host(`a.com`, `b.com`)
+			allMatches := ruleRegex.FindAllStringSubmatch(value, -1)
+			if len(allMatches) > 0 {
+				// Take the first captured group from the first match
+				host := strings.TrimSpace(allMatches[0][1])
+				if host == "" {
+					continue
+				}
 
 				url := fmt.Sprintf("%s://%s%s", scheme, host, port)
 				actions = append(actions, integrations.ContainerAction{

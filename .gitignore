@@ -42,3 +42,4 @@ data/
 pki_data/
 agent_pki/
 repos/
+__debug_bin*

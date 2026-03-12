@@ -46,3 +46,25 @@ func TestTraefikResolveContainerActions(t *testing.T) {
 		t.Errorf("expected URL http://sub.example.com:8080, got %s", action.URL)
 	}
 }
+
+func TestTraefikResolveContainerActionsMultiHost(t *testing.T) {
+	integration := &TraefikIntegration{}
+
+	ctx := integrations.ContainerContext{
+		ContainerID:   "123",
+		ContainerName: "test-app",
+		Labels: map[string]string{
+			"traefik.http.routers.test-app.rule": "Host(`a.com`, `b.com`)",
+		},
+	}
+
+	actions := integration.ResolveContainerActions(nil, ctx)
+	if len(actions) == 0 {
+		t.Fatalf("expected 1 action, got 0")
+	}
+
+	action := actions[0]
+	if action.URL != "https://a.com" {
+		t.Errorf("expected URL https://a.com (first host), got %s", action.URL)
+	}
+}

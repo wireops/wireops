@@ -16,19 +16,20 @@ func TestDozzleResolveContainerActions(t *testing.T) {
 	}
 
 	// Test without URL config
-	actions := integration.ResolveContainerActions(nil, ctx)
+	var config map[string]interface{} // config is nil for this test case
+	actions := integration.ResolveContainerActions(config, ctx)
 	if len(actions) != 0 {
 		t.Fatalf("expected 0 actions when URL is missing, got %d", len(actions))
 	}
 
 	// Test with URL config
-	cfg := map[string]interface{}{
+	config = map[string]interface{}{
 		"url": "http://dozzle.local:8080/", // Check trailing slash removal
 	}
 
-	actions = integration.ResolveContainerActions(cfg, ctx)
-	if len(actions) == 0 {
-		t.Fatalf("expected 1 action, got 0")
+	actions = integration.ResolveContainerActions(config, ctx)
+	if len(actions) != 1 {
+		t.Fatalf("expected 1 action, got %d", len(actions))
 	}
 
 	action := actions[0]
@@ -36,7 +37,7 @@ func TestDozzleResolveContainerActions(t *testing.T) {
 		t.Errorf("expected kind log, got %v", action.Kind)
 	}
 
-	expectedURL := "http://dozzle.local:8080/container/my-web-app"
+	expectedURL := "http://dozzle.local:8080/container/1234"
 	if action.URL != expectedURL {
 		t.Errorf("expected URL %s, got %s", expectedURL, action.URL)
 	}

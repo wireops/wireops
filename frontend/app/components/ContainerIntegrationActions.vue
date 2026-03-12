@@ -23,9 +23,12 @@ const replaceLogActions = computed(() => {
 const hasReplacedLogs = computed(() => replaceLogActions.value.length > 0)
 
 function openAction(action: IntegrationAction) {
-  if (action.url) {
-    window.open(action.url, '_blank')
+  // Security: only allow http(s) protocols to prevent javascript: etc.
+  if (!/^https?:\/\//i.test(action.url)) {
+    console.error('Blocked potentially unsafe integration URL:', action.url)
+    return
   }
+  window.open(action.url, '_blank', 'noopener,noreferrer')
 }
 </script>
 

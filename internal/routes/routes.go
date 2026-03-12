@@ -1385,6 +1385,12 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 
 	r.PUT("/api/custom/integrations/{slug}", func(e *core.RequestEvent) error {
 		slug := e.Request.PathValue("slug")
+
+		// Validate slug against integration registry
+		if _, exists := integrations.Get(slug); !exists {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid integration slug"})
+		}
+
 		
 		var body struct {
 			Enabled bool                   `json:"enabled"`
@@ -1424,7 +1430,13 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 
 	r.DELETE("/api/custom/integrations/{slug}", func(e *core.RequestEvent) error {
 		slug := e.Request.PathValue("slug")
-		recs, err := app.FindAllRecords("integrations", dbx.HashExp{"slug": slug})
+
+		// Validate slug against integration registry
+		if _, exists := integrations.Get(slug); !exists {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid integration slug"})
+		}
+
+		recs, err := app.FindRecordsByFilter("integrations", "slug = {:slug}", "", 0, 1, dbx.Params{"slug": slug})
 		if err != nil || len(recs) == 0 {
 			return e.JSON(http.StatusOK, map[string]string{"status": "deleted"})
 		}
@@ -1484,8 +1496,26 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		}
 
 		if dockerClient != nil && !isOffline {
-			statuses, _ = compose.GetStackStatus(e.Request.Context(), dockerClient.Raw(), projectName)
-		} else {
+			statuses, err = compose.GetStackStatus(e.Request.Context(), dockerClient.Raw(), projectName)
+			if err != nil {
+				log.Printf("[routes] failed to get local stack status for project %s: %v", projectName, err)
+			}
+		} else if agentSvc != nil {
+			assignedAgentID := stack.GetString("agent")
+			if assignedAgentID != "" && agentSvc.IsConnected(assignedAgentID) {
+				res, err := agentSvc.Dispatch(e.Request.Context(), assignedAgentID, protocol.GetStatusCommand{
+					CommandID:   fmt.Sprintf("status-actions-%s", stackID),
+					ProjectName: projectName,
+				})
+				if err == nil && res.Error == "" {
+					_ = json.Unmarshal([]byte(res.Output), &statuses)
+				} else {
+					log.Printf("[routes] remote status dispatch failed for agent %s stack %s: %v (res.Error=%s)", assignedAgentID, stackID, err, res.Error)
+				}
+			}
+		}
+
+		if len(statuses) == 0 {
 			return e.JSON(http.StatusOK, map[string][]integrations.ContainerAction{})
 		}
 

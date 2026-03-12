@@ -1,4 +1,4 @@
-import { ref } from 'vue'
+import { computed } from 'vue'
 
 export interface IntegrationAction {
     integration_slug: string

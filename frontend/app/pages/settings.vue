@@ -392,10 +392,18 @@ async function loadIntegrations() {
 
 async function handleSaveIntegration(integration: any) {
   try {
-    await saveIntegration(integration.slug, integration.enabled, integration.config)
-    toast.add({ title: `${integration.name} integration updated`, color: 'success' })
-  } catch (e: any) {
-    toast.add({ title: 'Failed to update integration', color: 'error' })
+    const success = await saveIntegration(integration.slug, integration.enabled, integration.config)
+    if (success) {
+      toast.add({ title: 'Success', description: `${integration.slug} integration updated`, color: 'success' })
+    } else {
+      // Revert local state if save failed
+      integration.enabled = !integration.enabled
+      toast.add({ title: 'Error', description: `Failed to update ${integration.slug}`, color: 'error' })
+    }
+  } catch (err: any) {
+    // Revert local state on exception
+    integration.enabled = !integration.enabled
+    toast.add({ title: 'Error', description: `An unexpected error occurred: ${err.message}`, color: 'error' })
   }
 }
 

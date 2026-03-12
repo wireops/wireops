@@ -66,10 +66,6 @@ const { data: agents } = useAsyncData('agents_for_stacks', () =>
 
 const { data: webhookUrl } = useAsyncData(`webhook_url_${stackId}`, () => getWebhookUrl(stackId))
 
-const { data: integrationsList } = useAsyncData('enabled_integrations', () =>
-  $pb.collection('integrations').getFullList({ filter: 'enabled = true' })
-)
-
 const agentOptions = computed(() =>
   (agents.value || []).map((a: any) => ({ label: a.hostname, value: a.id }))
 )

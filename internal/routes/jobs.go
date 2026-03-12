@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"path/filepath"
 
+	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/router"
 
@@ -25,6 +26,7 @@ type jobListItem struct {
 	Repository      jobRepoInfo     `json:"repository"`
 	Definition      *job.Definition `json:"definition"`
 	DefinitionError string          `json:"definition_error,omitempty"`
+	StalledReason   string          `json:"stalled_reason,omitempty"`
 }
 
 type jobRepoInfo struct {
@@ -66,6 +68,13 @@ func RegisterJobRoutes(r *router.Router[*core.RequestEvent], app core.App, sched
 				Created:    rec.GetDateTime("created").String(),
 				Updated:    rec.GetDateTime("updated").String(),
 				Repository: repoInfo,
+			}
+
+			if item.Status == "stalled" {
+				runs, err := app.FindRecordsByFilter("job_runs", "job = {:jobId} && status = 'stalled'", "-created", 1, 0, dbx.Params{"jobId": rec.Id})
+				if err == nil && len(runs) > 0 {
+					item.StalledReason = runs[0].GetString("output")
+				}
 			}
 
 			def, derr := job.ParseJobFile(repoWorkspace, repoID, item.JobFile)
@@ -128,5 +137,30 @@ func RegisterJobRoutes(r *router.Router[*core.RequestEvent], app core.App, sched
 		}
 
 		return e.JSON(http.StatusOK, def)
+	})
+
+	// Delete a job run (only if stalled).
+	r.DELETE("/api/custom/job-runs/{runId}", func(e *core.RequestEvent) error {
+		runID := e.Request.PathValue("runId")
+		if runID == "" {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "missing run id"})
+		}
+		
+		rec, err := app.FindRecordById("job_runs", runID)
+		if err != nil {
+			return e.JSON(http.StatusNotFound, map[string]string{"error": "job run not found"})
+		}
+		
+		if rec.GetString("status") != "stalled" {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "only stalled job runs can be deleted"})
+		}
+		
+		if err := app.Delete(rec); err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+		
+		// If we delete the latest run and there are no other stalled runs, we might want to update the job status,
+		// but typically jobs transition to "stalled" via the scheduler. For now, just delete the run.
+		return e.JSON(http.StatusOK, map[string]string{"status": "deleted"})
 	})
 }

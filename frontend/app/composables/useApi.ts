@@ -170,6 +170,7 @@ export function useApi() {
   const listJobs = () => customGet<JobListItem[]>('/api/custom/jobs')
   const triggerJobRun = (jobId: string) => customPost(`/api/custom/jobs/${jobId}/run`)
   const cancelJobRun = (runId: string) => customPost(`/api/custom/job-runs/${runId}/cancel`)
+  const deleteJobRun = (runId: string) => customDelete(`/api/custom/job-runs/${runId}`)
   const getJobDefinition = (jobId: string) =>
     customGet<JobDefinition>(`/api/custom/jobs/${jobId}/definition`)
 
@@ -182,5 +183,5 @@ export function useApi() {
   type PKIDetails = { ca: CertDetails; server: CertDetails }
   const getPKIDetails = () => customGet<PKIDetails>('/api/custom/settings/pki')
 
-  return { triggerSync, triggerRollback, forceRedeploy, getServices, getStackResources, stopContainer, restartContainer, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, getRepoFiles, testCredentials, keyscan, listOrphans, purgeOrphan, getSystemInfo, customPost, customGet, customPut, customPatch, customDelete, getSyncEventsWebhook, setSyncEventsWebhook, setNotificationsEnabled, deleteSyncEventsWebhook, testSyncEventsWebhook, getAgents, createAgentSeat, revokeAgent, getPKIDetails, transferStack, discoverProjects, importStack, listJobs, triggerJobRun, cancelJobRun, getJobDefinition }
+  return { triggerSync, triggerRollback, forceRedeploy, getServices, getStackResources, stopContainer, restartContainer, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, getRepoFiles, testCredentials, keyscan, listOrphans, purgeOrphan, getSystemInfo, customPost, customGet, customPut, customPatch, customDelete, getSyncEventsWebhook, setSyncEventsWebhook, setNotificationsEnabled, deleteSyncEventsWebhook, testSyncEventsWebhook, getAgents, createAgentSeat, revokeAgent, getPKIDetails, transferStack, discoverProjects, importStack, listJobs, triggerJobRun, cancelJobRun, deleteJobRun, getJobDefinition }
 }

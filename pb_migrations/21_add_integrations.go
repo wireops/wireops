@@ -11,6 +11,7 @@ func init() {
 
 		// Identifier for the integration (e.g., "traefik", "dozzle")
 		col.Fields.Add(&core.TextField{Name: "slug", Required: true})
+		col.AddIndex("idx_integrations_slug_unique", true, "slug", "")
 		// Global toggle
 		col.Fields.Add(&core.BoolField{Name: "enabled"})
 		// JSON configuration specific to the integration
@@ -20,11 +21,11 @@ func init() {
 		col.Fields.Add(&core.AutodateField{Name: "updated", OnCreate: true, OnUpdate: true})
 
 		// Only superusers can manage integrations
-		col.ListRule = strPtr("@request.auth.id != ''")
-		col.ViewRule = strPtr("@request.auth.id != ''")
-		col.CreateRule = strPtr("@request.auth.id != ''")
-		col.UpdateRule = strPtr("@request.auth.id != ''")
-		col.DeleteRule = strPtr("@request.auth.id != ''")
+		col.ListRule = nil
+		col.ViewRule = nil
+		col.CreateRule = nil
+		col.UpdateRule = nil
+		col.DeleteRule = nil
 
 		return app.Save(col)
 	}, func(app core.App) error {
