@@ -1495,27 +1495,28 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			}
 		}
 
-		if dockerClient != nil && !isOffline {
+		assignedAgentID := stack.GetString("agent")
+		if assignedAgentID != "" && agentSvc != nil && !agentSvc.IsEmbedded(assignedAgentID) {
+			if !agentSvc.IsConnected(assignedAgentID) {
+				return e.JSON(http.StatusServiceUnavailable, map[string]string{"error": "agent is offline or not connected"})
+			}
+			res, err := agentSvc.Dispatch(e.Request.Context(), assignedAgentID, protocol.GetStatusCommand{
+				CommandID:   fmt.Sprintf("status-actions-%s", stackID),
+				ProjectName: projectName,
+			})
+			if err != nil || res.Error != "" {
+				log.Printf("[routes] remote status dispatch failed for agent %s stack %s: %v (res.Error=%s)", assignedAgentID, stackID, err, res.Error)
+				return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to get remote stack status"})
+			}
+			if err := json.Unmarshal([]byte(res.Output), &statuses); err != nil {
+				log.Printf("[routes] failed to unmarshal remote status for agent %s stack %s: %v", assignedAgentID, stackID, err)
+				return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to unmarshal agent response"})
+			}
+		} else if dockerClient != nil && !isOffline {
 			statuses, err = compose.GetStackStatus(e.Request.Context(), dockerClient.Raw(), projectName)
 			if err != nil {
 				log.Printf("[routes] failed to get local stack status for project %s: %v", projectName, err)
 				return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to get stack status"})
-			}
-		} else if agentSvc != nil {
-			assignedAgentID := stack.GetString("agent")
-			if assignedAgentID != "" && agentSvc.IsConnected(assignedAgentID) {
-				res, err := agentSvc.Dispatch(e.Request.Context(), assignedAgentID, protocol.GetStatusCommand{
-					CommandID:   fmt.Sprintf("status-actions-%s", stackID),
-					ProjectName: projectName,
-				})
-				if err == nil && res.Error == "" {
-					_ = json.Unmarshal([]byte(res.Output), &statuses)
-				} else {
-					log.Printf("[routes] remote status dispatch failed for agent %s stack %s: %v (res.Error=%s)", assignedAgentID, stackID, err, res.Error)
-					return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to get remote stack status"})
-				}
-			} else {
-				return e.JSON(http.StatusServiceUnavailable, map[string]string{"error": "agent is offline or not connected"})
 			}
 		} else {
 			return e.JSON(http.StatusServiceUnavailable, map[string]string{"error": "no docker client or agent service available"})

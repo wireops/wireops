@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import JobsDeleteJobRunModal from './DeleteJobRunModal.vue'
 
 const props = defineProps<{
@@ -13,9 +13,12 @@ const toast = useToast()
 const page = ref(1)
 const perPage = ref(10)
 
+watch(perPage, () => {
+  page.value = 1
+})
 const { data: runsData, refresh: refreshRuns, status } = useAsyncData(() => `job_runs_${props.jobId}_page_${page.value}_${perPage.value}`, () => {
   return $pb.collection('job_runs').getList(page.value, perPage.value, {
-    filter: `job = "${props.jobId}"`,
+    filter: $pb.filter('job = {:id}', { id: props.jobId }),
     sort: '-created',
     expand: 'agent',
   })
@@ -48,7 +51,6 @@ function openDeleteModal(run: any) {
   if (run.status !== 'stalled') return
   runToDelete.value = run
   isDeleteModalOpen.value = true
-  console.log('openDeleteModal called, state:', isDeleteModalOpen.value, run)
 }
 
 function runStatusColor(status: string) {
