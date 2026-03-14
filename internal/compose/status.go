@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"log"
+	"path"
 	"strings"
 
 	"github.com/docker/docker/api/types/container"
@@ -221,11 +222,21 @@ func filterIntegrationLabels(labels map[string]string) map[string]string {
 	if labels == nil {
 		return nil
 	}
+
+	allowlist := []string{
+		"traefik.http.routers.*.rule",
+		"traefik.enable",
+		"dozzle.enable",
+	}
+
 	filtered := make(map[string]string)
 	for k, v := range labels {
 		lk := strings.ToLower(k)
-		if strings.HasPrefix(lk, "traefik.") || strings.HasPrefix(lk, "dozzle.") {
-			filtered[k] = v
+		for _, pattern := range allowlist {
+			if matched, _ := path.Match(pattern, lk); matched {
+				filtered[k] = v
+				break
+			}
 		}
 	}
 	if len(filtered) == 0 {

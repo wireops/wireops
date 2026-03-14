@@ -172,27 +172,7 @@ func (r *Renderer) GenerateRevision(
 	checksum := computeSHA256(normalizedYAML)
 
 	// Inject commit_sha, version, checksum, and generated_at AFTER hashing.
-	for serviceName, svcRaw := range services {
-		svc, ok := svcRaw.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		labels, _ := svc["labels"].(map[string]interface{})
-		annotations, _ := svc["annotations"].(map[string]interface{})
-
-		// Version-sensitive metadata as annotations
-		annotations["dev.wireops.repository.commit_sha"] = commitSHA
-		annotations["dev.wireops.version"] = strconv.Itoa(nextVersion)
-		annotations[labelChecksum] = checksum
-		annotations[labelGeneratedAt] = generatedAt
-
-		// Commit SHA is also kept as a label for easy container filtering/inspection
-		labels[labelCommitSHA] = commitSHA
-
-		svc["labels"] = labels
-		svc["annotations"] = annotations
-		services[serviceName] = svc
-	}
+	injectVersionMetadata(services, commitSHA, checksum, generatedAt, nextVersion)
 	configMap["services"] = services
 
 	// Compare with current stack state to see if we actually need a version bump
@@ -204,25 +184,7 @@ func (r *Renderer) GenerateRevision(
 			// Bump version label and re-inject post-hash metadata.
 			// The structural checksum (without commit_sha/version/generated_at) doesn't
 			// change here — only the version counter and commit_sha are updated.
-			for serviceName, svcRaw := range services {
-				svc, ok := svcRaw.(map[string]interface{})
-				if !ok {
-					continue
-				}
-				labels, _ := svc["labels"].(map[string]interface{})
-				annotations, _ := svc["annotations"].(map[string]interface{})
-
-				annotations["dev.wireops.repository.commit_sha"] = commitSHA
-				annotations["dev.wireops.version"] = strconv.Itoa(nextVersion)
-				annotations[labelChecksum] = checksum
-				annotations[labelGeneratedAt] = generatedAt
-
-				labels[labelCommitSHA] = commitSHA
-
-				svc["labels"] = labels
-				svc["annotations"] = annotations
-				services[serviceName] = svc
-			}
+			injectVersionMetadata(services, commitSHA, checksum, generatedAt, nextVersion)
 			configMap["services"] = services
 		}
 	} else if !forceIncrement && stack.GetString("checksum") == checksum {
@@ -288,6 +250,30 @@ func (r *Renderer) GenerateRevision(
 		Checksum:     checksum,
 		RenderedPath: fileName,
 	}, nil
+}
+
+func injectVersionMetadata(services map[string]interface{}, commitSHA, checksum, generatedAt string, version int) {
+	for serviceName, svcRaw := range services {
+		svc, ok := svcRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		labels, _ := svc["labels"].(map[string]interface{})
+		annotations, _ := svc["annotations"].(map[string]interface{})
+
+		// Version-sensitive metadata as annotations
+		annotations["dev.wireops.repository.commit_sha"] = commitSHA
+		annotations["dev.wireops.version"] = strconv.Itoa(version)
+		annotations[labelChecksum] = checksum
+		annotations[labelGeneratedAt] = generatedAt
+
+		// Commit SHA is also kept as a label for easy container filtering/inspection
+		labels[labelCommitSHA] = commitSHA
+
+		svc["labels"] = labels
+		svc["annotations"] = annotations
+		services[serviceName] = svc
+	}
 }
 
 func (r *Renderer) createRevisionRecord(stackID string, version int, commitSHA, checksum, composePath string) error {

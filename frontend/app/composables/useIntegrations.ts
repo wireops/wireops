@@ -1,5 +1,3 @@
-import { computed } from 'vue'
-
 export interface IntegrationAction {
     integration_slug: string
     kind: 'reverse-proxy' | 'log' | 'secret'

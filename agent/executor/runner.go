@@ -250,7 +250,12 @@ func GetStatus(ctx context.Context, cmd protocol.GetStatusCommand) protocol.Comm
 		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
 	}
 
-	encoded, _ := json.Marshal(statuses)
+	encoded, err := json.Marshal(statuses)
+	if err != nil {
+		log.Printf("[executor] get_status json marshal error project=%s: %v", cmd.ProjectName, err)
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
+	}
+
 	log.Printf("[executor] get_status done project=%s services=%d", cmd.ProjectName, len(statuses))
 	return protocol.CommandResult{CommandID: cmd.CommandID, Output: string(encoded)}
 }

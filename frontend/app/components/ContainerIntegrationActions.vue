@@ -35,30 +35,32 @@ function openAction(action: IntegrationAction) {
 <template>
   <div class="flex items-center gap-1">
     <!-- Link integrations (e.g., Traefik external links) -->
-    <UTooltip v-for="action in linkActions" :key="action.integration_slug" :text="action.label">
+    <UTooltip v-for="action in linkActions" :key="`${action.integration_slug}-${action.url}`" :text="action.label">
       <UButton
         variant="ghost"
         color="neutral"
         size="xs"
+        :aria-label="action.label || action.integration_slug"
         @click="openAction(action)"
       >
         <template #leading>
-          <img :src="`https://cdn.jsdelivr.net/gh/selfhst/icons/svg/${action.integration_slug}.svg`" class="w-4 h-4 object-contain" alt="">
+          <img :src="`https://cdn.jsdelivr.net/gh/selfhst/icons/svg/${action.integration_slug}.svg`" class="w-4 h-4 object-contain" :alt="action.integration_slug">
         </template>
       </UButton>
     </UTooltip>
 
     <!-- Logs button or Replaced Logs button (e.g., Dozzle) -->
     <template v-if="hasReplacedLogs">
-      <UTooltip v-for="action in replaceLogActions" :key="action.integration_slug" :text="action.label">
+      <UTooltip v-for="action in replaceLogActions" :key="`${action.integration_slug}-${action.url}`" :text="action.label">
         <UButton
           variant="ghost"
           color="neutral"
           size="xs"
+          :aria-label="action.label || action.integration_slug"
           @click="openAction(action)"
         >
           <template #leading>
-            <img :src="`https://cdn.jsdelivr.net/gh/selfhst/icons/svg/${action.integration_slug}.svg`" class="w-4 h-4 object-contain" alt="">
+            <img :src="`https://cdn.jsdelivr.net/gh/selfhst/icons/svg/${action.integration_slug}.svg`" class="w-4 h-4 object-contain" :alt="action.integration_slug">
           </template>
         </UButton>
       </UTooltip>

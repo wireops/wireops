@@ -18,19 +18,7 @@ const (
 )
 
 func TestRendererGenerateRevision(t *testing.T) {
-	// Setup PocketBase test app
-	app, err := tests.NewTestApp()
-	if err != nil {
-		t.Fatalf(errCreateTestApp, err)
-	}
-	defer app.Cleanup()
-
-	// Initialize tables needed
-	createTestCollections(t, app)
-
-	// Create a dummy workspace
-	workDir := t.TempDir()
-	composePath := filepath.Join(workDir, "docker-compose.yml")
+	app, workDir, composePath := setupRendererTest(t)
 	composeContent := `
 name: test_stack
 services:
@@ -39,9 +27,7 @@ services:
     labels:
       user.label: "value"
 `
-	if err := os.WriteFile(composePath, []byte(composeContent), 0644); err != nil {
-		t.Fatalf(errWriteComposeFile, err)
-	}
+	writeTestComposeFile(t, composePath, composeContent)
 
 	// Create Stack and Repo records
 	repo := createTestRepo(t, app, "Test Repo", "main")
@@ -97,9 +83,7 @@ services:
     labels:
       user.label: "value"
 `
-	if err := os.WriteFile(composePath, []byte(composeContent2), 0644); err != nil {
-		t.Fatalf(errWriteComposeFile, err)
-	}
+	writeTestComposeFile(t, composePath, composeContent2)
 
 	res4, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitC", false, "embedded")
 	if err != nil {
@@ -113,12 +97,7 @@ services:
 	}
 
 	// Verify the file was written
-	renderedFile := renderer.GetRevisionFilePath(stack.Id, res4.Version)
-	content, err := os.ReadFile(renderedFile)
-	if err != nil {
-		t.Fatalf("failed to read written config: %v", err)
-	}
-	contentStr := string(content)
+	contentStr := readRenderedFile(t, renderer, stack.Id, res4.Version)
 	if !contains(contentStr, `dev.wireops.managed: "true"`) {
 		t.Errorf("missing dev.wireops.managed label")
 	}
@@ -137,16 +116,7 @@ services:
 }
 
 func TestRendererStripReservedLabels(t *testing.T) {
-	app, err := tests.NewTestApp()
-	if err != nil {
-		t.Fatalf(errCreateTestApp, err)
-	}
-	defer app.Cleanup()
-
-	createTestCollections(t, app)
-
-	workDir := t.TempDir()
-	composePath := filepath.Join(workDir, "docker-compose.yml")
+	app, workDir, composePath := setupRendererTest(t)
 	// Service defines labels that use the reserved dev.wireops prefix —
 	// these must be stripped and replaced by system-injected values.
 	composeContent := `
@@ -162,9 +132,7 @@ services:
       dev.wireops.checksum: "fake"
       user.note: "safe"
 `
-	if err := os.WriteFile(composePath, []byte(composeContent), 0644); err != nil {
-		t.Fatalf(errWriteComposeFile, err)
-	}
+	writeTestComposeFile(t, composePath, composeContent)
 
 	repo := createTestRepo(t, app, "Sanitize Repo", "main")
 	stack := createTestStack(t, app, repo.Id, "sanitize_stack")
@@ -177,12 +145,7 @@ services:
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	renderedFile := renderer.GetRevisionFilePath(stack.Id, res.Version)
-	content, err := os.ReadFile(renderedFile)
-	if err != nil {
-		t.Fatalf("failed to read rendered file: %v", err)
-	}
-	contentStr := string(content)
+	contentStr := readRenderedFile(t, renderer, stack.Id, res.Version)
 
 	// Identity labels must win
 	if !contains(contentStr, `dev.wireops.managed: "true"`) {
@@ -207,16 +170,7 @@ services:
 }
 
 func TestRendererNoSecrets(t *testing.T) {
-	app, err := tests.NewTestApp()
-	if err != nil {
-		t.Fatalf(errCreateTestApp, err)
-	}
-	defer app.Cleanup()
-
-	createTestCollections(t, app)
-
-	workDir := t.TempDir()
-	composePath := filepath.Join(workDir, "docker-compose.yml")
+	app, workDir, composePath := setupRendererTest(t)
 	composeContent := `
 name: secret_stack
 services:
@@ -226,9 +180,7 @@ services:
       - MY_SECRET=${MY_SECRET}
       - ANOTHER_VAR=${ANOTHER_VAR:-default_val}
 `
-	if err := os.WriteFile(composePath, []byte(composeContent), 0644); err != nil {
-		t.Fatalf("failed to write compose file: %v", err)
-	}
+	writeTestComposeFile(t, composePath, composeContent)
 
 	repo := createTestRepo(t, app, "Secret Repo", "main")
 	stack := createTestStack(t, app, repo.Id, "secret_stack")
@@ -247,12 +199,7 @@ services:
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	renderedFile := renderer.GetRevisionFilePath(stack.Id, res.Version)
-	content, err := os.ReadFile(renderedFile)
-	if err != nil {
-		t.Fatalf("failed to read written config: %v", err)
-	}
-	contentStr := string(content)
+	contentStr := readRenderedFile(t, renderer, stack.Id, res.Version)
 
 	if contains(contentStr, "super_secret_value") {
 		t.Errorf("Security risk: secret value 'super_secret_value' was interpolated into the saved compose file!")
@@ -297,6 +244,36 @@ func bytesContains(s, substr []byte) bool {
 }
 
 // Helper methods to create tables and dummy data for tests
+
+func setupRendererTest(t *testing.T) (core.App, string, string) {
+	t.Helper()
+	app, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatalf(errCreateTestApp, err)
+	}
+	t.Cleanup(func() { app.Cleanup() })
+	createTestCollections(t, app)
+	workDir := t.TempDir()
+	return app, workDir, filepath.Join(workDir, "docker-compose.yml")
+}
+
+func writeTestComposeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf(errWriteComposeFile, err)
+	}
+}
+
+func readRenderedFile(t *testing.T, renderer *sync.Renderer, stackId string, version int) string {
+	t.Helper()
+	renderedFile := renderer.GetRevisionFilePath(stackId, version)
+	content, err := os.ReadFile(renderedFile)
+	if err != nil {
+		t.Fatalf("failed to read rendered file: %v", err)
+	}
+	return string(content)
+}
+
 func createTestCollections(t *testing.T, app core.App) {
 	// Simple implementations that create exactly what we need for the renderer
 
@@ -356,16 +333,7 @@ func createTestStack(t *testing.T, app core.App, repoId, name string) *core.Reco
 }
 
 func TestRendererListStyleLabels(t *testing.T) {
-	app, err := tests.NewTestApp()
-	if err != nil {
-		t.Fatalf(errCreateTestApp, err)
-	}
-	defer app.Cleanup()
-
-	createTestCollections(t, app)
-
-	workDir := t.TempDir()
-	composePath := filepath.Join(workDir, "docker-compose.yml")
+	app, workDir, composePath := setupRendererTest(t)
 	// Use list format for labels
 	composeContent := `
 name: list_labels_stack
@@ -376,9 +344,7 @@ services:
       - "traefik.http.routers.web.rule=Host(` + "`" + `example.com` + "`" + `)"
       - "user.safe=value"
 `
-	if err := os.WriteFile(composePath, []byte(composeContent), 0644); err != nil {
-		t.Fatalf(errWriteComposeFile, err)
-	}
+	writeTestComposeFile(t, composePath, composeContent)
 
 	repo := createTestRepo(t, app, "List Labels Repo", "main")
 	stack := createTestStack(t, app, repo.Id, "list_labels_stack")
@@ -391,12 +357,7 @@ services:
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	renderedFile := renderer.GetRevisionFilePath(stack.Id, res.Version)
-	content, err := os.ReadFile(renderedFile)
-	if err != nil {
-		t.Fatalf("failed to read rendered file: %v", err)
-	}
-	contentStr := string(content)
+	contentStr := readRenderedFile(t, renderer, stack.Id, res.Version)
 
 	// Verify Traefik label is preserved (marshaled as map in the output)
 	if !contains(contentStr, "traefik.http.routers.web.rule: Host(`example.com`)") {

@@ -13,7 +13,7 @@ const toast = useToast()
 const page = ref(1)
 const perPage = ref(10)
 
-const { data: runsData, refresh: refreshRuns, status } = useAsyncData(`job_runs_${props.jobId}_page_${page.value}_${perPage.value}`, () => {
+const { data: runsData, refresh: refreshRuns, status } = useAsyncData(() => `job_runs_${props.jobId}_page_${page.value}_${perPage.value}`, () => {
   return $pb.collection('job_runs').getList(page.value, perPage.value, {
     filter: `job = "${props.jobId}"`,
     sort: '-created',

@@ -1499,6 +1499,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			statuses, err = compose.GetStackStatus(e.Request.Context(), dockerClient.Raw(), projectName)
 			if err != nil {
 				log.Printf("[routes] failed to get local stack status for project %s: %v", projectName, err)
+				return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to get stack status"})
 			}
 		} else if agentSvc != nil {
 			assignedAgentID := stack.GetString("agent")
@@ -1511,8 +1512,13 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 					_ = json.Unmarshal([]byte(res.Output), &statuses)
 				} else {
 					log.Printf("[routes] remote status dispatch failed for agent %s stack %s: %v (res.Error=%s)", assignedAgentID, stackID, err, res.Error)
+					return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to get remote stack status"})
 				}
+			} else {
+				return e.JSON(http.StatusServiceUnavailable, map[string]string{"error": "agent is offline or not connected"})
 			}
+		} else {
+			return e.JSON(http.StatusServiceUnavailable, map[string]string{"error": "no docker client or agent service available"})
 		}
 
 		if len(statuses) == 0 {
