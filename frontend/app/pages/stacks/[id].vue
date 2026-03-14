@@ -443,6 +443,9 @@ onMounted(() => {
         </h1>
         <BadgeStatus v-if="stack" :status="effectiveStackStatus" />
       </div>
+      <div v-if="stack?.containers_list?.length" class="mt-2 sm:mt-0 sm:ml-4 flex-1">
+        <StackContainersList :containers="stack.containers_list" />
+      </div>
       <div class="grid grid-cols-3 sm:flex sm:items-center gap-2 sm:shrink-0">
         <UButton
           :icon="effectiveStackStatus === 'paused' ? 'i-lucide-play' : 'i-lucide-pause'"

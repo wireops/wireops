@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/go-git/go-git/v5/plumbing/transport"
@@ -14,6 +15,7 @@ import (
 	gogitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
+	"gopkg.in/yaml.v3"
 
 	"github.com/wireops/wireops/internal/config"
 	"github.com/wireops/wireops/internal/crypto"
@@ -160,6 +162,49 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 
 	app.OnRecordAfterDeleteSuccess("stacks").BindFunc(func(e *core.RecordEvent) error {
 		scheduler.UnregisterStack(e.Record.Id)
+		return e.Next()
+	})
+
+	app.OnRecordEnrich("stacks").BindFunc(func(e *core.RecordEnrichEvent) error {
+		// Determine compose file location
+		var composeFile string
+		if e.Record.GetString("source_type") == "local" {
+			if importPath := e.Record.GetString("import_path"); importPath != "" {
+				composeFile = importPath
+			}
+		} else {
+			repoID := e.Record.GetString("repository")
+			base := filepath.Join(app.DataDir(), "repositories", repoID)
+			composePath := e.Record.GetString("compose_path")
+			
+			if composePath != "" && composePath != "." {
+				cleaned := filepath.Clean(composePath)
+				if !filepath.IsAbs(cleaned) && !strings.HasPrefix(cleaned, "/") {
+					composeFile = filepath.Join(base, cleaned)
+				} else {
+					// Fallback to searching the dir
+					composeFile = filepath.Join(base, "docker-compose.yml")
+				}
+			} else {
+				// Default names
+				for _, name := range []string{"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"} {
+					candidate := filepath.Join(base, name)
+					if _, err := os.Stat(candidate); err == nil {
+						composeFile = candidate
+						break
+					}
+				}
+			}
+		}
+
+		if composeFile != "" {
+			if b, err := os.ReadFile(composeFile); err == nil {
+				containers := extractContainersFromCompose(b)
+				// Create a transient property that the PocketBase API will serialize
+				e.Record.Set("containers_list", containers)
+			}
+		}
+
 		return e.Next()
 	})
 
@@ -343,4 +388,81 @@ func encryptField(record *core.Record, field string, key []byte) error {
 	}
 	record.Set(field, encrypted)
 	return nil
+}
+
+type ContainerInfo struct {
+	Name       string `json:"name"`
+	IsFallback bool   `json:"is_fallback"`
+	Slug       string `json:"slug,omitempty"`
+}
+
+func extractContainersFromCompose(yamlData []byte) []ContainerInfo {
+	var composeMap map[string]interface{}
+	if err := yaml.Unmarshal(yamlData, &composeMap); err != nil {
+		return nil
+	}
+
+	servicesRaw, ok := composeMap["services"]
+	if !ok || servicesRaw == nil {
+		return nil
+	}
+
+	services, ok := servicesRaw.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+
+	var results []ContainerInfo
+	for svcName, svcRaw := range services {
+		svc, ok := svcRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		info := ContainerInfo{
+			Name:       svcName,
+			IsFallback: true,
+		}
+
+		if cName, ok := svc["container_name"].(string); ok && cName != "" {
+			info.Name = cName
+			info.IsFallback = false
+		}
+
+		// Extract slug from labels, annotations, deploy.labels, deploy.annotations
+		slugFound := false
+		
+		checkSlug := func(meta map[string]interface{}) {
+			if slugFound {
+				return
+			}
+			if val, ok := meta["customization.image.slug"].(string); ok && val != "" {
+				info.Slug = val
+				slugFound = true
+			}
+		}
+
+		checkSlug(sync.NormalizeToMap(svc["labels"]))
+		checkSlug(sync.NormalizeToMap(svc["annotations"]))
+
+		if deployRaw, ok := svc["deploy"]; ok {
+			if deploy, ok := deployRaw.(map[string]interface{}); ok {
+				checkSlug(sync.NormalizeToMap(deploy["labels"]))
+				checkSlug(sync.NormalizeToMap(deploy["annotations"]))
+			}
+		}
+
+		results = append(results, info)
+	}
+
+	// Alphabetical sort by Name
+	for i := 0; i < len(results); i++ {
+		for j := i + 1; j < len(results); j++ {
+			if results[j].Name < results[i].Name {
+				results[i], results[j] = results[j], results[i]
+			}
+		}
+	}
+
+	return results
 }

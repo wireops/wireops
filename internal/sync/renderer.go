@@ -135,8 +135,8 @@ func (r *Renderer) GenerateRevision(
 		}
 
 		// Prepare blocks (supporting both map and list formats)
-		labels := normalizeToMap(svc["labels"])
-		annotations := normalizeToMap(svc["annotations"])
+		labels := NormalizeToMap(svc["labels"])
+		annotations := NormalizeToMap(svc["annotations"])
 
 		// Scrub any user-supplied metadata using the reserved dev.wireops namespace
 		stripWireopsMetadata(labels)
@@ -320,8 +320,8 @@ func stripWireopsMetadata(m map[string]interface{}) {
 	}
 }
 
-// normalizeToMap converts a label/annotation block (which can be a map or a list) into a map.
-func normalizeToMap(input interface{}) map[string]interface{} {
+// NormalizeToMap converts a label/annotation block (which can be a map or a list) into a map.
+func NormalizeToMap(input interface{}) map[string]interface{} {
 	if m, ok := input.(map[string]interface{}); ok {
 		// Return a copy to avoid mutating the original if shared (though unlikely here)
 		res := make(map[string]interface{})
