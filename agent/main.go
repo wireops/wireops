@@ -133,6 +133,8 @@ func main() {
 				go handleProbe(conn, env.Payload)
 			case protocol.MsgInspect:
 				go handleInspect(conn, env.Payload)
+			case protocol.MsgGetStatus:
+				go handleGetStatus(conn, env.Payload)
 			case protocol.MsgGetResources:
 				go handleGetResources(conn, env.Payload)
 			case protocol.MsgDiscoverProjects:
@@ -259,6 +261,17 @@ func handleGetResources(conn *websocket.Conn, payload interface{}) {
 	}
 	log.Printf("[AGENT] get_resources stack: %s project: %s (command: %s)", cmd.StackID, cmd.ProjectName, cmd.CommandID)
 	result := executor.GetResources(context.Background(), cmd)
+	sendResult(conn, result)
+}
+
+func handleGetStatus(conn *websocket.Conn, payload interface{}) {
+	cmd, err := unmarshalPayload[protocol.GetStatusCommand](payload)
+	if err != nil {
+		log.Printf("[AGENT] Invalid get_status payload: %v", err)
+		return
+	}
+	log.Printf("[AGENT] get_status project: %s (command: %s)", cmd.ProjectName, cmd.CommandID)
+	result := executor.GetStatus(context.Background(), cmd)
 	sendResult(conn, result)
 }
 

@@ -12,6 +12,7 @@ const (
 	MsgTeardown     MessageType = "teardown"
 	MsgProbe        MessageType = "probe"
 	MsgInspect      MessageType = "inspect"
+	MsgGetStatus   MessageType = "get_status"
 	MsgGetResources MessageType = "get_resources"
 
 	MsgDiscoverProjects MessageType = "discover_projects"
@@ -107,6 +108,12 @@ type ProbeResult struct {
 
 	// Services lists the names of services that have containers on this host.
 	Services []string `json:"services,omitempty"`
+}
+
+// GetStatusCommand asks the agent for live container statuses and labels for a project.
+type GetStatusCommand struct {
+	CommandID   string `json:"command_id"`
+	ProjectName string `json:"project_name"`
 }
 
 // InspectCommand queries the agent for the currently running commit SHA

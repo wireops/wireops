@@ -242,7 +242,7 @@ func (s *Scheduler) executeJob(jobID, trigger string) {
 
 	agents := s.dispatcher.GetAgentsByTags(def.Tags)
 	if len(agents) == 0 {
-		s.createStalledRun(jobID, trigger)
+		s.createStalledRun(jobID, trigger, def.Tags)
 		return
 	}
 
@@ -281,8 +281,11 @@ func (s *Scheduler) executeJob(jobID, trigger string) {
 		go s.dispatchToAgent(ctx, jobID, trigger, agentID, params)
 	}
 
-	// Update last_run_at immediately; run completion is async.
+	// Update last_run_at and status immediately; run completion is async.
 	rec.Set("last_run_at", time.Now())
+	if rec.GetString("status") == "stalled" {
+		rec.Set("status", "active")
+	}
 	_ = s.app.Save(rec)
 }
 
@@ -433,17 +436,28 @@ func (s *Scheduler) HandleAgentReconnect(agentID string) {
 }
 
 // createStalledRun writes a job_run with status=stalled when no agents are available.
-func (s *Scheduler) createStalledRun(jobID, trigger string) {
-	runID, err := s.createJobRun(jobID, "", trigger, "stalled")
+// It also updates the scheduled_jobs record's status to "stalled".
+func (s *Scheduler) createStalledRun(jobID, trigger string, tags []string) {
+	reason := "no matching agents available for the specified tags"
+	if len(tags) > 0 {
+		reason = fmt.Sprintf("no matching agents available for the required tags: %v", tags)
+	}
+	runID, err := s.createJobRun(jobID, "", trigger, "stalled", reason)
 	if err != nil {
 		log.Printf("[jobscheduler] createStalledRun: failed to create stalled run for job %s: %v", jobID, err)
 		return
 	}
 	log.Printf("[jobscheduler] job %s stalled (no matching agents), run %s", jobID, runID)
+
+	rec, err := s.app.FindRecordById("scheduled_jobs", jobID)
+	if err == nil && rec.GetString("status") != "paused" {
+		rec.Set("status", "stalled")
+		_ = s.app.Save(rec)
+	}
 }
 
 // createJobRun inserts a job_run record and returns its ID.
-func (s *Scheduler) createJobRun(jobID, agentID, trigger, status string) (string, error) {
+func (s *Scheduler) createJobRun(jobID, agentID, trigger, status string, output ...string) (string, error) {
 	col, err := s.app.FindCollectionByNameOrId("job_runs")
 	if err != nil {
 		return "", err
@@ -452,6 +466,9 @@ func (s *Scheduler) createJobRun(jobID, agentID, trigger, status string) (string
 	rec.Set("job", jobID)
 	rec.Set("trigger", trigger)
 	rec.Set("status", status)
+	if len(output) > 0 {
+		rec.Set("output", output[0])
+	}
 	rec.Set("expires_at", time.Now().AddDate(0, 0, 30))
 	if agentID != "" {
 		rec.Set("agent", agentID)

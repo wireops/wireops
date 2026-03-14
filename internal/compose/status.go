@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"log"
+	"path"
 	"strings"
 
 	"github.com/docker/docker/api/types/container"
@@ -20,6 +21,7 @@ type ServiceStatus struct {
 	ContainerID   string
 	ContainerName string
 	Status        string
+	Labels        map[string]string
 }
 
 type ContainerStats struct {
@@ -59,6 +61,7 @@ func GetStackStatus(ctx context.Context, cli *dockerclient.Client, projectName s
 			ContainerID:   cID,
 			ContainerName: name,
 			Status:        mapStatus(c.State),
+			Labels:        filterIntegrationLabels(c.Labels),
 		})
 	}
 
@@ -212,4 +215,32 @@ func ContainerBelongsToProject(ctx context.Context, cli *dockerclient.Client, co
 		return false, nil
 	}
 	return inspect.Config.Labels["com.docker.compose.project"] == projectName, nil
+}
+
+// filterIntegrationLabels restricts labels to only those relevant for integrations (e.g. traefik., dozzle.)
+func filterIntegrationLabels(labels map[string]string) map[string]string {
+	if labels == nil {
+		return nil
+	}
+
+	allowlist := []string{
+		"traefik.http.routers.*.rule",
+		"traefik.enable",
+		"dozzle.enable",
+	}
+
+	filtered := make(map[string]string)
+	for k, v := range labels {
+		lk := strings.ToLower(k)
+		for _, pattern := range allowlist {
+			if matched, _ := path.Match(pattern, lk); matched {
+				filtered[k] = v
+				break
+			}
+		}
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	return filtered
 }

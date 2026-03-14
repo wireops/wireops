@@ -234,6 +234,32 @@ func GetResources(ctx context.Context, cmd protocol.GetResourcesCommand) protoco
 	return protocol.CommandResult{CommandID: cmd.CommandID, Output: string(encoded)}
 }
 
+// GetStatus queries the agent for live container statuses and labels for a project.
+func GetStatus(ctx context.Context, cmd protocol.GetStatusCommand) protocol.CommandResult {
+	log.Printf("[executor] get_status start project=%s command=%s", cmd.ProjectName, cmd.CommandID)
+
+	cli, err := docker.NewClient()
+	if err != nil {
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
+	}
+	defer cli.Close()
+
+	statuses, err := compose.GetStackStatus(ctx, cli.Raw(), cmd.ProjectName)
+	if err != nil {
+		log.Printf("[executor] get_status error project=%s: %v", cmd.ProjectName, err)
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
+	}
+
+	encoded, err := json.Marshal(statuses)
+	if err != nil {
+		log.Printf("[executor] get_status json marshal error project=%s: %v", cmd.ProjectName, err)
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
+	}
+
+	log.Printf("[executor] get_status done project=%s services=%d", cmd.ProjectName, len(statuses))
+	return protocol.CommandResult{CommandID: cmd.CommandID, Output: string(encoded)}
+}
+
 // DiscoverProjects lists Docker Compose projects on this host that are not managed
 // by wireops (containers without the wireops.managed=true label). Results are grouped
 // by project name and returned as JSON-encoded DiscoverProjectsResult.
