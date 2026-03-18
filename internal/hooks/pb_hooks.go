@@ -145,6 +145,7 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 		repoDir := filepath.Join(app.DataDir(), "repositories", e.Record.Id)
 		_, err := os.Stat(filepath.Join(repoDir, ".git"))
 		e.Record.Set("is_cloned", err == nil)
+		e.Record.WithCustomData(true)
 		return e.Next()
 	})
 
@@ -175,26 +176,21 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 		} else {
 			repoID := e.Record.GetString("repository")
 			base := filepath.Join(app.DataDir(), "repositories", repoID)
-			composePath := e.Record.GetString("compose_path")
 			
+			composePath := e.Record.GetString("compose_path")
+			composeFileName := e.Record.GetString("compose_file")
+			if composeFileName == "" {
+				composeFileName = "docker-compose.yml"
+			}
+			
+			dir := base
 			if composePath != "" && composePath != "." {
 				cleaned := filepath.Clean(composePath)
 				if !filepath.IsAbs(cleaned) && !strings.HasPrefix(cleaned, "/") {
-					composeFile = filepath.Join(base, cleaned)
-				} else {
-					// Fallback to searching the dir
-					composeFile = filepath.Join(base, "docker-compose.yml")
-				}
-			} else {
-				// Default names
-				for _, name := range []string{"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"} {
-					candidate := filepath.Join(base, name)
-					if _, err := os.Stat(candidate); err == nil {
-						composeFile = candidate
-						break
-					}
+					dir = filepath.Join(base, cleaned)
 				}
 			}
+			composeFile = filepath.Join(dir, composeFileName)
 		}
 
 		if composeFile != "" {
@@ -202,6 +198,7 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 				containers := extractContainersFromCompose(b)
 				// Create a transient property that the PocketBase API will serialize
 				e.Record.Set("containers_list", containers)
+				e.Record.WithCustomData(true)
 			}
 		}
 

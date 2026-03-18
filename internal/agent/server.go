@@ -239,6 +239,9 @@ func (s *MTLSServer) Dispatch(ctx context.Context, agentID string, cmd interface
 	case protocol.InspectCommand:
 		msgType = protocol.MsgInspect
 		commandID = v.CommandID
+	case protocol.GetStatusCommand:
+		msgType = protocol.MsgGetStatus
+		commandID = v.CommandID
 	case protocol.GetResourcesCommand:
 		msgType = protocol.MsgGetResources
 		commandID = v.CommandID

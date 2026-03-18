@@ -224,9 +224,10 @@ func filterIntegrationLabels(labels map[string]string) map[string]string {
 	}
 
 	allowlist := []string{
-		"traefik.http.routers.*.rule",
+		"traefik.http.routers.*",
 		"traefik.enable",
 		"dozzle.enable",
+		"customization.image.slug",
 	}
 
 	filtered := make(map[string]string)
