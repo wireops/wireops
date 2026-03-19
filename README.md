@@ -150,7 +150,7 @@ The Traefik integration reads Traefik HTTP router rules from container labels an
 - **Category**: Reverse Proxy
 - **Label required**: `traefik.http.routers.<name>.rule=Host(...)`
 - **Config**: You can customize the default `scheme` (e.g. `https`) and `port` (e.g. `443` or blank for default) when enabling the integration.
-- **Example**: If a container has the label `traefik.http.routers.myapp.rule=Host(`myapp.example.com`)`, an action to open `https://myapp.example.com` is generated.
+- **Example**: If a container has the label ``traefik.http.routers.myapp.rule=Host(`myapp.example.com`)``, an action to open `https://myapp.example.com` is generated.
 
 **Example `docker-compose.yml` with Nginx:**
 
