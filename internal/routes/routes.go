@@ -1526,7 +1526,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			return e.JSON(http.StatusOK, map[string][]integrations.ContainerAction{})
 		}
 
-		// 3. Resolve actions
+// 3. Resolve actions
 		result := make(map[string][]integrations.ContainerAction)
 		for _, s := range statuses {
 			ctx := integrations.ContainerContext{

@@ -65,7 +65,7 @@ watch(() => form.value.repository, async (repoId) => {
     const files = await getRepoFiles(repoId)
     repoFiles.value = files || []
     if (repoFiles.value.length === 1) {
-      form.value.selected_file = repoFiles.value[0]
+      form.value.selected_file = repoFiles.value[0] || ''
     } else {
       form.value.selected_file = ''
     }
@@ -358,22 +358,17 @@ async function handlePurge(dirName: string) {
                   {{ stack.expand?.repository?.name || 'Unknown repo' }}
                 </template>
               </p>
-              <div class="hidden sm:flex items-center gap-4 mt-2 text-xs text-gray-400 dark:text-wire-200/40">
+              
+              <div class="flex items-center gap-2 mt-2 text-xs text-gray-400 dark:text-wire-200/40">
                 <UBadge v-if="stack.source_type === 'local'" label="local" variant="subtle" color="info" size="xs" />
-                <span v-if="stack.compose_file && stack.source_type !== 'local'" class="flex items-center gap-1">
-                  <UIcon name="i-lucide-file" class="w-3 h-3" />
-                  {{ stack.compose_file }}
-                </span>
-                <span v-if="stack.source_type !== 'local'" class="flex items-center gap-1">
-                  <UIcon name="i-lucide-timer" class="w-3 h-3" />
-                  {{ stack.poll_interval || 60 }}s
-                </span>
-                <span v-if="stack.last_synced_at" class="flex items-center gap-1">
-                  <UIcon name="i-lucide-clock" class="w-3 h-3" />
-                  {{ new Date(stack.last_synced_at).toLocaleString() }}
-                </span>
               </div>
             </NuxtLink>
+            
+            <div class="px-4">
+              <div v-if="stack.containers_list?.length" class="mt-3 sm:mt-0">
+                <StackContainersList :containers="stack.containers_list" />
+              </div>
+            </div>
             <div class="ml-2 border-l border-gray-200 dark:border-carbon-700 pl-4 flex items-center gap-1">
               <UTooltip text="Sync stack">
                 <UButton icon="i-lucide-refresh-cw" variant="ghost" size="xs" @click.stop="sync(stack.id)" />

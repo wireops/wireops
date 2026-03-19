@@ -5,7 +5,7 @@ const route = useRoute()
 const { $pb } = useNuxtApp()
 const { subscribe } = useRealtime()
 const { copy } = useCopy()
-const { triggerSync, triggerRollback, forceRedeploy, getServices, getStackResources, stopContainer, restartContainer, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, transferStack } = useApi()
+const { triggerSync, triggerRollback, forceRedeploy, getServices, getStackResources, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, transferStack } = useApi()
 const { getStackIntegrationActions } = useIntegrations()
 
 function formatUptime(startedAt: string): string {
@@ -148,6 +148,23 @@ async function openContainerLogs(containerId: string, containerName: string) {
   } catch {
     logsContent.value = 'Failed to load logs'
   }
+}
+
+// Container action confirmation
+const showContainerConfirmModal = ref(false)
+const containerActionState = ref<{ id: string, name: string, action: 'stop' | 'restart' | null }>({
+  id: '',
+  name: '',
+  action: null
+})
+
+function openContainerActionModal(containerId: string, containerName: string, action: 'stop' | 'restart') {
+  containerActionState.value = {
+    id: containerId,
+    name: containerName || containerId,
+    action
+  }
+  showContainerConfirmModal.value = true
 }
 
 // Repo commits for rollback
@@ -338,25 +355,6 @@ async function handleForceRedeploy() {
   }
 }
 
-// Container actions
-async function handleStopContainer(containerId: string) {
-  try {
-    await stopContainer(stackId, containerId)
-    toast.add({ title: 'Container stopped', color: 'warning' })
-    await loadServices()
-  } catch (e: any) {
-    toast.add({ title: e?.message || 'Failed to stop container', color: 'error' })
-  }
-}
-async function handleRestartContainer(containerId: string) {
-  try {
-    await restartContainer(stackId, containerId)
-    toast.add({ title: 'Container restarted', color: 'success' })
-    await loadServices()
-  } catch (e: any) {
-    toast.add({ title: e?.message || 'Failed to restart container', color: 'error' })
-  }
-}
 
 // Delete stack modal
 const showDeleteModal = ref(false)
@@ -442,6 +440,9 @@ onMounted(() => {
           {{ stack?.name }}
         </h1>
         <BadgeStatus v-if="stack" :status="effectiveStackStatus" />
+      </div>
+      <div v-if="stack?.containers_list?.length" class="mt-2 sm:mt-0 sm:ml-4 flex-1">
+        <StackContainersList :containers="stack.containers_list" />
       </div>
       <div class="grid grid-cols-3 sm:flex sm:items-center gap-2 sm:shrink-0">
         <UButton
@@ -614,7 +615,7 @@ onMounted(() => {
                       color="warning"
                       size="xs"
                       title="Stop"
-                      @click="handleStopContainer(c.container_id)"
+                      @click="openContainerActionModal(c.container_id, c.container_name, 'stop')"
                     />
                     <UButton
                       icon="i-lucide-rotate-cw"
@@ -622,7 +623,7 @@ onMounted(() => {
                       color="info"
                       size="xs"
                       title="Restart"
-                      @click="handleRestartContainer(c.container_id)"
+                      @click="openContainerActionModal(c.container_id, c.container_name, 'restart')"
                     />
                   </div>
                 </div>
@@ -1037,5 +1038,14 @@ onMounted(() => {
         />
       </template>
     </UModal>
+    <!-- Container action confirm modal -->
+    <ContainerActionModal
+      v-model:open="showContainerConfirmModal"
+      :stack-id="stackId"
+      :container-id="containerActionState.id"
+      :container-name="containerActionState.name"
+      :action="containerActionState.action"
+      @done="loadServices"
+    />
   </div>
 </template>

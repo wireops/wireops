@@ -70,6 +70,28 @@ Default credentials:
 3. **Configure**: Set environment variables, poll interval, and sync options
 4. **Deploy**: Stacks auto-sync on interval or trigger manually/via webhook
 
+### Container Image Customization
+
+You can customize the image slug (icon/identifier) displayed in the UI for your containers by adding the `customization.image.slug` label to your Docker Compose services. 
+
+These images are fetched from the [selfh.st/icons](https://selfh.st/icons/) catalog and served globally via its CDN. The slug you provide must match the identifier used in their catalog.
+
+The application automatically extracts this value from the service's `labels`, `annotations`, `deploy.labels`, or `deploy.annotations`.
+
+**Example `docker-compose.yml`:**
+
+```yaml
+services:
+  app:
+    image: my-app:latest
+    labels:
+      - "customization.image.slug=nuxtjs"
+    # Alternatively, you can use deploy labels/annotations:
+    # deploy:
+    #   labels:
+    #     - "customization.image.slug=nuxtjs"
+```
+
 ## Environment Variables
 
 - `SECRET_KEY`: 32-byte key for encrypting credentials (required)
@@ -111,6 +133,55 @@ go run main.go serve
 cd frontend
 npm install
 npm run dev
+```
+
+## Integrations
+
+Wireops supports integrations that add external platform actions and shortcuts directly into the application's container list. By analyzing specific properties or labels on your containers, wireops can expose quick actions.
+
+To use an integration, you need to enable and configure it in the application's UI settings. The integrations evaluate your active containers on-the-fly.
+
+Currently supported integrations:
+
+### Traefik
+
+The Traefik integration reads Traefik HTTP router rules from container labels and generates an "Open" action linking straight to the configured host.
+
+- **Category**: Reverse Proxy
+- **Label required**: `traefik.http.routers.<name>.rule=Host(...)`
+- **Config**: You can customize the default `scheme` (e.g. `https`) and `port` (e.g. `443` or blank for default) when enabling the integration.
+- **Example**: If a container has the label ``traefik.http.routers.myapp.rule=Host(`myapp.example.com`)``, an action to open `https://myapp.example.com` is generated.
+
+**Example `docker-compose.yml` with Nginx:**
+
+```yaml
+services:
+  web:
+    image: nginx:latest
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.my-nginx.rule=Host(`nginx.example.com`)"
+      - "traefik.http.services.my-nginx.loadbalancer.server.port=80"
+```
+
+### Dozzle
+
+The Dozzle integration replaces the basic container log viewer by redirecting the user to your centrally deployed Dozzle logging instance.
+
+- **Category**: Logging
+- **Config**: Needs the base `url` to your Dozzle instance (e.g., `https://logs.example.com`).
+- **Action generated**: A "Dozzle Logs" action is created for all containers linking to `{baseURL}/container/{containerID}`. No container-specific labels are required as long as Dozzle can access your Docker socket.
+
+**Example `docker-compose.yml` with Nginx:**
+
+```yaml
+services:
+  web:
+    image: nginx:latest
+    # No extra labels needed! Dozzle automatically 
+    # connects to the docker socket and wireops will
+    # automatically generate the action linking to
+    # https://logs.example.com/container/<nginx-container-id>
 ```
 
 ---
