@@ -7,7 +7,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/go-git/go-git/v5/plumbing/transport"
@@ -21,6 +20,7 @@ import (
 	"github.com/wireops/wireops/internal/crypto"
 	"github.com/wireops/wireops/internal/git"
 	"github.com/wireops/wireops/internal/jobscheduler"
+	"github.com/wireops/wireops/internal/safepath"
 	"github.com/wireops/wireops/internal/sync"
 )
 
@@ -167,39 +167,54 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 	})
 
 	app.OnRecordEnrich("stacks").BindFunc(func(e *core.RecordEnrichEvent) error {
-		// Determine compose file location
-		var composeFile string
-		if e.Record.GetString("source_type") == "local" {
-			if importPath := e.Record.GetString("import_path"); importPath != "" {
-				composeFile = importPath
-			}
+		var composeContent []byte
+
+		// Prefer rendered revision content stored in the record (especially for local stacks
+		// where the original file may only be present on the agent).
+		if rendered := e.Record.GetString("rendered_revision"); rendered != "" {
+			composeContent = []byte(rendered)
 		} else {
-			repoID := e.Record.GetString("repository")
-			base := filepath.Join(app.DataDir(), "repositories", repoID)
-			
-			composePath := e.Record.GetString("compose_path")
-			composeFileName := e.Record.GetString("compose_file")
-			if composeFileName == "" {
-				composeFileName = "docker-compose.yml"
+			var composeFile string
+			if e.Record.GetString("source_type") == "local" {
+				if importPath := e.Record.GetString("import_path"); importPath != "" {
+					composeFile = importPath
+				}
+			} else {
+				repoID := e.Record.GetString("repository")
+				base := filepath.Join(app.DataDir(), "repositories", repoID)
+
+				composePath := e.Record.GetString("compose_path")
+				composeFileName := e.Record.GetString("compose_file")
+
+				// Validate compose_path and compose_file to prevent traversal
+				if err := safepath.ValidateComposePath(composePath); err != nil {
+					composePath = "" // Fallback to root
+				}
+				if err := safepath.ValidateComposeFile(composeFileName); err != nil {
+					composeFileName = "docker-compose.yml" // Fallback to default
+				} else if composeFileName == "" {
+					composeFileName = "docker-compose.yml"
+				}
+
+				dir := base
+				if composePath != "" && composePath != "." {
+					dir = filepath.Join(base, filepath.Clean(composePath))
+				}
+				composeFile = filepath.Join(dir, composeFileName)
 			}
-			
-			dir := base
-			if composePath != "" && composePath != "." {
-				cleaned := filepath.Clean(composePath)
-				if !filepath.IsAbs(cleaned) && !strings.HasPrefix(cleaned, "/") {
-					dir = filepath.Join(base, cleaned)
+
+			if composeFile != "" {
+				if b, err := os.ReadFile(composeFile); err == nil {
+					composeContent = b
 				}
 			}
-			composeFile = filepath.Join(dir, composeFileName)
 		}
 
-		if composeFile != "" {
-			if b, err := os.ReadFile(composeFile); err == nil {
-				containers := extractContainersFromCompose(b)
-				// Create a transient property that the PocketBase API will serialize
-				e.Record.Set("containers_list", containers)
-				e.Record.WithCustomData(true)
-			}
+		if len(composeContent) > 0 {
+			containers := extractContainersFromCompose(composeContent)
+			// Create a transient property that the PocketBase API will serialize
+			e.Record.Set("containers_list", containers)
+			e.Record.WithCustomData(true)
 		}
 
 		return e.Next()
