@@ -94,11 +94,45 @@ services:
 
 ## Environment Variables
 
-- `SECRET_KEY`: 32-byte key for encrypting credentials (required)
-- `APP_URL`: Public URL of the application for CORS, webhooks, and image URLs (default: `http://localhost:8090`)
-- `PB_DATA_DIR`: PocketBase data directory (default: `./pb_data`)
-- `REPOS_WORKSPACE`: Directory for cloned repositories (default: `./repos`)
-- `PORT`: Port to bind the server (default: `8090`)
+### Server
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `SECRET_KEY` | **Yes** | — | 32-byte AES key for encrypting credentials and secrets at rest. Generate with `openssl rand -hex 32` |
+| `APP_URL` | No | `http://localhost:8090` | Base URL used for CORS, webhook URLs, and emails |
+| `PB_DATA_DIR` | No | `./pb_data` | PocketBase data directory (SQLite database, uploads) |
+| `REPOS_WORKSPACE` | No | `./repos` | Directory where Git repositories are cloned |
+| `STACKS_STORAGE_PATH` | No | `{PB_DATA_DIR}/stacks` | Directory for rendered compose revision files |
+| `WIREOPS_PKI_DIR` | No | `./pki_data` | Directory for CA and server TLS certificates |
+| `WIREOPS_DISABLE_LOCAL_WORKER` | No | `false` | Set to `true` to disable the embedded (local) worker |
+| `WIREOPS_WORKER_TAGS` | No | — | Comma-separated tags for the embedded worker (used for job routing) |
+| `WIREOPS_HEARTBEAT_INTERVAL` | No | `30` | Heartbeat interval in seconds. Remote worker read deadline is 3x this value |
+| `DOCKER_HOST` | No | `/var/run/docker.sock` | Docker Engine API host for the embedded worker |
+| `ALLOWED_PRIVATE_IP_RANGES` | No | — | Comma-separated CIDR ranges allowed for SSH host key scanning |
+
+#### SMTP (optional)
+
+| Variable | Default | Description |
+|---|---|---|
+| `SMTP_HOST` | — | SMTP server host. When set, enables PocketBase email delivery |
+| `SMTP_PORT` | `587` | SMTP server port |
+| `SMTP_USERNAME` | — | SMTP authentication username |
+| `SMTP_PASSWORD` | — | SMTP authentication password |
+| `SMTP_SENDER` | — | Sender email address |
+| `SMTP_TLS` | `false` | Set to `true` to enable TLS for SMTP |
+
+### Worker
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `WIREOPS_SERVER` | **Yes** | — | HTTP URL of the wireops server (used for initial bootstrap) |
+| `WIREOPS_BOOTSTRAP_TOKEN` | **Yes** (first run) | — | One-time seat token for PKI bootstrap. Only required when no certificates exist yet |
+| `WIREOPS_MTLS_SERVER` | No | Same as `WIREOPS_SERVER` | HTTPS URL for mTLS connections (port 8443). Set when the mTLS listener is on a different address |
+| `WIREOPS_WORKER_PKI_DIR` | No | `./worker_pki` | Directory where worker certificates (CA cert, worker cert, worker key) are stored |
+| `HOSTNAME` | No | System hostname | Worker identifier sent during registration |
+| `WIREOPS_WORKER_TAGS` | No | — | Comma-separated tags for job routing (e.g. `gpu,us-east`) |
+| `WIREOPS_CERT_RENEWAL_DAYS` | No | `30` | Days before certificate expiry at which the worker triggers auto-renewal |
+| `WIREOPS_HEARTBEAT_INTERVAL` | No | `30` | Interval in seconds between heartbeats sent to the server |
 
 ### APP_URL Configuration
 

@@ -130,6 +130,15 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 		if err == nil && len(records) > 0 {
 			return fmt.Errorf("cannot delete repository because it has %d associated stack(s)", len(records))
 		}
+		keys, err := app.FindAllRecords("repository_keys", dbx.HashExp{"repository": e.Record.Id})
+		if err != nil {
+			return fmt.Errorf("failed to list repository_keys for repository %s: %w", e.Record.Id, err)
+		}
+		for _, k := range keys {
+			if err := app.Delete(k); err != nil {
+				return fmt.Errorf("failed to delete repository_key %s: %w", k.Id, err)
+			}
+		}
 		return e.Next()
 	})
 
@@ -170,7 +179,7 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 		var composeContent []byte
 
 		// Prefer rendered revision content stored in the record (especially for local stacks
-		// where the original file may only be present on the agent).
+		// where the original file may only be present on the worker).
 		if rendered := e.Record.GetString("rendered_revision"); rendered != "" {
 			composeContent = []byte(rendered)
 		} else {

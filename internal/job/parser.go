@@ -82,6 +82,20 @@ func ParseJobFile(repoWorkspace, repoID, filePath string) (*Definition, error) {
 	return &def, nil
 }
 
+// IsJobFile reports whether data looks like a job.yaml by requiring
+// non-empty "title", "image", and "cron" fields at the top level.
+func IsJobFile(data []byte) bool {
+	var doc struct {
+		Title string `yaml:"title"`
+		Image string `yaml:"image"`
+		Cron  string `yaml:"cron"`
+	}
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return false
+	}
+	return doc.Title != "" && doc.Image != "" && doc.Cron != ""
+}
+
 func (d *Definition) validate() error {
 	if d.Title == "" {
 		return fmt.Errorf("job.yaml: title is required")

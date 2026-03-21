@@ -95,6 +95,10 @@ export function useApi() {
     customGet<{ sha: string; message: string; author: string; date: string }[]>(`/api/custom/repositories/${repoId}/commits`)
   const getRepoFiles = (repoId: string) =>
     customGet<string[]>(`/api/custom/repositories/${repoId}/files`)
+  const getStackFiles = (repoId: string) =>
+    customGet<string[]>(`/api/custom/repositories/${repoId}/stack-files`)
+  const getJobFiles = (repoId: string) =>
+    customGet<string[]>(`/api/custom/repositories/${repoId}/job-files`)
   const testCredentials = (body: any) => customPost('/api/custom/credentials/test', body)
   const keyscan = (host: string, port = 22) => customPost('/api/custom/credentials/keyscan', { host, port })
   const listOrphans = () => customGet<{ dir_name: string; compose_file: string; has_compose: boolean }[]>('/api/custom/orphans')
@@ -135,10 +139,10 @@ export function useApi() {
     customPost('/api/custom/sync-events-webhook/test', body)
 
   type DiscoveredProject = { project_name: string; compose_path: string; services: string[] }
-  const discoverProjects = (agentId: string) =>
-    customGet<DiscoveredProject[]>(`/api/custom/stacks/import/discover?agent=${agentId}`)
+  const discoverProjects = (workerId: string) =>
+    customGet<DiscoveredProject[]>(`/api/custom/stacks/import/discover?worker=${workerId}`)
 
-  type ImportStackBody = { name: string; agent_id: string; import_path: string; recreate_volumes: boolean }
+  type ImportStackBody = { name: string; worker_id: string; import_path: string; recreate_volumes: boolean }
   const importStack = (body: ImportStackBody) =>
     customPost<{ id: string; status: string }>('/api/custom/stacks/import', body)
 
@@ -174,14 +178,17 @@ export function useApi() {
   const getJobDefinition = (jobId: string) =>
     customGet<JobDefinition>(`/api/custom/jobs/${jobId}/definition`)
 
-  const getAgents = () => customGet<{ id: string; hostname: string; fingerprint: string; status: string; last_seen: string; health_history: { status: string, timestamp: string }[]; tags: string[] }[]>('/api/custom/agents')
-  const createAgentSeat = () => customPost<{ seat: string }>('/api/custom/agent/seat')
-  const revokeAgent = (id: string) => customPost(`/api/custom/agents/${id}/revoke`)
-  const transferStack = (stackId: string, targetAgentId: string) =>
-    customPost(`/api/custom/stacks/${stackId}/transfer`, { target_agent_id: targetAgentId })
-  type CertDetails = { issuer: string; subject: string; expiration_date: string; fingerprint: string }
+  const getWorkers = () => customGet<{ id: string; hostname: string; fingerprint: string; status: string; last_seen: string; health_history: { status: string, timestamp: string }[]; tags: string[]; cert_not_after: string; cert_status: string }[]>('/api/custom/workers')
+  const createWorkerSeat = () => customPost<{ seat: string }>('/api/custom/worker/seat')
+  const revokeWorker = (id: string) => customPost(`/api/custom/workers/${id}/revoke`)
+  const transferStack = (stackId: string, targetWorkerId: string) =>
+    customPost(`/api/custom/stacks/${stackId}/transfer`, { target_worker_id: targetWorkerId })
+  type CertDetails = { issuer: string; subject: string; expiration_date: string; fingerprint: string; status: string }
   type PKIDetails = { ca: CertDetails; server: CertDetails }
   const getPKIDetails = () => customGet<PKIDetails>('/api/custom/settings/pki')
+  const renewServerCert = () => customPost('/api/custom/pki/renew-server')
+  const renewWorkerCert = (id: string) => customPost(`/api/custom/workers/${id}/renew-cert`)
+  const forceRebootstrapWorker = (id: string) => customPost(`/api/custom/workers/${id}/force-rebootstrap`)
 
-  return { triggerSync, triggerRollback, forceRedeploy, getServices, getStackResources, stopContainer, restartContainer, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, getRepoFiles, testCredentials, keyscan, listOrphans, purgeOrphan, getSystemInfo, customPost, customGet, customPut, customPatch, customDelete, getSyncEventsWebhook, setSyncEventsWebhook, setNotificationsEnabled, deleteSyncEventsWebhook, testSyncEventsWebhook, getAgents, createAgentSeat, revokeAgent, getPKIDetails, transferStack, discoverProjects, importStack, listJobs, triggerJobRun, cancelJobRun, deleteJobRun, getJobDefinition }
+  return { triggerSync, triggerRollback, forceRedeploy, getServices, getStackResources, stopContainer, restartContainer, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, getRepoFiles, getStackFiles, getJobFiles, testCredentials, keyscan, listOrphans, purgeOrphan, getSystemInfo, customPost, customGet, customPut, customPatch, customDelete, getSyncEventsWebhook, setSyncEventsWebhook, setNotificationsEnabled, deleteSyncEventsWebhook, testSyncEventsWebhook, getWorkers, createWorkerSeat, revokeWorker, getPKIDetails, renewServerCert, renewWorkerCert, forceRebootstrapWorker, transferStack, discoverProjects, importStack, listJobs, triggerJobRun, cancelJobRun, deleteJobRun, getJobDefinition }
 }

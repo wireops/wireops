@@ -25,7 +25,7 @@ type Scheduler struct {
 	rootCancel context.CancelFunc
 }
 
-func NewScheduler(app core.App, dockerClient *docker.Client, dispatcher AgentDispatcher) *Scheduler {
+func NewScheduler(app core.App, dockerClient *docker.Client, dispatcher WorkerDispatcher) *Scheduler {
 	notifier := notify.New(app)
 	rootCtx, rootCancel := context.WithCancel(context.Background())
 	return &Scheduler{
@@ -120,18 +120,18 @@ func (s *Scheduler) TriggerForceRedeploy(stackID string, recreateContainers, rec
 	})
 }
 
-func (s *Scheduler) TriggerTransfer(stackID, targetAgentID string) {
+func (s *Scheduler) TriggerTransfer(stackID, targetWorkerID string) {
 	ctx := s.rootCtx
 	go s.safeRun(ctx, fmt.Sprintf("transfer[%s]", stackID), func() error {
-		return s.reconciler.TransferStack(ctx, stackID, targetAgentID)
+		return s.reconciler.TransferStack(ctx, stackID, targetWorkerID)
 	})
 }
 
-// TriggerPendingReconciles finds any pending reconnects for the given agent and triggers
+// TriggerPendingReconciles finds any pending reconnects for the given worker and triggers
 // them, keeping only the most recent event per stack.
-func (s *Scheduler) TriggerPendingReconciles(agentID string) {
+func (s *Scheduler) TriggerPendingReconciles(workerID string) {
 	ctx := s.rootCtx
-	go s.safeRun(ctx, fmt.Sprintf("pending-reconciles[agent=%s]", agentID), func() error {
+	go s.safeRun(ctx, fmt.Sprintf("pending-reconciles[worker=%s]", workerID), func() error {
 		type pendingEvent struct {
 			Record  *core.Record
 			Trigger string
@@ -147,7 +147,7 @@ func (s *Scheduler) TriggerPendingReconciles(agentID string) {
 		for _, rec := range records {
 			stackID := rec.GetString("stack")
 			stackRec, err := s.app.FindRecordById("stacks", stackID)
-			if err != nil || stackRec.GetString("agent") != agentID {
+			if err != nil || stackRec.GetString("worker") != workerID {
 				continue
 			}
 
@@ -167,12 +167,12 @@ func (s *Scheduler) TriggerPendingReconciles(agentID string) {
 		}
 
 		if len(stackEvents) > 0 {
-			log.Printf("[scheduler] found %d pending reconciles for agent %s", len(stackEvents), agentID)
+			log.Printf("[scheduler] found %d pending reconciles for worker %s", len(stackEvents), workerID)
 		}
 
 		queueTotal := len(stackEvents)
 		for stackID, event := range stackEvents {
-			log.Printf("[scheduler] triggering pending %s reconcile for stack %s upon agent %s reconnect (queue total: %d)", event.Trigger, stackID, agentID, queueTotal)
+			log.Printf("[scheduler] triggering pending %s reconcile for stack %s upon worker %s reconnect (queue total: %d)", event.Trigger, stackID, workerID, queueTotal)
 			_ = s.app.Delete(event.Record)
 			s.TriggerSync(stackID, event.Trigger, queueTotal)
 		}

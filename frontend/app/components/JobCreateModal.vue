@@ -1,6 +1,6 @@
 <script setup lang="ts">
 const { $pb } = useNuxtApp()
-const { getRepoFiles } = useApi()
+const { getJobFiles } = useApi()
 const toast = useToast()
 
 const props = defineProps<{
@@ -38,7 +38,7 @@ watch(() => form.value.repository, async (repoId) => {
 
   loadingFiles.value = true
   try {
-    repoFiles.value = (await getRepoFiles(repoId)) || []
+    repoFiles.value = (await getJobFiles(repoId)) || []
   } catch {
     toast.add({ title: 'Failed to fetch repository files', color: 'error' })
   } finally {
@@ -97,7 +97,7 @@ async function submit() {
       </UFormField>
 
       <!-- Job file -->
-      <UFormField label="Job file" :error="repoFiles.length === 0 && !!form.repository && !loadingFiles ? 'No .yaml files found in this repository' : undefined" required>
+      <UFormField label="Job file" :error="repoFiles.length === 0 && !!form.repository && !loadingFiles ? 'No job.yaml files found in this repository' : undefined" required>
         <div class="flex items-center gap-2">
           <USelect
             v-model="form.job_file"

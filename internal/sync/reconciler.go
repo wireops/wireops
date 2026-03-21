@@ -27,14 +27,14 @@ import (
 	"github.com/wireops/wireops/internal/safepath"
 )
 
-// AgentDispatcher defines how the reconciler sends compose commands to agents.
+// WorkerDispatcher defines how the reconciler sends compose commands to workers.
 // The MTLSServer implements this interface.
-type AgentDispatcher interface {
-	Dispatch(ctx context.Context, agentID string, cmd interface{}) (protocol.CommandResult, error)
-	IsEmbedded(agentID string) bool
-	// IsConnected reports whether the agent currently has an active WebSocket connection.
-	// Always returns true for the embedded agent.
-	IsConnected(agentID string) bool
+type WorkerDispatcher interface {
+	Dispatch(ctx context.Context, workerID string, cmd interface{}) (protocol.CommandResult, error)
+	IsEmbedded(workerID string) bool
+	// IsConnected reports whether the worker currently has an active WebSocket connection.
+	// Always returns true for the embedded worker.
+	IsConnected(workerID string) bool
 }
 
 type Reconciler struct {
@@ -44,10 +44,10 @@ type Reconciler struct {
 	secretKey    []byte
 	notifier     *notify.Notifier
 	renderer     *Renderer
-	dispatcher   AgentDispatcher
+	dispatcher   WorkerDispatcher
 }
 
-func NewReconciler(app core.App, dockerClient *docker.Client, notifier *notify.Notifier, dispatcher AgentDispatcher) *Reconciler {
+func NewReconciler(app core.App, dockerClient *docker.Client, notifier *notify.Notifier, dispatcher WorkerDispatcher) *Reconciler {
 	key := []byte(os.Getenv("SECRET_KEY"))
 	return &Reconciler{
 		app:          app,
@@ -59,17 +59,17 @@ func NewReconciler(app core.App, dockerClient *docker.Client, notifier *notify.N
 	}
 }
 
-// resolveAgent returns the agent record for a stack, plus whether it's embedded.
-func (r *Reconciler) resolveAgent(stack *core.Record) (agentID, fingerprint string, err error) {
-	agentID = stack.GetString("agent")
-	if agentID == "" {
+// resolveWorker returns the worker record for a stack, plus whether it's embedded.
+func (r *Reconciler) resolveWorker(stack *core.Record) (workerID, fingerprint string, err error) {
+	workerID = stack.GetString("worker")
+	if workerID == "" {
 		return "", "embedded", nil
 	}
-	agent, err := r.app.FindRecordById("agents", agentID)
+	worker, err := r.app.FindRecordById("workers", workerID)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to find agent %s: %w", agentID, err)
+		return "", "", fmt.Errorf("failed to find worker %s: %w", workerID, err)
 	}
-	return agentID, agent.GetString("fingerprint"), nil
+	return workerID, worker.GetString("fingerprint"), nil
 }
 
 // ReconcileStack fetches the repo, checks for changes, and deploys the compose stack.
@@ -151,33 +151,33 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	repo.Set("status", "connected")
 	_ = r.app.Save(repo)
 
-	agentID, agentFingerprint, err := r.resolveAgent(stack)
+	workerID, workerFingerprint, err := r.resolveWorker(stack)
 	if err != nil {
-		errMsg := fmt.Sprintf("agent resolution failed: %v", err)
+		errMsg := fmt.Sprintf("worker resolution failed: %v", err)
 		r.logFailure(stackID, trigger, "", errMsg)
 		r.markError(stack, "stacks")
 		return fmt.Errorf("%s", errMsg)
 	}
-	isOnline := agentFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsConnected(agentID)
+	isOnline := workerFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsConnected(workerID)
 
 	neverSynced := stack.GetString("last_synced_at") == ""
 	repoChanged := gitpkg.HasChanged(remoteSHA, lastSHA)
 
 	if !isOnline {
 		if repoChanged || trigger != "cron" {
-			log.Printf("[reconciler] agent %s is offline, queueing pending reconcile for stack %s", agentID, stackID)
+			log.Printf("[reconciler] worker %s is offline, queueing pending reconcile for stack %s", workerID, stackID)
 			r.queuePendingReconcile(stackID, trigger, remoteSHA)
 			stack.Set("status", prevStatus)
 			_ = r.app.Save(stack)
 			return nil
 		}
-		// Agent offline but no changes and it's a cron, just skip quietly.
+		// Worker offline but no changes and it's a cron, just skip quietly.
 		stack.Set("status", prevStatus)
 		_ = r.app.Save(stack)
 		return nil
 	}
 
-	// Agent is online. Fetch the currently running commit SHA from the agent.
+	// Worker is online. Fetch the currently running commit SHA from the worker.
 	// This is used as a fast-path skip for the cron trigger: if the container is
 	// already running the expected commit AND the repo hasn't changed, we can skip
 	// without even running the renderer. However, this check can fail if docker
@@ -185,7 +185,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	// leaving a stale commit_sha label. The renderer-based skip below handles that.
 	containerSHA := ""
 	if !neverSynced {
-		containerSHA = r.inspectStackCommit(ctx, agentID, agentFingerprint, stackID)
+		containerSHA = r.inspectStackCommit(ctx, workerID, workerFingerprint, stackID)
 	}
 
 	if trigger == "cron" && !neverSynced && !repoChanged && containerSHA == remoteSHA {
@@ -241,7 +241,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	prevChecksum := stack.GetString("checksum")
 	prevVersion := stack.GetInt("current_version")
 
-	renderRes, err := r.renderer.GenerateRevision(ctx, stack, repo, workDir, composeFile, envVars, remoteSHA, false, agentFingerprint)
+	renderRes, err := r.renderer.GenerateRevision(ctx, stack, repo, workDir, composeFile, envVars, remoteSHA, false, workerFingerprint)
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to generate label revision: %v", err)
 		r.logFailure(stackID, trigger, remoteSHA, errMsg)
@@ -284,7 +284,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	maxRetries := 3
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		start := time.Now()
-		if agentFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsEmbedded(agentID) {
+		if workerFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsEmbedded(workerID) {
 			// Embedded: run compose directly on the server host
 			output, runErr = compose.RunUp(ctx, compose.RunOptions{
 				WorkDir:     filepath.Dir(renderedFilePath),
@@ -292,7 +292,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 				EnvVars:     envVars,
 			})
 		} else {
-			// Remote agent: send command over WebSocket
+			// Remote worker: send command over WebSocket
 			composeContent, readErr := os.ReadFile(renderedFilePath)
 			if readErr != nil {
 				errMsg := fmt.Sprintf("failed to read rendered compose file: %v", readErr)
@@ -300,7 +300,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 				r.markError(stack, "stacks")
 				return fmt.Errorf("%s", errMsg)
 			}
-			result, dispatchErr := r.dispatcher.Dispatch(ctx, agentID, protocol.DeployCommand{
+			result, dispatchErr := r.dispatcher.Dispatch(ctx, workerID, protocol.DeployCommand{
 				CommandID:      syncLog.Id,
 				StackID:        stackID,
 				CommitSHA:      remoteSHA,
@@ -370,7 +370,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	stack.Set("status", "active")
 	_ = r.app.Save(stack)
 
-	if agentFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsEmbedded(agentID) {
+	if workerFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsEmbedded(workerID) {
 		r.refreshServiceStatus(ctx, stackID, workDir)
 	}
 
@@ -459,7 +459,7 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 		log.Printf("[reconciler] failed to load env vars for stack %s: %v", stackID, envErr)
 	}
 
-	agentID, agentFingerprint, err := r.resolveAgent(stack)
+	workerID, workerFingerprint, err := r.resolveWorker(stack)
 	if err != nil {
 		errMsg := fmt.Sprintf("agent resolution failed: %v", err)
 		r.logFailure(stackID, "manual", commitSHA, errMsg)
@@ -467,7 +467,7 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 		return fmt.Errorf("%s", errMsg)
 	}
 
-	renderRes, err := r.renderer.GenerateRevision(ctx, stack, repo, workDir, composeFile, envVars, commitSHA, true, agentFingerprint)
+	renderRes, err := r.renderer.GenerateRevision(ctx, stack, repo, workDir, composeFile, envVars, commitSHA, true, workerFingerprint)
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to generate label revision on rollback: %v", err)
 		r.logFailure(stackID, "manual", commitSHA, errMsg)
@@ -493,7 +493,7 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 	var output string
 	var runErr error
 
-	if agentFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsEmbedded(agentID) {
+	if workerFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsEmbedded(workerID) {
 		output, runErr = compose.RunUp(ctx, compose.RunOptions{
 			WorkDir:     filepath.Dir(renderedFilePath),
 			ComposeFile: renderRes.RenderedPath,
@@ -511,7 +511,7 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 		if syncLog != nil {
 			cmdID = syncLog.Id
 		}
-		result, dispatchErr := r.dispatcher.Dispatch(ctx, agentID, protocol.DeployCommand{
+		result, dispatchErr := r.dispatcher.Dispatch(ctx, workerID, protocol.DeployCommand{
 			CommandID:      cmdID,
 			StackID:        stackID,
 			CommitSHA:      commitSHA,
@@ -570,7 +570,7 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 	stack.Set("status", "paused")
 	_ = r.app.Save(stack)
 
-	if agentFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsEmbedded(agentID) {
+	if workerFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsEmbedded(workerID) {
 		r.refreshServiceStatus(ctx, stackID, workDir)
 	}
 
@@ -620,7 +620,7 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 		log.Printf("[reconciler] failed to load env vars for stack %s: %v", stackID, envErr)
 	}
 
-	agentID, agentFingerprint, err := r.resolveAgent(stack)
+	workerID, workerFingerprint, err := r.resolveWorker(stack)
 	if err != nil {
 		errMsg := fmt.Sprintf("agent resolution failed: %v", err)
 		r.logFailure(stackID, "redeploy", lastSHA, errMsg)
@@ -628,7 +628,7 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 		return fmt.Errorf("%s", errMsg)
 	}
 
-	renderRes, err := r.renderer.GenerateRevision(ctx, stack, repo, workDir, composeFile, envVars, lastSHA, true, agentFingerprint)
+	renderRes, err := r.renderer.GenerateRevision(ctx, stack, repo, workDir, composeFile, envVars, lastSHA, true, workerFingerprint)
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to generate label revision on redeploy: %v", err)
 		r.logFailure(stackID, "redeploy", lastSHA, errMsg)
@@ -654,7 +654,7 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 	var output string
 	var runErr error
 
-	if agentFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsEmbedded(agentID) {
+	if workerFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsEmbedded(workerID) {
 		output, runErr = compose.RunForceUp(ctx, compose.ForceUpOptions{
 			RunOptions: compose.RunOptions{
 				WorkDir:     filepath.Dir(renderedFilePath),
@@ -677,7 +677,7 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 		if syncLog != nil {
 			cmdID = syncLog.Id
 		}
-		result, dispatchErr := r.dispatcher.Dispatch(ctx, agentID, protocol.RedeployCommand{
+		result, dispatchErr := r.dispatcher.Dispatch(ctx, workerID, protocol.RedeployCommand{
 			DeployCommand: protocol.DeployCommand{
 				CommandID:      cmdID,
 				StackID:        stackID,
@@ -737,7 +737,7 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 	stack.Set("status", "paused")
 	_ = r.app.Save(stack)
 
-	if agentFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsEmbedded(agentID) {
+	if workerFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsEmbedded(workerID) {
 		r.refreshServiceStatus(ctx, stackID, workDir)
 	}
 
@@ -775,16 +775,16 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 		return fmt.Errorf("%s", errMsg)
 	}
 
-	agentID, agentFingerprint, err := r.resolveAgent(stack)
+	workerID, workerFingerprint, err := r.resolveWorker(stack)
 	if err != nil {
-		errMsg := fmt.Sprintf("agent resolution failed: %v", err)
+		errMsg := fmt.Sprintf("worker resolution failed: %v", err)
 		r.logFailure(stackID, trigger, "", errMsg)
 		r.markError(stack, "stacks")
 		return fmt.Errorf("%s", errMsg)
 	}
-	isOnline := agentFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsConnected(agentID)
+	isOnline := workerFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsConnected(workerID)
 	if !isOnline {
-		log.Printf("[reconciler] agent %s is offline, queueing pending reconcile for local stack %s", agentID, stackID)
+		log.Printf("[reconciler] worker %s is offline, queueing pending reconcile for local stack %s", workerID, stackID)
 		r.queuePendingReconcile(stackID, trigger, "")
 		return nil
 	}
@@ -797,7 +797,7 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 	var composeContent []byte
 	var workDir, composeFile string
 
-	isEmbedded := agentFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsEmbedded(agentID)
+	isEmbedded := workerFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsEmbedded(workerID)
 	if isEmbedded {
 		data, err := os.ReadFile(importPath)
 		if err != nil {
@@ -811,7 +811,7 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 		composeFile = filepath.Base(importPath)
 	} else {
 		cmdID := fmt.Sprintf("readfile-%s", stackID)
-		result, dispatchErr := r.dispatcher.Dispatch(ctx, agentID, protocol.ReadFileCommand{
+		result, dispatchErr := r.dispatcher.Dispatch(ctx, workerID, protocol.ReadFileCommand{
 			CommandID: cmdID,
 			Path:      importPath,
 		})
@@ -866,7 +866,7 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 		log.Printf("[reconciler] failed to load env vars for local stack %s: %v", stackID, envErr)
 	}
 
-	renderRes, err := r.renderer.GenerateRevision(ctx, stack, nil, workDir, composeFile, envVars, "imported", false, agentFingerprint)
+	renderRes, err := r.renderer.GenerateRevision(ctx, stack, nil, workDir, composeFile, envVars, "imported", false, workerFingerprint)
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to generate label revision: %v", err)
 		r.logFailure(stackID, trigger, "", errMsg)
@@ -916,7 +916,7 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 		b64 := base64.StdEncoding.EncodeToString(composeBytes)
 
 		if recreateContainers {
-			result, dispatchErr := r.dispatcher.Dispatch(ctx, agentID, protocol.RedeployCommand{
+			result, dispatchErr := r.dispatcher.Dispatch(ctx, workerID, protocol.RedeployCommand{
 				DeployCommand: protocol.DeployCommand{
 					CommandID:      syncLog.Id,
 					StackID:        stackID,
@@ -936,7 +936,7 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 				runErr = dispatchErr
 			}
 		} else {
-			result, dispatchErr := r.dispatcher.Dispatch(ctx, agentID, protocol.DeployCommand{
+			result, dispatchErr := r.dispatcher.Dispatch(ctx, workerID, protocol.DeployCommand{
 				CommandID:      syncLog.Id,
 				StackID:        stackID,
 				CommitSHA:      "imported",
@@ -1014,8 +1014,8 @@ func (r *Reconciler) queuePendingReconcile(stackID, trigger, commitSHA string) {
 	}
 }
 
-func (r *Reconciler) inspectStackCommit(ctx context.Context, agentID, agentFingerprint, stackID string) string {
-	if agentFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsEmbedded(agentID) {
+func (r *Reconciler) inspectStackCommit(ctx context.Context, workerID, workerFingerprint, stackID string) string {
+	if workerFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsEmbedded(workerID) {
 		if r.dockerClient != nil {
 			sha, err := r.dockerClient.GetRunningStackCommit(ctx, stackID)
 			if err != nil {
@@ -1027,7 +1027,7 @@ func (r *Reconciler) inspectStackCommit(ctx context.Context, agentID, agentFinge
 		return ""
 	}
 
-	result, err := r.dispatcher.Dispatch(ctx, agentID, protocol.InspectCommand{
+	result, err := r.dispatcher.Dispatch(ctx, workerID, protocol.InspectCommand{
 		CommandID: "inspect-" + stackID + "-" + fmt.Sprint(time.Now().UnixNano()),
 		StackID:   stackID,
 	})
@@ -1243,10 +1243,10 @@ func (r *Reconciler) refreshServiceStatus(_ context.Context, stackID, workDir st
 	}
 }
 
-// TransferStack provisions the stack on targetAgentID, then tears it down on the
+// TransferStack provisions the stack on targetWorkerID, then tears it down on the
 // original agent, and updates the stack record to point to the new agent.
 // Data (volumes, container state) is NOT preserved — this is by design for v1.
-func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetAgentID string) error {
+func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID string) error {
 	mu := r.stackMutex(stackID)
 	if !mu.TryLock() {
 		log.Printf("[transfer] stack=%s skipped: already syncing", stackID)
@@ -1259,12 +1259,12 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetAgentID s
 		return fmt.Errorf("stack not found: %w", err)
 	}
 
-	sourceAgentID := stack.GetString("agent")
-	if sourceAgentID == targetAgentID {
-		return fmt.Errorf("target agent is the same as the current agent")
+	sourceWorkerID := stack.GetString("worker")
+	if sourceWorkerID == targetWorkerID {
+		return fmt.Errorf("target worker is the same as the current worker")
 	}
 
-	log.Printf("[transfer] START stack=%s source_agent=%s target_agent=%s", stackID, sourceAgentID, targetAgentID)
+	log.Printf("[transfer] START stack=%s source_worker=%s target_worker=%s", stackID, sourceWorkerID, targetWorkerID)
 
 	// Read the current rendered compose file for both deploy and teardown.
 	var composeContent []byte
@@ -1290,26 +1290,26 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetAgentID s
 
 	composeB64 := base64.StdEncoding.EncodeToString(composeContent)
 
-	// Resolve agent hostnames and fingerprints for human-friendly sync log messages.
-	sourceHostname := sourceAgentID
+	// Resolve worker hostnames and fingerprints for human-friendly sync log messages.
+	sourceHostname := sourceWorkerID
 	sourceFingerprint := ""
-	if sourceAgentID == "" {
+	if sourceWorkerID == "" {
 		sourceFingerprint = "embedded"
 		sourceHostname = "Server (Embedded)"
-	} else if a, err := r.app.FindRecordById("agents", sourceAgentID); err != nil {
-		return fmt.Errorf("failed to find source agent %s: %w", sourceAgentID, err)
+	} else if a, err := r.app.FindRecordById("workers", sourceWorkerID); err != nil {
+		return fmt.Errorf("failed to find source worker %s: %w", sourceWorkerID, err)
 	} else {
 		sourceHostname = a.GetString("hostname")
 		sourceFingerprint = a.GetString("fingerprint")
 	}
 
-	targetHostname := targetAgentID
+	targetHostname := targetWorkerID
 	targetFingerprint := ""
-	if targetAgentID == "" {
+	if targetWorkerID == "" {
 		targetFingerprint = "embedded"
 		targetHostname = "Server (Embedded)"
-	} else if a, err := r.app.FindRecordById("agents", targetAgentID); err != nil {
-		return fmt.Errorf("failed to find target agent %s: %w", targetAgentID, err)
+	} else if a, err := r.app.FindRecordById("workers", targetWorkerID); err != nil {
+		return fmt.Errorf("failed to find target worker %s: %w", targetWorkerID, err)
 	} else {
 		targetHostname = a.GetString("hostname")
 		targetFingerprint = a.GetString("fingerprint")
@@ -1342,7 +1342,7 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetAgentID s
 
 	// --- Pre-flight 1: check if target agent already has a stack with this name ---
 	stackName := stack.GetString("name")
-	existingStacks, err := r.app.FindAllRecords("stacks", dbx.HashExp{"name": stackName, "agent": targetAgentID})
+	existingStacks, err := r.app.FindAllRecords("stacks", dbx.HashExp{"name": stackName, "worker": targetWorkerID})
 	if err == nil && len(existingStacks) > 0 {
 		errMsg := fmt.Sprintf("a stack named '%s' already exists on target agent %s", stackName, targetHostname)
 		log.Printf("[transfer] validation error: %s", errMsg)
@@ -1369,13 +1369,13 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetAgentID s
 	// If containers (any state) already exist for this project on the target host,
 	// we abort early to avoid conflicting volumes, networks, or port bindings.
 	var probeErrMsg string
-	if targetFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsEmbedded(targetAgentID) {
-		log.Printf("[transfer] probe: running locally for target_agent=%s stack=%s", targetAgentID, stackID)
+	if targetFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsEmbedded(targetWorkerID) {
+		log.Printf("[transfer] probe: running locally for target_agent=%s stack=%s", targetWorkerID, stackID)
 		services, _ := compose.RunPs(ctx, compose.RunOptions{
 			WorkDir:     workDir,
 			ComposeFile: composeFilePath,
 		})
-		log.Printf("[transfer] probe: target_agent=%s containers=%d services=%v", targetAgentID, len(services), services)
+		log.Printf("[transfer] probe: target_agent=%s containers=%d services=%v", targetWorkerID, len(services), services)
 		if len(services) > 0 {
 			probeErrMsg = fmt.Sprintf(
 				"target agent %s already has %d container(s) for this stack (services: %s) — "+
@@ -1385,8 +1385,8 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetAgentID s
 		}
 	} else {
 		probeID := fmt.Sprintf("probe-%s", stackID)
-		log.Printf("[transfer] probe: dispatching to target_agent=%s stack=%s", targetAgentID, stackID)
-		probeResult, probeErr := r.dispatcher.Dispatch(ctx, targetAgentID, protocol.ProbeCommand{
+		log.Printf("[transfer] probe: dispatching to target_agent=%s stack=%s", targetWorkerID, stackID)
+		probeResult, probeErr := r.dispatcher.Dispatch(ctx, targetWorkerID, protocol.ProbeCommand{
 			CommandID:      probeID,
 			StackID:        stackID,
 			ComposeFileB64: composeB64,
@@ -1394,7 +1394,7 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetAgentID s
 		if probeErr == nil && probeResult.Error == "" && probeResult.Output != "" {
 			var probe protocol.ProbeResult
 			if jsonErr := json.Unmarshal([]byte(probeResult.Output), &probe); jsonErr == nil {
-				log.Printf("[transfer] probe: target_agent=%s containers=%d services=%v", targetAgentID, probe.ContainerCount, probe.Services)
+				log.Printf("[transfer] probe: target_agent=%s containers=%d services=%v", targetWorkerID, probe.ContainerCount, probe.Services)
 				if probe.ContainerCount > 0 {
 					probeErrMsg = fmt.Sprintf(
 						"target agent %s already has %d container(s) for this stack (services: %s) — "+
@@ -1405,7 +1405,7 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetAgentID s
 			}
 		}
 		if probeErr != nil {
-			log.Printf("[transfer] probe error target_agent=%s (non-blocking): %v", targetAgentID, probeErr)
+			log.Printf("[transfer] probe error target_agent=%s (non-blocking): %v", targetWorkerID, probeErr)
 		}
 	}
 
@@ -1441,16 +1441,16 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetAgentID s
 	var deployErr error
 	var dispatchErr error
 
-	if targetFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsEmbedded(targetAgentID) {
-		log.Printf("[transfer] step 1/2: deploy running locally for target_agent=%s (%s) stack=%s", targetAgentID, targetHostname, stackID)
+	if targetFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsEmbedded(targetWorkerID) {
+		log.Printf("[transfer] step 1/2: deploy running locally for target_agent=%s (%s) stack=%s", targetWorkerID, targetHostname, stackID)
 		deployOutput, deployErr = compose.RunUp(ctx, compose.RunOptions{
 			WorkDir:     workDir,
 			ComposeFile: composeFilePath,
 			EnvVars:     envVars,
 		})
 	} else {
-		log.Printf("[transfer] step 1/2: deploy dispatching to target_agent=%s (%s) stack=%s", targetAgentID, targetHostname, stackID)
-		deployResult, dErr := r.dispatcher.Dispatch(ctx, targetAgentID, protocol.DeployCommand{
+		log.Printf("[transfer] step 1/2: deploy dispatching to target_agent=%s (%s) stack=%s", targetWorkerID, targetHostname, stackID)
+		deployResult, dErr := r.dispatcher.Dispatch(ctx, targetWorkerID, protocol.DeployCommand{
 			CommandID:      cmdID,
 			StackID:        stackID,
 			Trigger:        "transfer",
@@ -1466,38 +1466,38 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetAgentID s
 
 	if dispatchErr != nil || deployErr != nil {
 		deployErrMsg := fmt.Sprintf("%v%v", dispatchErr, deployErr)
-		log.Printf("[transfer] step 1/2: deploy error target_agent=%s elapsed=%dms: %s", targetAgentID, time.Since(start).Milliseconds(), deployErrMsg)
+		log.Printf("[transfer] step 1/2: deploy error target_agent=%s elapsed=%dms: %s", targetWorkerID, time.Since(start).Milliseconds(), deployErrMsg)
 		outputBuf.WriteString(deployOutput)
 		fmt.Fprintf(&outputBuf, "\nerror: %s\n", deployErrMsg)
 		fmt.Fprintf(&outputBuf, "\n=== Step 2/2: Cleanup on target agent (%s) ===\n", targetHostname)
 
 		// Best-effort cleanup on agent B — remove any partial containers it may have started.
-		if targetFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsEmbedded(targetAgentID) {
-			log.Printf("[transfer] step 2/2: cleanup running locally for target_agent=%s stack=%s", targetAgentID, stackID)
+		if targetFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsEmbedded(targetWorkerID) {
+			log.Printf("[transfer] step 2/2: cleanup running locally for target_agent=%s stack=%s", targetWorkerID, stackID)
 			cleanupOutput, cleanupErr := compose.RunDown(ctx, compose.RunOptions{
 				WorkDir:     workDir,
 				ComposeFile: composeFilePath,
 			})
 			if cleanupErr != nil {
-				log.Printf("[transfer] step 2/2: cleanup error target_agent=%s: %v", targetAgentID, cleanupErr)
+				log.Printf("[transfer] step 2/2: cleanup error target_agent=%s: %v", targetWorkerID, cleanupErr)
 				fmt.Fprintf(&outputBuf, "cleanup teardown failed: %v\n", cleanupErr)
 			} else {
-				log.Printf("[transfer] step 2/2: cleanup done target_agent=%s", targetAgentID)
+				log.Printf("[transfer] step 2/2: cleanup done target_agent=%s", targetWorkerID)
 				outputBuf.WriteString(cleanupOutput)
 				fmt.Fprintf(&outputBuf, "cleanup teardown succeeded.\n")
 			}
-		} else if r.dispatcher != nil && r.dispatcher.IsConnected(targetAgentID) {
-			log.Printf("[transfer] step 2/2: cleanup dispatching to target_agent=%s stack=%s", targetAgentID, stackID)
-			cleanupResult, cleanupErr := r.dispatcher.Dispatch(ctx, targetAgentID, protocol.TeardownCommand{
+		} else if r.dispatcher != nil && r.dispatcher.IsConnected(targetWorkerID) {
+			log.Printf("[transfer] step 2/2: cleanup dispatching to target_agent=%s stack=%s", targetWorkerID, stackID)
+			cleanupResult, cleanupErr := r.dispatcher.Dispatch(ctx, targetWorkerID, protocol.TeardownCommand{
 				CommandID:      fmt.Sprintf("teardown-cleanup-%s", stackID),
 				StackID:        stackID,
 				ComposeFileB64: composeB64,
 			})
 			if cleanupErr != nil || cleanupResult.Error != "" {
-				log.Printf("[transfer] step 2/2: cleanup error target_agent=%s: %v %s", targetAgentID, cleanupErr, cleanupResult.Error)
+				log.Printf("[transfer] step 2/2: cleanup error target_agent=%s: %v %s", targetWorkerID, cleanupErr, cleanupResult.Error)
 				fmt.Fprintf(&outputBuf, "cleanup teardown failed: %v %s\n", cleanupErr, cleanupResult.Error)
 			} else {
-				log.Printf("[transfer] step 2/2: cleanup done target_agent=%s", targetAgentID)
+				log.Printf("[transfer] step 2/2: cleanup done target_agent=%s", targetWorkerID)
 				outputBuf.WriteString(cleanupResult.Output)
 				fmt.Fprintf(&outputBuf, "cleanup teardown succeeded.\n")
 			}
@@ -1525,37 +1525,37 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetAgentID s
 
 	outputBuf.WriteString(deployOutput)
 	fmt.Fprintf(&outputBuf, "deploy on %s: done.\n", targetHostname)
-	log.Printf("[transfer] step 1/2: deploy done target_agent=%s elapsed=%dms", targetAgentID, time.Since(start).Milliseconds())
+	log.Printf("[transfer] step 1/2: deploy done target_agent=%s elapsed=%dms", targetWorkerID, time.Since(start).Milliseconds())
 
 	// --- Step 2: Teardown on source agent (agent A) ---
 	fmt.Fprintf(&outputBuf, "\n=== Step 2/2: Teardown on source agent (%s) ===\n", sourceHostname)
-	if sourceFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsEmbedded(sourceAgentID) {
-		log.Printf("[transfer] step 2/2: teardown running locally for source_agent=%s (%s) stack=%s", sourceAgentID, sourceHostname, stackID)
+	if sourceFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsEmbedded(sourceWorkerID) {
+		log.Printf("[transfer] step 2/2: teardown running locally for source_agent=%s (%s) stack=%s", sourceWorkerID, sourceHostname, stackID)
 		teardownOutput, teardownErr := compose.RunDown(ctx, compose.RunOptions{
 			WorkDir:     workDir,
 			ComposeFile: composeFilePath,
 		})
 		outputBuf.WriteString(teardownOutput)
 		if teardownErr != nil {
-			log.Printf("[transfer] step 2/2: teardown error source_agent=%s: %v — containers may be orphaned", sourceAgentID, teardownErr)
+			log.Printf("[transfer] step 2/2: teardown error source_agent=%s: %v — containers may be orphaned", sourceWorkerID, teardownErr)
 			fmt.Fprintf(&outputBuf, "teardown failed: %v — containers may be orphaned.\n", teardownErr)
 		} else {
-			log.Printf("[transfer] step 2/2: teardown done source_agent=%s", sourceAgentID)
+			log.Printf("[transfer] step 2/2: teardown done source_agent=%s", sourceWorkerID)
 			fmt.Fprintf(&outputBuf, "teardown on %s: done.\n", sourceHostname)
 		}
-	} else if sourceAgentID != "" && r.dispatcher.IsConnected(sourceAgentID) {
-		log.Printf("[transfer] step 2/2: teardown dispatching to source_agent=%s (%s) stack=%s", sourceAgentID, sourceHostname, stackID)
-		teardownResult, teardownErr := r.dispatcher.Dispatch(ctx, sourceAgentID, protocol.TeardownCommand{
+	} else if sourceWorkerID != "" && r.dispatcher.IsConnected(sourceWorkerID) {
+		log.Printf("[transfer] step 2/2: teardown dispatching to source_agent=%s (%s) stack=%s", sourceWorkerID, sourceHostname, stackID)
+		teardownResult, teardownErr := r.dispatcher.Dispatch(ctx, sourceWorkerID, protocol.TeardownCommand{
 			CommandID:      fmt.Sprintf("teardown-transfer-%s", stackID),
 			StackID:        stackID,
 			ComposeFileB64: composeB64,
 		})
 		outputBuf.WriteString(teardownResult.Output)
 		if teardownErr != nil || teardownResult.Error != "" {
-			log.Printf("[transfer] step 2/2: teardown error source_agent=%s: %v %s — containers may be orphaned", sourceAgentID, teardownErr, teardownResult.Error)
+			log.Printf("[transfer] step 2/2: teardown error source_agent=%s: %v %s — containers may be orphaned", sourceWorkerID, teardownErr, teardownResult.Error)
 			fmt.Fprintf(&outputBuf, "teardown failed: %v %s — containers may be orphaned.\n", teardownErr, teardownResult.Error)
 		} else {
-			log.Printf("[transfer] step 2/2: teardown done source_agent=%s", sourceAgentID)
+			log.Printf("[transfer] step 2/2: teardown done source_agent=%s", sourceWorkerID)
 			fmt.Fprintf(&outputBuf, "teardown on %s: done.\n", sourceHostname)
 		}
 	} else {
@@ -1566,12 +1566,12 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetAgentID s
 	duration := time.Since(start).Milliseconds()
 
 	// --- Step 3: Update stack record to point to the new agent ---
-	stack.Set("agent", targetAgentID)
+	stack.Set("worker", targetWorkerID)
 	stack.Set("status", "active")
 	stack.Set("last_synced_at", time.Now().UTC().Format(time.RFC3339))
 	_ = r.app.Save(stack)
 
-	if targetFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsEmbedded(targetAgentID) {
+	if targetFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsEmbedded(targetWorkerID) {
 		r.refreshServiceStatus(ctx, stackID, workDir)
 	}
 
@@ -1588,6 +1588,6 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetAgentID s
 		DurationMs: duration,
 	})
 
-	log.Printf("[transfer] DONE stack=%s source_agent=%s target_agent=%s elapsed=%dms", stackID, sourceAgentID, targetAgentID, duration)
+	log.Printf("[transfer] DONE stack=%s source_agent=%s target_agent=%s elapsed=%dms", stackID, sourceWorkerID, targetWorkerID, duration)
 	return nil
 }

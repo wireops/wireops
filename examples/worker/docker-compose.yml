@@ -1,0 +1,54 @@
+# wireops Worker — docker-compose deployment
+#
+# Requirements:
+#   - WIREOPS_SERVER:          HTTP URL of the wireops server (e.g. https://wireops.example.com)
+#   - WIREOPS_MTLS_SERVER:     mTLS server URL (e.g. https://wireops.example.com:8443)
+#   - WIREOPS_BOOTSTRAP_TOKEN: One-time token from the wireops admin panel (only needed on first run)
+#
+# Usage:
+#   First boot  → set WIREOPS_BOOTSTRAP_TOKEN and run `docker compose up -d`
+#   Subsequent  → remove WIREOPS_BOOTSTRAP_TOKEN (certs are stored in the pki volume)
+
+services:
+  wireops-worker:
+    image: ghcr.io/wireops/wireops-worker:latest
+    restart: unless-stopped
+    environment:
+      # Address of the wireops server HTTP API (used for bootstrap)
+      WIREOPS_SERVER: ${WIREOPS_SERVER}
+
+      # Address of the wireops mTLS listener (used for WebSocket command channel)
+      WIREOPS_MTLS_SERVER: ${WIREOPS_MTLS_SERVER}
+
+      # One-time bootstrap token — only required on the first run.
+      # After the certs are stored in the pki volume you can remove this.
+      WIREOPS_BOOTSTRAP_TOKEN: ${WIREOPS_BOOTSTRAP_TOKEN:-}
+
+      # Directory where the worker stores its PKI certificates.
+      # Must match the volume mount path below.
+      WIREOPS_WORKER_PKI_DIR: /var/lib/wireops/pki
+
+      # Optional: override the hostname reported to the server.
+      # Defaults to the container's hostname if not set.
+      HOSTNAME: ${WORKER_HOSTNAME:-}
+
+      # Optional: override where the worker writes temporary rendered compose files.
+      # Defaults to /tmp/wireops-worker inside the container.
+      WIREOPS_WORKER_WORK_DIR: /tmp/wireops-worker
+
+    volumes:
+      # Persist worker PKI certificates across restarts/upgrades.
+      # On the first boot the worker will bootstrap and write certs here.
+      - wireops-worker-pki:/var/lib/wireops/pki
+
+      # Give the worker access to the Docker socket so it can run
+      # `docker compose up` on behalf of the server.
+      - /var/run/docker.sock:/var/run/docker.sock
+
+    # Required so the worker can reach the server over the host network
+    # (adjust if the server is on a remote host or uses a custom network).
+    # network_mode: host   ← uncomment if worker and server are on the same machine
+
+volumes:
+  wireops-worker-pki:
+    driver: local

@@ -62,7 +62,7 @@ func (r *Renderer) GenerateRevision(
 	envVars []string,
 	commitSHA string,
 	forceIncrement bool,
-	agentFingerprint string,
+	workerFingerprint string,
 ) (*RenderResult, error) {
 
 	stackID := stack.Id
@@ -152,8 +152,8 @@ func (r *Renderer) GenerateRevision(
 		annotations["dev.wireops.repository.url"] = repoURL
 		annotations["dev.wireops.repository.branch"] = branch
 		annotations["dev.wireops.repository.file"] = composeFile
-		if agentFingerprint != "" {
-			annotations["dev.wireops.agent.fingerprint"] = agentFingerprint
+		if workerFingerprint != "" {
+			annotations["dev.wireops.worker.fingerprint"] = workerFingerprint
 		}
 
 		svc["labels"] = labels
@@ -195,9 +195,9 @@ func (r *Renderer) GenerateRevision(
 			// Self-heal: If the file is missing from disk (e.g. user deleted pb_data/stacks),
 			// re-serialize and write the yaml without bumping the database version.
 			if finalYAML, err := yaml.Marshal(configMap); err == nil {
-				stackDir := filepath.Join(r.stackStorage, stackID)
-				os.MkdirAll(stackDir, 0755)
-				os.WriteFile(expectedFilePath, finalYAML, 0644)
+			stackDir := filepath.Join(r.stackStorage, stackID)
+			os.MkdirAll(stackDir, 0700)
+			os.WriteFile(expectedFilePath, finalYAML, 0600)
 			}
 		}
 
@@ -217,7 +217,7 @@ func (r *Renderer) GenerateRevision(
 
 	// Prepare storage directory
 	stackDir := filepath.Join(r.stackStorage, stackID)
-	if err := os.MkdirAll(stackDir, 0755); err != nil {
+	if err := os.MkdirAll(stackDir, 0700); err != nil {
 		return nil, fmt.Errorf("failed to create stack storage dir: %w", err)
 	}
 
@@ -225,7 +225,7 @@ func (r *Renderer) GenerateRevision(
 	filePath := filepath.Join(stackDir, fileName)
 
 	// Write to disk
-	if err := os.WriteFile(filePath, finalYAML, 0644); err != nil {
+	if err := os.WriteFile(filePath, finalYAML, 0600); err != nil {
 		return nil, fmt.Errorf("failed to write rendered compose file: %w", err)
 	}
 

@@ -16,7 +16,7 @@ const errorMessage = ref('')
 async function confirmDelete() {
   isDeleting.value = true
   errorMessage.value = ''
-  
+
   try {
     await $pb.collection('repositories').delete(props.repositoryId)
     isOpen.value = false

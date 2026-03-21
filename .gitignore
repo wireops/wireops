@@ -37,9 +37,10 @@ pb_data/
 pb_public/
 frontend/.output/
 frontend/.nuxt/
+frontend/dist/
 frontend/node_modules/
 data/
 pki_data/
-agent_pki/
 repos/
 __debug_bin*
+worker_pki/

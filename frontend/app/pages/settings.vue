@@ -4,7 +4,8 @@ const toast = useToast()
 
 const keyscanHost = ref('')
 const keyscanPort = ref(22)
-const { keyscan, getSyncEventsWebhook, setSyncEventsWebhook, setNotificationsEnabled, deleteSyncEventsWebhook, testSyncEventsWebhook, getPKIDetails } = useApi()
+const { keyscan, getSyncEventsWebhook, setSyncEventsWebhook, setNotificationsEnabled, deleteSyncEventsWebhook, testSyncEventsWebhook, getPKIDetails, renewServerCert } = useApi()
+const renewingServerCert = ref(false)
 
 const { data: pkiDetails, pending: pkiPending } = useAsyncData('pki_details', getPKIDetails)
 
@@ -27,6 +28,29 @@ function formatDatetime(dateStr: string) {
     return new Date(dateStr).toLocaleString()
   } catch {
     return dateStr
+  }
+}
+
+function certStatusColor(status: string): 'success' | 'warning' | 'error' | 'neutral' {
+  switch (status) {
+    case 'ok': return 'success'
+    case 'warning': return 'warning'
+    case 'critical':
+    case 'expired': return 'error'
+    default: return 'neutral'
+  }
+}
+
+async function handleRenewServerCert() {
+  renewingServerCert.value = true
+  try {
+    await renewServerCert()
+    toast.add({ title: 'Server certificate renewed', color: 'success' })
+    pkiDetails.value = await getPKIDetails()
+  } catch (e: any) {
+    toast.add({ title: 'Failed to renew', description: e?.message, color: 'error' })
+  } finally {
+    renewingServerCert.value = false
   }
 }
 
@@ -473,14 +497,29 @@ watch(activeTab, (val) => {
       </UCard>
 
       <UCard>
-        <template #header><h3 class="font-semibold">mTLS Certificates</h3></template>
+        <template #header>
+          <div class="flex items-center justify-between">
+            <h3 class="font-semibold">mTLS Certificates</h3>
+            <UButton
+              label="Renew Server Cert"
+              icon="i-lucide-refresh-cw"
+              size="xs"
+              variant="outline"
+              :loading="renewingServerCert"
+              @click="handleRenewServerCert"
+            />
+          </div>
+        </template>
         <p class="text-sm text-gray-500 mb-4">
-          Details of the Root CA and the Server Certificate used for mTLS agent connections.
+          Details of the Root CA and the Server Certificate used for mTLS worker connections.
         </p>
         <div v-if="pkiPending" class="text-sm text-gray-500">Loading...</div>
         <div v-else-if="pkiDetails" class="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div v-if="pkiDetails.ca" class="space-y-2">
-            <h4 class="font-medium text-sm text-primary">Root CA</h4>
+            <div class="flex items-center gap-2">
+              <h4 class="font-medium text-sm text-primary">Root CA</h4>
+              <UBadge v-if="pkiDetails.ca?.status" :label="pkiDetails.ca.status" :color="certStatusColor(pkiDetails.ca.status)" size="xs" variant="subtle" />
+            </div>
             <div class="bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-3 text-xs font-mono space-y-1.5">
               <div><span class="text-gray-500 mr-2">Issuer:</span> {{ pkiDetails.ca?.issuer }}</div>
               <div><span class="text-gray-500 mr-2">Subject:</span> {{ pkiDetails.ca?.subject }}</div>
@@ -489,7 +528,10 @@ watch(activeTab, (val) => {
             </div>
           </div>
           <div v-if="pkiDetails.server" class="space-y-2">
-            <h4 class="font-medium text-sm text-primary">Server Certificate</h4>
+            <div class="flex items-center gap-2">
+              <h4 class="font-medium text-sm text-primary">Server Certificate</h4>
+              <UBadge v-if="pkiDetails.server?.status" :label="pkiDetails.server.status" :color="certStatusColor(pkiDetails.server.status)" size="xs" variant="subtle" />
+            </div>
             <div class="bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-3 text-xs font-mono space-y-1.5">
               <div><span class="text-gray-500 mr-2">Issuer:</span> {{ pkiDetails.server?.issuer }}</div>
               <div><span class="text-gray-500 mr-2">Subject:</span> {{ pkiDetails.server?.subject }}</div>

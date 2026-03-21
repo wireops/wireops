@@ -270,7 +270,7 @@ async function toggleEnabled() {
             <code class="font-mono text-gray-800 dark:text-wire-200 break-all">{{ Array.isArray(definition.command) ? definition.command.join(' ') : definition.command }}</code>
           </div>
           <div v-if="definition.tags?.length" class="space-y-1 sm:col-span-2">
-            <p class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-wire-200/40">Agent tags</p>
+            <p class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-wire-200/40">Worker tags</p>
             <div class="flex flex-wrap gap-1">
               <UBadge
                 v-for="tag in definition.tags"

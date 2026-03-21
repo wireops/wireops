@@ -10,8 +10,8 @@ const emit = defineEmits<{
 
 // Step 1 state
 const step = ref<1 | 2>(1)
-const agents = ref<any[]>([])
-const selectedAgentId = ref('')
+const workers = ref<any[]>([])
+const selectedWorkerId = ref('')
 const discovering = ref(false)
 const discoveredProjects = ref<{ project_name: string; compose_path: string; services: string[] }[]>([])
 const selectedProject = ref<{ project_name: string; compose_path: string; services: string[] } | null>(null)
@@ -27,35 +27,35 @@ const importError = ref('')
 
 onMounted(async () => {
   try {
-    agents.value = await $pb.collection('agents').getFullList({
+    workers.value = await $pb.collection('workers').getFullList({
       filter: 'status = "ACTIVE"',
       sort: 'hostname',
     })
-    const embedded = agents.value.find((a: any) => a.fingerprint === 'embedded')
-    if (embedded) selectedAgentId.value = embedded.id
+    const embedded = workers.value.find((a: any) => a.fingerprint === 'embedded')
+    if (embedded) selectedWorkerId.value = embedded.id
   } catch {
-    agents.value = []
+    workers.value = []
   }
 })
 
-const agentOptions = computed(() =>
-  agents.value.map((a: any) => ({ label: a.hostname, value: a.id }))
+const workerOptions = computed(() =>
+  workers.value.map((a: any) => ({ label: a.hostname, value: a.id }))
 )
 
-watch(selectedAgentId, () => {
+watch(selectedWorkerId, () => {
   discoveredProjects.value = []
   selectedProject.value = null
   discoverError.value = ''
 })
 
 async function runDiscover() {
-  if (!selectedAgentId.value) return
+  if (!selectedWorkerId.value) return
   discovering.value = true
   discoverError.value = ''
   discoveredProjects.value = []
   selectedProject.value = null
   try {
-    discoveredProjects.value = await discoverProjects(selectedAgentId.value)
+    discoveredProjects.value = await discoverProjects(selectedWorkerId.value)
   } catch (e: any) {
     discoverError.value = e?.message || 'Failed to discover projects'
   } finally {
@@ -72,7 +72,7 @@ function selectProject(project: typeof discoveredProjects.value[number]) {
 }
 
 function goToStep2() {
-  if (!stackName.value.trim() || !importPath.value.trim() || !selectedAgentId.value) return
+  if (!stackName.value.trim() || !importPath.value.trim() || !selectedWorkerId.value) return
   importError.value = ''
   acknowledgedRestart.value = false
   recreateVolumes.value = false
@@ -86,7 +86,7 @@ async function confirmImport() {
   try {
     const result = await importStack({
       name: stackName.value.trim(),
-      agent_id: selectedAgentId.value,
+      worker_id: selectedWorkerId.value,
       import_path: importPath.value.trim(),
       recreate_volumes: recreateVolumes.value,
     })
@@ -116,13 +116,13 @@ async function confirmImport() {
 
     <!-- STEP 1: Discovery & configuration -->
     <div v-if="step === 1" class="space-y-5">
-      <!-- Agent selector + discover button -->
+      <!-- Worker selector + discover button -->
       <div class="flex gap-2 items-end">
-        <UFormField label="Agent" class="flex-1">
+        <UFormField label="Worker" class="flex-1">
           <USelect
-            v-model="selectedAgentId"
-            :items="agentOptions"
-            placeholder="Select an agent"
+            v-model="selectedWorkerId"
+            :items="workerOptions"
+            placeholder="Select a worker"
             class="w-full"
           />
         </UFormField>
@@ -131,7 +131,7 @@ async function confirmImport() {
           icon="i-lucide-search"
           variant="outline"
           :loading="discovering"
-          :disabled="!selectedAgentId"
+          :disabled="!selectedWorkerId"
           @click="runDiscover"
         />
       </div>
@@ -166,7 +166,7 @@ async function confirmImport() {
         </div>
       </div>
 
-      <div v-else-if="!discovering && selectedAgentId && discoveredProjects.length === 0 && !discoverError" class="text-sm text-muted text-center py-4">
+      <div v-else-if="!discovering && selectedWorkerId && discoveredProjects.length === 0 && !discoverError" class="text-sm text-muted text-center py-4">
         No unmanaged Compose projects found. You can still enter a path manually below.
       </div>
 
@@ -177,7 +177,7 @@ async function confirmImport() {
         </UFormField>
         <UFormField
           label="Compose file path (absolute)"
-          help="Absolute path to the docker-compose.yml on the agent host."
+          help="Absolute path to the docker-compose.yml on the worker host."
           required
         >
           <UInput v-model="importPath" placeholder="/opt/myapp/docker-compose.yml" class="w-full" />
@@ -259,7 +259,7 @@ async function confirmImport() {
             v-if="step === 1"
             label="Continue"
             icon="i-lucide-arrow-right"
-            :disabled="!stackName.trim() || !importPath.trim() || !selectedAgentId"
+            :disabled="!stackName.trim() || !importPath.trim() || !selectedWorkerId"
             @click="goToStep2"
           />
           <UButton

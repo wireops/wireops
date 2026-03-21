@@ -4,7 +4,7 @@ const { transferStack } = useApi()
 const toast = useToast()
 
 const props = defineProps<{
-  stack: any // the stack record (must have .id, .name, .agent)
+  stack: any // the stack record (must have .id, .name, .worker)
 }>()
 
 const emit = defineEmits<{
@@ -12,38 +12,38 @@ const emit = defineEmits<{
   cancel: []
 }>()
 
-const agents = ref<any[]>([])
-const selectedAgentId = ref<string>('')
+const workers = ref<any[]>([])
+const selectedWorkerId = ref<string>('')
 const transferring = ref(false)
 const errorMsg = ref('')
 
-const agentOptions = computed(() =>
-  agents.value
-    .filter((a: any) => a.id !== props.stack?.agent)
+const workerOptions = computed(() =>
+  workers.value
+    .filter((a: any) => a.id !== props.stack?.worker)
     .map((a: any) => ({ label: a.hostname, value: a.id }))
 )
 
 onMounted(async () => {
   try {
-    agents.value = await $pb.collection('agents').getFullList({
+    workers.value = await $pb.collection('workers').getFullList({
       filter: 'status = "ACTIVE"',
       sort: 'hostname',
     })
   } catch {
-    agents.value = []
+    workers.value = []
   }
 })
 
 async function confirmTransfer() {
-  if (!selectedAgentId.value) return
+  if (!selectedWorkerId.value) return
   transferring.value = true
   errorMsg.value = ''
   try {
-    await transferStack(props.stack.id, selectedAgentId.value)
-    const targetAgent = agents.value.find((a) => a.id === selectedAgentId.value)
+    await transferStack(props.stack.id, selectedWorkerId.value)
+    const targetWorker = workers.value.find((a) => a.id === selectedWorkerId.value)
     toast.add({
       title: `Stack "${props.stack.name}" transfer started`,
-      description: `Provisioning on ${targetAgent?.hostname || 'target agent'} — this may take a moment.`,
+      description: `Provisioning on ${targetWorker?.hostname || 'target worker'} — this may take a moment.`,
       color: 'warning',
     })
     emit('transferred')
@@ -70,16 +70,16 @@ async function confirmTransfer() {
         color="warning"
         icon="i-lucide-triangle-alert"
         title="Data will not be preserved"
-        description="Transferring between agents does not maintain volumes, container state, or any local storage. Plan your backup and restoration before proceeding."
-      />
+      description="Transferring between workers does not maintain volumes, container state, or any local storage. Plan your backup and restoration before proceeding."
+    />
 
-      <!-- Agent selector -->
-      <UFormField label="Target Agent" :help="agentOptions.length === 0 ? 'No other active agents available.' : undefined">
+      <!-- Worker selector -->
+      <UFormField label="Target Worker" :help="workerOptions.length === 0 ? 'No other active workers available.' : undefined">
         <USelect
-          v-model="selectedAgentId"
-          :items="agentOptions"
-          placeholder="Select a target agent"
-          :disabled="agentOptions.length === 0"
+          v-model="selectedWorkerId"
+          :items="workerOptions"
+          placeholder="Select a target worker"
+          :disabled="workerOptions.length === 0"
           class="w-full"
         />
       </UFormField>
@@ -99,7 +99,7 @@ async function confirmTransfer() {
           color="warning"
           icon="i-lucide-arrow-right-left"
           :loading="transferring"
-          :disabled="!selectedAgentId || agentOptions.length === 0"
+          :disabled="!selectedWorkerId || workerOptions.length === 0"
           @click="confirmTransfer"
         />
       </div>

@@ -20,7 +20,7 @@ const { data: runsData, refresh: refreshRuns, status } = useAsyncData(() => `job
   return $pb.collection('job_runs').getList(page.value, perPage.value, {
     filter: $pb.filter('job = {:id}', { id: props.jobId }),
     sort: '-created',
-    expand: 'agent',
+    expand: 'worker',
   })
 }, { watch: [page, perPage] })
 
@@ -119,8 +119,8 @@ defineExpose({
               <div class="flex items-center gap-2">
                 <UBadge :label="run.status" :color="runStatusColor(run.status)" variant="subtle" size="xs" />
                 <UBadge :label="run.trigger" variant="subtle" color="neutral" size="xs" />
-                <span v-if="run.expand?.agent?.hostname" class="text-xs text-gray-400 dark:text-wire-200/40 font-mono">
-                  {{ run.expand.agent.hostname }}
+                <span v-if="run.expand?.worker?.hostname" class="text-xs text-gray-400 dark:text-wire-200/40 font-mono">
+                  {{ run.expand.worker.hostname }}
                 </span>
               </div>
               <p class="text-xs text-gray-400 dark:text-wire-200/40 mt-0.5">{{ formatRelative(run.created) }}</p>
