@@ -80,7 +80,7 @@ jobs:
       run: |
         mkdir -p dist
         CGO_ENABLED=0 GOOS=linux GOARCH=${{ matrix.goarch }} go build -ldflags="-s -w" -o dist/wireops-amd64 .
-        CGO_ENABLED=0 GOOS=linux GOARCH=${{ matrix.goarch }} go build -ldflags="-s -w" -o dist/wireops-agent-amd64 ./agent/main.go
+        CGO_ENABLED=0 GOOS=linux GOARCH=${{ matrix.goarch }} go build -ldflags="-s -w" -o dist/wireops-worker-amd64 ./worker/main.go
 
     - name: Upload server binary artifact
       uses: actions/upload-artifact@v4
@@ -89,11 +89,11 @@ jobs:
         path: dist/wireops-amd64
         retention-days: 3
 
-    - name: Upload agent binary artifact
+    - name: Upload worker binary artifact
       uses: actions/upload-artifact@v4
       with:
-        name: binary-agent-${{ matrix.arch }}
-        path: dist/wireops-agent-amd64
+        name: binary-worker-${{ matrix.arch }}
+        path: dist/wireops-worker-amd64
         retention-days: 3
 
   build-and-push:
@@ -118,10 +118,10 @@ jobs:
         merge-multiple: true
         path: dist
 
-    - name: Download agent binary
+    - name: Download worker binary
       uses: actions/download-artifact@v4
       with:
-        pattern: binary-agent-*
+        pattern: binary-worker-*
         merge-multiple: true
         path: dist
 
@@ -134,8 +134,8 @@ jobs:
     - name: Prepare binaries
       run: |
         cp dist/wireops-amd64 ./wireops
-        cp dist/wireops-agent-amd64 ./wireops-agent
-        chmod +x ./wireops ./wireops-agent
+        cp dist/wireops-worker-amd64 ./wireops-worker
+        chmod +x ./wireops ./wireops-worker
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
@@ -171,24 +171,24 @@ jobs:
         platforms: linux/amd64
         provenance: true
 
-    - name: Extract agent metadata
-      id: meta-agent
+    - name: Extract worker metadata
+      id: meta-worker
       uses: docker/metadata-action@v5
       with:
-        images: ${{ env.REGISTRY }}/${{ github.repository }}/wireops-agent
+        images: ${{ env.REGISTRY }}/${{ github.repository }}/wireops-worker
         tags: |
           type=semver,pattern={{version}}
           type=semver,pattern={{major}}.{{minor}}
           type=semver,pattern={{major}}
           type=raw,value=latest,enable={{is_default_branch}}
 
-    - name: Build and push agent image
+    - name: Build and push worker image
       uses: docker/build-push-action@v5
       with:
         context: .
-        file: ./Dockerfile.agent
+        file: ./Dockerfile.worker
         push: true
-        tags: ${{ steps.meta-agent.outputs.tags }}
-        labels: ${{ steps.meta-agent.outputs.labels }}
+        tags: ${{ steps.meta-worker.outputs.tags }}
+        labels: ${{ steps.meta-worker.outputs.labels }}
         platforms: linux/amd64
         provenance: true

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
@@ -79,13 +80,7 @@ func Bootstrap(serverURL, token, pkiDir string) error {
 	}
 	privPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privBytes})
 
-	if err := writeSafe(filepath.Join(pkiDir, "worker.key"), privPEM, 0600); err != nil {
-		return err
-	}
-	if err := writeSafe(filepath.Join(pkiDir, "worker.crt"), []byte(result.WorkerCert), 0644); err != nil {
-		return err
-	}
-	if err := writeSafe(filepath.Join(pkiDir, "ca.crt"), []byte(result.CACert), 0644); err != nil {
+	if err := WriteCertificates(pkiDir, []byte(result.WorkerCert), privPEM, []byte(result.CACert)); err != nil {
 		return err
 	}
 
@@ -104,18 +99,38 @@ func writeSafe(path string, data []byte, perm os.FileMode) error {
 	return err
 }
 
-// HasValidCerts checks if the certificates already exist.
+// HasValidCerts reports whether all certificate files exist and are parseable.
+// File existence alone is insufficient; corrupt or mismatched certs must also
+// trigger re-bootstrapping.
 func HasValidCerts(pkiDir string) bool {
-	paths := []string{
-		filepath.Join(pkiDir, "worker.key"),
-		filepath.Join(pkiDir, "worker.crt"),
-		filepath.Join(pkiDir, "ca.crt"),
-	}
-	for _, p := range paths {
+	keyPath := filepath.Join(pkiDir, "worker.key")
+	certPath := filepath.Join(pkiDir, "worker.crt")
+	caPath := filepath.Join(pkiDir, "ca.crt")
+
+	for _, p := range []string{keyPath, certPath, caPath} {
 		if _, err := os.Stat(p); os.IsNotExist(err) {
 			return false
 		}
 	}
+
+	// Verify the keypair can be loaded.
+	if _, err := tls.LoadX509KeyPair(certPath, keyPath); err != nil {
+		return false
+	}
+
+	// Verify the CA cert can be parsed.
+	caPEM, err := os.ReadFile(caPath)
+	if err != nil {
+		return false
+	}
+	block, _ := pem.Decode(caPEM)
+	if block == nil {
+		return false
+	}
+	if _, err := x509.ParseCertificate(block.Bytes); err != nil {
+		return false
+	}
+
 	return true
 }
 
@@ -138,10 +153,11 @@ func GetCertNotAfter(pkiDir string) (time.Time, error) {
 }
 
 // NeedsRenewal reports whether the worker certificate expires within thresholdDays.
+// Any parse or validation error is treated as needing renewal (fail-closed).
 func NeedsRenewal(pkiDir string, thresholdDays int) bool {
 	notAfter, err := GetCertNotAfter(pkiDir)
 	if err != nil {
-		return false
+		return true
 	}
 	return time.Until(notAfter) < time.Duration(thresholdDays)*24*time.Hour
 }

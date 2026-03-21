@@ -15,6 +15,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 )
 
@@ -22,6 +23,7 @@ type Service struct {
 	pkiDir string
 	caCert *x509.Certificate
 	caPriv *rsa.PrivateKey
+	mu     sync.Mutex
 }
 
 func NewService(pkiDir string) *Service {
@@ -287,18 +289,40 @@ func (s *Service) GetServerTLSCert() (tls.Certificate, error) {
 }
 
 // RenewServerCert generates a new server certificate signed by the current CA.
-// The mTLS server picks up the new cert automatically via GetCertificate/GetServerTLSCert.
+// It writes to temporary files first, then atomically renames both into place under
+// the service mutex so readers never observe a mismatched cert/key pair.
 func (s *Service) RenewServerCert() error {
 	if s.caCert == nil || s.caPriv == nil {
 		return errors.New("CA not initialized")
 	}
-	serverCertPath := filepath.Join(s.pkiDir, "server.crt")
-	serverKeyPath := filepath.Join(s.pkiDir, "server.key")
+
+	tmpCertPath := filepath.Join(s.pkiDir, "server.crt.tmp")
+	tmpKeyPath := filepath.Join(s.pkiDir, "server.key.tmp")
+
+	// Clean up temps on any failure path.
+	cleanup := func() {
+		os.Remove(tmpCertPath)
+		os.Remove(tmpKeyPath)
+	}
 
 	log.Println("[PKI] Renewing server certificate...")
-	if err := s.generateServerCert(serverCertPath, serverKeyPath); err != nil {
-		return fmt.Errorf("failed to renew server cert: %w", err)
+	if err := s.generateServerCert(tmpCertPath, tmpKeyPath); err != nil {
+		cleanup()
+		return fmt.Errorf("failed to generate server cert: %w", err)
 	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err := os.Rename(tmpCertPath, filepath.Join(s.pkiDir, "server.crt")); err != nil {
+		cleanup()
+		return fmt.Errorf("failed to install server cert: %w", err)
+	}
+	if err := os.Rename(tmpKeyPath, filepath.Join(s.pkiDir, "server.key")); err != nil {
+		cleanup()
+		return fmt.Errorf("failed to install server key: %w", err)
+	}
+
 	log.Println("[PKI] Server certificate renewed successfully.")
 	return nil
 }
@@ -325,7 +349,9 @@ func (s *Service) GetCACertNotAfter() time.Time {
 func (s *Service) ServerCertNeedsRenewal(thresholdDays int) bool {
 	notAfter, err := s.GetServerCertNotAfter()
 	if err != nil {
-		return false
+		// Treat missing or corrupt certs as needing renewal so the auto-renew
+		// path can repair them.
+		return true
 	}
 	return time.Until(notAfter) < time.Duration(thresholdDays)*24*time.Hour
 }

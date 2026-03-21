@@ -23,10 +23,17 @@ async function handleSetup() {
       password: password.value,
       passwordConfirm: passwordConfirm.value,
     })
+  } catch (e: any) {
+    error.value = e?.message || 'Setup failed'
+    loading.value = false
+    return
+  }
+
+  try {
     await login(email.value, password.value)
     navigateTo('/')
   } catch (e: any) {
-    error.value = e?.message || 'Setup failed'
+    error.value = e?.message || 'Login failed after setup — please sign in manually'
   } finally {
     loading.value = false
   }

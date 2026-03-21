@@ -65,7 +65,7 @@ func callHandler(t *testing.T, app core.App, method, target string, body any, ha
 		},
 	}
 	if err := handler(e); err != nil {
-		t.Logf("handler returned error: %v", err)
+		t.Fatalf("handler returned error: %v", err)
 	}
 	return rec
 }

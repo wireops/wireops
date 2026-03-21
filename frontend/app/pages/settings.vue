@@ -46,7 +46,11 @@ async function handleRenewServerCert() {
   try {
     await renewServerCert()
     toast.add({ title: 'Server certificate renewed', color: 'success' })
-    pkiDetails.value = await getPKIDetails()
+    try {
+      pkiDetails.value = await getPKIDetails()
+    } catch {
+      toast.add({ title: 'Could not refresh PKI details', color: 'warning' })
+    }
   } catch (e: any) {
     toast.add({ title: 'Failed to renew', description: e?.message, color: 'error' })
   } finally {

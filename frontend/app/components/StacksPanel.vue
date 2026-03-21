@@ -11,12 +11,19 @@ const { data: stacks, refresh } = useAsyncData('stacks_list', () =>
 
 const isUpdating = ref(false)
 
+let updateTimer: ReturnType<typeof setTimeout> | undefined
+
 onMounted(() => {
   subscribe('stacks', () => {
     isUpdating.value = true
     refresh()
-    setTimeout(() => { isUpdating.value = false }, 500)
+    clearTimeout(updateTimer)
+    updateTimer = setTimeout(() => { isUpdating.value = false }, 500)
   })
+})
+
+onBeforeUnmount(() => {
+  clearTimeout(updateTimer)
 })
 
 const showCreate = ref(false)

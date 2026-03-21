@@ -62,17 +62,22 @@ watch(() => form.value.repository, async (repoId) => {
     form.value.selected_file = ''
     return
   }
+  const requestedRepo = repoId
   loadingFiles.value = true
   try {
     const files = await getStackFiles(repoId)
+    if (form.value.repository !== requestedRepo) return
     repoFiles.value = files || []
     form.value.selected_file = repoFiles.value.length === 1 ? repoFiles.value[0]! : ''
   } catch {
+    if (form.value.repository !== requestedRepo) return
     toast.add({ title: 'Failed to fetch repository files', color: 'error' })
     repoFiles.value = []
     form.value.selected_file = ''
   } finally {
-    loadingFiles.value = false
+    if (form.value.repository === requestedRepo) {
+      loadingFiles.value = false
+    }
   }
 })
 
@@ -114,6 +119,8 @@ async function handleSubmit() {
     })
     emit('update:open', false)
     emit('created')
+  } catch (e: any) {
+    toast.add({ title: 'Failed to create stack', description: e?.message, color: 'error' })
   } finally {
     saving.value = false
   }

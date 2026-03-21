@@ -191,7 +191,9 @@ func (s *Scheduler) CancelRun(runID string) error {
 	containerName := "wireops-job-" + runID
 
 	if s.dispatcher.IsEmbedded(workerID) {
-		out, runErr := exec.Command("docker", "stop", containerName).CombinedOutput()
+		stopCtx, stopCancel := context.WithTimeout(s.rootCtx, 30*time.Second)
+		defer stopCancel()
+		out, runErr := exec.CommandContext(stopCtx, "docker", "stop", containerName).CombinedOutput()
 		if runErr != nil {
 			return fmt.Errorf("docker stop failed: %w\n%s", runErr, string(out))
 		}
@@ -352,7 +354,7 @@ func (s *Scheduler) runJobEmbedded(ctx context.Context, runID string, cmd protoc
 	go func() {
 		start := time.Now()
 		args := cmd.BuildDockerRunArgs()
-		out, runErr := exec.Command("docker", args...).CombinedOutput()
+		out, runErr := exec.CommandContext(ctx, "docker", args...).CombinedOutput()
 		elapsed := time.Since(start).Milliseconds()
 
 		output := string(out)

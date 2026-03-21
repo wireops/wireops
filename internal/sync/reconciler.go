@@ -158,7 +158,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		r.markError(stack, "stacks")
 		return fmt.Errorf("%s", errMsg)
 	}
-	isOnline := workerFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsConnected(workerID)
+	isOnline := workerFingerprint == "embedded" || (r.dispatcher != nil && r.dispatcher.IsConnected(workerID))
 
 	neverSynced := stack.GetString("last_synced_at") == ""
 	repoChanged := gitpkg.HasChanged(remoteSHA, lastSHA)
@@ -284,7 +284,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	maxRetries := 3
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		start := time.Now()
-		if workerFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsEmbedded(workerID) {
+		if workerFingerprint == "embedded" || (r.dispatcher != nil && r.dispatcher.IsEmbedded(workerID)) {
 			// Embedded: run compose directly on the server host
 			output, runErr = compose.RunUp(ctx, compose.RunOptions{
 				WorkDir:     filepath.Dir(renderedFilePath),
@@ -370,7 +370,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	stack.Set("status", "active")
 	_ = r.app.Save(stack)
 
-	if workerFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsEmbedded(workerID) {
+	if workerFingerprint == "embedded" || (r.dispatcher != nil && r.dispatcher.IsEmbedded(workerID)) {
 		r.refreshServiceStatus(ctx, stackID, workDir)
 	}
 
@@ -493,7 +493,7 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 	var output string
 	var runErr error
 
-	if workerFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsEmbedded(workerID) {
+	if workerFingerprint == "embedded" || (r.dispatcher != nil && r.dispatcher.IsEmbedded(workerID)) {
 		output, runErr = compose.RunUp(ctx, compose.RunOptions{
 			WorkDir:     filepath.Dir(renderedFilePath),
 			ComposeFile: renderRes.RenderedPath,
@@ -570,7 +570,7 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 	stack.Set("status", "paused")
 	_ = r.app.Save(stack)
 
-	if workerFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsEmbedded(workerID) {
+	if workerFingerprint == "embedded" || (r.dispatcher != nil && r.dispatcher.IsEmbedded(workerID)) {
 		r.refreshServiceStatus(ctx, stackID, workDir)
 	}
 
@@ -654,7 +654,7 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 	var output string
 	var runErr error
 
-	if workerFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsEmbedded(workerID) {
+	if workerFingerprint == "embedded" || (r.dispatcher != nil && r.dispatcher.IsEmbedded(workerID)) {
 		output, runErr = compose.RunForceUp(ctx, compose.ForceUpOptions{
 			RunOptions: compose.RunOptions{
 				WorkDir:     filepath.Dir(renderedFilePath),
@@ -737,7 +737,7 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 	stack.Set("status", "paused")
 	_ = r.app.Save(stack)
 
-	if workerFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsEmbedded(workerID) {
+	if workerFingerprint == "embedded" || (r.dispatcher != nil && r.dispatcher.IsEmbedded(workerID)) {
 		r.refreshServiceStatus(ctx, stackID, workDir)
 	}
 
@@ -782,7 +782,7 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 		r.markError(stack, "stacks")
 		return fmt.Errorf("%s", errMsg)
 	}
-	isOnline := workerFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsConnected(workerID)
+	isOnline := workerFingerprint == "embedded" || (r.dispatcher != nil && r.dispatcher.IsConnected(workerID))
 	if !isOnline {
 		log.Printf("[reconciler] worker %s is offline, queueing pending reconcile for local stack %s", workerID, stackID)
 		r.queuePendingReconcile(stackID, trigger, "")
@@ -797,7 +797,7 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 	var composeContent []byte
 	var workDir, composeFile string
 
-	isEmbedded := workerFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsEmbedded(workerID)
+	isEmbedded := workerFingerprint == "embedded" || (r.dispatcher != nil && r.dispatcher.IsEmbedded(workerID))
 	if isEmbedded {
 		data, err := os.ReadFile(importPath)
 		if err != nil {
@@ -1015,7 +1015,7 @@ func (r *Reconciler) queuePendingReconcile(stackID, trigger, commitSHA string) {
 }
 
 func (r *Reconciler) inspectStackCommit(ctx context.Context, workerID, workerFingerprint, stackID string) string {
-	if workerFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsEmbedded(workerID) {
+	if workerFingerprint == "embedded" || (r.dispatcher != nil && r.dispatcher.IsEmbedded(workerID)) {
 		if r.dockerClient != nil {
 			sha, err := r.dockerClient.GetRunningStackCommit(ctx, stackID)
 			if err != nil {
@@ -1369,7 +1369,7 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 	// If containers (any state) already exist for this project on the target host,
 	// we abort early to avoid conflicting volumes, networks, or port bindings.
 	var probeErrMsg string
-	if targetFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsEmbedded(targetWorkerID) {
+	if targetFingerprint == "embedded" || (r.dispatcher != nil && r.dispatcher.IsEmbedded(targetWorkerID)) {
 		log.Printf("[transfer] probe: running locally for target_agent=%s stack=%s", targetWorkerID, stackID)
 		services, _ := compose.RunPs(ctx, compose.RunOptions{
 			WorkDir:     workDir,
@@ -1441,7 +1441,7 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 	var deployErr error
 	var dispatchErr error
 
-	if targetFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsEmbedded(targetWorkerID) {
+	if targetFingerprint == "embedded" || (r.dispatcher != nil && r.dispatcher.IsEmbedded(targetWorkerID)) {
 		log.Printf("[transfer] step 1/2: deploy running locally for target_agent=%s (%s) stack=%s", targetWorkerID, targetHostname, stackID)
 		deployOutput, deployErr = compose.RunUp(ctx, compose.RunOptions{
 			WorkDir:     workDir,
@@ -1472,7 +1472,7 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 		fmt.Fprintf(&outputBuf, "\n=== Step 2/2: Cleanup on target agent (%s) ===\n", targetHostname)
 
 		// Best-effort cleanup on agent B — remove any partial containers it may have started.
-		if targetFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsEmbedded(targetWorkerID) {
+		if targetFingerprint == "embedded" || (r.dispatcher != nil && r.dispatcher.IsEmbedded(targetWorkerID)) {
 			log.Printf("[transfer] step 2/2: cleanup running locally for target_agent=%s stack=%s", targetWorkerID, stackID)
 			cleanupOutput, cleanupErr := compose.RunDown(ctx, compose.RunOptions{
 				WorkDir:     workDir,
@@ -1529,7 +1529,7 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 
 	// --- Step 2: Teardown on source agent (agent A) ---
 	fmt.Fprintf(&outputBuf, "\n=== Step 2/2: Teardown on source agent (%s) ===\n", sourceHostname)
-	if sourceFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsEmbedded(sourceWorkerID) {
+	if sourceFingerprint == "embedded" || (r.dispatcher != nil && r.dispatcher.IsEmbedded(sourceWorkerID)) {
 		log.Printf("[transfer] step 2/2: teardown running locally for source_agent=%s (%s) stack=%s", sourceWorkerID, sourceHostname, stackID)
 		teardownOutput, teardownErr := compose.RunDown(ctx, compose.RunOptions{
 			WorkDir:     workDir,
@@ -1571,7 +1571,7 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 	stack.Set("last_synced_at", time.Now().UTC().Format(time.RFC3339))
 	_ = r.app.Save(stack)
 
-	if targetFingerprint == "embedded" || r.dispatcher == nil || r.dispatcher.IsEmbedded(targetWorkerID) {
+	if targetFingerprint == "embedded" || (r.dispatcher != nil && r.dispatcher.IsEmbedded(targetWorkerID)) {
 		r.refreshServiceStatus(ctx, stackID, workDir)
 	}
 

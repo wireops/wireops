@@ -2,6 +2,7 @@ package routes
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/mail"
 
@@ -27,15 +28,6 @@ func handleSetupStatus(app core.App) func(*core.RequestEvent) error {
 
 func handleSetupCreate(app core.App) func(*core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
-		// Guard: only allowed when no real superusers exist yet.
-		count, err := countRealSuperusers(app)
-		if err != nil {
-			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to check setup status"})
-		}
-		if count > 0 {
-			return e.JSON(http.StatusForbidden, map[string]string{"error": "setup has already been completed"})
-		}
-
 		var body struct {
 			Email           string `json:"email"`
 			Password        string `json:"password"`
@@ -58,21 +50,42 @@ func handleSetupCreate(app core.App) func(*core.RequestEvent) error {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "passwords do not match"})
 		}
 
-		superusers, err := app.FindCollectionByNameOrId(core.CollectionNameSuperusers)
-		if err != nil {
-			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "internal error"})
-		}
+		// Run the guard-check and record creation in a single transaction to
+		// prevent concurrent requests from creating multiple admin accounts.
+		txErr := app.RunInTransaction(func(txApp core.App) error {
+			count, err := countRealSuperusers(txApp)
+			if err != nil {
+				return errSetupAlreadyDone // treat count failure as blocked
+			}
+			if count > 0 {
+				return errSetupAlreadyDone
+			}
 
-		record := core.NewRecord(superusers)
-		record.Set("email", body.Email)
-		record.Set("password", body.Password)
-		if err := app.Save(record); err != nil {
-			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			superusers, err := txApp.FindCollectionByNameOrId(core.CollectionNameSuperusers)
+			if err != nil {
+				return err
+			}
+
+			record := core.NewRecord(superusers)
+			record.Set("email", body.Email)
+			record.Set("password", body.Password)
+			return txApp.Save(record)
+		})
+
+		if txErr == errSetupAlreadyDone {
+			return e.JSON(http.StatusForbidden, map[string]string{"error": "setup has already been completed"})
+		}
+		if txErr != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": txErr.Error()})
 		}
 
 		return e.JSON(http.StatusCreated, map[string]string{"status": "created"})
 	}
 }
+
+// errSetupAlreadyDone is a sentinel returned inside the transaction to signal
+// that a real superuser already exists so we can map it to a 403 response.
+var errSetupAlreadyDone = errors.New("setup already done")
 
 // countRealSuperusers returns the number of superusers excluding the
 // temporary installer account that PocketBase auto-creates on first boot

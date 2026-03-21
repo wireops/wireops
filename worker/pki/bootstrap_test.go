@@ -94,8 +94,8 @@ func TestNeedsRenewalExpired(t *testing.T) {
 func TestNeedsRenewalMissingCert(t *testing.T) {
 	dir := t.TempDir()
 
-	if NeedsRenewal(dir, 30) {
-		t.Error("expected NeedsRenewal=false when cert file is missing")
+	if !NeedsRenewal(dir, 30) {
+		t.Error("expected NeedsRenewal=true when cert file is missing (fail-closed)")
 	}
 }
 
