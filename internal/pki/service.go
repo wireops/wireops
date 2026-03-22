@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log"
 	"math/big"
+	"net"
 	"os"
 	"path/filepath"
 	"sync"
@@ -23,7 +24,7 @@ type Service struct {
 	pkiDir string
 	caCert *x509.Certificate
 	caPriv *rsa.PrivateKey
-	mu     sync.Mutex
+	mu     sync.RWMutex
 }
 
 func NewService(pkiDir string) *Service {
@@ -58,7 +59,7 @@ func (s *Service) EnsurePKI() error {
 		return err
 	}
 
-	if err := s.generateServerCert(serverCertPath, serverKeyPath); err != nil {
+	if err := s.generateServerCert(serverCertPath, serverKeyPath, []string{"localhost", "server"}, nil); err != nil {
 		return err
 	}
 
@@ -160,7 +161,11 @@ func (s *Service) generateCA(certPath, keyPath string) error {
 	return nil
 }
 
-func (s *Service) generateServerCert(certPath, keyPath string) error {
+// generateServerCert creates a new server certificate signed by the CA and
+// writes it to certPath/keyPath. dnsNames and ipAddresses are included as
+// SubjectAltNames; pass nil/empty to omit them (initial creation passes
+// defaults; renewal passes the SANs preserved from the prior certificate).
+func (s *Service) generateServerCert(certPath, keyPath string, dnsNames []string, ipAddresses []net.IP) error {
 	priv, err := rsa.GenerateKey(rand.Reader, 4096)
 	if err != nil {
 		return err
@@ -178,13 +183,13 @@ func (s *Service) generateServerCert(certPath, keyPath string) error {
 			Organization: []string{"wireops"},
 			CommonName:   "wireops Server",
 		},
-		NotBefore:   time.Now(),
-		NotAfter:    time.Now().AddDate(1, 0, 0), // 1 year
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		KeyUsage:    x509.KeyUsageDigitalSignature,
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().AddDate(1, 0, 0), // 1 year
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		DNSNames:     dnsNames,
+		IPAddresses:  ipAddresses,
 	}
-
-	template.DNSNames = []string{"localhost", "server"}
 
 	derBytes, err := x509.CreateCertificate(rand.Reader, &template, s.caCert, &priv.PublicKey, s.caPriv)
 	if err != nil {
@@ -222,9 +227,9 @@ func fileExists(filename string) bool {
 
 // SignedCertResult holds the output of a CSR signing operation.
 type SignedCertResult struct {
-	CertPEM    []byte
-	Serial     string
-	NotAfter   time.Time
+	CertPEM  []byte
+	Serial   string
+	NotAfter time.Time
 }
 
 // SignCSR takes a PEM-encoded CSR and returns a signed certificate with metadata.
@@ -282,31 +287,45 @@ func (s *Service) GetCACertPEM() ([]byte, error) {
 }
 
 // GetServerTLSCert returns the loaded server certificate for the TLS server.
+// It holds a read-lock so it never races with RenewServerCert's write-lock.
 func (s *Service) GetServerTLSCert() (tls.Certificate, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	serverCertPath := filepath.Join(s.pkiDir, "server.crt")
 	serverKeyPath := filepath.Join(s.pkiDir, "server.key")
 	return tls.LoadX509KeyPair(serverCertPath, serverKeyPath)
 }
 
 // RenewServerCert generates a new server certificate signed by the current CA.
-// It writes to temporary files first, then atomically renames both into place under
-// the service mutex so readers never observe a mismatched cert/key pair.
+// It writes to temporary files first, then atomically renames both into place
+// under the write lock so concurrent readers (GetServerTLSCert, loadServerCert)
+// never observe a mismatched cert/key pair.
+// SANs from the existing server certificate are preserved in the renewed cert.
 func (s *Service) RenewServerCert() error {
 	if s.caCert == nil || s.caPriv == nil {
 		return errors.New("CA not initialized")
 	}
 
+	// Preserve SANs from the current cert (best-effort; fall back to defaults).
+	dnsNames := []string{"localhost", "server"}
+	var ipAddresses []net.IP
+	if existing, err := s.loadServerCert(); err == nil {
+		if len(existing.DNSNames) > 0 {
+			dnsNames = existing.DNSNames
+		}
+		ipAddresses = existing.IPAddresses
+	}
+
 	tmpCertPath := filepath.Join(s.pkiDir, "server.crt.tmp")
 	tmpKeyPath := filepath.Join(s.pkiDir, "server.key.tmp")
 
-	// Clean up temps on any failure path.
 	cleanup := func() {
 		os.Remove(tmpCertPath)
 		os.Remove(tmpKeyPath)
 	}
 
 	log.Println("[PKI] Renewing server certificate...")
-	if err := s.generateServerCert(tmpCertPath, tmpKeyPath); err != nil {
+	if err := s.generateServerCert(tmpCertPath, tmpKeyPath, dnsNames, ipAddresses); err != nil {
 		cleanup()
 		return fmt.Errorf("failed to generate server cert: %w", err)
 	}
@@ -357,7 +376,16 @@ func (s *Service) ServerCertNeedsRenewal(thresholdDays int) bool {
 }
 
 // loadServerCert parses the server certificate from disk.
+// It holds a read-lock so reads are consistent with RenewServerCert writes.
 func (s *Service) loadServerCert() (*x509.Certificate, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.readServerCertUnlocked()
+}
+
+// readServerCertUnlocked parses the server certificate without acquiring a lock.
+// Callers must hold at least a read lock.
+func (s *Service) readServerCertUnlocked() (*x509.Certificate, error) {
 	certPath := filepath.Join(s.pkiDir, "server.crt")
 	certPEM, err := os.ReadFile(certPath)
 	if err != nil {

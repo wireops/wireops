@@ -3,6 +3,7 @@ package routes
 import (
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/mail"
 
@@ -13,7 +14,28 @@ import (
 
 func RegisterSetupRoutes(r *router.Router[*core.RequestEvent], app core.App) {
 	r.GET("/api/custom/setup/status", handleSetupStatus(app))
-	r.POST("/api/custom/setup", handleSetupCreate(app))
+	r.POST("/api/custom/setup", localhostOnly(handleSetupCreate(app)))
+}
+
+// localhostOnly is a middleware that restricts a handler to requests originating
+// from the loopback interface. This protects the setup endpoint from being
+// triggered by a remote client before the legitimate admin has a chance to act.
+//
+// When wireops is deployed inside Docker with published ports, requests from a
+// host browser arrive via the Docker bridge network (not 127.0.0.1). In that
+// case bind the port to the host loopback instead: -p 127.0.0.1:8090:8090.
+func localhostOnly(next func(*core.RequestEvent) error) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
+		host, _, err := net.SplitHostPort(e.Request.RemoteAddr)
+		if err != nil {
+			host = e.Request.RemoteAddr
+		}
+		ip := net.ParseIP(host)
+		if ip == nil || !ip.IsLoopback() {
+			return e.JSON(http.StatusForbidden, map[string]string{"error": "setup endpoint is only accessible from localhost"})
+		}
+		return next(e)
+	}
 }
 
 func handleSetupStatus(app core.App) func(*core.RequestEvent) error {
@@ -55,7 +77,9 @@ func handleSetupCreate(app core.App) func(*core.RequestEvent) error {
 		txErr := app.RunInTransaction(func(txApp core.App) error {
 			count, err := countRealSuperusers(txApp)
 			if err != nil {
-				return errSetupAlreadyDone // treat count failure as blocked
+				// Propagate DB errors unchanged so the outer handler maps them
+				// to a 500 rather than a misleading 403.
+				return err
 			}
 			if count > 0 {
 				return errSetupAlreadyDone
@@ -76,7 +100,7 @@ func handleSetupCreate(app core.App) func(*core.RequestEvent) error {
 			return e.JSON(http.StatusForbidden, map[string]string{"error": "setup has already been completed"})
 		}
 		if txErr != nil {
-			return e.JSON(http.StatusInternalServerError, map[string]string{"error": txErr.Error()})
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		}
 
 		return e.JSON(http.StatusCreated, map[string]string{"status": "created"})

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
 	"github.com/pocketbase/pocketbase/tools/router"
@@ -35,7 +36,13 @@ func clearAllSuperusers(t *testing.T, app core.App) {
 	t.Helper()
 	// Use raw SQL to bypass the "can't delete last superuser" guard that
 	// app.Delete() enforces — this is intentional in a test-only context.
-	if _, err := app.DB().NewQuery("DELETE FROM _superusers").Execute(); err != nil {
+	// The PocketBase installer account is preserved so countRealSuperusers
+	// continues to ignore it, correctly modeling a fresh-install state.
+	_, err := app.DB().
+		NewQuery("DELETE FROM _superusers WHERE email != {:installer}").
+		Bind(dbx.Params{"installer": core.DefaultInstallerEmail}).
+		Execute()
+	if err != nil {
 		t.Fatalf("failed to clear superusers: %v", err)
 	}
 }
@@ -53,6 +60,7 @@ func callHandler(t *testing.T, app core.App, method, target string, body any, ha
 		reqBody = bytes.NewBuffer(nil)
 	}
 	req := httptest.NewRequest(method, target, reqBody)
+	req.RemoteAddr = "127.0.0.1:1234"
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

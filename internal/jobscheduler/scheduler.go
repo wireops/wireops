@@ -13,6 +13,8 @@ import (
 	gosync "sync"
 	"time"
 
+	"hash/fnv"
+
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
@@ -563,12 +565,15 @@ func (s *Scheduler) patchJobRunMeta(runID, containerName, commitSHA string) {
 	}
 }
 
-// pickWorker selects one worker from the list using a simple round-robin keyed by jobID.
+// pickWorker selects one worker from the list deterministically by hashing jobID.
+// Different job IDs distribute across the worker pool; the selection is stable
+// for a given jobID regardless of when it is called.
 func (s *Scheduler) pickWorker(jobID string, workers []string) string {
 	if len(workers) == 1 {
 		return workers[0]
 	}
-	// Use the current unix second modulo length for a cheap stateless round-robin.
-	idx := int(time.Now().Unix()) % len(workers)
+	h := fnv.New32a()
+	h.Write([]byte(jobID))
+	idx := int(h.Sum32()) % len(workers)
 	return workers[idx]
 }

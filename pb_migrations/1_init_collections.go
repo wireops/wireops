@@ -293,6 +293,9 @@ func createStackEnvVars(app core.App) error {
 	col.Fields.Add(&core.BoolField{Name: "secret"})
 	addAutoDateFields(col)
 
+	// Secret values are AES-GCM encrypted at rest and masked to "" in all API
+	// responses via OnRecordEnrich in internal/hooks/pb_hooks.go. Plaintext is
+	// only accessible server-side via FindAllRecords + crypto.Decrypt.
 	col.ListRule = strPtr("@request.auth.id != ''")
 	col.ViewRule = strPtr("@request.auth.id != ''")
 	col.CreateRule = strPtr("@request.auth.id != ''")
@@ -461,6 +464,9 @@ func createJobEnvVars(app core.App) error {
 	col.Fields.Add(&core.BoolField{Name: "secret"})
 	addAutoDateFields(col)
 
+	// Secret values are AES-GCM encrypted at rest and masked to "" in all API
+	// responses via OnRecordEnrich in internal/hooks/pb_hooks.go. Plaintext is
+	// only accessible server-side via FindAllRecords + crypto.Decrypt.
 	col.ListRule = strPtr("@request.auth.id != ''")
 	col.ViewRule = strPtr("@request.auth.id != ''")
 	col.CreateRule = strPtr("@request.auth.id != ''")

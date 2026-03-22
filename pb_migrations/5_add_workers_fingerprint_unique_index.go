@@ -7,6 +7,8 @@ import (
 	m "github.com/pocketbase/pocketbase/migrations"
 )
 
+const fingerprintIndexSQL = "CREATE UNIQUE INDEX IF NOT EXISTS idx_workers_fingerprint ON workers (fingerprint)"
+
 func init() {
 	m.Register(func(app core.App) error {
 		col, err := app.FindCollectionByNameOrId("workers")
@@ -14,7 +16,13 @@ func init() {
 			return err
 		}
 
-		col.Indexes = append(col.Indexes, "CREATE UNIQUE INDEX IF NOT EXISTS idx_workers_fingerprint ON workers (fingerprint)")
+		for _, idx := range col.Indexes {
+			if idx == fingerprintIndexSQL {
+				return nil // already applied
+			}
+		}
+
+		col.Indexes = append(col.Indexes, fingerprintIndexSQL)
 
 		if err := app.Save(col); err != nil {
 			return err
@@ -29,7 +37,7 @@ func init() {
 		}
 
 		for i, idx := range col.Indexes {
-			if idx == "CREATE UNIQUE INDEX IF NOT EXISTS idx_workers_fingerprint ON workers (fingerprint)" {
+			if idx == fingerprintIndexSQL {
 				col.Indexes = append(col.Indexes[:i], col.Indexes[i+1:]...)
 				break
 			}

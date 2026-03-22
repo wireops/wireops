@@ -461,7 +461,7 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 
 	workerID, workerFingerprint, err := r.resolveWorker(stack)
 	if err != nil {
-		errMsg := fmt.Sprintf("agent resolution failed: %v", err)
+		errMsg := fmt.Sprintf("worker resolution failed: %v", err)
 		r.logFailure(stackID, "manual", commitSHA, errMsg)
 		r.markError(stack, "stacks")
 		return fmt.Errorf("%s", errMsg)
@@ -622,7 +622,7 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 
 	workerID, workerFingerprint, err := r.resolveWorker(stack)
 	if err != nil {
-		errMsg := fmt.Sprintf("agent resolution failed: %v", err)
+		errMsg := fmt.Sprintf("worker resolution failed: %v", err)
 		r.logFailure(stackID, "redeploy", lastSHA, errMsg)
 		r.markError(stack, "stacks")
 		return fmt.Errorf("%s", errMsg)
@@ -1010,7 +1010,7 @@ func (r *Reconciler) queuePendingReconcile(stackID, trigger, commitSHA string) {
 
 	queueLog, err := r.createSyncLog(stackID, "queue", commitSHA, "Added to offline queue (original trigger: "+trigger+")")
 	if err == nil {
-		r.updateSyncLog(queueLog.Id, "queued", "Agent is offline. Sync will proceed when agent reconnects.", 0)
+		r.updateSyncLog(queueLog.Id, "queued", "Worker is offline. Sync will proceed when worker reconnects.", 0)
 	}
 }
 
@@ -1244,7 +1244,7 @@ func (r *Reconciler) refreshServiceStatus(_ context.Context, stackID, workDir st
 }
 
 // TransferStack provisions the stack on targetWorkerID, then tears it down on the
-// original agent, and updates the stack record to point to the new agent.
+// original worker, and updates the stack record to point to the new worker.
 // Data (volumes, container state) is NOT preserved — this is by design for v1.
 func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID string) error {
 	mu := r.stackMutex(stackID)
@@ -1543,7 +1543,7 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 			log.Printf("[transfer] step 2/2: teardown done source_agent=%s", sourceWorkerID)
 			fmt.Fprintf(&outputBuf, "teardown on %s: done.\n", sourceHostname)
 		}
-	} else if sourceWorkerID != "" && r.dispatcher.IsConnected(sourceWorkerID) {
+	} else if sourceWorkerID != "" && r.dispatcher != nil && r.dispatcher.IsConnected(sourceWorkerID) {
 		log.Printf("[transfer] step 2/2: teardown dispatching to source_agent=%s (%s) stack=%s", sourceWorkerID, sourceHostname, stackID)
 		teardownResult, teardownErr := r.dispatcher.Dispatch(ctx, sourceWorkerID, protocol.TeardownCommand{
 			CommandID:      fmt.Sprintf("teardown-transfer-%s", stackID),
