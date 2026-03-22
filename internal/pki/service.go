@@ -16,7 +16,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strings"
+	"sync"
 	"time"
 )
 
@@ -24,6 +24,7 @@ type Service struct {
 	pkiDir string
 	caCert *x509.Certificate
 	caPriv *rsa.PrivateKey
+	mu     sync.RWMutex
 }
 
 func NewService(pkiDir string) *Service {
@@ -58,7 +59,7 @@ func (s *Service) EnsurePKI() error {
 		return err
 	}
 
-	if err := s.generateServerCert(serverCertPath, serverKeyPath); err != nil {
+	if err := s.generateServerCert(serverCertPath, serverKeyPath, []string{"localhost", "server"}, nil); err != nil {
 		return err
 	}
 
@@ -160,7 +161,11 @@ func (s *Service) generateCA(certPath, keyPath string) error {
 	return nil
 }
 
-func (s *Service) generateServerCert(certPath, keyPath string) error {
+// generateServerCert creates a new server certificate signed by the CA and
+// writes it to certPath/keyPath. dnsNames and ipAddresses are included as
+// SubjectAltNames; pass nil/empty to omit them (initial creation passes
+// defaults; renewal passes the SANs preserved from the prior certificate).
+func (s *Service) generateServerCert(certPath, keyPath string, dnsNames []string, ipAddresses []net.IP) error {
 	priv, err := rsa.GenerateKey(rand.Reader, 4096)
 	if err != nil {
 		return err
@@ -178,24 +183,12 @@ func (s *Service) generateServerCert(certPath, keyPath string) error {
 			Organization: []string{"wireops"},
 			CommonName:   "wireops Server",
 		},
-		NotBefore:   time.Now(),
-		NotAfter:    time.Now().AddDate(1, 0, 0), // 1 year
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		KeyUsage:    x509.KeyUsageDigitalSignature,
-	}
-
-	sans := os.Getenv("WIREOPS_SERVER_SANS")
-	if sans != "" {
-		for _, san := range strings.Split(sans, ",") {
-			san = strings.TrimSpace(san)
-			if ip := net.ParseIP(san); ip != nil {
-				template.IPAddresses = append(template.IPAddresses, ip)
-			} else {
-				template.DNSNames = append(template.DNSNames, san)
-			}
-		}
-	} else {
-		template.DNSNames = []string{"localhost", "server"}
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().AddDate(1, 0, 0), // 1 year
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		DNSNames:     dnsNames,
+		IPAddresses:  ipAddresses,
 	}
 
 	derBytes, err := x509.CreateCertificate(rand.Reader, &template, s.caCert, &priv.PublicKey, s.caPriv)
@@ -232,8 +225,15 @@ func fileExists(filename string) bool {
 	return !info.IsDir()
 }
 
-// SignCSR takes a PEM-encoded CSR and returns a PEM-encoded Certificate signed by the CA.
-func (s *Service) SignCSR(csrPEM []byte, agentID string) ([]byte, error) {
+// SignedCertResult holds the output of a CSR signing operation.
+type SignedCertResult struct {
+	CertPEM  []byte
+	Serial   string
+	NotAfter time.Time
+}
+
+// SignCSR takes a PEM-encoded CSR and returns a signed certificate with metadata.
+func (s *Service) SignCSR(csrPEM []byte, workerID string) (*SignedCertResult, error) {
 	block, _ := pem.Decode(csrPEM)
 	if block == nil {
 		return nil, errors.New("failed to parse CSR PEM")
@@ -253,14 +253,15 @@ func (s *Service) SignCSR(csrPEM []byte, agentID string) ([]byte, error) {
 		return nil, err
 	}
 
+	notAfter := time.Now().AddDate(1, 0, 0)
 	template := x509.Certificate{
 		SerialNumber: serialNumber,
 		Subject: pkix.Name{
-			Organization: []string{"wireops Agent"},
-			CommonName:   agentID, // Connect identity to CN
+			Organization: []string{"wireops Worker"},
+			CommonName:   workerID,
 		},
 		NotBefore:   time.Now(),
-		NotAfter:    time.Now().AddDate(1, 0, 0), // 1 year
+		NotAfter:    notAfter,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 		KeyUsage:    x509.KeyUsageDigitalSignature,
 	}
@@ -270,7 +271,11 @@ func (s *Service) SignCSR(csrPEM []byte, agentID string) ([]byte, error) {
 		return nil, err
 	}
 
-	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certBytes}), nil
+	return &SignedCertResult{
+		CertPEM:  pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certBytes}),
+		Serial:   serialNumber.Text(16),
+		NotAfter: notAfter,
+	}, nil
 }
 
 // GetCACertPEM returns the PEM-encoded CA public certificate.
@@ -282,10 +287,115 @@ func (s *Service) GetCACertPEM() ([]byte, error) {
 }
 
 // GetServerTLSCert returns the loaded server certificate for the TLS server.
+// It holds a read-lock so it never races with RenewServerCert's write-lock.
 func (s *Service) GetServerTLSCert() (tls.Certificate, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	serverCertPath := filepath.Join(s.pkiDir, "server.crt")
 	serverKeyPath := filepath.Join(s.pkiDir, "server.key")
 	return tls.LoadX509KeyPair(serverCertPath, serverKeyPath)
+}
+
+// RenewServerCert generates a new server certificate signed by the current CA.
+// It writes to temporary files first, then atomically renames both into place
+// under the write lock so concurrent readers (GetServerTLSCert, loadServerCert)
+// never observe a mismatched cert/key pair.
+// SANs from the existing server certificate are preserved in the renewed cert.
+func (s *Service) RenewServerCert() error {
+	if s.caCert == nil || s.caPriv == nil {
+		return errors.New("CA not initialized")
+	}
+
+	// Preserve SANs from the current cert (best-effort; fall back to defaults).
+	dnsNames := []string{"localhost", "server"}
+	var ipAddresses []net.IP
+	if existing, err := s.loadServerCert(); err == nil {
+		if len(existing.DNSNames) > 0 {
+			dnsNames = existing.DNSNames
+		}
+		ipAddresses = existing.IPAddresses
+	}
+
+	tmpCertPath := filepath.Join(s.pkiDir, "server.crt.tmp")
+	tmpKeyPath := filepath.Join(s.pkiDir, "server.key.tmp")
+
+	cleanup := func() {
+		os.Remove(tmpCertPath)
+		os.Remove(tmpKeyPath)
+	}
+
+	log.Println("[PKI] Renewing server certificate...")
+	if err := s.generateServerCert(tmpCertPath, tmpKeyPath, dnsNames, ipAddresses); err != nil {
+		cleanup()
+		return fmt.Errorf("failed to generate server cert: %w", err)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err := os.Rename(tmpCertPath, filepath.Join(s.pkiDir, "server.crt")); err != nil {
+		cleanup()
+		return fmt.Errorf("failed to install server cert: %w", err)
+	}
+	if err := os.Rename(tmpKeyPath, filepath.Join(s.pkiDir, "server.key")); err != nil {
+		cleanup()
+		return fmt.Errorf("failed to install server key: %w", err)
+	}
+
+	log.Println("[PKI] Server certificate renewed successfully.")
+	return nil
+}
+
+// GetServerCertNotAfter returns the expiry time of the current server certificate.
+func (s *Service) GetServerCertNotAfter() (time.Time, error) {
+	cert, err := s.loadServerCert()
+	if err != nil {
+		return time.Time{}, err
+	}
+	return cert.NotAfter, nil
+}
+
+// GetCACertNotAfter returns the expiry time of the Root CA certificate.
+func (s *Service) GetCACertNotAfter() time.Time {
+	if s.caCert == nil {
+		return time.Time{}
+	}
+	return s.caCert.NotAfter
+}
+
+// ServerCertNeedsRenewal reports whether the server certificate expires within
+// the given number of days.
+func (s *Service) ServerCertNeedsRenewal(thresholdDays int) bool {
+	notAfter, err := s.GetServerCertNotAfter()
+	if err != nil {
+		// Treat missing or corrupt certs as needing renewal so the auto-renew
+		// path can repair them.
+		return true
+	}
+	return time.Until(notAfter) < time.Duration(thresholdDays)*24*time.Hour
+}
+
+// loadServerCert parses the server certificate from disk.
+// It holds a read-lock so reads are consistent with RenewServerCert writes.
+func (s *Service) loadServerCert() (*x509.Certificate, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.readServerCertUnlocked()
+}
+
+// readServerCertUnlocked parses the server certificate without acquiring a lock.
+// Callers must hold at least a read lock.
+func (s *Service) readServerCertUnlocked() (*x509.Certificate, error) {
+	certPath := filepath.Join(s.pkiDir, "server.crt")
+	certPEM, err := os.ReadFile(certPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read server cert: %w", err)
+	}
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		return nil, errors.New("failed to decode server cert PEM")
+	}
+	return x509.ParseCertificate(block.Bytes)
 }
 
 type CertDetails struct {
@@ -293,11 +403,27 @@ type CertDetails struct {
 	Subject        string    `json:"subject"`
 	ExpirationDate time.Time `json:"expiration_date"`
 	Fingerprint    string    `json:"fingerprint"`
+	Status         string    `json:"status"`
 }
 
 type PKIDetails struct {
 	CA     CertDetails `json:"ca"`
 	Server CertDetails `json:"server"`
+}
+
+// CertStatus returns "ok", "warning", or "critical" based on days until expiry.
+func CertStatus(notAfter time.Time) string {
+	remaining := time.Until(notAfter)
+	switch {
+	case remaining < 0:
+		return "expired"
+	case remaining < 7*24*time.Hour:
+		return "critical"
+	case remaining < 30*24*time.Hour:
+		return "warning"
+	default:
+		return "ok"
+	}
 }
 
 // GetPKIDetails returns public details about the CA and Server certificates.
@@ -314,19 +440,12 @@ func (s *Service) GetPKIDetails() (*PKIDetails, error) {
 		Subject:        s.caCert.Subject.CommonName,
 		ExpirationDate: s.caCert.NotAfter,
 		Fingerprint:    caFingerprint,
+		Status:         CertStatus(s.caCert.NotAfter),
 	}
 
-	serverCertPair, err := s.GetServerTLSCert()
+	serverCert, err := s.loadServerCert()
 	if err != nil {
 		return nil, fmt.Errorf("failed to load server certificate: %w", err)
-	}
-	if len(serverCertPair.Certificate) == 0 {
-		return nil, errors.New("server certificate contains no data")
-	}
-
-	serverCert, err := x509.ParseCertificate(serverCertPair.Certificate[0])
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse server certificate: %w", err)
 	}
 
 	serverHash := sha256.Sum256(serverCert.Raw)
@@ -337,6 +456,7 @@ func (s *Service) GetPKIDetails() (*PKIDetails, error) {
 		Subject:        serverCert.Subject.CommonName,
 		ExpirationDate: serverCert.NotAfter,
 		Fingerprint:    serverFingerprint,
+		Status:         CertStatus(serverCert.NotAfter),
 	}
 
 	return &PKIDetails{

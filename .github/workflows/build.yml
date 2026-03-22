@@ -54,7 +54,7 @@ jobs:
   sonarqube:
     name: SonarQube
     runs-on: ubuntu-latest
-    needs: [backend, agent, frontend]
+    needs: [backend, worker, frontend]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -69,7 +69,7 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
-  agent:
+  worker:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -88,17 +88,17 @@ jobs:
     - name: Download dependencies
       run: go mod download
 
-    - name: Run agent tests
+    - name: Run worker tests
       env:
         CGO_ENABLED: 0
-      run: go test -v ./agent/...
+      run: go test -v ./worker/...
 
-    - name: Build agent
+    - name: Build worker
       env:
         CGO_ENABLED: 0
       run: |
         mkdir -p dist
-        go build -o dist/wireops-agent ./agent/main.go
+        go build -o dist/wireops-worker ./worker/main.go
 
   frontend:
     runs-on: ubuntu-latest
@@ -141,7 +141,7 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
-    needs: [backend, agent, frontend]
+    needs: [backend, worker, frontend]
     permissions:
       contents: read
     
@@ -176,13 +176,13 @@ jobs:
         
         go build -ldflags "-s -w" -o dist/wireops-${{ matrix.os }}-${{ matrix.arch }} .
 
-    - name: Build agent binary
+    - name: Build worker binary
       run: |
         export GOOS=${{ matrix.os }}
         export GOARCH=${{ matrix.arch }}
         export CGO_ENABLED=0
         
-        go build -ldflags "-s -w" -o dist/wireops-agent-${{ matrix.os }}-${{ matrix.arch }} ./agent/main.go
+        go build -ldflags "-s -w" -o dist/wireops-worker-${{ matrix.os }}-${{ matrix.arch }} ./worker/main.go
 
     - name: Upload server artifacts
       uses: actions/upload-artifact@v4
@@ -191,9 +191,9 @@ jobs:
         path: dist/wireops-${{ matrix.os }}-${{ matrix.arch }}
         retention-days: 30
 
-    - name: Upload agent artifacts
+    - name: Upload worker artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: wireops-agent-${{ matrix.os }}-${{ matrix.arch }}
-        path: dist/wireops-agent-${{ matrix.os }}-${{ matrix.arch }}
+        name: wireops-worker-${{ matrix.os }}-${{ matrix.arch }}
+        path: dist/wireops-worker-${{ matrix.os }}-${{ matrix.arch }}
         retention-days: 30

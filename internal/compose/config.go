@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"gopkg.in/yaml.v3"
 )
 
 // ConfigOptions represents options for `docker compose config`
@@ -66,4 +68,16 @@ func ParseConfigJSON(output string) (map[string]interface{}, error) {
 		return nil, fmt.Errorf("failed to parse compose config JSON: %w", err)
 	}
 	return config, nil
+}
+
+// IsComposeFile reports whether data looks like a Docker Compose file
+// by requiring a non-empty "services" map at the top level.
+func IsComposeFile(data []byte) bool {
+	var doc struct {
+		Services map[string]any `yaml:"services"`
+	}
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return false
+	}
+	return len(doc.Services) > 0
 }

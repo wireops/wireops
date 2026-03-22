@@ -13,6 +13,8 @@ import (
 	gosync "sync"
 	"time"
 
+	"hash/fnv"
+
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
@@ -24,15 +26,15 @@ import (
 	"github.com/wireops/wireops/internal/protocol"
 )
 
-// AgentDispatcher is the subset of agent.MTLSServer used by the scheduler.
-type AgentDispatcher interface {
-	GetAgentsByTags(tags []string) []string
-	IsEmbedded(agentID string) bool
-	IsConnected(agentID string) bool
-	Dispatch(ctx context.Context, agentID string, cmd interface{}) (protocol.CommandResult, error)
+// WorkerDispatcher is the subset of worker.MTLSServer used by the scheduler.
+type WorkerDispatcher interface {
+	GetWorkersByTags(tags []string) []string
+	IsEmbedded(workerID string) bool
+	IsConnected(workerID string) bool
+	Dispatch(ctx context.Context, workerID string, cmd interface{}) (protocol.CommandResult, error)
 }
 
-// jobRunParams bundles repository/job metadata needed by dispatchToAgent.
+// jobRunParams bundles repository/job metadata needed by dispatchToWorker.
 // Grouping these avoids exceeding the per-function parameter limit.
 type jobRunParams struct {
 	repoID     string
@@ -43,10 +45,10 @@ type jobRunParams struct {
 	envMap     map[string]string
 }
 
-// Scheduler manages cron entries for scheduled jobs and dispatches them to agents.
+// Scheduler manages cron entries for scheduled jobs and dispatches them to workers.
 type Scheduler struct {
 	app        core.App
-	dispatcher AgentDispatcher
+	dispatcher WorkerDispatcher
 	dataDir    string
 	secretKey  []byte
 
@@ -60,7 +62,7 @@ type Scheduler struct {
 
 // NewScheduler creates a Scheduler. dataDir is the PocketBase data directory
 // (used to locate the cloned repositories workspace).
-func NewScheduler(app core.App, dispatcher AgentDispatcher, dataDir string) *Scheduler {
+func NewScheduler(app core.App, dispatcher WorkerDispatcher, dataDir string) *Scheduler {
 	rootCtx, rootCancel := context.WithCancel(context.Background())
 	return &Scheduler{
 		app:        app,
@@ -173,8 +175,8 @@ func (s *Scheduler) TriggerManual(jobID string) {
 	go s.executeJob(jobID, "manual")
 }
 
-// CancelRun stops a running job container. For embedded agents it runs docker stop
-// on the server; for remote agents it dispatches KillJobCommand.
+// CancelRun stops a running job container. For the embedded worker it runs docker stop
+// on the server; for remote workers it dispatches KillJobCommand.
 func (s *Scheduler) CancelRun(runID string) error {
 	rec, err := s.app.FindRecordById("job_runs", runID)
 	if err != nil {
@@ -183,15 +185,17 @@ func (s *Scheduler) CancelRun(runID string) error {
 	if rec.GetString("status") != "running" {
 		return fmt.Errorf("job run is not running (status: %s)", rec.GetString("status"))
 	}
-	agentID := rec.GetString("agent")
-	if agentID == "" {
-		return fmt.Errorf("job run has no agent")
+	workerID := rec.GetString("worker")
+	if workerID == "" {
+		return fmt.Errorf("job run has no worker")
 	}
 
 	containerName := "wireops-job-" + runID
 
-	if s.dispatcher.IsEmbedded(agentID) {
-		out, runErr := exec.Command("docker", "stop", containerName).CombinedOutput()
+	if s.dispatcher.IsEmbedded(workerID) {
+		stopCtx, stopCancel := context.WithTimeout(s.rootCtx, 30*time.Second)
+		defer stopCancel()
+		out, runErr := exec.CommandContext(stopCtx, "docker", "stop", containerName).CombinedOutput()
 		if runErr != nil {
 			return fmt.Errorf("docker stop failed: %w\n%s", runErr, string(out))
 		}
@@ -205,14 +209,14 @@ func (s *Scheduler) CancelRun(runID string) error {
 	}
 	ctx, cancel := context.WithTimeout(s.rootCtx, 15*time.Second)
 	defer cancel()
-	result, err := s.dispatcher.Dispatch(ctx, agentID, cmd)
+	result, err := s.dispatcher.Dispatch(ctx, workerID, cmd)
 	if err != nil {
 		return fmt.Errorf("dispatch kill failed: %w", err)
 	}
 	if result.Error != "" {
-		return fmt.Errorf("agent error: %s", result.Error)
+		return fmt.Errorf("worker error: %s", result.Error)
 	}
-	log.Printf("[jobscheduler] cancelled remote run %s on agent %s", runID, agentID)
+	log.Printf("[jobscheduler] cancelled remote run %s on worker %s", runID, workerID)
 	return nil
 }
 
@@ -240,8 +244,8 @@ func (s *Scheduler) executeJob(jobID, trigger string) {
 		return
 	}
 
-	agents := s.dispatcher.GetAgentsByTags(def.Tags)
-	if len(agents) == 0 {
+	workers := s.dispatcher.GetWorkersByTags(def.Tags)
+	if len(workers) == 0 {
 		s.createStalledRun(jobID, trigger, def.Tags)
 		return
 	}
@@ -272,13 +276,13 @@ func (s *Scheduler) executeJob(jobID, trigger string) {
 
 	switch def.Mode {
 	case job.ModeOnceAll:
-		for _, agentID := range agents {
-			agentID := agentID
-			go s.dispatchToAgent(ctx, jobID, trigger, agentID, params)
+		for _, workerID := range workers {
+			workerID := workerID
+			go s.dispatchToWorker(ctx, jobID, trigger, workerID, params)
 		}
 	default: // ModeOnce
-		agentID := s.pickAgent(jobID, agents)
-		go s.dispatchToAgent(ctx, jobID, trigger, agentID, params)
+		workerID := s.pickWorker(jobID, workers)
+		go s.dispatchToWorker(ctx, jobID, trigger, workerID, params)
 	}
 
 	// Update last_run_at and status immediately; run completion is async.
@@ -289,14 +293,14 @@ func (s *Scheduler) executeJob(jobID, trigger string) {
 	_ = s.app.Save(rec)
 }
 
-// dispatchToAgent creates a job_run record and sends RunJobCommand to the agent.
-// For remote agents it only waits for the start ack (≤30s), not job completion.
-// Completion is delivered via HandleJobCompleted when the agent pushes MsgJobCompleted.
-// For the embedded agent the container runs in a goroutine inside this call.
-func (s *Scheduler) dispatchToAgent(ctx context.Context, jobID, trigger, agentID string, p jobRunParams) {
-	runID, err := s.createJobRun(jobID, agentID, trigger, "pending")
+// dispatchToWorker creates a job_run record and sends RunJobCommand to the worker.
+// For remote workers it only waits for the start ack (≤30s), not job completion.
+// Completion is delivered via HandleJobCompleted when the worker pushes MsgJobCompleted.
+// For the embedded worker the container runs in a goroutine inside this call.
+func (s *Scheduler) dispatchToWorker(ctx context.Context, jobID, trigger, workerID string, p jobRunParams) {
+	runID, err := s.createJobRun(jobID, workerID, trigger, "pending")
 	if err != nil {
-		log.Printf("[jobscheduler] dispatchToAgent: failed to create job_run job=%s agent=%s: %v", jobID, agentID, err)
+		log.Printf("[jobscheduler] dispatchToWorker: failed to create job_run job=%s worker=%s: %v", jobID, workerID, err)
 		return
 	}
 
@@ -318,41 +322,41 @@ func (s *Scheduler) dispatchToAgent(ctx context.Context, jobID, trigger, agentID
 		Network:          p.def.Network,
 	}
 
-	if s.dispatcher.IsEmbedded(agentID) {
+	if s.dispatcher.IsEmbedded(workerID) {
 		s.setJobRunStatus(runID, "running")
 		s.runJobEmbedded(ctx, runID, cmd)
 		return
 	}
 
-	// Remote agent: wait only for the start ack (agent immediately returns "started").
+	// Remote worker: wait only for the start ack (worker immediately returns "started").
 	// Actual completion arrives later via HandleJobCompleted.
 	ackCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	result, dispatchErr := s.dispatcher.Dispatch(ackCtx, agentID, cmd)
+	result, dispatchErr := s.dispatcher.Dispatch(ackCtx, workerID, cmd)
 	if dispatchErr != nil {
-		log.Printf("[jobscheduler] dispatchToAgent: ack error job=%s run=%s: %v", jobID, runID, dispatchErr)
+		log.Printf("[jobscheduler] dispatchToWorker: ack error job=%s run=%s: %v", jobID, runID, dispatchErr)
 		s.updateJobRun(runID, "error", dispatchErr.Error(), 0)
 		return
 	}
 	if result.Error != "" {
-		log.Printf("[jobscheduler] dispatchToAgent: agent error job=%s run=%s: %s", jobID, runID, result.Error)
+		log.Printf("[jobscheduler] dispatchToWorker: worker error job=%s run=%s: %s", jobID, runID, result.Error)
 		s.updateJobRun(runID, "error", result.Error, 0)
 		return
 	}
 
 	// Ack received — container is starting.
 	s.setJobRunStatus(runID, "running")
-	log.Printf("[jobscheduler] job %s run %s started on agent %s", jobID, runID, agentID)
+	log.Printf("[jobscheduler] job %s run %s started on worker %s", jobID, runID, workerID)
 }
 
-// runJobEmbedded starts the container asynchronously on the server (embedded agent).
+// runJobEmbedded starts the container asynchronously on the server (embedded worker).
 // When the container exits it updates the job_run directly without WebSocket round-trips.
 func (s *Scheduler) runJobEmbedded(ctx context.Context, runID string, cmd protocol.RunJobCommand) {
 	go func() {
 		start := time.Now()
 		args := cmd.BuildDockerRunArgs()
-		out, runErr := exec.Command("docker", args...).CombinedOutput()
+		out, runErr := exec.CommandContext(ctx, "docker", args...).CombinedOutput()
 		elapsed := time.Since(start).Milliseconds()
 
 		output := string(out)
@@ -373,7 +377,7 @@ func (s *Scheduler) runJobEmbedded(ctx context.Context, runID string, cmd protoc
 
 
 
-// HandleJobCompleted is called by the MTLSServer when a remote agent pushes
+// HandleJobCompleted is called by the MTLSServer when a remote worker pushes
 // a MsgJobCompleted message. It updates the job_run record with the final result.
 func (s *Scheduler) HandleJobCompleted(msg protocol.JobCompletedMessage) {
 	status := "success"
@@ -391,7 +395,7 @@ const maxJobRunDuration = time.Hour
 // MarkForgottenRuns finds every job_run that has been in "running" state for
 // longer than maxJobRunDuration and marks it as "forgotten". This is a safety
 // net for short-execution jobs: a 1-hour wall-clock limit signals something
-// went wrong silently (agent crash with no reconnect, zombie container, etc.).
+// went wrong silently (worker crash with no reconnect, zombie container, etc.).
 func (s *Scheduler) MarkForgottenRuns() {
 	cutoff := time.Now().Add(-maxJobRunDuration)
 
@@ -416,38 +420,38 @@ func (s *Scheduler) MarkForgottenRuns() {
 	}
 }
 
-// HandleAgentReconnect marks any job_runs that were left in "running" state for the
-// given agent as "error". This handles the case where the agent restarted mid-job.
-func (s *Scheduler) HandleAgentReconnect(agentID string) {
+// HandleWorkerReconnect marks any job_runs that were left in "running" state for the
+// given worker as "error". This handles the case where the worker restarted mid-job.
+func (s *Scheduler) HandleWorkerReconnect(workerID string) {
 	records, err := s.app.FindAllRecords("job_runs", dbx.HashExp{
-		"agent":  agentID,
+		"worker": workerID,
 		"status": "running",
 	})
 	if err != nil {
-		log.Printf("[jobscheduler] HandleAgentReconnect: query failed: %v", err)
+		log.Printf("[jobscheduler] HandleWorkerReconnect: query failed: %v", err)
 		return
 	}
 	for _, rec := range records {
 		rec.Set("status", "error")
-		rec.Set("output", "job lost: agent disconnected or restarted during execution")
+		rec.Set("output", "job lost: worker disconnected or restarted during execution")
 		_ = s.app.Save(rec)
-		log.Printf("[jobscheduler] run %s marked error: agent %s reconnected", rec.Id, agentID)
+		log.Printf("[jobscheduler] run %s marked error: worker %s reconnected", rec.Id, workerID)
 	}
 }
 
-// createStalledRun writes a job_run with status=stalled when no agents are available.
+// createStalledRun writes a job_run with status=stalled when no workers are available.
 // It also updates the scheduled_jobs record's status to "stalled".
 func (s *Scheduler) createStalledRun(jobID, trigger string, tags []string) {
-	reason := "no matching agents available for the specified tags"
+	reason := "no matching workers available for the specified tags"
 	if len(tags) > 0 {
-		reason = fmt.Sprintf("no matching agents available for the required tags: %v", tags)
+		reason = fmt.Sprintf("no matching workers available for the required tags: %v", tags)
 	}
 	runID, err := s.createJobRun(jobID, "", trigger, "stalled", reason)
 	if err != nil {
 		log.Printf("[jobscheduler] createStalledRun: failed to create stalled run for job %s: %v", jobID, err)
 		return
 	}
-	log.Printf("[jobscheduler] job %s stalled (no matching agents), run %s", jobID, runID)
+	log.Printf("[jobscheduler] job %s stalled (no matching workers), run %s", jobID, runID)
 
 	rec, err := s.app.FindRecordById("scheduled_jobs", jobID)
 	if err == nil && rec.GetString("status") != "paused" {
@@ -457,7 +461,7 @@ func (s *Scheduler) createStalledRun(jobID, trigger string, tags []string) {
 }
 
 // createJobRun inserts a job_run record and returns its ID.
-func (s *Scheduler) createJobRun(jobID, agentID, trigger, status string, output ...string) (string, error) {
+func (s *Scheduler) createJobRun(jobID, workerID, trigger, status string, output ...string) (string, error) {
 	col, err := s.app.FindCollectionByNameOrId("job_runs")
 	if err != nil {
 		return "", err
@@ -470,8 +474,8 @@ func (s *Scheduler) createJobRun(jobID, agentID, trigger, status string, output 
 		rec.Set("output", output[0])
 	}
 	rec.Set("expires_at", time.Now().AddDate(0, 0, 30))
-	if agentID != "" {
-		rec.Set("agent", agentID)
+	if workerID != "" {
+		rec.Set("worker", workerID)
 	}
 	if err := s.app.Save(rec); err != nil {
 		return "", err
@@ -561,12 +565,15 @@ func (s *Scheduler) patchJobRunMeta(runID, containerName, commitSHA string) {
 	}
 }
 
-// pickAgent selects one agent from the list using a simple round-robin keyed by jobID.
-func (s *Scheduler) pickAgent(jobID string, agents []string) string {
-	if len(agents) == 1 {
-		return agents[0]
+// pickWorker selects one worker from the list deterministically by hashing jobID.
+// Different job IDs distribute across the worker pool; the selection is stable
+// for a given jobID regardless of when it is called.
+func (s *Scheduler) pickWorker(jobID string, workers []string) string {
+	if len(workers) == 1 {
+		return workers[0]
 	}
-	// Use the current unix second modulo length for a cheap stateless round-robin.
-	idx := int(time.Now().Unix()) % len(agents)
-	return agents[idx]
+	h := fnv.New32a()
+	h.Write([]byte(jobID))
+	idx := int(h.Sum32()) % len(workers)
+	return workers[idx]
 }

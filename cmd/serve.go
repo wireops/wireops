@@ -17,7 +17,6 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/plugins/migratecmd"
 
-	"github.com/wireops/wireops/internal/agent"
 	"github.com/wireops/wireops/internal/config"
 	"github.com/wireops/wireops/internal/docker"
 	"github.com/wireops/wireops/internal/hooks"
@@ -26,6 +25,7 @@ import (
 	"github.com/wireops/wireops/internal/protocol"
 	"github.com/wireops/wireops/internal/routes"
 	"github.com/wireops/wireops/internal/sync"
+	"github.com/wireops/wireops/internal/worker"
 
 	_ "github.com/wireops/wireops/internal/integrations/dozzle"
 	_ "github.com/wireops/wireops/internal/integrations/traefik"
@@ -105,6 +105,13 @@ func Execute() error {
 		log.Fatalf("Fatal: could not initialize PKI: %v", err)
 	}
 
+	if pkiService.ServerCertNeedsRenewal(7) {
+		log.Println("[PKI] Server certificate expires within 7 days. Renewing now...")
+		if err := pkiService.RenewServerCert(); err != nil {
+			log.Printf("[PKI] Warning: failed to renew server cert at startup: %v", err)
+		}
+	}
+
 	app := pocketbase.New()
 	app.RootCmd.Use = "wireops"
 
@@ -145,16 +152,16 @@ func Execute() error {
 		log.Printf("Warning: could not initialize Docker client: %v", err)
 	}
 
-	agentSvc := agent.NewService(app)
-	mtlsServer := agent.NewMTLSServer(app, pkiService, agentSvc)
+	workerSvc := worker.NewService(app)
+	mtlsServer := worker.NewMTLSServer(app, pkiService, workerSvc)
 	scheduler := sync.NewScheduler(app, dockerClient, mtlsServer)
 	jobSched := jobscheduler.NewScheduler(app, mtlsServer, dataDir)
 
-	mtlsServer.SetOnConnect(func(agentID string) {
-		scheduler.TriggerPendingReconciles(agentID)
-		// Mark any running job_runs for this agent as failed — they were lost
+	mtlsServer.SetOnConnect(func(workerID string) {
+		scheduler.TriggerPendingReconciles(workerID)
+		// Mark any running job_runs for this worker as failed — they were lost
 		// during the disconnect and the completion message will never arrive.
-		jobSched.HandleAgentReconnect(agentID)
+		jobSched.HandleWorkerReconnect(workerID)
 	})
 
 	mtlsServer.SetOnJobCompleted(func(msg protocol.JobCompletedMessage) {
@@ -162,7 +169,7 @@ func Execute() error {
 	})
 
 	go func() {
-		// Use a dedicated port for agent mTLS traffic
+		// Use a dedicated port for worker mTLS traffic
 		addr := ":8443"
 		if err := mtlsServer.Start(addr); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Fatal: mTLS server failed: %v", err)
@@ -170,33 +177,33 @@ func Execute() error {
 	}()
 
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
-		// Sync embedded agent status and register its tags before starting the job
-		// scheduler so the first cron tick always sees the agent as available.
-		embeddedAgents, _ := app.FindAllRecords("agents", dbx.HashExp{"fingerprint": "embedded"})
-		if len(embeddedAgents) > 0 {
-			embeddedAgent := embeddedAgents[0]
+		// Sync embedded worker status and register its tags before starting the job
+		// scheduler so the first cron tick always sees the worker as available.
+		embeddedWorkers, _ := app.FindAllRecords("workers", dbx.HashExp{"fingerprint": "embedded"})
+		if len(embeddedWorkers) > 0 {
+			embeddedWorker := embeddedWorkers[0]
 
-			disableLocal := os.Getenv("WIREOPS_DISABLE_LOCAL_AGENT") == "true" || os.Getenv("WIREOPS_DISABLE_LOCAL_AGENT") == "1"
+			disableLocal := os.Getenv("WIREOPS_DISABLE_LOCAL_WORKER") == "true" || os.Getenv("WIREOPS_DISABLE_LOCAL_WORKER") == "1"
 			targetStatus := "ACTIVE"
 			if disableLocal {
 				targetStatus = "REVOKED"
 			}
-			if embeddedAgent.GetString("status") != targetStatus {
-				embeddedAgent.Set("status", targetStatus)
-				if saveErr := app.Save(embeddedAgent); saveErr != nil {
-					log.Printf("[AGENT] Failed to update embedded agent status: %v", saveErr)
+			if embeddedWorker.GetString("status") != targetStatus {
+				embeddedWorker.Set("status", targetStatus)
+				if saveErr := app.Save(embeddedWorker); saveErr != nil {
+					log.Printf("[WORKER] Failed to update embedded worker status: %v", saveErr)
 				} else {
-					log.Printf("[AGENT] Embedded agent status updated to %s", targetStatus)
+					log.Printf("[WORKER] Embedded worker status updated to %s", targetStatus)
 				}
 			}
 
 			// Tags must be registered synchronously so the job scheduler can
 			// resolve them on the very first cron tick.
-			mtlsServer.SetAgentTags(embeddedAgent.Id, parseTags(os.Getenv("WIREOPS_AGENT_TAGS")))
-			log.Printf("[AGENT] Embedded agent tags set: %v", parseTags(os.Getenv("WIREOPS_AGENT_TAGS")))
+			mtlsServer.SetWorkerTags(embeddedWorker.Id, parseTags(os.Getenv("WIREOPS_WORKER_TAGS")))
+			log.Printf("[WORKER] Embedded worker tags set: %v", parseTags(os.Getenv("WIREOPS_WORKER_TAGS")))
 
 			// Heartbeat loop runs in the background.
-			go func(agentID string) {
+			go func(workerID string) {
 				intervalStr := os.Getenv("WIREOPS_HEARTBEAT_INTERVAL")
 				if intervalStr == "" {
 					intervalStr = "30"
@@ -206,14 +213,14 @@ func Execute() error {
 					intervalSecs = 30
 				}
 
-				_ = agentSvc.RecordHealthEvent(agentID, "online")
-				scheduler.TriggerPendingReconciles(agentID)
+				_ = workerSvc.RecordHealthEvent(workerID, "online")
+				scheduler.TriggerPendingReconciles(workerID)
 
 				ticker := time.NewTicker(time.Duration(intervalSecs) * time.Second)
 				for range ticker.C {
-					_ = agentSvc.RecordHealthEvent(agentID, "online")
+					_ = workerSvc.RecordHealthEvent(workerID, "online")
 				}
-			}(embeddedAgent.Id)
+			}(embeddedWorker.Id)
 		}
 
 		// Configure CORS middleware based on APP_URL
@@ -221,8 +228,9 @@ func Execute() error {
 
 		se.Router.GET("/{path...}", apis.Static(os.DirFS("./pb_public"), false))
 
+		routes.RegisterSetupRoutes(se.Router, app)
 		routes.Register(se.Router, app, scheduler, dockerClient, mtlsServer)
-		routes.RegisterAgentRoutes(se.Router, app, agentSvc, pkiService, mtlsServer, mtlsServer)
+		routes.RegisterWorkerRoutes(se.Router, app, workerSvc, pkiService, mtlsServer, mtlsServer)
 		routes.RegisterJobRoutes(se.Router, app, jobSched)
 
 		if err := scheduler.Start(); err != nil {
@@ -233,6 +241,20 @@ func Execute() error {
 		// Mark job_runs stuck in "running" for more than 1 hour as "forgotten".
 		app.Cron().Add("job_forgotten_sweep", "*/5 * * * *", func() {
 			jobSched.MarkForgottenRuns()
+		})
+
+		// Check PKI certificate expiry daily at 02:00.
+		app.Cron().Add("pki_cert_check", "0 2 * * *", func() {
+			if pkiService.ServerCertNeedsRenewal(30) {
+				log.Println("[PKI] Server certificate expires within 30 days. Renewing...")
+				if err := pkiService.RenewServerCert(); err != nil {
+					log.Printf("[PKI] Failed to renew server cert: %v", err)
+				}
+			}
+			caExpiry := pkiService.GetCACertNotAfter()
+			if time.Until(caExpiry) < 180*24*time.Hour {
+				log.Printf("[PKI] Warning: Root CA expires on %s (less than 180 days)", caExpiry.Format("2006-01-02"))
+			}
 		})
 
 		// Purge job_runs older than 30 days every night at 03:00.

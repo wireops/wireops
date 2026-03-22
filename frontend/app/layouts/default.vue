@@ -7,10 +7,9 @@ const { isShowingHelp, shortcuts } = useKeyboard()
 
 const navItems = [
   { label: 'Dashboard', icon: 'i-lucide-layout-dashboard', to: '/' },
-  { label: 'Stacks', icon: 'i-lucide-container', to: '/stacks' },
-  { label: 'Jobs', icon: 'i-lucide-calendar-clock', to: '/jobs' },
+  { label: 'Workloads', icon: 'i-lucide-container', to: '/workloads' },
   { label: 'Repositories', icon: 'i-lucide-git-branch', to: '/repositories' },
-  { label: 'Agents', icon: 'i-lucide-network', to: '/agents' },
+  { label: 'Workers', icon: 'i-lucide-network', to: '/workers' },
   { label: 'Settings', icon: 'i-lucide-settings', to: '/settings' },
   { label: 'About', icon: 'i-lucide-info', to: '/about' },
 ]

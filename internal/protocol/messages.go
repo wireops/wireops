@@ -1,12 +1,12 @@
 // Package protocol defines the shared WebSocket message types used for
-// communication between the wireops server (control plane) and remote agents.
+// communication between the wireops server (control plane) and remote workers.
 package protocol
 
 // MessageType identifies the type of a WebSocket message.
 type MessageType string
 
 const (
-	// Server → Agent commands
+	// Server → Worker commands
 	MsgDeploy       MessageType = "deploy"
 	MsgRedeploy     MessageType = "redeploy"
 	MsgTeardown     MessageType = "teardown"
@@ -20,7 +20,11 @@ const (
 	MsgRunJob           MessageType = "run_job"
 	MsgKillJob          MessageType = "kill_job"
 
-	// Agent → Server responses/events
+	// Server → Worker PKI lifecycle
+	MsgRequestRenewal   MessageType = "request_renewal"
+	MsgForceRebootstrap MessageType = "force_rebootstrap"
+
+	// Worker → Server responses/events
 	MsgResult       MessageType = "result"
 	MsgHeartbeat    MessageType = "heartbeat"
 	MsgJobCompleted MessageType = "job_completed"
@@ -33,19 +37,19 @@ type Envelope struct {
 	Payload interface{} `json:"payload"`
 }
 
-// DeployCommand is sent from the server to an agent to run `docker compose up`.
+// DeployCommand is sent from the server to a worker to run `docker compose up`.
 type DeployCommand struct {
 	// CommandID is a unique identifier for correlating the response.
 	CommandID string `json:"command_id"`
 
-	// StackID, CommitSHA, and Trigger are informational — used for agent-side logging.
+	// StackID, CommitSHA, and Trigger are informational — used for worker-side logging.
 	StackID    string `json:"stack_id"`
 	CommitSHA  string `json:"commit_sha"`
 	Trigger    string `json:"trigger"` // cron, manual, webhook, rollback, etc.
 	QueueTotal int    `json:"queue_total,omitempty"`
 
 	// ComposeFileB64 is the base64-encoded rendered compose YAML content.
-	// The agent writes this to a temp file before running the command; it is
+	// The worker writes this to a temp file before running the command; it is
 	// never interpolated with env vars (those are passed via cmd.Env instead).
 	ComposeFileB64 string `json:"compose_file_b64"`
 
@@ -63,21 +67,21 @@ type RedeployCommand struct {
 	RecreateNetworks   bool `json:"recreate_networks"`
 }
 
-// TeardownCommand is sent from the server to an agent to run `docker compose down`.
-// The agent uses the rendered compose file so docker compose knows which containers to stop.
+// TeardownCommand is sent from the server to a worker to run `docker compose down`.
+// The worker uses the rendered compose file so docker compose knows which containers to stop.
 type TeardownCommand struct {
 	// CommandID is a unique identifier for correlating the response.
 	CommandID string `json:"command_id"`
 
-	// StackID is informational, used for agent-side logging.
+	// StackID is informational, used for worker-side logging.
 	StackID string `json:"stack_id"`
 
-	// ComposeFileB64 is the base64-encoded rendered compose YAML so the agent
+	// ComposeFileB64 is the base64-encoded rendered compose YAML so the worker
 	// can run `docker compose -f <file> down` with the correct project context.
 	ComposeFileB64 string `json:"compose_file_b64"`
 }
 
-// CommandResult is sent from the agent back to the server after executing a command.
+// CommandResult is sent from the worker back to the server after executing a command.
 type CommandResult struct {
 	CommandID string `json:"command_id"`
 	Output    string `json:"output"`
@@ -85,18 +89,18 @@ type CommandResult struct {
 	Error string `json:"error,omitempty"`
 }
 
-// ProbeCommand is sent from the server to an agent to check whether a compose
-// project already has running or stopped containers. The agent runs
+// ProbeCommand is sent from the server to a worker to check whether a compose
+// project already has running or stopped containers. The worker runs
 // `docker compose ps` and responds with a CommandResult whose Output is a
 // JSON-encoded ProbeResult.
 type ProbeCommand struct {
 	// CommandID correlates the response.
 	CommandID string `json:"command_id"`
 
-	// StackID is informational (used for logging on the agent side).
+	// StackID is informational (used for logging on the worker side).
 	StackID string `json:"stack_id"`
 
-	// ComposeFileB64 is the base64-encoded compose YAML; the agent writes it
+	// ComposeFileB64 is the base64-encoded compose YAML; the worker writes it
 	// temporarily so `docker compose ps` can resolve the project name correctly.
 	ComposeFileB64 string `json:"compose_file_b64"`
 }
@@ -110,13 +114,13 @@ type ProbeResult struct {
 	Services []string `json:"services,omitempty"`
 }
 
-// GetStatusCommand asks the agent for live container statuses and labels for a project.
+// GetStatusCommand asks the worker for live container statuses and labels for a project.
 type GetStatusCommand struct {
 	CommandID   string `json:"command_id"`
 	ProjectName string `json:"project_name"`
 }
 
-// InspectCommand queries the agent for the currently running commit SHA
+// InspectCommand queries the worker for the currently running commit SHA
 // from the running container's wireops.commit label.
 type InspectCommand struct {
 	CommandID string `json:"command_id"`
@@ -128,13 +132,13 @@ type InspectResult struct {
 	CommitSHA string `json:"commit_sha"`
 }
 
-// GetResourcesCommand is sent from the server to an agent to query Docker volumes
+// GetResourcesCommand is sent from the server to a worker to query Docker volumes
 // and networks associated with a compose project.
 type GetResourcesCommand struct {
 	// CommandID correlates the response.
 	CommandID string `json:"command_id"`
 
-	// StackID is informational (used for logging on the agent side).
+	// StackID is informational (used for logging on the worker side).
 	StackID string `json:"stack_id"`
 
 	// ProjectName is the Docker Compose project name, derived from the workdir basename.
@@ -164,13 +168,13 @@ type GetResourcesResult struct {
 	Networks []NetworkInfo `json:"networks"`
 }
 
-// DiscoverProjectsCommand asks the agent to list Docker Compose projects on this
+// DiscoverProjectsCommand asks the worker to list Docker Compose projects on this
 // host that are not managed by wireops (containers without the wireops.managed=true label).
 type DiscoverProjectsCommand struct {
 	CommandID string `json:"command_id"`
 }
 
-// DiscoveredProject describes a single compose project found on the agent host.
+// DiscoveredProject describes a single compose project found on the worker host.
 type DiscoveredProject struct {
 	ProjectName string   `json:"project_name"`
 	ComposePath string   `json:"compose_path"` // from com.docker.compose.project.working_dir label
@@ -183,15 +187,15 @@ type DiscoverProjectsResult struct {
 	Projects []DiscoveredProject `json:"projects"`
 }
 
-// ReadFileCommand asks the agent to read a file from its local filesystem and
+// ReadFileCommand asks the worker to read a file from its local filesystem and
 // return the raw content as base64-encoded bytes. Only .yml/.yaml files are permitted.
 type ReadFileCommand struct {
 	CommandID string `json:"command_id"`
 	Path      string `json:"path"`
 }
 
-// RunJobCommand is sent from the server to an agent to execute a one-shot
-// docker run job. The agent starts the container asynchronously and immediately
+// RunJobCommand is sent from the server to a worker to execute a one-shot
+// docker run job. The worker starts the container asynchronously and immediately
 // acks via CommandResult; the final outcome arrives as a JobCompletedMessage.
 type RunJobCommand struct {
 	// CommandID correlates the immediate ack response.
@@ -270,15 +274,15 @@ func (cmd *RunJobCommand) BuildDockerRunArgs() []string {
 	return args
 }
 
-// KillJobCommand tells the agent to stop a running job container.
-// The agent runs `docker stop wireops-job-<JobRunID>`. The container exit will
+// KillJobCommand tells the worker to stop a running job container.
+// The worker runs `docker stop wireops-job-<JobRunID>`. The container exit will
 // trigger the existing RunJob completion flow and send JobCompletedMessage.
 type KillJobCommand struct {
 	CommandID string `json:"command_id"`
 	JobRunID  string `json:"job_run_id"`
 }
 
-// JobCompletedMessage is sent from the agent to the server when a job container
+// JobCompletedMessage is sent from the worker to the server when a job container
 // exits. It is an unsolicited push message, not a reply to a specific command.
 type JobCompletedMessage struct {
 	// JobRunID matches the job_run record on the server.
@@ -296,7 +300,7 @@ type JobCompletedMessage struct {
 
 // HeartbeatPayload is the optional body sent inside a MsgHeartbeat envelope.
 // ActiveJobRunIDs lists the job_run IDs whose containers are still running on
-// this agent — the server uses this as a liveness signal.
+// this worker — the server uses this as a liveness signal.
 type HeartbeatPayload struct {
 	ActiveJobRunIDs []string `json:"active_job_run_ids,omitempty"`
 }

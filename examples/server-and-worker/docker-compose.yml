@@ -1,0 +1,40 @@
+services:
+  wireops:
+    image: ghcr.io/wireops/wireops:latest
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8090}:8090"
+      - "${MTLS_PORT:-8443}:8443"
+    volumes:
+      - ./data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - SECRET_KEY=${SECRET_KEY}
+      - APP_URL=${APP_URL:-http://localhost:8090}
+      - PB_DATA_DIR=${PB_DATA_DIR:-/data/pb_data}
+      - REPOS_WORKSPACE=${REPOS_WORKSPACE:-/data/repos}
+      - WIREOPS_DISABLE_LOCAL_WORKER=true
+    env_file:
+      - .env
+
+  wireops-worker:
+    image: ghcr.io/wireops/wireops-worker:latest
+    restart: unless-stopped
+    depends_on:
+      - wireops
+    environment:
+      - WIREOPS_SERVER=${WIREOPS_SERVER:-http://wireops:8090}
+      - WIREOPS_MTLS_SERVER=${WIREOPS_MTLS_SERVER:-https://wireops:8443}
+      - WIREOPS_BOOTSTRAP_TOKEN=${WIREOPS_BOOTSTRAP_TOKEN:-}
+      - WIREOPS_WORKER_PKI_DIR=/var/lib/wireops/pki
+      - WIREOPS_WORKER_WORK_DIR=/tmp/wireops-worker
+      - HOSTNAME=${WORKER_HOSTNAME:-}
+    volumes:
+      - wireops-worker-pki:/var/lib/wireops/pki
+      - /var/run/docker.sock:/var/run/docker.sock
+    env_file:
+      - .env
+
+volumes:
+  wireops-worker-pki:
+    driver: local

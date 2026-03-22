@@ -3,7 +3,7 @@ const { deleteStack } = useApi()
 const toast = useToast()
 
 const props = defineProps<{
-  stack: any // the stack record (must have .id, .name, and optionally .expand.agent)
+  stack: any // the stack record (must have .id, .name, and optionally .expand.worker)
 }>()
 
 const emit = defineEmits<{
@@ -11,23 +11,23 @@ const emit = defineEmits<{
   cancel: []
 }>()
 
-// Agent connectivity check
-const agentOffline = computed(() => {
-  const agent = props.stack?.expand?.agent
-  if (!agent) return false // embedded / unknown, allow
-  // An agent is considered offline if its last_seen is >2 minutes ago OR status is not ACTIVE
-  if (agent.status && agent.status !== 'ACTIVE') return true
+// Worker connectivity check
+const workerOffline = computed(() => {
+  const worker = props.stack?.expand?.worker
+  if (!worker) return false // embedded / unknown, allow
+  // A worker is considered offline if its status is not ACTIVE
+  if (worker.status && worker.status !== 'ACTIVE') return true
   return false
 })
 
-const agentName = computed(() => props.stack?.expand?.agent?.hostname || 'Agent')
+const workerName = computed(() => props.stack?.expand?.worker?.hostname || 'Worker')
 
 const forceDelete = ref(false)
 const deleting = ref(false)
 const errorMsg = ref('')
 
 async function confirmDelete() {
-  if (agentOffline.value && !forceDelete.value) return
+  if (workerOffline.value && !forceDelete.value) return
   deleting.value = true
   errorMsg.value = ''
   try {
@@ -56,14 +56,14 @@ async function confirmDelete() {
     </template>
 
     <div class="space-y-4">
-      <!-- Agent offline warning -->
-      <div v-if="agentOffline" class="flex items-start gap-3 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3">
+      <!-- Worker offline warning -->
+      <div v-if="workerOffline" class="flex items-start gap-3 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3">
         <UIcon name="i-lucide-wifi-off" class="w-5 h-5 text-red-500 mt-0.5 shrink-0" />
         <div class="space-y-2">
           <div>
-            <p class="text-sm font-medium text-red-500">Agent unavailable</p>
+            <p class="text-sm font-medium text-red-500">Worker unavailable</p>
             <p class="text-xs text-red-500 mt-0.5">
-              <span class="font-mono">{{ agentName }}</span> is offline. You can force delete the database records, but the containers on the host will become orphaned.
+              <span class="font-mono">{{ workerName }}</span> is offline. You can force delete the database records, but the containers on the host will become orphaned.
             </p>
           </div>
           <UCheckbox v-model="forceDelete" color="red" label="Force delete database records only" class="pt-2" />
@@ -73,7 +73,7 @@ async function confirmDelete() {
       <!-- Confirmation text -->
       <div v-else class="text-sm text-gray-500 space-y-1">
         <p>Are you sure you want to delete <span class="font-semibold text-gray-800 dark:text-gray-200">{{ stack?.name }}</span>?</p>
-        <p class="text-xs">The agent will run <code class="bg-gray-100 dark:bg-gray-800 px-1 rounded">docker compose down</code> to stop all containers before removing the stack.</p>
+        <p class="text-xs">The worker will run <code class="bg-gray-100 dark:bg-gray-800 px-1 rounded">docker compose down</code> to stop all containers before removing the stack.</p>
         <p class="text-xs text-red-500 font-medium">This action cannot be undone.</p>
       </div>
 
@@ -92,7 +92,7 @@ async function confirmDelete() {
           color="error"
           icon="i-lucide-trash-2"
           :loading="deleting"
-          :disabled="agentOffline && !forceDelete"
+          :disabled="workerOffline && !forceDelete"
           @click="confirmDelete"
         />
       </div>

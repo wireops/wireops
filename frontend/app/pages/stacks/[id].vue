@@ -28,18 +28,18 @@ const { platformIconUrl } = useRepositoryPlatform()
 const stackId = route.params.id as string
 
 const { data: stack, refresh: refreshStack, error: stackError } = useAsyncData(`stack_${stackId}`, () =>
-  $pb.collection('stacks').getOne(stackId, { expand: 'repository,agent' })
+  $pb.collection('stacks').getOne(stackId, { expand: 'repository,worker' })
 )
 
-const agentOffline = computed(() => {
-  const agent = stack.value?.expand?.agent
-  if (!agent) return false
-  if (agent.status && agent.status !== 'ACTIVE') return true
+const workerOffline = computed(() => {
+  const worker = stack.value?.expand?.worker
+  if (!worker) return false
+  if (worker.status && worker.status !== 'ACTIVE') return true
   return false
 })
 
 const effectiveStackStatus = computed(() => {
-  if (agentOffline.value) return 'unknown'
+  if (workerOffline.value) return 'unknown'
   return stack.value?.status || 'unknown'
 })
 watch(stackError, (err) => {
@@ -60,14 +60,14 @@ const { data: envVars, refresh: refreshEnv } = useAsyncData(`env_${stackId}`, ()
   })
 )
 
-const { data: agents } = useAsyncData('agents_for_stacks', () =>
-  $pb.collection('agents').getFullList({ filter: 'status = "ACTIVE"', sort: 'hostname' })
+const { data: workers } = useAsyncData('workers_for_stacks', () =>
+  $pb.collection('workers').getFullList({ filter: 'status = "ACTIVE"', sort: 'hostname' })
 )
 
 const { data: webhookUrl } = useAsyncData(`webhook_url_${stackId}`, () => getWebhookUrl(stackId))
 
-const agentOptions = computed(() =>
-  (agents.value || []).map((a: any) => ({ label: a.hostname, value: a.id }))
+const workerOptions = computed(() =>
+  (workers.value || []).map((a: any) => ({ label: a.hostname, value: a.id }))
 )
 
 const services = ref<any[]>([])
@@ -239,11 +239,10 @@ async function saveEdit() {
 
   await $pb.collection('stacks').update(stackId, {
     name: editForm.value.name,
-    agent: editForm.value.agent,
+    worker: editForm.value.worker,
     compose_path: editForm.value.compose_path,
     compose_file: editForm.value.compose_file,
     poll_interval: editForm.value.poll_interval,
-    auto_sync: editForm.value.auto_sync,
   })
   editing.value = false
   refreshStack()
@@ -372,7 +371,7 @@ function onTransferDone() {
   // Refresh logs immediately — the sync log entry is created before the goroutine
   // starts working, so the 'running' state should already be visible.
   refreshLogs()
-  // Refresh the stack record after a delay for the agent field to update
+  // Refresh the stack record after a delay for the worker field to update
   setTimeout(() => { refreshStack(); refreshLogs() }, 4000)
 }
 
@@ -488,8 +487,8 @@ onMounted(() => {
             </NuxtLink>
           </div>
           <div>
-            <span class="text-gray-500">Agent:</span>
-            <span class="ml-1">{{ stack?.expand?.agent?.hostname || 'Unknown' }}</span>
+            <span class="text-gray-500">Worker:</span>
+            <span class="ml-1">{{ stack?.expand?.worker?.hostname || 'Unknown' }}</span>
           </div>
           <div><span class="text-gray-500">Compose Path:</span> {{ stack?.compose_path || '.' }}</div>
           <div>
@@ -500,7 +499,6 @@ onMounted(() => {
             >{{ stack?.compose_file || 'docker-compose.yml' }}</button>
           </div>
           <div><span class="text-gray-500">Poll Interval:</span> {{ stack?.poll_interval || 60 }}s</div>
-          <div class="flex items-center gap-2"><span class="text-gray-500">Auto Sync:</span> <USwitch :model-value="stack?.auto_sync" disabled /></div>
           <div><span class="text-gray-500">Last Synced:</span> {{ stack?.last_synced_at ? new Date(stack.last_synced_at).toLocaleString() : 'Never' }}</div>
           <div class="col-span-2 flex items-center gap-2">
             <span class="text-gray-500">Revision:</span>
@@ -518,7 +516,7 @@ onMounted(() => {
         </div>
         <form v-else class="grid grid-cols-1 sm:grid-cols-2 gap-4" @submit.prevent="saveEdit">
           <UFormField label="Name"><UInput v-model="editForm.name" /></UFormField>
-          <UFormField label="Agent"><USelect v-model="editForm.agent" :items="agentOptions" /></UFormField>
+          <UFormField label="Worker"><USelect v-model="editForm.worker" :items="workerOptions" /></UFormField>
           <UFormField label="Compose Path" :error="editErrors.compose_path"><UInput v-model="editForm.compose_path" /></UFormField>
           <UFormField label="Compose File" :error="editErrors.compose_file"><UInput v-model="editForm.compose_file" /></UFormField>
           <UFormField label="Poll Interval (s)"><UInput v-model.number="editForm.poll_interval" type="number" /></UFormField>
@@ -730,7 +728,7 @@ onMounted(() => {
           <div class="flex items-center justify-between">
             <div>
               <p class="text-sm font-medium">Transfer Stack</p>
-              <p class="text-xs text-gray-500">Move this stack to another agent. Data will not be preserved.</p>
+              <p class="text-xs text-gray-500">Move this stack to another worker. Data will not be preserved.</p>
             </div>
             <UButton
               label="Transfer Stack"
@@ -843,7 +841,7 @@ onMounted(() => {
             <UAlert
               v-else-if="log.status === 'queued'"
               title="Deployment Queued"
-              description="The agent is currently offline. This update has been placed in the deployment queue and will automatically proceed when the agent reconnects."
+              description="The worker is currently offline. This update has been placed in the deployment queue and will automatically proceed when the worker reconnects."
               icon="i-lucide-list-todo"
               color="warning"
               variant="subtle"
