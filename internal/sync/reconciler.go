@@ -25,6 +25,7 @@ import (
 	"github.com/wireops/wireops/internal/notify"
 	"github.com/wireops/wireops/internal/protocol"
 	"github.com/wireops/wireops/internal/safepath"
+	"github.com/wireops/wireops/internal/secrets"
 )
 
 // WorkerDispatcher defines how the reconciler sends compose commands to workers.
@@ -38,24 +39,33 @@ type WorkerDispatcher interface {
 }
 
 type Reconciler struct {
-	app          core.App
-	dockerClient *docker.Client
-	mu           sync.Map
-	secretKey    []byte
-	notifier     *notify.Notifier
-	renderer     *Renderer
-	dispatcher   WorkerDispatcher
+	app            core.App
+	dockerClient   *docker.Client
+	mu             sync.Map
+	secretKey      []byte
+	notifier       *notify.Notifier
+	renderer       *Renderer
+	dispatcher     WorkerDispatcher
+	secretsRegistry *secrets.Registry
 }
 
 func NewReconciler(app core.App, dockerClient *docker.Client, notifier *notify.Notifier, dispatcher WorkerDispatcher) *Reconciler {
 	key := []byte(os.Getenv("SECRET_KEY"))
+
+	// Build the secret provider registry with all supported providers.
+	reg := secrets.NewRegistry()
+	reg.Register(secrets.NewInternalProvider(key))
+	reg.Register(secrets.NewVaultProvider())
+	reg.Register(secrets.NewInfisicalProvider())
+
 	return &Reconciler{
-		app:          app,
-		dockerClient: dockerClient,
-		secretKey:    key,
-		notifier:     notifier,
-		renderer:     NewRenderer(app),
-		dispatcher:   dispatcher,
+		app:             app,
+		dockerClient:    dockerClient,
+		secretKey:       key,
+		notifier:        notifier,
+		renderer:        NewRenderer(app),
+		dispatcher:      dispatcher,
+		secretsRegistry: reg,
 	}
 }
 
@@ -232,6 +242,16 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		log.Printf("[reconciler] failed to load env vars for stack %s: %v", stackID, envErr)
 	}
 
+	// Write .env to the repo workDir NOW so that compose config (called by
+	// GenerateRevision below via compose.Config) can resolve ${VAR} interpolations.
+	// The actual docker compose up runs from the rendered dir — that copy is written later.
+	if envWriteErr := WriteEnvFile(workDir, envVars); envWriteErr != nil {
+		log.Printf("[reconciler] warning: failed to write .env to repo dir for stack %s: %v", stackID, envWriteErr)
+	}
+	if giErr := EnsureGitignoreHasEnv(workDir); giErr != nil {
+		log.Printf("[reconciler] warning: failed to update .gitignore for stack %s: %v", stackID, giErr)
+	}
+
 	// Reload stack after possible checksum/version update by renderer setup.
 	// (stack record may have been modified above by markError etc.)
 	stack, err = r.app.FindRecordById("stacks", stackID)
@@ -285,11 +305,14 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		start := time.Now()
 		if workerFingerprint == "embedded" || (r.dispatcher != nil && r.dispatcher.IsEmbedded(workerID)) {
-			// Embedded: run compose directly on the server host
+			// Embedded: write .env to the rendered compose dir (where docker compose up runs).
+			renderedDir := filepath.Dir(renderedFilePath)
+			if envErr := WriteEnvFile(renderedDir, envVars); envErr != nil {
+				log.Printf("[reconciler] warning: failed to write .env for stack %s: %v", stackID, envErr)
+			}
 			output, runErr = compose.RunUp(ctx, compose.RunOptions{
-				WorkDir:     filepath.Dir(renderedFilePath),
+				WorkDir:     renderedDir,
 				ComposeFile: renderRes.RenderedPath,
-				EnvVars:     envVars,
 			})
 		} else {
 			// Remote worker: send command over WebSocket
@@ -300,22 +323,27 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 				r.markError(stack, "stacks")
 				return fmt.Errorf("%s", errMsg)
 			}
-			result, dispatchErr := r.dispatcher.Dispatch(ctx, workerID, protocol.DeployCommand{
-				CommandID:      syncLog.Id,
-				StackID:        stackID,
-				CommitSHA:      remoteSHA,
-				Trigger:        trigger,
-				QueueTotal:     queueTotal,
-				ComposeFileB64: base64.StdEncoding.EncodeToString(composeContent),
-				EnvVars:        envVars,
-			})
-			output = result.Output
-			runErr = nil
-			if result.Error != "" {
-				runErr = fmt.Errorf("%s", result.Error)
-			}
-			if dispatchErr != nil {
-				runErr = dispatchErr
+			envFileB64, b64Err := buildEnvFileB64(envVars)
+			if b64Err != nil {
+				runErr = fmt.Errorf("failed to serialize env vars for remote deploy: %w", b64Err)
+			} else {
+				result, dispatchErr := r.dispatcher.Dispatch(ctx, workerID, protocol.DeployCommand{
+					CommandID:      syncLog.Id,
+					StackID:        stackID,
+					CommitSHA:      remoteSHA,
+					Trigger:        trigger,
+					QueueTotal:     queueTotal,
+					ComposeFileB64: base64.StdEncoding.EncodeToString(composeContent),
+					EnvFileB64:     envFileB64,
+				})
+				output = result.Output
+				runErr = nil
+				if result.Error != "" {
+					runErr = fmt.Errorf("%s", result.Error)
+				}
+				if dispatchErr != nil {
+					runErr = dispatchErr
+				}
 			}
 		}
 
@@ -467,6 +495,15 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 		return fmt.Errorf("%s", errMsg)
 	}
 
+	// Write .env to workDir so that compose config (called inside
+	// GenerateRevision) can resolve ${VAR} interpolations from the repo file.
+	if envWriteErr := WriteEnvFile(workDir, envVars); envWriteErr != nil {
+		log.Printf("[reconciler] warning: failed to write .env to repo dir for stack %s (rollback): %v", stackID, envWriteErr)
+	}
+	if giErr := EnsureGitignoreHasEnv(workDir); giErr != nil {
+		log.Printf("[reconciler] warning: failed to update .gitignore for stack %s (rollback): %v", stackID, giErr)
+	}
+
 	renderRes, err := r.renderer.GenerateRevision(ctx, stack, repo, workDir, composeFile, envVars, commitSHA, true, workerFingerprint)
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to generate label revision on rollback: %v", err)
@@ -494,10 +531,13 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 	var runErr error
 
 	if workerFingerprint == "embedded" || (r.dispatcher != nil && r.dispatcher.IsEmbedded(workerID)) {
+		renderedDir := filepath.Dir(renderedFilePath)
+		if envErr := WriteEnvFile(renderedDir, envVars); envErr != nil {
+			log.Printf("[reconciler] warning: failed to write .env for stack %s (rollback): %v", stackID, envErr)
+		}
 		output, runErr = compose.RunUp(ctx, compose.RunOptions{
-			WorkDir:     filepath.Dir(renderedFilePath),
+			WorkDir:     renderedDir,
 			ComposeFile: renderRes.RenderedPath,
-			EnvVars:     envVars,
 		})
 	} else {
 		composeContent, readErr := os.ReadFile(renderedFilePath)
@@ -511,20 +551,25 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 		if syncLog != nil {
 			cmdID = syncLog.Id
 		}
-		result, dispatchErr := r.dispatcher.Dispatch(ctx, workerID, protocol.DeployCommand{
-			CommandID:      cmdID,
-			StackID:        stackID,
-			CommitSHA:      commitSHA,
-			Trigger:        "rollback",
-			ComposeFileB64: base64.StdEncoding.EncodeToString(composeContent),
-			EnvVars:        envVars,
-		})
-		output = result.Output
-		if result.Error != "" {
-			runErr = fmt.Errorf("%s", result.Error)
-		}
-		if dispatchErr != nil {
-			runErr = dispatchErr
+		envFileB64, b64Err := buildEnvFileB64(envVars)
+		if b64Err != nil {
+			runErr = fmt.Errorf("failed to serialize env vars for remote rollback: %w", b64Err)
+		} else {
+			result, dispatchErr := r.dispatcher.Dispatch(ctx, workerID, protocol.DeployCommand{
+				CommandID:      cmdID,
+				StackID:        stackID,
+				CommitSHA:      commitSHA,
+				Trigger:        "rollback",
+				ComposeFileB64: base64.StdEncoding.EncodeToString(composeContent),
+				EnvFileB64:     envFileB64,
+			})
+			output = result.Output
+			if result.Error != "" {
+				runErr = fmt.Errorf("%s", result.Error)
+			}
+			if dispatchErr != nil {
+				runErr = dispatchErr
+			}
 		}
 	}
 
@@ -628,6 +673,15 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 		return fmt.Errorf("%s", errMsg)
 	}
 
+	// Write .env to workDir so that compose config (called inside
+	// GenerateRevision) can resolve ${VAR} interpolations from the repo file.
+	if envWriteErr := WriteEnvFile(workDir, envVars); envWriteErr != nil {
+		log.Printf("[reconciler] warning: failed to write .env to repo dir for stack %s (redeploy): %v", stackID, envWriteErr)
+	}
+	if giErr := EnsureGitignoreHasEnv(workDir); giErr != nil {
+		log.Printf("[reconciler] warning: failed to update .gitignore for stack %s (redeploy): %v", stackID, giErr)
+	}
+
 	renderRes, err := r.renderer.GenerateRevision(ctx, stack, repo, workDir, composeFile, envVars, lastSHA, true, workerFingerprint)
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to generate label revision on redeploy: %v", err)
@@ -655,11 +709,14 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 	var runErr error
 
 	if workerFingerprint == "embedded" || (r.dispatcher != nil && r.dispatcher.IsEmbedded(workerID)) {
+		renderedDir := filepath.Dir(renderedFilePath)
+		if envErr := WriteEnvFile(renderedDir, envVars); envErr != nil {
+			log.Printf("[reconciler] warning: failed to write .env for stack %s (redeploy): %v", stackID, envErr)
+		}
 		output, runErr = compose.RunForceUp(ctx, compose.ForceUpOptions{
 			RunOptions: compose.RunOptions{
-				WorkDir:     filepath.Dir(renderedFilePath),
+				WorkDir:     renderedDir,
 				ComposeFile: renderRes.RenderedPath,
-				EnvVars:     envVars,
 			},
 			RecreateContainers: recreateContainers,
 			RecreateVolumes:    recreateVolumes,
@@ -677,25 +734,30 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 		if syncLog != nil {
 			cmdID = syncLog.Id
 		}
-		result, dispatchErr := r.dispatcher.Dispatch(ctx, workerID, protocol.RedeployCommand{
-			DeployCommand: protocol.DeployCommand{
-				CommandID:      cmdID,
-				StackID:        stackID,
-				CommitSHA:      lastSHA,
-				Trigger:        "force-redeploy",
-				ComposeFileB64: base64.StdEncoding.EncodeToString(composeContent),
-				EnvVars:        envVars,
-			},
-			RecreateContainers: recreateContainers,
-			RecreateVolumes:    recreateVolumes,
-			RecreateNetworks:   recreateNetworks,
-		})
-		output = result.Output
-		if result.Error != "" {
-			runErr = fmt.Errorf("%s", result.Error)
-		}
-		if dispatchErr != nil {
-			runErr = dispatchErr
+		envFileB64, b64Err := buildEnvFileB64(envVars)
+		if b64Err != nil {
+			runErr = fmt.Errorf("failed to serialize env vars for remote redeploy: %w", b64Err)
+		} else {
+			result, dispatchErr := r.dispatcher.Dispatch(ctx, workerID, protocol.RedeployCommand{
+				DeployCommand: protocol.DeployCommand{
+					CommandID:      cmdID,
+					StackID:        stackID,
+					CommitSHA:      lastSHA,
+					Trigger:        "force-redeploy",
+					ComposeFileB64: base64.StdEncoding.EncodeToString(composeContent),
+					EnvFileB64:     envFileB64,
+				},
+				RecreateContainers: recreateContainers,
+				RecreateVolumes:    recreateVolumes,
+				RecreateNetworks:   recreateNetworks,
+			})
+			output = result.Output
+			if result.Error != "" {
+				runErr = fmt.Errorf("%s", result.Error)
+			}
+			if dispatchErr != nil {
+				runErr = dispatchErr
+			}
 		}
 	}
 
@@ -866,6 +928,12 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 		log.Printf("[reconciler] failed to load env vars for local stack %s: %v", stackID, envErr)
 	}
 
+	// Write .env to workDir so that compose config (called inside
+	// GenerateRevision) can resolve ${VAR} interpolations.
+	if envWriteErr := WriteEnvFile(workDir, envVars); envWriteErr != nil {
+		log.Printf("[reconciler] warning: failed to write .env to work dir for stack %s (local sync): %v", stackID, envWriteErr)
+	}
+
 	renderRes, err := r.renderer.GenerateRevision(ctx, stack, nil, workDir, composeFile, envVars, "imported", false, workerFingerprint)
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to generate label revision: %v", err)
@@ -891,10 +959,13 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 	start := time.Now()
 
 	if isEmbedded {
+		renderedDir := filepath.Dir(renderedFilePath)
+		if envErr := WriteEnvFile(renderedDir, envVars); envErr != nil {
+			log.Printf("[reconciler] warning: failed to write .env for stack %s (local sync): %v", stackID, envErr)
+		}
 		opts := compose.RunOptions{
-			WorkDir:     filepath.Dir(renderedFilePath),
+			WorkDir:     renderedDir,
 			ComposeFile: renderRes.RenderedPath,
-			EnvVars:     envVars,
 		}
 		if recreateContainers {
 			output, runErr = compose.RunForceUp(ctx, compose.ForceUpOptions{
@@ -915,7 +986,10 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 		}
 		b64 := base64.StdEncoding.EncodeToString(composeBytes)
 
-		if recreateContainers {
+		envFileB64, b64Err := buildEnvFileB64(envVars)
+		if b64Err != nil {
+			runErr = fmt.Errorf("failed to serialize env vars for remote local-sync: %w", b64Err)
+		} else if recreateContainers {
 			result, dispatchErr := r.dispatcher.Dispatch(ctx, workerID, protocol.RedeployCommand{
 				DeployCommand: protocol.DeployCommand{
 					CommandID:      syncLog.Id,
@@ -923,7 +997,7 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 					CommitSHA:      "imported",
 					Trigger:        trigger,
 					ComposeFileB64: b64,
-					EnvVars:        envVars,
+					EnvFileB64:     envFileB64,
 				},
 				RecreateContainers: true,
 				RecreateVolumes:    recreateVolumes,
@@ -942,7 +1016,7 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 				CommitSHA:      "imported",
 				Trigger:        trigger,
 				ComposeFileB64: b64,
-				EnvVars:        envVars,
+				EnvFileB64:     envFileB64,
 			})
 			output = result.Output
 			if result.Error != "" {
@@ -952,6 +1026,7 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 				runErr = dispatchErr
 			}
 		}
+
 	}
 
 	duration := time.Since(start).Milliseconds()
@@ -1122,16 +1197,41 @@ func (r *Reconciler) loadEnvVars(ctx context.Context, stackID string) ([]string,
 			continue
 		}
 
-		if rec.GetBool("secret") && len(r.secretKey) == 32 {
-			// Handle standard Wires encrypted secrets
-			if decrypted, err := crypto.Decrypt(val, r.secretKey); err == nil {
-				val = string(decrypted)
+		if rec.GetBool("secret") {
+			// Resolve the secret value via the appropriate provider.
+			providerName := rec.GetString("secret_provider")
+			if providerName == "" {
+				providerName = "internal"
 			}
+			provider, provErr := r.secretsRegistry.Get(providerName)
+			if provErr != nil {
+				return nil, fmt.Errorf("stack %s: unknown secret provider %q for key %q: %w", stackID, providerName, key, provErr)
+			}
+			resolved, resolveErr := provider.Resolve(ctx, val)
+			if resolveErr != nil {
+				return nil, fmt.Errorf("stack %s: failed to resolve secret %q (provider=%s): %w", stackID, key, providerName, resolveErr)
+			}
+			val = resolved
 		}
 
 		envVars = append(envVars, key+"="+val)
 	}
 	return envVars, nil
+}
+
+// buildEnvFileB64 renders envVars as a .env file using the canonical
+// serializeEnvContent serializer (same quoting and validation as WriteEnvFile)
+// and returns the base64-encoded result. If envVars is empty, returns ("", nil)
+// which signals the worker to remove the .env file.
+func buildEnvFileB64(envVars []string) (string, error) {
+	if len(envVars) == 0 {
+		return "", nil
+	}
+	content, err := serializeEnvContent(envVars)
+	if err != nil {
+		return "", fmt.Errorf("buildEnvFileB64: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString([]byte(content)), nil
 }
 
 func (r *Reconciler) createSyncLog(stackID, trigger, commitSHA, commitMsg string) (*core.Record, error) {
@@ -1443,24 +1543,32 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 
 	if targetFingerprint == "embedded" || (r.dispatcher != nil && r.dispatcher.IsEmbedded(targetWorkerID)) {
 		log.Printf("[transfer] step 1/2: deploy running locally for target_agent=%s (%s) stack=%s", targetWorkerID, targetHostname, stackID)
+		renderedDir := filepath.Dir(composeFilePath)
+		if envErr := WriteEnvFile(renderedDir, envVars); envErr != nil {
+			log.Printf("[reconciler] warning: failed to write .env for stack %s (transfer): %v", stackID, envErr)
+		}
 		deployOutput, deployErr = compose.RunUp(ctx, compose.RunOptions{
-			WorkDir:     workDir,
+			WorkDir:     renderedDir,
 			ComposeFile: composeFilePath,
-			EnvVars:     envVars,
 		})
 	} else {
 		log.Printf("[transfer] step 1/2: deploy dispatching to target_agent=%s (%s) stack=%s", targetWorkerID, targetHostname, stackID)
-		deployResult, dErr := r.dispatcher.Dispatch(ctx, targetWorkerID, protocol.DeployCommand{
-			CommandID:      cmdID,
-			StackID:        stackID,
-			Trigger:        "transfer",
-			ComposeFileB64: composeB64,
-			EnvVars:        envVars,
-		})
-		deployOutput = deployResult.Output
-		dispatchErr = dErr
-		if deployResult.Error != "" {
-			deployErr = fmt.Errorf("%s", deployResult.Error)
+		envFileB64, b64Err := buildEnvFileB64(envVars)
+		if b64Err != nil {
+			deployErr = fmt.Errorf("failed to serialize env vars for remote transfer: %w", b64Err)
+		} else {
+			deployResult, dErr := r.dispatcher.Dispatch(ctx, targetWorkerID, protocol.DeployCommand{
+				CommandID:      cmdID,
+				StackID:        stackID,
+				Trigger:        "transfer",
+				ComposeFileB64: composeB64,
+				EnvFileB64:     envFileB64,
+			})
+			deployOutput = deployResult.Output
+			dispatchErr = dErr
+			if deployResult.Error != "" {
+				deployErr = fmt.Errorf("%s", deployResult.Error)
+			}
 		}
 	}
 

@@ -31,7 +31,8 @@ var stackDir = func() string {
 
 // Deploy decodes the base64 compose file, writes it to a temp file, and runs
 // `docker compose up`. Environment variables are passed via cmd.Env, never
-// interpolated into the YAML.
+// interpolated into the YAML. If EnvFileB64 is set, a .env file is also written
+// to the work directory before the compose command runs.
 func Deploy(ctx context.Context, cmd protocol.DeployCommand) protocol.CommandResult {
 	trigger := cmd.Trigger
 	if trigger == "" {
@@ -51,10 +52,15 @@ func Deploy(ctx context.Context, cmd protocol.DeployCommand) protocol.CommandRes
 	}
 	defer cleanup()
 
+	if envErr := applyEnvFile(workDir, cmd.EnvFileB64); envErr != nil {
+		err := fmt.Errorf("failed to apply env file for stack %s: %w", cmd.StackID, envErr)
+		log.Printf("[executor] deploy error stack=%s trigger=%s: %v", cmd.StackID, trigger, err)
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
+	}
+
 	output, runErr := compose.RunUp(ctx, compose.RunOptions{
 		WorkDir:     workDir,
 		ComposeFile: composeFile,
-		EnvVars:     cmd.EnvVars,
 	})
 
 	result := protocol.CommandResult{CommandID: cmd.CommandID, Output: output}
@@ -89,11 +95,16 @@ func Redeploy(ctx context.Context, cmd protocol.RedeployCommand) protocol.Comman
 	}
 	defer cleanup()
 
+	if envErr := applyEnvFile(workDir, cmd.EnvFileB64); envErr != nil {
+		err := fmt.Errorf("failed to apply env file for stack %s: %w", cmd.StackID, envErr)
+		log.Printf("[executor] redeploy error stack=%s trigger=%s: %v", cmd.StackID, trigger, err)
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
+	}
+
 	output, runErr := compose.RunForceUp(ctx, compose.ForceUpOptions{
 		RunOptions: compose.RunOptions{
 			WorkDir:     workDir,
 			ComposeFile: composeFile,
-			EnvVars:     cmd.EnvVars,
 		},
 		RecreateContainers: cmd.RecreateContainers,
 		RecreateVolumes:    cmd.RecreateVolumes,
@@ -444,4 +455,26 @@ func prepareComposeFile(stackID, commandID, b64Content string) (string, string, 
 
 	cleanup := func() { _ = os.RemoveAll(dir) }
 	return dir, filename, cleanup, nil
+}
+
+// applyEnvFile writes or removes the .env file in workDir based on envFileB64.
+// If envFileB64 is non-empty, it base64-decodes the content and writes .env with
+// mode 0600. If empty, any existing .env in the directory is removed.
+// Errors during write or decode are returned so callers can abort deployment.
+func applyEnvFile(workDir, envFileB64 string) error {
+	envPath := filepath.Join(workDir, ".env")
+	if envFileB64 == "" {
+		if err := os.Remove(envPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to remove .env: %w", err)
+		}
+		return nil
+	}
+	data, err := base64.StdEncoding.DecodeString(envFileB64)
+	if err != nil {
+		return fmt.Errorf("failed to decode .env content: %w", err)
+	}
+	if err := os.WriteFile(envPath, data, 0600); err != nil {
+		return fmt.Errorf("failed to write .env: %w", err)
+	}
+	return nil
 }
