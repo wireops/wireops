@@ -2,6 +2,8 @@ package secrets
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	"github.com/wireops/wireops/internal/crypto"
 )
@@ -22,17 +24,15 @@ func NewInternalProvider(secretKey []byte) *InternalSecretProvider {
 func (p *InternalSecretProvider) Name() string { return "internal" }
 
 // Resolve decrypts the AES-GCM ciphertext using the application secret key.
-// If the key is missing or decryption fails, the raw value is returned as-is
-// so plaintext env vars still work without encryption.
+// Returns an error if the key is absent/invalid or if decryption fails, so
+// the caller can fail-fast rather than deploying raw ciphertext or an empty value.
 func (p *InternalSecretProvider) Resolve(_ context.Context, rawValue string) (string, error) {
 	if len(p.secretKey) != 32 {
-		// No key configured — treat value as already plaintext.
-		return rawValue, nil
+		return "", errors.New("internal secret provider: SECRET_KEY is not configured or is not 32 bytes")
 	}
 	decrypted, err := crypto.Decrypt(rawValue, p.secretKey)
 	if err != nil {
-		// Not a valid ciphertext — return as plaintext (backward-compatible).
-		return rawValue, nil
+		return "", fmt.Errorf("internal secret provider: failed to decrypt value: %w", err)
 	}
 	return string(decrypted), nil
 }

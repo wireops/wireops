@@ -20,29 +20,18 @@ func WriteEnvFile(workDir string, envVars []string) error {
 		return RemoveEnvFile(workDir)
 	}
 
-	var sb strings.Builder
-	for _, kv := range envVars {
-		idx := strings.IndexByte(kv, '=')
-		if idx < 0 {
-			// Malformed env var — write as-is followed by newline.
-			sb.WriteString(kv)
-			sb.WriteByte('\n')
-			continue
-		}
-		key := kv[:idx]
-		val := kv[idx+1:]
-		sb.WriteString(key)
-		sb.WriteByte('=')
-		sb.WriteString(quoteEnvValue(val))
-		sb.WriteByte('\n')
+	contents, err := serializeEnvContent(envVars)
+	if err != nil {
+		return fmt.Errorf("envfile: %w", err)
 	}
 
 	path := filepath.Join(workDir, envFileName)
-	if err := os.WriteFile(path, []byte(sb.String()), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
 		return fmt.Errorf("envfile: failed to write %s: %w", path, err)
 	}
 	return nil
 }
+
 
 // RemoveEnvFile removes the .env file in workDir if it exists.
 // If it does not exist, RemoveEnvFile returns nil.
@@ -52,6 +41,34 @@ func RemoveEnvFile(workDir string) error {
 		return fmt.Errorf("envfile: failed to remove %s: %w", path, err)
 	}
 	return nil
+}
+
+// serializeEnvContent renders envVars as .env file content and returns the
+// result as a string. Each KEY=VALUE pair is written on its own line; values
+// are quoted via quoteEnvValue when they contain special characters.
+// Values that contain literal newlines or carriage returns are rejected because
+// they cannot be represented on a single .env line without breaking parsers.
+func serializeEnvContent(envVars []string) (string, error) {
+	var sb strings.Builder
+	for _, kv := range envVars {
+		idx := strings.IndexByte(kv, '=')
+		if idx < 0 {
+			// Malformed entry (no '=') — write as-is; best-effort.
+			sb.WriteString(kv)
+			sb.WriteByte('\n')
+			continue
+		}
+		key := kv[:idx]
+		val := kv[idx+1:]
+		if strings.ContainsAny(val, "\r\n") {
+			return "", fmt.Errorf("key %q contains a multiline value which is not supported in .env files", key)
+		}
+		sb.WriteString(key)
+		sb.WriteByte('=')
+		sb.WriteString(quoteEnvValue(val))
+		sb.WriteByte('\n')
+	}
+	return sb.String(), nil
 }
 
 // EnsureGitignoreHasEnv checks for a .gitignore file in the given directory.

@@ -53,7 +53,9 @@ func Deploy(ctx context.Context, cmd protocol.DeployCommand) protocol.CommandRes
 	defer cleanup()
 
 	if envErr := applyEnvFile(workDir, cmd.EnvFileB64); envErr != nil {
-		log.Printf("[executor] deploy env file warning stack=%s: %v", cmd.StackID, envErr)
+		err := fmt.Errorf("failed to apply env file for stack %s: %w", cmd.StackID, envErr)
+		log.Printf("[executor] deploy error stack=%s trigger=%s: %v", cmd.StackID, trigger, err)
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
 	}
 
 	output, runErr := compose.RunUp(ctx, compose.RunOptions{
@@ -94,7 +96,9 @@ func Redeploy(ctx context.Context, cmd protocol.RedeployCommand) protocol.Comman
 	defer cleanup()
 
 	if envErr := applyEnvFile(workDir, cmd.EnvFileB64); envErr != nil {
-		log.Printf("[executor] redeploy env file warning stack=%s: %v", cmd.StackID, envErr)
+		err := fmt.Errorf("failed to apply env file for stack %s: %w", cmd.StackID, envErr)
+		log.Printf("[executor] redeploy error stack=%s trigger=%s: %v", cmd.StackID, trigger, err)
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
 	}
 
 	output, runErr := compose.RunForceUp(ctx, compose.ForceUpOptions{
@@ -456,7 +460,7 @@ func prepareComposeFile(stackID, commandID, b64Content string) (string, string, 
 // applyEnvFile writes or removes the .env file in workDir based on envFileB64.
 // If envFileB64 is non-empty, it base64-decodes the content and writes .env with
 // mode 0600. If empty, any existing .env in the directory is removed.
-// Errors are non-fatal warnings; they do not abort the deploy.
+// Errors during write or decode are returned so callers can abort deployment.
 func applyEnvFile(workDir, envFileB64 string) error {
 	envPath := filepath.Join(workDir, ".env")
 	if envFileB64 == "" {
