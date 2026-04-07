@@ -14,7 +14,6 @@ import (
 type RunOptions struct {
 	WorkDir     string
 	ComposeFile string
-	EnvVars     []string
 }
 
 func RunUp(ctx context.Context, opts RunOptions) (string, error) {
@@ -40,12 +39,7 @@ func RunUp(ctx context.Context, opts RunOptions) (string, error) {
 		"up", "-d", "--remove-orphans",
 	)
 	cmd.Dir = opts.WorkDir
-
-	env := os.Environ()
-	if len(opts.EnvVars) > 0 {
-		env = append(env, opts.EnvVars...)
-	}
-	cmd.Env = env
+	cmd.Env = os.Environ()
 
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
@@ -82,9 +76,6 @@ func RunForceUp(ctx context.Context, opts ForceUpOptions) (string, error) {
 	}
 
 	env := os.Environ()
-	if len(opts.EnvVars) > 0 {
-		env = append(env, opts.EnvVars...)
-	}
 
 	var allOutput strings.Builder
 

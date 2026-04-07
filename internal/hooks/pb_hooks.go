@@ -21,6 +21,7 @@ import (
 	"github.com/wireops/wireops/internal/git"
 	"github.com/wireops/wireops/internal/jobscheduler"
 	"github.com/wireops/wireops/internal/safepath"
+	"github.com/wireops/wireops/internal/secrets"
 	"github.com/wireops/wireops/internal/sync"
 )
 
@@ -231,6 +232,15 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 
 	// Encrypt stack env var values on create/update only when secret=true
 	app.OnRecordCreate("stack_env_vars").BindFunc(func(e *core.RecordEvent) error {
+		if provider := e.Record.GetString("secret_provider"); provider != "" {
+			if err := validateSecretProvider(provider); err != nil {
+				return err
+			}
+		} else if e.Record.GetBool("secret") {
+			// Default to "internal" so the schema Pattern constraint (^(internal|)$)
+			// is satisfied and the reconciler can resolve the secret at deploy time.
+			e.Record.Set("secret_provider", "internal")
+		}
 		if e.Record.GetBool("secret") {
 			if err := encryptField(e.Record, "value", secretKey); err != nil {
 				return err
@@ -240,6 +250,11 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 	})
 
 	app.OnRecordUpdate("stack_env_vars").BindFunc(func(e *core.RecordEvent) error {
+		if provider := e.Record.GetString("secret_provider"); provider != "" {
+			if err := validateSecretProvider(provider); err != nil {
+				return err
+			}
+		}
 		if e.Record.GetBool("secret") {
 			if err := encryptField(e.Record, "value", secretKey); err != nil {
 				return err
@@ -410,6 +425,23 @@ func encryptField(record *core.Record, field string, key []byte) error {
 	record.Set(field, encrypted)
 	return nil
 }
+
+// validateSecretProvider returns an error when provider is not in
+// secrets.ValidProviders. It prevents unimplemented backends (vault,
+// infisical) from being persisted, which would cause guaranteed
+// deploy-time failures when their Resolve() is called.
+func validateSecretProvider(provider string) error {
+	for _, valid := range secrets.ValidProviders {
+		if provider == valid {
+			return nil
+		}
+	}
+	return fmt.Errorf(
+		"unknown secret provider %q; currently supported providers: %v",
+		provider, secrets.ValidProviders,
+	)
+}
+
 
 type ContainerInfo struct {
 	Name       string `json:"name"`

@@ -12,7 +12,7 @@ const (
 	MsgTeardown     MessageType = "teardown"
 	MsgProbe        MessageType = "probe"
 	MsgInspect      MessageType = "inspect"
-	MsgGetStatus   MessageType = "get_status"
+	MsgGetStatus    MessageType = "get_status"
 	MsgGetResources MessageType = "get_resources"
 
 	MsgDiscoverProjects MessageType = "discover_projects"
@@ -49,14 +49,15 @@ type DeployCommand struct {
 	QueueTotal int    `json:"queue_total,omitempty"`
 
 	// ComposeFileB64 is the base64-encoded rendered compose YAML content.
-	// The worker writes this to a temp file before running the command; it is
-	// never interpolated with env vars (those are passed via cmd.Env instead).
+	// The worker writes this to a temp file before running the command.
 	ComposeFileB64 string `json:"compose_file_b64"`
 
-	// EnvVars are KEY=VALUE strings injected into the command's environment.
-	// Secrets remain server-side until resolved here; they are NOT embedded
-	// in the compose YAML.
-	EnvVars []string `json:"env_vars"`
+	// EnvFileB64 is the base64-encoded content of a .env file to be written by
+	// the worker in its working directory before running docker compose.
+	// If empty, the worker should remove any existing .env file in the work dir.
+	// This mirrors the behavior of the embedded worker, which writes the .env
+	// directly into the repository clone directory.
+	EnvFileB64 string `json:"env_file_b64,omitempty"`
 }
 
 // RedeployCommand extends DeployCommand with force-recreate options.
@@ -79,6 +80,11 @@ type TeardownCommand struct {
 	// ComposeFileB64 is the base64-encoded rendered compose YAML so the worker
 	// can run `docker compose -f <file> down` with the correct project context.
 	ComposeFileB64 string `json:"compose_file_b64"`
+
+	// EnvFileB64 is the base64-encoded content of a .env file to be written by
+	// the worker before running docker compose down. If empty, any existing .env
+	// file in the work directory is removed.
+	EnvFileB64 string `json:"env_file_b64,omitempty"`
 }
 
 // CommandResult is sent from the worker back to the server after executing a command.
@@ -103,6 +109,11 @@ type ProbeCommand struct {
 	// ComposeFileB64 is the base64-encoded compose YAML; the worker writes it
 	// temporarily so `docker compose ps` can resolve the project name correctly.
 	ComposeFileB64 string `json:"compose_file_b64"`
+
+	// EnvFileB64 is the base64-encoded content of a .env file to be written by
+	// the worker before running docker compose ps. If empty, any existing .env
+	// file in the work directory is removed.
+	EnvFileB64 string `json:"env_file_b64,omitempty"`
 }
 
 // ProbeResult is the JSON payload inside CommandResult.Output after a ProbeCommand.
