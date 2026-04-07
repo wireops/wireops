@@ -39,13 +39,13 @@ type WorkerDispatcher interface {
 }
 
 type Reconciler struct {
-	app            core.App
-	dockerClient   *docker.Client
-	mu             sync.Map
-	secretKey      []byte
-	notifier       *notify.Notifier
-	renderer       *Renderer
-	dispatcher     WorkerDispatcher
+	app             core.App
+	dockerClient    *docker.Client
+	mu              sync.Map
+	secretKey       []byte
+	notifier        *notify.Notifier
+	renderer        *Renderer
+	dispatcher      WorkerDispatcher
 	secretsRegistry *secrets.Registry
 }
 
@@ -932,6 +932,8 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 	// GenerateRevision) can resolve ${VAR} interpolations.
 	if envWriteErr := WriteEnvFile(workDir, envVars); envWriteErr != nil {
 		log.Printf("[reconciler] warning: failed to write .env to work dir for stack %s (local sync): %v", stackID, envWriteErr)
+	} else if gitignoreErr := EnsureGitignoreHasEnv(workDir); gitignoreErr != nil {
+		log.Printf("[reconciler] warning: failed to ensure .gitignore for stack %s (local sync): %v", stackID, gitignoreErr)
 	}
 
 	renderRes, err := r.renderer.GenerateRevision(ctx, stack, nil, workDir, composeFile, envVars, "imported", false, workerFingerprint)
@@ -1390,6 +1392,11 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 
 	composeB64 := base64.StdEncoding.EncodeToString(composeContent)
 
+	envFileB64, b64Err := buildEnvFileB64(envVars)
+	if b64Err != nil {
+		return fmt.Errorf("failed to serialize env vars for transfer: %w", b64Err)
+	}
+
 	// Resolve worker hostnames and fingerprints for human-friendly sync log messages.
 	sourceHostname := sourceWorkerID
 	sourceFingerprint := ""
@@ -1490,6 +1497,7 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 			CommandID:      probeID,
 			StackID:        stackID,
 			ComposeFileB64: composeB64,
+			EnvFileB64:     envFileB64,
 		})
 		if probeErr == nil && probeResult.Error == "" && probeResult.Output != "" {
 			var probe protocol.ProbeResult
@@ -1553,22 +1561,17 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 		})
 	} else {
 		log.Printf("[transfer] step 1/2: deploy dispatching to target_agent=%s (%s) stack=%s", targetWorkerID, targetHostname, stackID)
-		envFileB64, b64Err := buildEnvFileB64(envVars)
-		if b64Err != nil {
-			deployErr = fmt.Errorf("failed to serialize env vars for remote transfer: %w", b64Err)
-		} else {
-			deployResult, dErr := r.dispatcher.Dispatch(ctx, targetWorkerID, protocol.DeployCommand{
-				CommandID:      cmdID,
-				StackID:        stackID,
-				Trigger:        "transfer",
-				ComposeFileB64: composeB64,
-				EnvFileB64:     envFileB64,
-			})
-			deployOutput = deployResult.Output
-			dispatchErr = dErr
-			if deployResult.Error != "" {
-				deployErr = fmt.Errorf("%s", deployResult.Error)
-			}
+		deployResult, dErr := r.dispatcher.Dispatch(ctx, targetWorkerID, protocol.DeployCommand{
+			CommandID:      cmdID,
+			StackID:        stackID,
+			Trigger:        "transfer",
+			ComposeFileB64: composeB64,
+			EnvFileB64:     envFileB64,
+		})
+		deployOutput = deployResult.Output
+		dispatchErr = dErr
+		if deployResult.Error != "" {
+			deployErr = fmt.Errorf("%s", deployResult.Error)
 		}
 	}
 
@@ -1600,6 +1603,7 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 				CommandID:      fmt.Sprintf("teardown-cleanup-%s", stackID),
 				StackID:        stackID,
 				ComposeFileB64: composeB64,
+				EnvFileB64:     envFileB64,
 			})
 			if cleanupErr != nil || cleanupResult.Error != "" {
 				log.Printf("[transfer] step 2/2: cleanup error target_agent=%s: %v %s", targetWorkerID, cleanupErr, cleanupResult.Error)
@@ -1657,6 +1661,7 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 			CommandID:      fmt.Sprintf("teardown-transfer-%s", stackID),
 			StackID:        stackID,
 			ComposeFileB64: composeB64,
+			EnvFileB64:     envFileB64,
 		})
 		outputBuf.WriteString(teardownResult.Output)
 		if teardownErr != nil || teardownResult.Error != "" {

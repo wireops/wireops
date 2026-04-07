@@ -14,8 +14,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	stdsync "sync"
 	"strings"
+	stdsync "sync"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
@@ -29,6 +29,7 @@ import (
 
 	"github.com/wireops/wireops/internal/compose"
 	"github.com/wireops/wireops/internal/config"
+	"github.com/wireops/wireops/internal/crypto"
 	"github.com/wireops/wireops/internal/docker"
 	"github.com/wireops/wireops/internal/git"
 	"github.com/wireops/wireops/internal/integrations"
@@ -260,11 +261,11 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		if isRemote {
 			// Remote agent: dispatch command and decode result
 			cmdID := fmt.Sprintf("resources-%s", stackID)
-		result, dispatchErr := workerSvc.Dispatch(e.Request.Context(), workerID, protocol.GetResourcesCommand{
-			CommandID:   cmdID,
-			StackID:     stackID,
-			ProjectName: projectName,
-		})
+			result, dispatchErr := workerSvc.Dispatch(e.Request.Context(), workerID, protocol.GetResourcesCommand{
+				CommandID:   cmdID,
+				StackID:     stackID,
+				ProjectName: projectName,
+			})
 			if dispatchErr != nil {
 				log.Printf("[routes] get_resources dispatch error stack=%s: %v", stackID, dispatchErr)
 				return e.JSON(http.StatusOK, empty)
@@ -962,10 +963,33 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 				}
 			} else {
 				// Remote worker: dispatch TeardownCommand and wait for result
+				var teardownEnvFileB64 string
+				if envRecords, envLoadErr := app.FindAllRecords("stack_env_vars", dbx.HashExp{"stack": stackID}); envLoadErr == nil {
+					secretKey := []byte(os.Getenv("SECRET_KEY"))
+					var envVars []string
+					for _, rec := range envRecords {
+						key := rec.GetString("key")
+						if key == "" {
+							continue
+						}
+						val := rec.GetString("value")
+						if rec.GetBool("secret") {
+							dec, decErr := crypto.Decrypt(val, secretKey)
+							if decErr != nil {
+								log.Printf("[routes] teardown: skipping secret env var %q for stack %s: %v", key, stackID, decErr)
+								continue
+							}
+							val = string(dec)
+						}
+						envVars = append(envVars, key+"="+val)
+					}
+					teardownEnvFileB64, _ = sync.BuildEnvFileB64(envVars)
+				}
 				result, dispatchErr := workerSvc.Dispatch(e.Request.Context(), workerID, protocol.TeardownCommand{
 					CommandID:      cmdID,
 					StackID:        stackID,
 					ComposeFileB64: base64.StdEncoding.EncodeToString(composeContent),
+					EnvFileB64:     teardownEnvFileB64,
 				})
 				teardownOutput = result.Output
 				if dispatchErr != nil {
@@ -1466,7 +1490,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		if err != nil {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
-		
+
 		saved := make(map[string]*core.Record)
 		for _, r := range recs {
 			saved[r.GetString("slug")] = r
@@ -1492,7 +1516,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			}
 			if rec, exists := saved[slug]; exists {
 				item.Enabled = rec.GetBool("enabled")
-				
+
 				var cfg map[string]interface{}
 				if err := rec.UnmarshalJSONField("config", &cfg); err == nil && cfg != nil {
 					item.Config = cfg
@@ -1511,7 +1535,6 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid integration slug"})
 		}
 
-		
 		var body struct {
 			Enabled bool                   `json:"enabled"`
 			Config  map[string]interface{} `json:"config"`
@@ -1536,7 +1559,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 
 		rec.Set("enabled", body.Enabled)
 		rec.Set("config", body.Config)
-		
+
 		if err := app.Save(rec); err != nil {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
@@ -1568,7 +1591,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 
 	r.GET("/api/custom/stacks/{id}/integration-actions", func(e *core.RequestEvent) error {
 		stackID := e.Request.PathValue("id")
-		
+
 		// 1. Get enabled integrations
 		recs, err := app.FindAllRecords("integrations", dbx.HashExp{"enabled": true})
 		if err != nil {
@@ -1578,7 +1601,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			return e.JSON(http.StatusOK, map[string][]integrations.ContainerAction{})
 		}
 
-		activePlugins := make([]struct{
+		activePlugins := make([]struct {
 			Plugin integrations.Integration
 			Config map[string]interface{}
 		}, 0)
@@ -1591,7 +1614,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 				if cfg == nil {
 					cfg = make(map[string]interface{})
 				}
-				activePlugins = append(activePlugins, struct{
+				activePlugins = append(activePlugins, struct {
 					Plugin integrations.Integration
 					Config map[string]interface{}
 				}{plugin, cfg})
@@ -1603,10 +1626,10 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		if err != nil {
 			return e.JSON(http.StatusNotFound, map[string]string{"error": "stack not found"})
 		}
-		
+
 		projectName := compose.ProjectName(stackWorkDir(app, stack))
 		var statuses []compose.ServiceStatus
-		
+
 		isOffline := false
 		if workerSvc != nil {
 			assignedWorkerID := stack.GetString("worker")
@@ -1646,7 +1669,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			return e.JSON(http.StatusOK, map[string][]integrations.ContainerAction{})
 		}
 
-// 3. Resolve actions
+		// 3. Resolve actions
 		result := make(map[string][]integrations.ContainerAction)
 		for _, s := range statuses {
 			ctx := integrations.ContainerContext{
@@ -1654,7 +1677,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 				ContainerName: s.ContainerName,
 				Labels:        s.Labels,
 			}
-			
+
 			for _, ap := range activePlugins {
 				actions := ap.Plugin.ResolveContainerActions(ap.Config, ctx)
 				if len(actions) > 0 {

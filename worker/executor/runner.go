@@ -134,6 +134,12 @@ func Teardown(ctx context.Context, cmd protocol.TeardownCommand) protocol.Comman
 	}
 	defer cleanup()
 
+	if envErr := applyEnvFile(workDir, cmd.EnvFileB64); envErr != nil {
+		err := fmt.Errorf("failed to apply env file for stack %s: %w", cmd.StackID, envErr)
+		log.Printf("[executor] teardown error stack=%s: %v", cmd.StackID, err)
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
+	}
+
 	output, runErr := compose.RunDown(ctx, compose.RunOptions{
 		WorkDir:     workDir,
 		ComposeFile: composeFile,
@@ -162,6 +168,12 @@ func Probe(ctx context.Context, cmd protocol.ProbeCommand) protocol.CommandResul
 		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
 	}
 	defer cleanup()
+
+	if envErr := applyEnvFile(workDir, cmd.EnvFileB64); envErr != nil {
+		err := fmt.Errorf("failed to apply env file for stack %s: %w", cmd.StackID, envErr)
+		log.Printf("[executor] probe error stack=%s: %v", cmd.StackID, err)
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
+	}
 
 	services, psErr := compose.RunPs(ctx, compose.RunOptions{
 		WorkDir:     workDir,
@@ -429,8 +441,6 @@ func KillJob(cmd protocol.KillJobCommand) protocol.CommandResult {
 	log.Printf("[executor] kill_job sent job_run=%s", cmd.JobRunID)
 	return protocol.CommandResult{CommandID: cmd.CommandID, Output: "stopped"}
 }
-
-
 
 // prepareComposeFile decodes the base64 YAML, writes it to a structured directory
 // under stackDir/stacks/<stackID>/cmd-<commandID>/, and returns (workDir, filename, cleanupFn, error).

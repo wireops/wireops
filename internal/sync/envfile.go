@@ -2,6 +2,7 @@ package sync
 
 import (
 	"bufio"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -32,7 +33,6 @@ func WriteEnvFile(workDir string, envVars []string) error {
 	return nil
 }
 
-
 // RemoveEnvFile removes the .env file in workDir if it exists.
 // If it does not exist, RemoveEnvFile returns nil.
 func RemoveEnvFile(workDir string) error {
@@ -53,13 +53,13 @@ func serializeEnvContent(envVars []string) (string, error) {
 	for _, kv := range envVars {
 		idx := strings.IndexByte(kv, '=')
 		if idx < 0 {
-			// Malformed entry (no '=') — write as-is; best-effort.
-			sb.WriteString(kv)
-			sb.WriteByte('\n')
-			continue
+			return "", fmt.Errorf("malformed entry %q: missing '='", kv)
 		}
 		key := kv[:idx]
 		val := kv[idx+1:]
+		if err := validateEnvKey(key); err != nil {
+			return "", err
+		}
 		if strings.ContainsAny(val, "\r\n") {
 			return "", fmt.Errorf("key %q contains a multiline value which is not supported in .env files", key)
 		}
@@ -106,23 +106,70 @@ func EnsureGitignoreHasEnv(dir string) error {
 	return os.WriteFile(gitignorePath, []byte(".env\n"), 0644)
 }
 
+// BuildEnvFileB64 serializes envVars as a .env file and returns the base64-encoded
+// content. If envVars is empty it returns ("", nil), which signals the worker to
+// remove any existing .env file. This is the exported counterpart of the
+// package-internal buildEnvFileB64 used by the reconciler.
+func BuildEnvFileB64(envVars []string) (string, error) {
+	if len(envVars) == 0 {
+		return "", nil
+	}
+	content, err := serializeEnvContent(envVars)
+	if err != nil {
+		return "", fmt.Errorf("BuildEnvFileB64: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString([]byte(content)), nil
+}
+
+// validateEnvKey returns an error if key is not a valid .env variable name.
+// A valid key must be non-empty, must not have surrounding whitespace, and must
+// not contain '=', newlines, carriage returns, or other control characters.
+func validateEnvKey(key string) error {
+	if key == "" {
+		return fmt.Errorf("env key must not be empty")
+	}
+	if strings.TrimSpace(key) != key {
+		return fmt.Errorf("env key %q must not have surrounding whitespace", key)
+	}
+	for _, c := range key {
+		if c == '=' || c == '\n' || c == '\r' || c < 0x20 {
+			return fmt.Errorf("env key %q contains invalid character %q", key, c)
+		}
+	}
+	return nil
+}
+
 // quoteEnvValue returns a safely quoted .env value.
-// Values that contain whitespace, quotes, $, #, or = characters are wrapped in
-// double quotes, with any embedded double-quotes backslash-escaped.
-// Simple alphanumeric-and-punctuation values are returned as-is.
+//   - Values containing '$' but no single-quote are wrapped in single quotes so
+//     Docker Compose does not interpolate variables.
+//   - Values containing both '$' and a single-quote are wrapped in double quotes
+//     with backslashes, double-quotes, and dollar signs escaped to prevent
+//     interpolation.
+//   - Other values that require quoting are wrapped in double quotes with
+//     backslashes and double-quotes escaped.
+//   - Simple values with no special characters are returned as-is.
 func quoteEnvValue(val string) string {
-	needsQuote := false
-	for _, c := range val {
-		if c == ' ' || c == '\t' || c == '"' || c == '\'' ||
-			c == '$' || c == '#' || c == '\\' || c == '\n' || c == '\r' {
-			needsQuote = true
-			break
+	hasDollar := strings.ContainsRune(val, '$')
+	hasSingleQuote := strings.ContainsRune(val, '\'')
+
+	needsQuote := hasDollar || hasSingleQuote
+	if !needsQuote {
+		for _, c := range val {
+			if c == ' ' || c == '\t' || c == '"' ||
+				c == '#' || c == '\\' || c == '\n' || c == '\r' {
+				needsQuote = true
+				break
+			}
 		}
 	}
 	if !needsQuote {
 		return val
 	}
-	// Escape backslashes and double-quotes, then wrap.
-	escaped := strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(val)
+	if hasDollar && !hasSingleQuote {
+		// Single-quote wrap: $ is preserved verbatim, no escaping needed.
+		return "'" + val + "'"
+	}
+	// Double-quote wrap: escape \, ", and $ to prevent interpolation.
+	escaped := strings.NewReplacer(`\`, `\\`, `"`, `\"`, `$`, `\$`).Replace(val)
 	return `"` + escaped + `"`
 }
