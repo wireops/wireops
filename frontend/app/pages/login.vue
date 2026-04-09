@@ -1,12 +1,19 @@
 <script setup lang="ts">
 definePageMeta({ layout: false })
 
-const { login } = useAuth()
+const { login, getSSOProviders, loginWithSSO } = useAuth()
 
 const email = ref('')
 const password = ref('')
 const loading = ref(false)
+const ssoLoading = ref(false)
 const error = ref('')
+
+const ssoProviders = ref<{ name: string; displayName: string }[]>([])
+
+onMounted(async () => {
+  ssoProviders.value = await getSSOProviders()
+})
 
 async function handleLogin() {
   loading.value = true
@@ -18,6 +25,19 @@ async function handleLogin() {
     error.value = e?.message || 'Login failed'
   } finally {
     loading.value = false
+  }
+}
+
+async function handleSSOLogin(providerName: string) {
+  ssoLoading.value = true
+  error.value = ''
+  try {
+    await loginWithSSO(providerName)
+    navigateTo('/')
+  } catch (e: any) {
+    error.value = e?.message || 'SSO login failed'
+  } finally {
+    ssoLoading.value = false
   }
 }
 </script>
@@ -93,6 +113,28 @@ async function handleLogin() {
             </NuxtLink>
           </div>
         </form>
+
+        <template v-if="ssoProviders.length > 0">
+          <div class="flex items-center gap-3 mt-4">
+            <div class="flex-1 h-px bg-carbon-700" />
+            <span class="text-xs text-wire-500">or</span>
+            <div class="flex-1 h-px bg-carbon-700" />
+          </div>
+
+          <div class="flex flex-col gap-2 mt-3">
+            <UButton
+              v-for="provider in ssoProviders"
+              :key="provider.name"
+              block
+              variant="outline"
+              :loading="ssoLoading"
+              icon="i-lucide-shield"
+              :label="`Continue with ${provider.displayName}`"
+              class="border-carbon-700 text-wire-300 hover:border-yellow-400/50 hover:text-yellow-400"
+              @click="handleSSOLogin(provider.name)"
+            />
+          </div>
+        </template>
       </div>
     </div>
   </div>

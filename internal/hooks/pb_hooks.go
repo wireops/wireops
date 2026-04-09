@@ -28,6 +28,35 @@ import (
 func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Scheduler) {
 	secretKey := []byte(os.Getenv("SECRET_KEY"))
 
+	// OIDC_REQUIRE_EMAIL_VERIFIED: when "true", reject logins where email_verified is not true
+	requireEmailVerified := os.Getenv("OIDC_REQUIRE_EMAIL_VERIFIED") == "true"
+
+	// When the OIDC provider does not set email_verified=true (e.g. Authentik default),
+	// PocketBase's OIDC client leaves AuthUser.Email blank which causes record creation
+	// to fail with "email: cannot be blank". We recover the email from the raw claims.
+	app.OnRecordAuthWithOAuth2Request("sso_users").BindFunc(func(e *core.RecordAuthWithOAuth2RequestEvent) error {
+		if e.OAuth2User == nil {
+			return e.Next()
+		}
+
+		// Check email_verified claim if required
+		emailVerified, hasVerified := e.OAuth2User.RawUser["email_verified"].(bool)
+		if requireEmailVerified && (!hasVerified || !emailVerified) {
+			rawEmail, _ := e.OAuth2User.RawUser["email"].(string)
+			log.Printf("[oidc] login rejected: email not verified for %s", maskEmailForLog(rawEmail))
+			return fmt.Errorf("email address must be verified by the identity provider")
+		}
+
+		// Recover email from raw claims if PocketBase left it blank
+		if e.OAuth2User.Email == "" {
+			if raw, ok := e.OAuth2User.RawUser["email"].(string); ok && raw != "" {
+				log.Printf("[oidc] email_verified missing/false — using raw email claim: %s", maskEmailForLog(raw))
+				e.OAuth2User.Email = raw
+			}
+		}
+		return e.Next()
+	})
+
 	// Encrypt credential fields on create/update
 	app.OnRecordCreate("repository_keys").BindFunc(func(e *core.RecordEvent) error {
 		if err := encryptSensitiveFields(e.Record, secretKey); err != nil {
@@ -518,4 +547,27 @@ func extractContainersFromCompose(yamlData []byte) []ContainerInfo {
 	}
 
 	return results
+}
+
+// maskEmailForLog masks an email for safe logging (e.g., "user@example.com" -> "u***@example.com")
+func maskEmailForLog(email string) string {
+	if email == "" {
+		return "[empty]"
+	}
+	atIdx := -1
+	for i, c := range email {
+		if c == '@' {
+			atIdx = i
+			break
+		}
+	}
+	if atIdx == -1 {
+		return "[invalid]"
+	}
+	local := email[:atIdx]
+	domain := email[atIdx+1:]
+	if len(local) <= 1 {
+		return local + "***@" + domain
+	}
+	return string(local[0]) + "***@" + domain
 }

@@ -1,3 +1,5 @@
+import type { RecordModel } from 'pocketbase'
+
 export function useAuth() {
   const { $pb } = useNuxtApp()
   const user = useState('auth_user', () => $pb.authStore.record)
@@ -28,7 +30,38 @@ export function useAuth() {
     return $pb.collection('_superusers').confirmPasswordReset(token, password, passwordConfirm)
   }
 
+  const getSSOProviders = async (): Promise<{ name: string; displayName: string }[]> => {
+    try {
+      const methods = await $pb.collection('sso_users').listAuthMethods()
+      return (methods.oauth2?.providers ?? []).map((p: any) => ({
+        name: p.name as string,
+        displayName: (p.displayName as string) || p.name,
+      }))
+    } catch {
+      return []
+    }
+  }
+
+  const loginWithSSO = async (providerName: string) => {
+    const ssoAuth = await $pb.collection('sso_users').authWithOAuth2({ provider: providerName })
+
+    // Clear the SSO token immediately - we don't want it to be used for admin endpoints
+    // The SSO token is only valid for sso_users collection, not for _superusers
+    $pb.authStore.clear()
+
+    const config = useRuntimeConfig()
+    const baseURL = (config.public.pocketbaseUrl as string).replace(/\/$/, '')
+
+    const elevated = await $fetch<{ token: string; record: RecordModel }>(
+      `${baseURL}/api/custom/auth/elevate`,
+      { method: 'POST', body: { token: ssoAuth.token } }
+    )
+
+    $pb.authStore.save(elevated.token, elevated.record)
+    user.value = elevated.record
+  }
+
   const isAuthenticated = computed(() => $pb.authStore.isValid)
 
-  return { user, login, logout, changePassword, requestPasswordReset, confirmPasswordReset, isAuthenticated }
+  return { user, login, logout, changePassword, requestPasswordReset, confirmPasswordReset, isAuthenticated, getSSOProviders, loginWithSSO }
 }

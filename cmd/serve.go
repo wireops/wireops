@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"net/url"
@@ -124,26 +125,28 @@ func Execute() error {
 			return err
 		}
 		smtpHost := os.Getenv("SMTP_HOST")
-		if smtpHost == "" {
-			return nil
-		}
-		smtpPort := 587
-		if portStr := os.Getenv("SMTP_PORT"); portStr != "" {
-			if p, err := strconv.Atoi(portStr); err == nil {
-				smtpPort = p
+		if smtpHost != "" {
+			smtpPort := 587
+			if portStr := os.Getenv("SMTP_PORT"); portStr != "" {
+				if p, err := strconv.Atoi(portStr); err == nil {
+					smtpPort = p
+				}
 			}
+			s := app.Settings()
+			s.SMTP.Enabled = true
+			s.SMTP.Host = smtpHost
+			s.SMTP.Port = smtpPort
+			s.SMTP.Username = os.Getenv("SMTP_USERNAME")
+			s.SMTP.Password = os.Getenv("SMTP_PASSWORD")
+			s.SMTP.TLS = os.Getenv("SMTP_TLS") == "true"
+			if sender := os.Getenv("SMTP_SENDER"); sender != "" {
+				s.Meta.SenderAddress = sender
+			}
+			log.Printf("[smtp] configured from environment (host: %s, port: %d)", smtpHost, smtpPort)
 		}
-		s := app.Settings()
-		s.SMTP.Enabled = true
-		s.SMTP.Host = smtpHost
-		s.SMTP.Port = smtpPort
-		s.SMTP.Username = os.Getenv("SMTP_USERNAME")
-		s.SMTP.Password = os.Getenv("SMTP_PASSWORD")
-		s.SMTP.TLS = os.Getenv("SMTP_TLS") == "true"
-		if sender := os.Getenv("SMTP_SENDER"); sender != "" {
-			s.Meta.SenderAddress = sender
-		}
-		log.Printf("[smtp] configured from environment (host: %s, port: %d)", smtpHost, smtpPort)
+
+		configureOIDC(app)
+
 		return nil
 	})
 
@@ -232,6 +235,7 @@ func Execute() error {
 		routes.Register(se.Router, app, scheduler, dockerClient, mtlsServer)
 		routes.RegisterWorkerRoutes(se.Router, app, workerSvc, pkiService, mtlsServer, mtlsServer)
 		routes.RegisterJobRoutes(se.Router, app, jobSched)
+		routes.RegisterAuthRoutes(se.Router, app)
 
 		if err := scheduler.Start(); err != nil {
 			log.Printf("Warning: scheduler start error: %v", err)
@@ -294,6 +298,98 @@ func Execute() error {
 	_ = os.MkdirAll(reposWorkspace, 0755)
 
 	return app.Start()
+}
+
+// validateOIDCURL validates that a URL is well-formed and uses HTTPS in production.
+// Returns an error if the URL is invalid or insecure.
+func validateOIDCURL(urlStr, fieldName string) error {
+	if urlStr == "" {
+		return fmt.Errorf("%s is required", fieldName)
+	}
+
+	parsed, err := url.Parse(urlStr)
+	if err != nil {
+		return fmt.Errorf("%s is not a valid URL: %v", fieldName, err)
+	}
+
+	if parsed.Scheme != "https" && parsed.Scheme != "http" {
+		return fmt.Errorf("%s must use http or https scheme", fieldName)
+	}
+
+	if parsed.Host == "" {
+		return fmt.Errorf("%s must have a host", fieldName)
+	}
+
+	// In production (when APP_URL uses https), require HTTPS for OIDC URLs
+	appURL := config.GetAppURL()
+	if strings.HasPrefix(appURL, "https://") && parsed.Scheme != "https" {
+		return fmt.Errorf("%s must use HTTPS in production", fieldName)
+	}
+
+	return nil
+}
+
+// configureOIDC reads OIDC env vars and updates the sso_users collection accordingly.
+// If OIDC_CLIENT_ID is set, it enables the oidc OAuth2 provider on sso_users.
+// If it is empty, it disables OAuth2 so listAuthMethods returns no providers.
+func configureOIDC(app core.App) {
+	col, err := app.FindCollectionByNameOrId("sso_users")
+	if err != nil {
+		log.Printf("[oidc] sso_users collection not found, skipping OIDC setup: %v", err)
+		return
+	}
+
+	clientID := os.Getenv("OIDC_CLIENT_ID")
+	if clientID == "" {
+		if col.OAuth2.Enabled {
+			col.OAuth2.Enabled = false
+			col.OAuth2.Providers = nil
+			if err := app.Save(col); err != nil {
+				log.Printf("[oidc] failed to disable OAuth2 on sso_users: %v", err)
+			}
+		}
+		return
+	}
+
+	// Validate OIDC URLs before configuring
+	authURL := os.Getenv("OIDC_AUTH_URL")
+	tokenURL := os.Getenv("OIDC_TOKEN_URL")
+	userInfoURL := os.Getenv("OIDC_USER_INFO_URL")
+
+	if err := validateOIDCURL(authURL, "OIDC_AUTH_URL"); err != nil {
+		log.Printf("[oidc] configuration error: %v", err)
+		return
+	}
+	if err := validateOIDCURL(tokenURL, "OIDC_TOKEN_URL"); err != nil {
+		log.Printf("[oidc] configuration error: %v", err)
+		return
+	}
+	if err := validateOIDCURL(userInfoURL, "OIDC_USER_INFO_URL"); err != nil {
+		log.Printf("[oidc] configuration error: %v", err)
+		return
+	}
+
+	displayName := os.Getenv("OIDC_DISPLAY_NAME")
+	if displayName == "" {
+		displayName = "SSO"
+	}
+
+	col.OAuth2.Enabled = true
+	col.OAuth2.Providers = []core.OAuth2ProviderConfig{{
+		Name:         "oidc",
+		ClientId:     clientID,
+		ClientSecret: os.Getenv("OIDC_CLIENT_SECRET"),
+		AuthURL:      authURL,
+		TokenURL:     tokenURL,
+		UserInfoURL:  userInfoURL,
+		DisplayName:  displayName,
+	}}
+
+	if err := app.Save(col); err != nil {
+		log.Printf("[oidc] failed to configure OIDC provider on sso_users: %v", err)
+		return
+	}
+	log.Printf("[oidc] configured provider '%s' on sso_users", displayName)
 }
 
 // parseTags splits a comma-separated tag string into a trimmed, non-empty slice.

@@ -121,6 +121,43 @@ services:
 | `SMTP_SENDER` | — | Sender email address |
 | `SMTP_TLS` | `false` | Set to `true` to enable TLS for SMTP |
 
+#### OIDC / SSO (optional)
+
+wireops supports SSO login via any OIDC-compatible provider (Keycloak, Authentik, Zitadel, Okta, etc.). When configured, a **"Continue with [name]"** button appears on the login page alongside the standard email/password form.
+
+| Variable | Required | Description |
+|---|---|---|
+| `OIDC_CLIENT_ID` | **Yes** (to enable) | OAuth2 Client ID from your identity provider |
+| `OIDC_CLIENT_SECRET` | **Yes** (to enable) | OAuth2 Client Secret |
+| `OIDC_AUTH_URL` | **Yes** (to enable) | Authorization endpoint of your IdP |
+| `OIDC_TOKEN_URL` | **Yes** (to enable) | Token endpoint of your IdP |
+| `OIDC_USER_INFO_URL` | No | UserInfo endpoint. If omitted, user data is read from the `id_token` claims |
+| `OIDC_DISPLAY_NAME` | No | Label shown on the login button (default: `SSO`) |
+
+> **Note on special characters:** If `OIDC_CLIENT_SECRET` (or any value) contains special characters (`$`, `%`, `*`, `!`, etc.), wrap it in **single quotes** in the `.env` file to prevent `godotenv` from interpreting them:
+> ```bash
+> OIDC_CLIENT_SECRET='my$ecret!@#%'
+> ```
+
+The **redirect/callback URL** to register in your identity provider is:
+```
+https://your-wireops-domain.com/api/oauth2-redirect
+```
+
+**Provider example:**
+
+```bash
+# Authentik
+OIDC_CLIENT_ID=wireops
+OIDC_CLIENT_SECRET=your-secret
+OIDC_AUTH_URL=https://authentik.example.com/application/o/wireops/authorize/
+OIDC_TOKEN_URL=https://authentik.example.com/application/o/token/
+OIDC_USER_INFO_URL=https://authentik.example.com/application/o/userinfo/
+OIDC_DISPLAY_NAME=Authentik
+```
+
+**Note:** Only users whose OIDC identity email already exists in wireops as a superuser will be able to log in. No new superuser accounts are created automatically via SSO.
+
 ### Worker
 
 | Variable | Required | Default | Description |
