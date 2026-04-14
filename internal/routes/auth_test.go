@@ -2,6 +2,7 @@ package routes
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -97,6 +98,18 @@ func TestGetClientIP(t *testing.T) {
 			remoteAddr: "10.0.0.50",
 			expected:   "10.0.0.50",
 		},
+		{
+			name:       "untrusted peer ignores spoofed X-Forwarded-For",
+			headers:    map[string]string{"X-Forwarded-For": "1.2.3.4"},
+			remoteAddr: "203.0.113.1:4444",
+			expected:   "203.0.113.1",
+		},
+		{
+			name:       "untrusted peer ignores spoofed X-Real-IP",
+			headers:    map[string]string{"X-Real-IP": "1.2.3.4"},
+			remoteAddr: "198.51.100.2:443",
+			expected:   "198.51.100.2",
+		},
 	}
 
 	for _, tt := range tests {
@@ -112,6 +125,41 @@ func TestGetClientIP(t *testing.T) {
 				t.Errorf("getClientIP() = %q, want %q", result, tt.expected)
 			}
 		})
+	}
+}
+
+func TestGetClientIP_TrustedProxyFromEnv(t *testing.T) {
+	t.Setenv("WIREOPS_TRUSTED_PROXIES", "10.0.0.0/8")
+	t.Cleanup(func() { t.Setenv("WIREOPS_TRUSTED_PROXIES", "") })
+
+	req, err := http.NewRequest("POST", "/api/custom/auth/elevate", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.RemoteAddr = "10.0.0.1:8080"
+	req.Header.Set("X-Forwarded-For", "192.0.2.10")
+
+	if got := getClientIP(req); got != "192.0.2.10" {
+		t.Fatalf("getClientIP() = %q, want %q (trusted proxy CIDR from env)", got, "192.0.2.10")
+	}
+}
+
+func TestSqlClaimSSOForElevate(t *testing.T) {
+	q := sqlClaimSSOForElevate()
+	if !strings.Contains(q, `IFNULL("elevate_consumed", 0) = 0`) {
+		t.Fatalf("expected conditional consume in query, got: %s", q)
+	}
+	if !strings.Contains(q, `"elevate_consumed_at"`) {
+		t.Fatalf("expected consumed-at column in query, got: %s", q)
+	}
+}
+
+func TestQuoteSQLiteIdent(t *testing.T) {
+	if got := quoteSQLiteIdent(`sso_users`); got != `"sso_users"` {
+		t.Fatalf("quoteSQLiteIdent = %q", got)
+	}
+	if got := quoteSQLiteIdent(`foo"bar`); got != `"foo""bar"` {
+		t.Fatalf("quoteSQLiteIdent escape = %q", got)
 	}
 }
 

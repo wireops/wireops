@@ -46,6 +46,13 @@ func TestValidateOIDCURL(t *testing.T) {
 			errMsg:    "is required",
 		},
 		{
+			name:      "empty OIDC_USER_INFO_URL optional",
+			url:       "",
+			fieldName: "OIDC_USER_INFO_URL",
+			appURL:    "http://localhost:8090",
+			wantErr:   false,
+		},
+		{
 			name:      "invalid scheme",
 			url:       "ftp://idp.example.com/oauth2",
 			fieldName: "OIDC_TOKEN_URL",

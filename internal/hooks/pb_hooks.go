@@ -28,18 +28,19 @@ import (
 func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Scheduler) {
 	secretKey := []byte(os.Getenv("SECRET_KEY"))
 
-	// OIDC_REQUIRE_EMAIL_VERIFIED: when "true", reject logins where email_verified is not true
-	requireEmailVerified := os.Getenv("OIDC_REQUIRE_EMAIL_VERIFIED") == "true"
+	// OIDC_REQUIRE_EMAIL_VERIFIED: secure by default — reject when email_verified is absent or false.
+	// Set explicitly to "false" to opt out (e.g. IdPs that omit the claim or treat it like Authentik by default).
+	requireEmailVerified := os.Getenv("OIDC_REQUIRE_EMAIL_VERIFIED") != "false"
 
-	// When the OIDC provider does not set email_verified=true (e.g. Authentik default),
-	// PocketBase's OIDC client leaves AuthUser.Email blank which causes record creation
-	// to fail with "email: cannot be blank". We recover the email from the raw claims.
+	// When verification is not required, or when PocketBase's OIDC client leaves AuthUser.Email blank
+	// (e.g. unverified email stripped), we recover the address from raw claims so record creation does not
+	// fail with "email: cannot be blank".
 	app.OnRecordAuthWithOAuth2Request("sso_users").BindFunc(func(e *core.RecordAuthWithOAuth2RequestEvent) error {
 		if e.OAuth2User == nil {
 			return e.Next()
 		}
 
-		// Check email_verified claim if required
+		// Require a true email_verified claim unless OIDC_REQUIRE_EMAIL_VERIFIED=false
 		emailVerified, hasVerified := e.OAuth2User.RawUser["email_verified"].(bool)
 		if requireEmailVerified && (!hasVerified || !emailVerified) {
 			rawEmail, _ := e.OAuth2User.RawUser["email"].(string)
@@ -54,6 +55,18 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 				e.OAuth2User.Email = raw
 			}
 		}
+		if e.OAuth2User.Email == "" {
+			return fmt.Errorf("auth: provider did not return email claim; ensure email scope/claim is present")
+		}
+		return e.Next()
+	})
+
+	// OIDC client secret must not be persisted; only OIDC_CLIENT_SECRET is used at runtime.
+	app.OnCollectionUpdate("sso_users").BindFunc(func(e *core.CollectionEvent) error {
+		if e.Type != core.ModelEventTypeUpdate {
+			return e.Next()
+		}
+		ClearPersistedOIDCClientSecret(e.Collection)
 		return e.Next()
 	})
 

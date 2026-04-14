@@ -226,6 +226,10 @@ func Execute() error {
 			}(embeddedWorker.Id)
 		}
 
+		// OIDC client secret lives only in OIDC_CLIENT_SECRET; inject into the collection cache
+		// for OAuth handlers, then reload the cache so it is not retained for other routes.
+		se.Router.BindFunc(hooks.SSOUsersOAuthRuntimeMiddleware(app))
+
 		// Configure CORS middleware based on APP_URL
 		se.Router.BindFunc(configureCORSMiddleware)
 
@@ -302,8 +306,12 @@ func Execute() error {
 
 // validateOIDCURL validates that a URL is well-formed and uses HTTPS in production.
 // Returns an error if the URL is invalid or insecure.
+// OIDC_USER_INFO_URL may be empty (user data then comes from id_token claims).
 func validateOIDCURL(urlStr, fieldName string) error {
 	if urlStr == "" {
+		if fieldName == "OIDC_USER_INFO_URL" {
+			return nil
+		}
 		return fmt.Errorf("%s is required", fieldName)
 	}
 
@@ -329,9 +337,19 @@ func validateOIDCURL(urlStr, fieldName string) error {
 	return nil
 }
 
+// persistSSOUsersOAuth2Disabled clears OAuth2 on sso_users and saves so invalid env does not leave a stale provider.
+func persistSSOUsersOAuth2Disabled(app core.App, col *core.Collection, logCtx string) {
+	col.OAuth2.Enabled = false
+	col.OAuth2.Providers = nil
+	if err := app.Save(col); err != nil {
+		log.Printf("[oidc] failed to persist disabled OAuth2 on sso_users (%s): %v", logCtx, err)
+	}
+}
+
 // configureOIDC reads OIDC env vars and updates the sso_users collection accordingly.
 // If OIDC_CLIENT_ID is set, it enables the oidc OAuth2 provider on sso_users.
 // If it is empty, it disables OAuth2 so listAuthMethods returns no providers.
+// The client secret is not saved: set OIDC_CLIENT_SECRET in the environment (injected at OAuth request time).
 func configureOIDC(app core.App) {
 	col, err := app.FindCollectionByNameOrId("sso_users")
 	if err != nil {
@@ -341,12 +359,8 @@ func configureOIDC(app core.App) {
 
 	clientID := os.Getenv("OIDC_CLIENT_ID")
 	if clientID == "" {
-		if col.OAuth2.Enabled {
-			col.OAuth2.Enabled = false
-			col.OAuth2.Providers = nil
-			if err := app.Save(col); err != nil {
-				log.Printf("[oidc] failed to disable OAuth2 on sso_users: %v", err)
-			}
+		if col.OAuth2.Enabled || len(col.OAuth2.Providers) > 0 {
+			persistSSOUsersOAuth2Disabled(app, col, "OIDC_CLIENT_ID unset")
 		}
 		return
 	}
@@ -358,14 +372,17 @@ func configureOIDC(app core.App) {
 
 	if err := validateOIDCURL(authURL, "OIDC_AUTH_URL"); err != nil {
 		log.Printf("[oidc] configuration error: %v", err)
+		persistSSOUsersOAuth2Disabled(app, col, "invalid OIDC_AUTH_URL")
 		return
 	}
 	if err := validateOIDCURL(tokenURL, "OIDC_TOKEN_URL"); err != nil {
 		log.Printf("[oidc] configuration error: %v", err)
+		persistSSOUsersOAuth2Disabled(app, col, "invalid OIDC_TOKEN_URL")
 		return
 	}
 	if err := validateOIDCURL(userInfoURL, "OIDC_USER_INFO_URL"); err != nil {
 		log.Printf("[oidc] configuration error: %v", err)
+		persistSSOUsersOAuth2Disabled(app, col, "invalid OIDC_USER_INFO_URL")
 		return
 	}
 
@@ -374,11 +391,12 @@ func configureOIDC(app core.App) {
 		displayName = "SSO"
 	}
 
+	// Client secret is never stored; use OIDC_CLIENT_SECRET at runtime (see SSOUsersOAuthRuntimeMiddleware).
 	col.OAuth2.Enabled = true
 	col.OAuth2.Providers = []core.OAuth2ProviderConfig{{
 		Name:         "oidc",
 		ClientId:     clientID,
-		ClientSecret: os.Getenv("OIDC_CLIENT_SECRET"),
+		ClientSecret: "",
 		AuthURL:      authURL,
 		TokenURL:     tokenURL,
 		UserInfoURL:  userInfoURL,

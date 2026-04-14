@@ -52,13 +52,18 @@ export function useAuth() {
     const config = useRuntimeConfig()
     const baseURL = (config.public.pocketbaseUrl as string).replace(/\/$/, '')
 
-    const elevated = await $fetch<{ token: string; record: RecordModel }>(
-      `${baseURL}/api/custom/auth/elevate`,
-      { method: 'POST', body: { token: ssoAuth.token } }
-    )
+    try {
+      const elevated = await $fetch<{ token: string; record: RecordModel }>(
+        `${baseURL}/api/custom/auth/elevate`,
+        { method: 'POST', body: { token: ssoAuth.token } }
+      )
 
-    $pb.authStore.save(elevated.token, elevated.record)
-    user.value = elevated.record
+      $pb.authStore.save(elevated.token, elevated.record)
+      user.value = elevated.record
+    } catch (err) {
+      user.value = null
+      throw err
+    }
   }
 
   const isAuthenticated = computed(() => $pb.authStore.isValid)

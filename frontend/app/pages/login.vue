@@ -12,7 +12,12 @@ const error = ref('')
 const ssoProviders = ref<{ name: string; displayName: string }[]>([])
 
 onMounted(async () => {
-  ssoProviders.value = await getSSOProviders()
+  try {
+    ssoProviders.value = await getSSOProviders()
+  } catch (e) {
+    console.warn('Failed to load SSO providers', e)
+    ssoProviders.value = []
+  }
 })
 
 async function handleLogin() {
