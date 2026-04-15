@@ -28,6 +28,48 @@ import (
 func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Scheduler) {
 	secretKey := []byte(os.Getenv("SECRET_KEY"))
 
+	// OIDC_REQUIRE_EMAIL_VERIFIED: secure by default — reject when email_verified is absent or false.
+	// Set explicitly to "false" to opt out (e.g. IdPs that omit the claim or treat it like Authentik by default).
+	requireEmailVerified := os.Getenv("OIDC_REQUIRE_EMAIL_VERIFIED") != "false"
+
+	// When verification is not required, or when PocketBase's OIDC client leaves AuthUser.Email blank
+	// (e.g. unverified email stripped), we recover the address from raw claims so record creation does not
+	// fail with "email: cannot be blank".
+	app.OnRecordAuthWithOAuth2Request("sso_users").BindFunc(func(e *core.RecordAuthWithOAuth2RequestEvent) error {
+		if e.OAuth2User == nil {
+			return e.Next()
+		}
+
+		// Require a true email_verified claim unless OIDC_REQUIRE_EMAIL_VERIFIED=false
+		emailVerified, hasVerified := e.OAuth2User.RawUser["email_verified"].(bool)
+		if requireEmailVerified && (!hasVerified || !emailVerified) {
+			rawEmail, _ := e.OAuth2User.RawUser["email"].(string)
+			log.Printf("[oidc] login rejected: email not verified for %s", maskEmailForLog(rawEmail))
+			return fmt.Errorf("email address must be verified by the identity provider")
+		}
+
+		// Recover email from raw claims if PocketBase left it blank
+		if e.OAuth2User.Email == "" {
+			if raw, ok := e.OAuth2User.RawUser["email"].(string); ok && raw != "" {
+				log.Printf("[oidc] email_verified missing/false — using raw email claim: %s", maskEmailForLog(raw))
+				e.OAuth2User.Email = raw
+			}
+		}
+		if e.OAuth2User.Email == "" {
+			return fmt.Errorf("auth: provider did not return email claim; ensure email scope/claim is present")
+		}
+		return e.Next()
+	})
+
+	// OIDC client secret must not be persisted; only OIDC_CLIENT_SECRET is used at runtime.
+	app.OnCollectionUpdate("sso_users").BindFunc(func(e *core.CollectionEvent) error {
+		if e.Type != core.ModelEventTypeUpdate {
+			return e.Next()
+		}
+		ClearPersistedOIDCClientSecret(e.Collection)
+		return e.Next()
+	})
+
 	// Encrypt credential fields on create/update
 	app.OnRecordCreate("repository_keys").BindFunc(func(e *core.RecordEvent) error {
 		if err := encryptSensitiveFields(e.Record, secretKey); err != nil {
@@ -518,4 +560,27 @@ func extractContainersFromCompose(yamlData []byte) []ContainerInfo {
 	}
 
 	return results
+}
+
+// maskEmailForLog masks an email for safe logging (e.g., "user@example.com" -> "u***@example.com")
+func maskEmailForLog(email string) string {
+	if email == "" {
+		return "[empty]"
+	}
+	atIdx := -1
+	for i, c := range email {
+		if c == '@' {
+			atIdx = i
+			break
+		}
+	}
+	if atIdx == -1 {
+		return "[invalid]"
+	}
+	local := email[:atIdx]
+	domain := email[atIdx+1:]
+	if len(local) <= 1 {
+		return local + "***@" + domain
+	}
+	return string(local[0]) + "***@" + domain
 }
