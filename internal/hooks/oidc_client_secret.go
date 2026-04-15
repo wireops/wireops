@@ -1,7 +1,6 @@
 package hooks
 
 import (
-	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -11,9 +10,13 @@ import (
 
 const oidcProviderName = "oidc"
 
-// SSOUsersOAuthRuntimeMiddleware sets the OIDC provider client secret from OIDC_CLIENT_SECRET
-// on the cached sso_users collection for PocketBase OAuth2 handlers, then reloads the collection
-// cache after the request so the secret is not left in memory for other routes.
+// SSOUsersOAuthRuntimeMiddleware injects the OIDC provider client secret from OIDC_CLIENT_SECRET
+// into the sso_users collection for PocketBase OAuth2 handlers.
+//
+// Instead of mutating the shared global collection cache, it replaces e.App with a
+// per-request proxy whose FindCachedCollectionByNameOrId returns a shallow copy of
+// the sso_users collection with a fresh Providers slice containing the injected secret.
+// The shared cached pointer is never written to, eliminating any race window.
 func SSOUsersOAuthRuntimeMiddleware(app core.App) func(*core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
 		if !ssoOAuthRequestNeedsRuntimeSecret(e.Request.Method, e.Request.URL.Path) {
@@ -21,16 +24,7 @@ func SSOUsersOAuthRuntimeMiddleware(app core.App) func(*core.RequestEvent) error
 		}
 
 		secret := strings.TrimSpace(os.Getenv("OIDC_CLIENT_SECRET"))
-		if err := injectOIDCClientSecretInCache(app, secret); err != nil {
-			log.Printf("[oidc] inject client secret for OAuth request: %v", err)
-			return e.Next()
-		}
-
-		defer func() {
-			if err := app.ReloadCachedCollections(); err != nil {
-				log.Printf("[oidc] reload collection cache after OAuth request: %v", err)
-			}
-		}()
+		e.App = &oidcSecretApp{App: app, secret: secret}
 
 		return e.Next()
 	}
@@ -49,21 +43,38 @@ func ssoOAuthRequestNeedsRuntimeSecret(method, path string) bool {
 	return false
 }
 
-func injectOIDCClientSecretInCache(app core.App, secret string) error {
-	col, err := app.FindCachedCollectionByNameOrId("sso_users")
-	if err != nil {
-		return err
+// oidcSecretApp is a per-request core.App proxy that shadows
+// FindCachedCollectionByNameOrId to return a request-local copy of the
+// sso_users collection with the OIDC client secret injected, so the
+// shared cache is never mutated.
+type oidcSecretApp struct {
+	core.App
+	secret string
+}
+
+// FindCachedCollectionByNameOrId delegates to the underlying App for every
+// collection except sso_users. For sso_users it returns a shallow copy whose
+// Providers slice has the OIDC client secret set, leaving the shared cached
+// pointer untouched.
+func (a *oidcSecretApp) FindCachedCollectionByNameOrId(nameOrId string) (*core.Collection, error) {
+	col, err := a.App.FindCachedCollectionByNameOrId(nameOrId)
+	if err != nil || col == nil || col.Name != "sso_users" || !col.OAuth2.Enabled {
+		return col, err
 	}
-	if !col.OAuth2.Enabled {
-		return nil
-	}
-	for i := range col.OAuth2.Providers {
-		if col.OAuth2.Providers[i].Name == oidcProviderName {
-			col.OAuth2.Providers[i].ClientSecret = secret
+
+	// Shallow-copy the Collection value and replace only the Providers slice so
+	// the shared cached pointer is never written to.
+	colCopy := *col
+	providers := make([]core.OAuth2ProviderConfig, len(col.OAuth2.Providers))
+	copy(providers, col.OAuth2.Providers)
+	for i := range providers {
+		if providers[i].Name == oidcProviderName {
+			providers[i].ClientSecret = a.secret
 			break
 		}
 	}
-	return nil
+	colCopy.OAuth2.Providers = providers
+	return &colCopy, nil
 }
 
 // ClearPersistedOIDCClientSecret removes the wireops-managed OIDC client secret from the

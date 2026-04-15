@@ -10,7 +10,7 @@ func init() {
 	m.Register(func(app core.App) error {
 		col, err := app.FindCollectionByNameOrId("sso_users")
 		if err != nil {
-			return nil
+			return err
 		}
 		if col.Fields.GetByName("elevate_consumed") != nil {
 			return nil
@@ -21,7 +21,7 @@ func init() {
 	}, func(app core.App) error {
 		col, err := app.FindCollectionByNameOrId("sso_users")
 		if err != nil {
-			return nil
+			return err
 		}
 		col.Fields.RemoveByName("elevate_consumed_at")
 		col.Fields.RemoveByName("elevate_consumed")
