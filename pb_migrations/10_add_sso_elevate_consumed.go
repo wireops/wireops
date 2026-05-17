@@ -3,6 +3,8 @@ package pb_migrations
 import (
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
+
+	"github.com/wireops/wireops/internal/oidc"
 )
 
 // Migration 10: SSO elevate replay protection — one successful /auth/elevate per SSO session.
@@ -17,6 +19,7 @@ func init() {
 		}
 		col.Fields.Add(&core.BoolField{Name: "elevate_consumed"})
 		col.Fields.Add(&core.DateField{Name: "elevate_consumed_at"})
+		oidc.HydrateClientSecretForValidation(col)
 		return app.Save(col)
 	}, func(app core.App) error {
 		col, err := app.FindCollectionByNameOrId("sso_users")
@@ -25,6 +28,7 @@ func init() {
 		}
 		col.Fields.RemoveByName("elevate_consumed_at")
 		col.Fields.RemoveByName("elevate_consumed")
+		oidc.HydrateClientSecretForValidation(col)
 		return app.Save(col)
 	})
 }

@@ -22,6 +22,7 @@ import (
 	"github.com/wireops/wireops/internal/docker"
 	"github.com/wireops/wireops/internal/hooks"
 	"github.com/wireops/wireops/internal/jobscheduler"
+	"github.com/wireops/wireops/internal/oidc"
 	"github.com/wireops/wireops/internal/pki"
 	"github.com/wireops/wireops/internal/protocol"
 	"github.com/wireops/wireops/internal/routes"
@@ -402,6 +403,7 @@ func configureOIDC(app core.App) {
 		UserInfoURL:  userInfoURL,
 		DisplayName:  displayName,
 	}}
+	oidc.HydrateClientSecretForValidation(col)
 
 	if err := app.Save(col); err != nil {
 		log.Printf("[oidc] failed to configure OIDC provider on sso_users: %v", err)

@@ -20,6 +20,7 @@ import (
 	"github.com/wireops/wireops/internal/crypto"
 	"github.com/wireops/wireops/internal/git"
 	"github.com/wireops/wireops/internal/jobscheduler"
+	"github.com/wireops/wireops/internal/oidc"
 	"github.com/wireops/wireops/internal/safepath"
 	"github.com/wireops/wireops/internal/secrets"
 	"github.com/wireops/wireops/internal/sync"
@@ -38,6 +39,18 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 	app.OnRecordAuthWithOAuth2Request("sso_users").BindFunc(func(e *core.RecordAuthWithOAuth2RequestEvent) error {
 		if e.OAuth2User == nil {
 			return e.Next()
+		}
+
+		if e.Record != nil {
+			e.Record.Set("elevate_consumed", false)
+			e.Record.Set("elevate_consumed_at", nil)
+			if e.Record.Id != "" {
+				_, err := app.DB().NewQuery("UPDATE `sso_users` SET `elevate_consumed` = 0, `elevate_consumed_at` = '' WHERE `id` = {:id}").
+					Bind(dbx.Params{"id": e.Record.Id}).Execute()
+				if err != nil {
+					log.Printf("[oidc] warning: failed to reset elevate_consumed: %v", err)
+				}
+			}
 		}
 
 		// Require a true email_verified claim unless OIDC_REQUIRE_EMAIL_VERIFIED=false
@@ -62,11 +75,11 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 	})
 
 	// OIDC client secret must not be persisted; only OIDC_CLIENT_SECRET is used at runtime.
-	app.OnCollectionUpdate("sso_users").BindFunc(func(e *core.CollectionEvent) error {
+	app.OnCollectionUpdateExecute("sso_users").BindFunc(func(e *core.CollectionEvent) error {
 		if e.Type != core.ModelEventTypeUpdate {
 			return e.Next()
 		}
-		ClearPersistedOIDCClientSecret(e.Collection)
+		oidc.ClearPersistedClientSecret(e.Collection)
 		return e.Next()
 	})
 
@@ -152,7 +165,7 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 				_, err := git.CloneOrFetch(repoID, gitURL, branch, auth, workspace)
 				done <- err
 			}()
-			
+
 			select {
 			case <-ctx.Done():
 				log.Printf("[hooks] background clone timed out for repo %s", repoID)
@@ -484,7 +497,6 @@ func validateSecretProvider(provider string) error {
 	)
 }
 
-
 type ContainerInfo struct {
 	Name       string `json:"name"`
 	IsFallback bool   `json:"is_fallback"`
@@ -526,7 +538,7 @@ func extractContainersFromCompose(yamlData []byte) []ContainerInfo {
 
 		// Extract slug from labels, annotations, deploy.labels, deploy.annotations
 		slugFound := false
-		
+
 		checkSlug := func(meta map[string]interface{}) {
 			if slugFound {
 				return
