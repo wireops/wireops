@@ -36,43 +36,7 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 	// When verification is not required, or when PocketBase's OIDC client leaves AuthUser.Email blank
 	// (e.g. unverified email stripped), we recover the address from raw claims so record creation does not
 	// fail with "email: cannot be blank".
-	app.OnRecordAuthWithOAuth2Request("sso_users").BindFunc(func(e *core.RecordAuthWithOAuth2RequestEvent) error {
-		if e.OAuth2User == nil {
-			return e.Next()
-		}
-
-		if e.Record != nil {
-			e.Record.Set("elevate_consumed", false)
-			e.Record.Set("elevate_consumed_at", nil)
-			if e.Record.Id != "" {
-				_, err := app.DB().NewQuery("UPDATE `sso_users` SET `elevate_consumed` = 0, `elevate_consumed_at` = '' WHERE `id` = {:id}").
-					Bind(dbx.Params{"id": e.Record.Id}).Execute()
-				if err != nil {
-					log.Printf("[oidc] warning: failed to reset elevate_consumed: %v", err)
-				}
-			}
-		}
-
-		// Require a true email_verified claim unless OIDC_REQUIRE_EMAIL_VERIFIED=false
-		emailVerified, hasVerified := e.OAuth2User.RawUser["email_verified"].(bool)
-		if requireEmailVerified && (!hasVerified || !emailVerified) {
-			rawEmail, _ := e.OAuth2User.RawUser["email"].(string)
-			log.Printf("[oidc] login rejected: email not verified for %s", maskEmailForLog(rawEmail))
-			return fmt.Errorf("email address must be verified by the identity provider")
-		}
-
-		// Recover email from raw claims if PocketBase left it blank
-		if e.OAuth2User.Email == "" {
-			if raw, ok := e.OAuth2User.RawUser["email"].(string); ok && raw != "" {
-				log.Printf("[oidc] email_verified missing/false — using raw email claim: %s", maskEmailForLog(raw))
-				e.OAuth2User.Email = raw
-			}
-		}
-		if e.OAuth2User.Email == "" {
-			return fmt.Errorf("auth: provider did not return email claim; ensure email scope/claim is present")
-		}
-		return e.Next()
-	})
+	app.OnRecordAuthWithOAuth2Request("sso_users").BindFunc(HandleSSOAuthRequest(requireEmailVerified))
 
 	// OIDC client secret must not be persisted; only OIDC_CLIENT_SECRET is used at runtime.
 	app.OnCollectionUpdateExecute("sso_users").BindFunc(func(e *core.CollectionEvent) error {
@@ -595,4 +559,48 @@ func maskEmailForLog(email string) string {
 		return local + "***@" + domain
 	}
 	return string(local[0]) + "***@" + domain
+}
+
+func HandleSSOAuthRequest(requireEmailVerified bool) func(e *core.RecordAuthWithOAuth2RequestEvent) error {
+	return func(e *core.RecordAuthWithOAuth2RequestEvent) error {
+		if e.OAuth2User == nil {
+			return e.Next()
+		}
+
+		// Require a true email_verified claim unless OIDC_REQUIRE_EMAIL_VERIFIED=false
+		emailVerified, hasVerified := e.OAuth2User.RawUser["email_verified"].(bool)
+		if requireEmailVerified && (!hasVerified || !emailVerified) {
+			rawEmail, _ := e.OAuth2User.RawUser["email"].(string)
+			log.Printf("[oidc] login rejected: email not verified for %s", maskEmailForLog(rawEmail))
+			return fmt.Errorf("email address must be verified by the identity provider")
+		}
+
+		// Recover email from raw claims if PocketBase left it blank
+		if e.OAuth2User.Email == "" {
+			if raw, ok := e.OAuth2User.RawUser["email"].(string); ok && raw != "" {
+				log.Printf("[oidc] email_verified missing/false — using raw email claim: %s", maskEmailForLog(raw))
+				e.OAuth2User.Email = raw
+			}
+		}
+		if e.OAuth2User.Email == "" {
+			return fmt.Errorf("auth: provider did not return email claim; ensure email scope/claim is present")
+		}
+
+		if err := e.Next(); err != nil {
+			return err
+		}
+
+		if e.Record != nil {
+			e.Record.Set("elevate_consumed", false)
+			e.Record.Set("elevate_consumed_at", nil)
+
+			if e.Record.Id != "" {
+				if err := e.App.Save(e.Record); err != nil {
+					log.Printf("[oidc] warning: failed to reset elevate state after successful auth: %v", err)
+				}
+			}
+		}
+
+		return nil
+	}
 }
