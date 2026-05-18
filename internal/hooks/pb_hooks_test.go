@@ -1,7 +1,13 @@
 package hooks
 
 import (
+	"errors"
 	"testing"
+
+	"github.com/pocketbase/pocketbase/core"
+	"github.com/pocketbase/pocketbase/tests"
+	"github.com/pocketbase/pocketbase/tools/auth"
+	"github.com/pocketbase/pocketbase/tools/types"
 )
 
 func TestMaskEmailForLog(t *testing.T) {
@@ -82,5 +88,195 @@ func TestMaskEmailForLog_ConsistentOutput(t *testing.T) {
 		if result != expected {
 			t.Errorf("Inconsistent output on iteration %d: got %q, want %q", i, result, expected)
 		}
+	}
+}
+
+func TestHandleSSOAuthRequest(t *testing.T) {
+	scenarios := []struct {
+		name                 string
+		requireEmailVerified bool
+		oauth2User           *auth.AuthUser
+		record               *core.Record
+		nextErr              error
+		expectError          bool
+		expectConsumeFalse   bool
+	}{
+		{
+			name:                 "nil oauth2user proceeds to next",
+			requireEmailVerified: true,
+			oauth2User:           nil,
+			record:               nil,
+			expectError:          false,
+		},
+		{
+			name:                 "valid user with verified email",
+			requireEmailVerified: true,
+			oauth2User: &auth.AuthUser{
+				Email:   "test@example.com",
+				RawUser: map[string]any{"email_verified": true},
+			},
+			record:             core.NewRecord(core.NewBaseCollection("sso_users")),
+			expectError:        false,
+			expectConsumeFalse: true,
+		},
+		{
+			name:                 "unverified email rejected when required",
+			requireEmailVerified: true,
+			oauth2User: &auth.AuthUser{
+				Email:   "test@example.com",
+				RawUser: map[string]any{"email_verified": false},
+			},
+			record:      core.NewRecord(core.NewBaseCollection("sso_users")),
+			expectError: true,
+		},
+		{
+			name:                 "unverified email allowed when not required",
+			requireEmailVerified: false,
+			oauth2User: &auth.AuthUser{
+				Email:   "test@example.com",
+				RawUser: map[string]any{"email_verified": false},
+			},
+			record:             core.NewRecord(core.NewBaseCollection("sso_users")),
+			expectError:        false,
+			expectConsumeFalse: true,
+		},
+		{
+			name:                 "recovers missing email from raw claims",
+			requireEmailVerified: false,
+			oauth2User: &auth.AuthUser{
+				Email:   "",
+				RawUser: map[string]any{"email": "recovered@example.com"},
+			},
+			record:             core.NewRecord(core.NewBaseCollection("sso_users")),
+			expectError:        false,
+			expectConsumeFalse: true,
+		},
+		{
+			name:                 "fails if no email is found at all",
+			requireEmailVerified: false,
+			oauth2User: &auth.AuthUser{
+				Email:   "",
+				RawUser: map[string]any{},
+			},
+			record:      core.NewRecord(core.NewBaseCollection("sso_users")),
+			expectError: true,
+		},
+		{
+			name:                 "does not reset fields when downstream auth fails",
+			requireEmailVerified: true,
+			oauth2User: &auth.AuthUser{
+				Email:   "test@example.com",
+				RawUser: map[string]any{"email_verified": true},
+			},
+			record:      core.NewRecord(core.NewBaseCollection("sso_users")),
+			nextErr:     errors.New("downstream auth failed"),
+			expectError: true,
+		},
+	}
+
+	for _, tt := range scenarios {
+		t.Run(tt.name, func(t *testing.T) {
+			app, err := tests.NewTestApp()
+			if err != nil {
+				t.Fatalf("new test app: %v", err)
+			}
+			t.Cleanup(func() { app.Cleanup() })
+
+			handler := HandleSSOAuthRequest(tt.requireEmailVerified)
+			app.OnRecordAuthWithOAuth2Request("sso_users").BindFunc(handler)
+
+			if tt.record != nil {
+				tt.record.Set("elevate_consumed", true)
+				tt.record.Set("elevate_consumed_at", types.NowDateTime())
+			}
+
+			event := &core.RecordAuthWithOAuth2RequestEvent{
+				RequestEvent: &core.RequestEvent{App: app},
+				OAuth2User:   tt.oauth2User,
+				Record:       tt.record,
+			}
+			event.Collection = core.NewBaseCollection("sso_users")
+
+			err = app.OnRecordAuthWithOAuth2Request().Trigger(event, func(e *core.RecordAuthWithOAuth2RequestEvent) error {
+				return tt.nextErr
+			})
+
+			if tt.expectError && err == nil {
+				t.Errorf("expected error but got nil")
+			}
+			if !tt.expectError && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+			if tt.expectConsumeFalse && tt.record != nil {
+				if tt.record.GetBool("elevate_consumed") != false {
+					t.Errorf("expected elevate_consumed to be false, got true")
+				}
+				if tt.record.GetString("elevate_consumed_at") != "" {
+					t.Errorf("expected elevate_consumed_at to be empty")
+				}
+			}
+			if !tt.expectConsumeFalse && tt.record != nil && tt.nextErr != nil {
+				if tt.record.GetBool("elevate_consumed") != true {
+					t.Errorf("expected elevate_consumed to remain true when auth fails")
+				}
+				if tt.record.GetString("elevate_consumed_at") == "" {
+					t.Errorf("expected elevate_consumed_at to remain set when auth fails")
+				}
+			}
+			if tt.oauth2User != nil && tt.name == "recovers missing email from raw claims" && tt.oauth2User.Email != "recovered@example.com" {
+				t.Errorf("expected email to be recovered, got %q", tt.oauth2User.Email)
+			}
+		})
+	}
+}
+
+func TestHandleSSOAuthRequestPersistsElevateResetAfterSuccess(t *testing.T) {
+	app, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatalf("new test app: %v", err)
+	}
+	t.Cleanup(func() { app.Cleanup() })
+
+	col := core.NewBaseCollection("sso_users")
+	col.Fields.Add(&core.BoolField{Name: "elevate_consumed"})
+	col.Fields.Add(&core.DateField{Name: "elevate_consumed_at"})
+	if err := app.Save(col); err != nil {
+		t.Fatalf("save collection: %v", err)
+	}
+
+	record := core.NewRecord(col)
+	record.Set("elevate_consumed", true)
+	record.Set("elevate_consumed_at", types.NowDateTime())
+	if err := app.Save(record); err != nil {
+		t.Fatalf("save record: %v", err)
+	}
+
+	app.OnRecordAuthWithOAuth2Request("sso_users").BindFunc(HandleSSOAuthRequest(true))
+
+	event := &core.RecordAuthWithOAuth2RequestEvent{
+		RequestEvent: &core.RequestEvent{App: app},
+		OAuth2User: &auth.AuthUser{
+			Email:   "test@example.com",
+			RawUser: map[string]any{"email_verified": true},
+		},
+		Record: record,
+	}
+	event.Collection = col
+
+	if err := app.OnRecordAuthWithOAuth2Request().Trigger(event, func(e *core.RecordAuthWithOAuth2RequestEvent) error {
+		return nil
+	}); err != nil {
+		t.Fatalf("trigger auth hook: %v", err)
+	}
+
+	reloaded, err := app.FindRecordById("sso_users", record.Id)
+	if err != nil {
+		t.Fatalf("reload record: %v", err)
+	}
+	if reloaded.GetBool("elevate_consumed") {
+		t.Fatalf("expected elevate_consumed to be reset in db")
+	}
+	if reloaded.GetString("elevate_consumed_at") != "" {
+		t.Fatalf("expected elevate_consumed_at to be NULL in db, got %q", reloaded.GetString("elevate_consumed_at"))
 	}
 }

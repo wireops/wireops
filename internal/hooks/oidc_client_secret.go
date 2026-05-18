@@ -6,9 +6,9 @@ import (
 	"strings"
 
 	"github.com/pocketbase/pocketbase/core"
-)
 
-const oidcProviderName = "oidc"
+	"github.com/wireops/wireops/internal/oidc"
+)
 
 // SSOUsersOAuthRuntimeMiddleware injects the OIDC provider client secret from OIDC_CLIENT_SECRET
 // into the sso_users collection for PocketBase OAuth2 handlers.
@@ -68,7 +68,7 @@ func (a *oidcSecretApp) FindCachedCollectionByNameOrId(nameOrId string) (*core.C
 	providers := make([]core.OAuth2ProviderConfig, len(col.OAuth2.Providers))
 	copy(providers, col.OAuth2.Providers)
 	for i := range providers {
-		if providers[i].Name == oidcProviderName {
+		if providers[i].Name == oidc.ProviderName {
 			providers[i].ClientSecret = a.secret
 			break
 		}
@@ -80,12 +80,5 @@ func (a *oidcSecretApp) FindCachedCollectionByNameOrId(nameOrId string) (*core.C
 // ClearPersistedOIDCClientSecret removes the wireops-managed OIDC client secret from the
 // collection model so it is never written to the database (source of truth is OIDC_CLIENT_SECRET).
 func ClearPersistedOIDCClientSecret(col *core.Collection) {
-	if col == nil || col.Name != "sso_users" {
-		return
-	}
-	for i := range col.OAuth2.Providers {
-		if col.OAuth2.Providers[i].Name == oidcProviderName {
-			col.OAuth2.Providers[i].ClientSecret = ""
-		}
-	}
+	oidc.ClearPersistedClientSecret(col)
 }
