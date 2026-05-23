@@ -13,23 +13,15 @@ import (
 	"syscall"
 	"time"
 
-	"net/http"
-	"sync/atomic"
-
 	"github.com/gorilla/websocket"
 	"github.com/wireops/wireops/internal/protocol"
 	"github.com/wireops/wireops/worker/api"
 	"github.com/wireops/wireops/worker/executor"
-	"github.com/wireops/wireops/worker/pki"
 	wsync "github.com/wireops/wireops/worker/sync"
 )
 
 var activeJobs gosync.Map
 var connWriteMu gosync.Mutex
-
-// renewInProgress is set to 1 while a cert renewal is closing the WebSocket.
-// The readLoop checks this to suppress the expected "use of closed connection" error.
-var renewInProgress atomic.Int32
 
 const (
 	maxBackoff     = 5 * time.Minute
@@ -39,35 +31,21 @@ const (
 type disconnectReason int
 
 const (
-	reasonUnknown       disconnectReason = iota
-	reasonRevoked                        // server revoked this worker
-	reasonRebootstrap                    // admin requested re-bootstrap
-	reasonCertRenewed                    // cert was swapped, reconnect immediately
-	reasonShutdown                       // graceful shutdown
+	reasonUnknown disconnectReason = iota
+	reasonRevoked
+	reasonShutdown
 )
 
 func main() {
 	serverURL := os.Getenv("WIREOPS_SERVER")
-	mtlsServerURL := os.Getenv("WIREOPS_MTLS_SERVER")
-	bootstrapToken := os.Getenv("WIREOPS_BOOTSTRAP_TOKEN")
-	workerPKIDir := os.Getenv("WIREOPS_WORKER_PKI_DIR")
+	workerToken := os.Getenv("WIREOPS_WORKER_TOKEN")
 	hostname := os.Getenv("HOSTNAME")
-
-	renewalDays := 30
-	if v := os.Getenv("WIREOPS_CERT_RENEWAL_DAYS"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			renewalDays = n
-		}
-	}
 
 	if serverURL == "" {
 		log.Fatal("WIREOPS_SERVER must be set")
 	}
-	if mtlsServerURL == "" {
-		mtlsServerURL = serverURL
-	}
-	if workerPKIDir == "" {
-		workerPKIDir = "./worker_pki"
+	if workerToken == "" {
+		log.Fatal("WIREOPS_WORKER_TOKEN must be set")
 	}
 	if hostname == "" {
 		h, err := os.Hostname()
@@ -78,17 +56,6 @@ func main() {
 		}
 	}
 
-	if !pki.HasValidCerts(workerPKIDir) {
-		if bootstrapToken == "" {
-			log.Fatal("WIREOPS_BOOTSTRAP_TOKEN is required for initial setup but not provided")
-		}
-		if err := pki.Bootstrap(serverURL, bootstrapToken, workerPKIDir); err != nil {
-			log.Fatalf("Fatal: bootstrap failed: %v", err)
-		}
-	} else {
-		log.Println("[WORKER] Certificates found, skipping bootstrap.")
-	}
-
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
@@ -96,23 +63,11 @@ func main() {
 	backoff := initialBackoff
 
 	for {
-		reason := runSession(mtlsServerURL, workerPKIDir, hostname, tags, renewalDays, sigChan)
+		reason := runSession(serverURL, workerToken, hostname, tags, sigChan)
 
 		switch reason {
 		case reasonRevoked:
-			pki.PurgeCredentials(workerPKIDir)
-			log.Fatal("[WORKER] This worker has been revoked by the server. " +
-				"Bootstrap a new worker with a fresh seat token to continue.")
-
-		case reasonRebootstrap:
-			pki.PurgeCredentials(workerPKIDir)
-			log.Fatal("[WORKER] Server requested re-bootstrap. " +
-				"Restart the worker with a new WIREOPS_BOOTSTRAP_TOKEN to continue.")
-
-		case reasonCertRenewed:
-			log.Println("[WORKER] Certificate renewed. Reconnecting immediately...")
-			backoff = initialBackoff
-			continue
+			log.Fatal("[WORKER] This worker token has been rejected by the server. Issue a new token to continue.")
 
 		case reasonShutdown:
 			log.Println("[WORKER] Shutting down...")
@@ -128,21 +83,15 @@ func main() {
 
 // runSession handles one full connect-register-websocket cycle.
 // Returns the reason the session ended so the caller can decide what to do.
-func runSession(mtlsServerURL, workerPKIDir, hostname string, tags []string, renewalDays int, sigChan <-chan os.Signal) disconnectReason {
-	renewInProgress.Store(0)
-
-	client, err := api.NewMTLSClient(workerPKIDir)
-	if err != nil {
-		log.Printf("[WORKER] Failed to create mTLS client: %v", err)
-		return reasonUnknown
-	}
+func runSession(serverURL, workerToken, hostname string, tags []string, sigChan <-chan os.Signal) disconnectReason {
+	client := api.NewClient()
 
 	for i := 1; i <= 5; i++ {
-		err = api.Register(client, mtlsServerURL, hostname, "1.0.0", tags)
+		err := api.Register(client, serverURL, workerToken, hostname, "1.0.0", tags)
 		if err == nil {
 			break
 		}
-		if errors.Is(err, api.ErrRevoked) {
+		if errors.Is(err, api.ErrRevoked) || errors.Is(err, api.ErrUnauthorized) {
 			return reasonRevoked
 		}
 		log.Printf("[WORKER] Registration attempt %d failed: %v. Retrying in 5s...", i, err)
@@ -153,7 +102,7 @@ func runSession(mtlsServerURL, workerPKIDir, hostname string, tags []string, ren
 		}
 	}
 
-	conn, err := wsync.Connect(mtlsServerURL, workerPKIDir)
+	conn, err := wsync.Connect(serverURL, workerToken)
 	if err != nil {
 		log.Printf("[WORKER] Failed to connect WebSocket: %v", err)
 		return reasonUnknown
@@ -164,7 +113,7 @@ func runSession(mtlsServerURL, workerPKIDir, hostname string, tags []string, ren
 
 	disconnectCh := make(chan disconnectReason, 1)
 
-	go readLoop(conn, workerPKIDir, mtlsServerURL, client, renewalDays, disconnectCh)
+	go readLoop(conn, disconnectCh)
 
 	intervalStr := os.Getenv("WIREOPS_HEARTBEAT_INTERVAL")
 	if intervalStr == "" {
@@ -177,8 +126,6 @@ func runSession(mtlsServerURL, workerPKIDir, hostname string, tags []string, ren
 
 	ticker := time.NewTicker(time.Duration(intervalSecs) * time.Second)
 	defer ticker.Stop()
-
-	renewalChecked := false
 
 	for {
 		select {
@@ -204,24 +151,16 @@ func runSession(mtlsServerURL, workerPKIDir, hostname string, tags []string, ren
 			if writeErr != nil {
 				log.Printf("[WORKER] Heartbeat failed: %v", writeErr)
 			}
-
-			if !renewalChecked {
-				renewalChecked = true
-				go checkAndRenew(conn, workerPKIDir, mtlsServerURL, client, renewalDays, disconnectCh)
-			}
 		}
 	}
 }
 
-func readLoop(conn *websocket.Conn, workerPKIDir, mtlsServerURL string, client *http.Client, renewalDays int, disconnectCh chan<- disconnectReason) {
+func readLoop(conn *websocket.Conn, disconnectCh chan<- disconnectReason) {
 	for {
 		_, msg, err := conn.ReadMessage()
 		if err != nil {
 			if closeErr, ok := err.(*websocket.CloseError); ok && closeErr.Code == websocket.ClosePolicyViolation {
 				disconnectCh <- reasonRevoked
-				return
-			}
-			if renewInProgress.Load() == 1 {
 				return
 			}
 			log.Printf("[WORKER] WebSocket read error: %v", err)
@@ -259,62 +198,10 @@ func readLoop(conn *websocket.Conn, workerPKIDir, mtlsServerURL string, client *
 		case protocol.MsgKillJob:
 			go handleKillJob(conn, env.Payload)
 
-		case protocol.MsgRequestRenewal:
-			log.Println("[WORKER] Server requested certificate renewal.")
-			go performRenewal(conn, workerPKIDir, mtlsServerURL, client, disconnectCh)
-
-		case protocol.MsgForceRebootstrap:
-			log.Println("[WORKER] Server requested force re-bootstrap.")
-			disconnectCh <- reasonRebootstrap
-
 		default:
 			log.Printf("[WORKER] Unknown message type: %s", env.Type)
 		}
 	}
-}
-
-func checkAndRenew(conn *websocket.Conn, workerPKIDir, mtlsServerURL string, client *http.Client, renewalDays int, disconnectCh chan<- disconnectReason) {
-	if !pki.NeedsRenewal(workerPKIDir, renewalDays) {
-		return
-	}
-	log.Printf("[WORKER] Certificate expires within %d days. Starting renewal...", renewalDays)
-	performRenewal(conn, workerPKIDir, mtlsServerURL, client, disconnectCh)
-}
-
-func performRenewal(conn *websocket.Conn, workerPKIDir, mtlsServerURL string, client *http.Client, disconnectCh chan<- disconnectReason) {
-	csrPEM, keyPEM, err := pki.GenerateCSR()
-	if err != nil {
-		log.Printf("[WORKER] Failed to generate CSR for renewal: %v", err)
-		return
-	}
-
-	result, err := api.Renew(client, mtlsServerURL, csrPEM)
-	if err != nil {
-		if errors.Is(err, api.ErrRevoked) {
-			disconnectCh <- reasonRevoked
-			return
-		}
-		log.Printf("[WORKER] Renewal request failed: %v", err)
-		return
-	}
-
-	if err := pki.WriteCertificates(workerPKIDir, []byte(result.WorkerCert), keyPEM, []byte(result.CACert)); err != nil {
-		log.Printf("[WORKER] Failed to write renewed certificates: %v", err)
-		return
-	}
-
-	log.Println("[WORKER] Certificate files updated. Closing connection to reconnect with new credentials.")
-
-	renewInProgress.Store(1)
-
-	connWriteMu.Lock()
-	_ = conn.WriteMessage(
-		websocket.CloseMessage,
-		websocket.FormatCloseMessage(websocket.CloseNormalClosure, "certificate renewed"),
-	)
-	connWriteMu.Unlock()
-
-	disconnectCh <- reasonCertRenewed
 }
 
 func handleDeploy(conn *websocket.Conn, payload interface{}) {

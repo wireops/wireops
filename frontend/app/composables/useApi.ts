@@ -178,17 +178,11 @@ export function useApi() {
   const getJobDefinition = (jobId: string) =>
     customGet<JobDefinition>(`/api/custom/jobs/${jobId}/definition`)
 
-  const getWorkers = () => customGet<{ id: string; hostname: string; fingerprint: string; status: string; last_seen: string; health_history: { status: string, timestamp: string }[]; tags: string[]; cert_not_after: string; cert_status: string }[]>('/api/custom/workers')
-  const createWorkerSeat = () => customPost<{ seat: string }>('/api/custom/worker/seat')
+  const getWorkers = () => customGet<{ id: string; hostname: string; status: string; last_seen: string; health_history: { status: string, timestamp: string }[]; tags: string[]; is_embedded: boolean; token_status: string; token_expires: string; token_last_used: string }[]>('/api/custom/workers')
+  const createWorkerToken = () => customPost<{ token: string; token_id: string; status: string; expires_at: string }>('/api/custom/worker/tokens')
   const revokeWorker = (id: string) => customPost(`/api/custom/workers/${id}/revoke`)
   const transferStack = (stackId: string, targetWorkerId: string) =>
     customPost(`/api/custom/stacks/${stackId}/transfer`, { target_worker_id: targetWorkerId })
-  type CertDetails = { issuer: string; subject: string; expiration_date: string; fingerprint: string; status: string }
-  type PKIDetails = { ca: CertDetails; server: CertDetails }
-  const getPKIDetails = () => customGet<PKIDetails>('/api/custom/settings/pki')
-  const renewServerCert = () => customPost('/api/custom/pki/renew-server')
-  const renewWorkerCert = (id: string) => customPost(`/api/custom/workers/${id}/renew-cert`)
-  const forceRebootstrapWorker = (id: string) => customPost(`/api/custom/workers/${id}/force-rebootstrap`)
 
-  return { triggerSync, triggerRollback, forceRedeploy, getServices, getStackResources, stopContainer, restartContainer, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, getRepoFiles, getStackFiles, getJobFiles, testCredentials, keyscan, listOrphans, purgeOrphan, getSystemInfo, customPost, customGet, customPut, customPatch, customDelete, getSyncEventsWebhook, setSyncEventsWebhook, setNotificationsEnabled, deleteSyncEventsWebhook, testSyncEventsWebhook, getWorkers, createWorkerSeat, revokeWorker, getPKIDetails, renewServerCert, renewWorkerCert, forceRebootstrapWorker, transferStack, discoverProjects, importStack, listJobs, triggerJobRun, cancelJobRun, deleteJobRun, getJobDefinition }
+  return { triggerSync, triggerRollback, forceRedeploy, getServices, getStackResources, stopContainer, restartContainer, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, getRepoFiles, getStackFiles, getJobFiles, testCredentials, keyscan, listOrphans, purgeOrphan, getSystemInfo, customPost, customGet, customPut, customPatch, customDelete, getSyncEventsWebhook, setSyncEventsWebhook, setNotificationsEnabled, deleteSyncEventsWebhook, testSyncEventsWebhook, getWorkers, createWorkerToken, revokeWorker, transferStack, discoverProjects, importStack, listJobs, triggerJobRun, cancelJobRun, deleteJobRun, getJobDefinition }
 }

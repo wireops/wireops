@@ -7,6 +7,7 @@ const { announce } = useA11yAnnouncer()
 
 const props = defineProps<{
   stack: any // the stack record (must have .id, .name, and optionally .expand.worker)
+  workerOffline?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -14,12 +15,16 @@ const emit = defineEmits<{
   cancel: []
 }>()
 
+const showForceDeleteOption = ref(false)
+
 // Worker connectivity check
 const workerOffline = computed(() => {
+  if (props.workerOffline) return true
+  if (showForceDeleteOption.value) return true
   const worker = props.stack?.expand?.worker
   if (!worker) return false // embedded / unknown, allow
   // A worker is considered offline if its status is not ACTIVE
-  if (worker.status && worker.status !== 'ACTIVE') return true
+  if (worker.status && worker.status !== WORKER_STATUS.ACTIVE) return true
   return false
 })
 
@@ -37,6 +42,9 @@ async function confirmDelete() {
     const res = await deleteStack(props.stack.id, forceDelete.value)
     if (res?.error) {
       errorMsg.value = res.error
+      if (res.error.toLowerCase().includes('offline')) {
+        showForceDeleteOption.value = true
+      }
       return
     }
     toast.add({ title: `Stack "${props.stack.name}" deleted`, color: 'success' })
@@ -44,6 +52,9 @@ async function confirmDelete() {
     emit('deleted')
   } catch (e: any) {
     errorMsg.value = e?.message || 'Unexpected error'
+    if (errorMsg.value.toLowerCase().includes('offline')) {
+      showForceDeleteOption.value = true
+    }
     announce(`Failed to delete stack ${props.stack?.name || ''}`.trim(), 'assertive')
   } finally {
     deleting.value = false
@@ -67,11 +78,24 @@ async function confirmDelete() {
         <div class="space-y-2">
           <div>
             <p class="text-sm font-medium text-red-500">Worker unavailable</p>
-            <p class="text-xs text-red-500 mt-0.5">
-              <span class="font-mono">{{ workerName }}</span> is offline. You can force delete the database records, but the containers on the host will become orphaned.
+            <p class="text-xs text-red-500 mt-1 leading-relaxed">
+              <WorkerNameLabel :name="workerName" /> is offline. You can force delete the database records, but the containers on the host will become orphaned.
             </p>
           </div>
-          <UCheckbox v-model="forceDelete" color="red" label="Force delete database records only" class="pt-2" />
+          <div class="pt-2">
+            <UCheckbox
+              v-model="forceDelete"
+              color="error"
+              label="Force delete database records only"
+              :ui="{
+                root: 'items-center',
+                base: 'border border-red-500 dark:border-red-400/80 !ring-0',
+                indicator: '!bg-transparent',
+                icon: 'text-red-500 dark:text-red-400',
+                label: 'text-red-600 dark:text-red-400 font-medium text-xs'
+              }"
+            />
+          </div>
         </div>
       </div>
 
