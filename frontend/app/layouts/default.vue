@@ -83,19 +83,24 @@ watch(mobileMenuOpen, (isOpen) => {
 
 <template>
   <div class="min-h-screen bg-white dark:bg-carbon-950">
-    <div v-if="isAuthenticated" class="flex min-h-screen">
-      <AppSidebar
-        :nav-items="navItems"
-        :current-path="route.path"
-        :color-mode-value="colorMode.value"
-        @help="openHelp"
-        @accessibility="openAccessibility"
-        @toggle-theme="toggleTheme"
-        @logout="handleLogout"
-      />
+    <div :class="isAuthenticated ? 'flex min-h-screen' : 'min-h-screen'">
+      <template v-if="isAuthenticated">
+        <AppSidebar
+          :nav-items="navItems"
+          :current-path="route.path"
+          :color-mode-value="colorMode.value"
+          @help="openHelp"
+          @accessibility="openAccessibility"
+          @toggle-theme="toggleTheme"
+          @logout="handleLogout"
+        />
+      </template>
 
-      <div class="flex min-w-0 flex-1 flex-col">
-        <header class="sticky top-0 z-40 border-b border-gray-200 bg-white/95 backdrop-blur lg:hidden dark:border-carbon-800 dark:bg-carbon-950/95">
+      <div :class="isAuthenticated ? 'flex min-w-0 flex-1 flex-col' : 'w-full'">
+        <header
+          v-if="isAuthenticated"
+          class="sticky top-0 z-40 border-b border-gray-200 bg-white/95 backdrop-blur lg:hidden dark:border-carbon-800 dark:bg-carbon-950/95"
+        >
           <div class="flex items-center justify-between px-4 py-3 sm:px-6">
             <div class="flex items-center gap-3">
               <UButton
@@ -120,14 +125,20 @@ watch(mobileMenuOpen, (isOpen) => {
           </div>
         </header>
 
-        <main id="main-content" tabindex="-1" class="flex-1">
-          <div class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+        <main
+          id="main-content"
+          tabindex="-1"
+          :class="isAuthenticated ? 'flex-1' : 'mx-auto min-h-screen max-w-7xl px-4 py-6 sm:px-6 lg:px-8'"
+        >
+          <div v-if="isAuthenticated" class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
             <slot />
           </div>
+          <slot v-else />
         </main>
       </div>
 
       <AppSidebar
+        v-if="isAuthenticated"
         mobile
         :open="mobileMenuOpen"
         :nav-items="navItems"
@@ -140,15 +151,6 @@ watch(mobileMenuOpen, (isOpen) => {
         @logout="handleLogout"
       />
     </div>
-
-    <main
-      v-else
-      id="main-content"
-      tabindex="-1"
-      class="max-w-7xl mx-auto min-h-screen px-4 py-6 sm:px-6 lg:px-8"
-    >
-      <slot />
-    </main>
 
     <UModal v-model:open="isShowingHelp">
       <template #content>
