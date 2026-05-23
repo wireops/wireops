@@ -134,7 +134,7 @@ onMounted(() => {
             <UButton
               to="/stacks"
               icon="i-lucide-layers"
-              label="Manage Stacks"
+              label="Manage Workloads"
               color="primary"
               variant="soft"
               block
