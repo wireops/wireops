@@ -4,6 +4,7 @@ const { triggerSync, listOrphans, purgeOrphan } = useApi()
 const { subscribe } = useRealtime()
 const toast = useToast()
 const { platformIconUrl } = useRepositoryPlatform()
+const router = useRouter()
 
 const { data: stacks, refresh } = useAsyncData('stacks_list', () =>
   $pb.collection('stacks').getFullList({ sort: '-updated', expand: 'repository,worker' })
@@ -69,9 +70,35 @@ const statusColor = (s: string) => {
   }
 }
 
+const cardAccentClass = (s: string) => {
+  switch (s) {
+    case 'active': return 'border-l-emerald-400 dark:border-l-emerald-400'
+    case 'syncing': return 'border-l-sky-400 dark:border-l-sky-400'
+    case 'error': return 'border-l-rose-400 dark:border-l-rose-400'
+    case 'paused':
+    case 'pending': return 'border-l-amber-400 dark:border-l-amber-400'
+    default: return 'border-l-gray-300 dark:border-l-carbon-600'
+  }
+}
+
+const stackStatusLabel = (s: string) => {
+  switch (s) {
+    case 'active': return 'Synced'
+    case 'syncing': return 'Syncing'
+    case 'error': return 'Error'
+    case 'paused': return 'Paused'
+    case 'pending': return 'Pending'
+    default: return s || 'Unknown'
+  }
+}
+
+function openStack(stackId: string) {
+  router.push(`/stacks/${stackId}`)
+}
+
 const searchQuery = ref('')
 const statusFilter = ref('all')
-const sortBy = ref('updated')
+const sortBy = ref('name')
 
 const filteredStacks = computed(() => {
   let filtered = stacks.value || []
@@ -219,51 +246,105 @@ async function handlePurge(dirName: string) {
           <p class="text-xs text-gray-400 mt-1">Try adjusting your search or filters</p>
         </div>
 
-        <div v-else class="space-y-3">
+        <div v-else class="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-3">
           <div
             v-for="stack in filteredStacks"
             :key="stack.id"
-            class="flex items-center justify-between p-4 bg-gray-50 dark:bg-carbon-800/40 rounded-xl border border-gray-200 dark:border-carbon-700 hover:shadow-[0_0_0_2px_rgba(255,198,0,0.35),0_0_20px_rgba(255,198,0,0.12)] transition-all"
+            class="relative w-full min-w-0 border border-gray-200 border-l-4 border-l-gray-300 bg-white p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-[0_0_0_1px_rgba(255,198,0,0.28),0_12px_24px_rgba(15,23,42,0.08)] dark:border-carbon-700 dark:border-l-carbon-600 dark:bg-carbon-800/55 dark:hover:shadow-[0_0_0_1px_rgba(255,198,0,0.24),0_14px_28px_rgba(0,0,0,0.24)]"
+            :class="cardAccentClass(stack.status)"
+            role="link"
+            tabindex="0"
+            @click="openStack(stack.id)"
+            @keydown.enter="openStack(stack.id)"
+            @keydown.space.prevent="openStack(stack.id)"
           >
-            <NuxtLink :to="`/stacks/${stack.id}`" class="flex-1 min-w-0">
-              <div class="flex items-center gap-2 mb-1">
-                <h3 class="font-semibold truncate text-gray-900 dark:text-wire-200">{{ stack.name }}</h3>
-                <BadgeStatus :status="stack.status" />
+            <div class="flex h-full flex-col gap-3">
+              <div class="block">
+                <div class="min-w-0">
+                  <div class="group inline-flex max-w-full items-center">
+                    <h3 class="truncate text-base font-bold tracking-tight text-gray-950 transition-colors group-hover:text-yellow-500 dark:text-white">
+                      {{ stack.name }}
+                    </h3>
+                  </div>
+                </div>
+                <div class="absolute right-4 top-4 flex shrink-0 items-center gap-1" @click.stop>
+                  <UButton
+                    icon="i-lucide-refresh-cw"
+                    variant="soft"
+                    color="primary"
+                    size="sm"
+                    class="hidden sm:inline-flex"
+                    @click="sync(stack.id)"
+                  />
+                  <UButton
+                    icon="i-lucide-refresh-cw"
+                    label="Sync"
+                    variant="soft"
+                    color="primary"
+                    size="sm"
+                    class="min-h-10 min-w-28 justify-center text-sm font-semibold sm:hidden"
+                    @click="sync(stack.id)"
+                  />
+                </div>
               </div>
-              <p class="text-sm text-gray-500 dark:text-wire-200/50">
-                <template v-if="stack.source_type === 'local'">
-                  <UIcon name="i-lucide-hard-drive" class="w-3 h-3 inline" />
-                  {{ stack.import_path || 'local import' }}
-                </template>
-                <template v-else>
-                  <img
-                    v-if="platformIconUrl(stack.expand?.repository?.platform)"
-                    :src="platformIconUrl(stack.expand?.repository?.platform)!"
-                    class="w-3 h-3 object-contain inline shrink-0"
-                    alt=""
-                  >
-                  <UIcon v-else name="i-lucide-git-branch" class="w-3 h-3 inline shrink-0" />
-                  {{ stack.expand?.repository?.name || 'Unknown repo' }}
-                </template>
-              </p>
 
-              <div class="flex items-center gap-2 mt-2 text-xs text-gray-400 dark:text-wire-200/40">
-                <UBadge v-if="stack.source_type === 'local'" label="local" variant="subtle" color="info" size="xs" />
-              </div>
-            </NuxtLink>
+              <div class="space-y-1.5 bg-gray-50/90 px-3 py-2.5 dark:bg-carbon-900/55">
+                <div class="grid grid-cols-[78px_1fr] items-start gap-2 text-sm">
+                  <span class="text-gray-500 dark:text-wire-200/45">Status</span>
+                  <div class="flex min-w-0 items-center gap-2">
+                    <UIcon
+                      name="i-lucide-badge-check"
+                      class="h-3.5 w-3.5 shrink-0"
+                      :class="{
+                        'text-emerald-500': statusColor(stack.status) === 'success',
+                        'text-sky-500': statusColor(stack.status) === 'info',
+                        'text-rose-500': statusColor(stack.status) === 'error',
+                        'text-amber-500': statusColor(stack.status) === 'warning',
+                        'text-gray-400': statusColor(stack.status) === 'neutral',
+                      }"
+                    />
+                    <span class="truncate font-medium text-gray-900 dark:text-wire-200">{{ stackStatusLabel(stack.status) }}</span>
+                  </div>
+                </div>
 
-            <div class="px-4">
-              <div v-if="stack.containers_list?.length" class="mt-3 sm:mt-0">
-                <StackContainersList :containers="stack.containers_list" />
+                <div class="grid grid-cols-[78px_1fr] items-start gap-2 text-sm">
+                  <span class="text-gray-500 dark:text-wire-200/45">Repository</span>
+                  <div class="min-w-0">
+                    <template v-if="stack.source_type === 'local'">
+                      <span class="inline-flex items-center gap-1.5 text-gray-900 dark:text-wire-200">
+                        <UIcon name="i-lucide-hard-drive" class="h-3.5 w-3.5 shrink-0 text-sky-500" />
+                        <span class="truncate">{{ stack.import_path || 'local import' }}</span>
+                      </span>
+                    </template>
+                    <template v-else>
+                      <span class="inline-flex items-center gap-1.5 text-gray-900 dark:text-wire-200">
+                        <img
+                          v-if="platformIconUrl(stack.expand?.repository?.platform)"
+                          :src="platformIconUrl(stack.expand?.repository?.platform)!"
+                          class="h-3.5 w-3.5 shrink-0 object-contain"
+                          alt=""
+                        >
+                        <UIcon v-else name="i-lucide-git-branch" class="h-3.5 w-3.5 shrink-0 text-gray-400" />
+                        <span class="truncate">{{ stack.expand?.repository?.name || 'Unknown repo' }}</span>
+                      </span>
+                    </template>
+                  </div>
+                </div>
+
+                <div class="grid grid-cols-[78px_1fr] items-start gap-2 text-sm">
+                  <span class="text-gray-500 dark:text-wire-200/45">Worker</span>
+                  <span class="truncate text-gray-900 dark:text-wire-200">
+                    {{ stack.expand?.worker?.hostname || 'Unknown worker' }}
+                  </span>
+                </div>
+
+                <div v-if="stack.containers_list?.length" class="grid grid-cols-[78px_1fr] items-start gap-2 text-sm">
+                  <span class="text-gray-500 dark:text-wire-200/45">Services</span>
+                  <div class="min-w-0">
+                    <StackContainersList :containers="stack.containers_list" />
+                  </div>
+                </div>
               </div>
-            </div>
-            <div class="ml-2 border-l border-gray-200 dark:border-carbon-700 pl-4 flex items-center gap-1">
-              <UTooltip text="Sync stack">
-                <UButton icon="i-lucide-refresh-cw" variant="ghost" size="xs" @click.stop="sync(stack.id)" />
-              </UTooltip>
-              <UTooltip text="Delete stack">
-                <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="xs" @click.stop="openDelete(stack)" />
-              </UTooltip>
             </div>
           </div>
         </div>

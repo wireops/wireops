@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import AppSidebar from './sidebar/AppSidebar.vue'
+
 const { isAuthenticated, logout } = useAuth()
 const route = useRoute()
 const colorMode = useColorMode()
@@ -7,7 +9,15 @@ const { isShowingHelp, shortcuts } = useKeyboard()
 
 const navItems = [
   { label: 'Dashboard', icon: 'i-lucide-layout-dashboard', to: '/' },
-  { label: 'Workloads', icon: 'i-lucide-container', to: '/workloads' },
+  {
+    label: 'Workloads',
+    icon: 'i-lucide-container',
+    to: '/workloads',
+    children: [
+      { label: 'Stacks', icon: 'i-lucide-layers', to: '/stacks' },
+      { label: 'Jobs', icon: 'i-lucide-calendar-clock', to: '/jobs' },
+    ],
+  },
   { label: 'Repositories', icon: 'i-lucide-git-branch', to: '/repositories' },
   { label: 'Workers', icon: 'i-lucide-network', to: '/workers' },
   { label: 'Settings', icon: 'i-lucide-settings', to: '/settings' },
@@ -16,7 +26,26 @@ const navItems = [
 
 function isActive(to: string) {
   if (to === '/') return route.path === '/'
+  if (to === '/workloads') {
+    return route.path.startsWith('/workloads') || route.path.startsWith('/stacks') || route.path.startsWith('/jobs')
+  }
   return route.path.startsWith(to)
+}
+
+const activeNavLabel = computed(() => navItems.find(item => isActive(item.to))?.label || 'Menu')
+
+function toggleTheme() {
+  colorMode.preference = colorMode.value === 'dark' ? 'light' : 'dark'
+}
+
+function openHelp() {
+  mobileMenuOpen.value = false
+  isShowingHelp.value = true
+}
+
+function handleLogout() {
+  mobileMenuOpen.value = false
+  logout()
 }
 
 watch(() => route.fullPath, () => {
@@ -26,86 +55,60 @@ watch(() => route.fullPath, () => {
 
 <template>
   <div class="min-h-screen bg-white dark:bg-carbon-950">
-    <header class="dark sticky top-0 z-50 border-b border-carbon-800 bg-carbon-900">
-      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div class="flex h-14 items-center justify-between">
-          <div class="flex items-center gap-6">
-            <NuxtLink to="/" class="flex items-center gap-2">
-              <UIcon name="i-lucide-zap" class="w-6 h-6 text-yellow-400 drop-shadow-[0_0_6px_rgba(255,198,0,0.6)]" />
-              <span class="font-black text-lg tracking-widest uppercase text-yellow-400 drop-shadow-[0_0_8px_rgba(255,198,0,0.4)]">
-                wireops
-              </span>
-            </NuxtLink>
-            <nav v-if="isAuthenticated" class="hidden sm:flex items-center gap-1">
+    <div v-if="isAuthenticated" class="flex min-h-screen">
+      <AppSidebar
+        :nav-items="navItems"
+        :current-path="route.path"
+        :color-mode-value="colorMode.value"
+        @help="openHelp"
+        @toggle-theme="toggleTheme"
+        @logout="handleLogout"
+      />
+
+      <div class="flex min-w-0 flex-1 flex-col">
+        <div class="sticky top-0 z-40 border-b border-gray-200 bg-white/95 backdrop-blur lg:hidden dark:border-carbon-800 dark:bg-carbon-950/95">
+          <div class="flex items-center justify-between px-4 py-3 sm:px-6">
+            <div class="flex items-center gap-3">
               <UButton
-                v-for="item in navItems"
-                :key="item.to"
-                :to="item.to"
-                :icon="item.icon"
-                :label="item.label"
-                :variant="isActive(item.to) ? 'soft' : 'ghost'"
-                :color="isActive(item.to) ? 'primary' : 'neutral'"
+                :icon="mobileMenuOpen ? 'i-lucide-x' : 'i-lucide-menu'"
+                variant="outline"
+                color="neutral"
                 size="sm"
+                @click="mobileMenuOpen = !mobileMenuOpen"
               />
-            </nav>
-          </div>
-          <div v-if="isAuthenticated" class="flex items-center gap-2">
-            <UButton
-              :icon="colorMode.value === 'dark' ? 'i-lucide-sun' : 'i-lucide-moon'"
-              variant="ghost"
-              color="neutral"
-              size="sm"
-              :title="colorMode.value === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'"
-              @click="colorMode.preference = colorMode.value === 'dark' ? 'light' : 'dark'"
-            />
-            <UButton
-              icon="i-lucide-log-out"
-              variant="ghost"
-              color="neutral"
-              size="sm"
-              class="hidden sm:inline-flex"
-              @click="logout"
-            />
-            <UButton
-              :icon="mobileMenuOpen ? 'i-lucide-x' : 'i-lucide-menu'"
-              variant="ghost"
-              color="neutral"
-              size="sm"
-              class="sm:hidden"
-              @click="mobileMenuOpen = !mobileMenuOpen"
-            />
+              <div>
+                <p class="text-xs uppercase tracking-[0.24em] text-gray-500 dark:text-wire-200/45">Navigation</p>
+                <p class="text-sm font-semibold text-gray-900 dark:text-white">{{ activeNavLabel }}</p>
+              </div>
+            </div>
+            <NuxtLink to="/" class="flex items-center gap-2">
+              <UIcon name="i-lucide-zap" class="h-5 w-5 text-yellow-400" />
+              <span class="font-black text-sm tracking-[0.28em] uppercase text-yellow-400">wireops</span>
+            </NuxtLink>
           </div>
         </div>
-      </div>
-      <div v-if="isAuthenticated && mobileMenuOpen" class="dark sm:hidden border-t border-carbon-800 bg-carbon-900">
-        <nav class="flex flex-col px-4 py-2 gap-1">
-          <UButton
-            v-for="item in navItems"
-            :key="item.to"
-            :to="item.to"
-            :icon="item.icon"
-            :label="item.label"
-            :variant="isActive(item.to) ? 'soft' : 'ghost'"
-            :color="isActive(item.to) ? 'primary' : 'neutral'"
-            size="sm"
-            class="justify-start"
-          />
-          <div class="border-t border-carbon-800 mt-1 pt-1">
-            <UButton
-              icon="i-lucide-log-out"
-              label="Logout"
-              variant="ghost"
-              color="neutral"
-              size="sm"
-              class="justify-start w-full"
-              @click="logout"
-            />
-          </div>
-        </nav>
-      </div>
-    </header>
 
-    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <main class="flex-1">
+          <div class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+            <slot />
+          </div>
+        </main>
+      </div>
+
+      <AppSidebar
+        mobile
+        :open="mobileMenuOpen"
+        :nav-items="navItems"
+        :current-path="route.path"
+        :color-mode-value="colorMode.value"
+        @close="mobileMenuOpen = false"
+        @help="openHelp"
+        @toggle-theme="toggleTheme"
+        @logout="handleLogout"
+      />
+    </div>
+
+    <main v-else class="max-w-7xl mx-auto px-4 py-6 sm:px-6 lg:px-8">
       <slot />
     </main>
 

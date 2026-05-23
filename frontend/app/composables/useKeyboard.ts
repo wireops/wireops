@@ -8,7 +8,7 @@ export function useKeyboard() {
     { key: 'Cmd/Ctrl + S', description: 'Trigger sync (on stack page)' },
     { key: 'Escape', description: 'Close modals' },
     { key: 'G then D', description: 'Go to Dashboard' },
-    { key: 'G then S', description: 'Go to Stacks' },
+    { key: 'G then W', description: 'Go to Stacks' },
     { key: 'G then R', description: 'Go to Repositories' },
     { key: '?', description: 'Show this help' },
   ]
@@ -77,7 +77,7 @@ export function useKeyboard() {
             event.preventDefault()
             router.push('/')
             break
-          case 's':
+          case 'w':
             event.preventDefault()
             router.push('/stacks')
             break
