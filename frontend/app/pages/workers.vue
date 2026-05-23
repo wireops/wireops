@@ -70,8 +70,28 @@ async function handleRevoke(worker: any) {
 }
 
 async function copyToClipboard(text: string) {
-  await navigator.clipboard.writeText(text)
-  toast.add({ title: 'Copied!', color: 'success' })
+  try {
+    await navigator.clipboard.writeText(text)
+    toast.add({ title: 'Copied!', color: 'success' })
+  } catch {
+    try {
+      const textarea = document.createElement('textarea')
+      textarea.value = text
+      textarea.style.position = 'fixed'
+      document.body.appendChild(textarea)
+      textarea.focus()
+      textarea.select()
+      const successful = document.execCommand('copy')
+      document.body.removeChild(textarea)
+      if (successful) {
+        toast.add({ title: 'Copied!', color: 'success' })
+      } else {
+        throw new Error()
+      }
+    } catch {
+      toast.add({ title: 'Copy failed', description: 'Please copy the token manually.', color: 'error' })
+    }
+  }
 }
 
 function formatDate(dateStr: string) {
@@ -127,7 +147,7 @@ onUnmounted(() => {
         </div>
       </template>
       <p class="text-sm text-gray-500 dark:text-wire-200/60 mb-4">
-        This token is in <strong>{{ issuedTokenStatus }}</strong> for 1 hour. It becomes <strong>ACTIVE</strong> when the worker connects for the first time.
+        This token is in <strong>{{ issuedTokenStatus }}</strong> state until <strong>{{ formatDate(issuedTokenExpiresAt) }}</strong>. It becomes <strong>ACTIVE</strong> when the worker connects for the first time.
       </p>
       <div class="flex items-center gap-2 bg-gray-100 dark:bg-carbon-800/60 p-2 rounded-lg border border-gray-200 dark:border-carbon-700 break-all">
         <code class="text-sm font-mono flex-1 select-all text-wire-400">{{ issuedToken }}</code>
@@ -137,7 +157,7 @@ onUnmounted(() => {
       <div class="mt-4 pt-4 border-t border-gray-100 dark:border-carbon-800">
         <p class="text-xs font-semibold mb-2 uppercase text-gray-400 dark:text-wire-200/40 tracking-wider">Example Command (Docker)</p>
         <pre class="bg-gray-900 dark:bg-carbon-950 text-wire-400/80 p-3 rounded-lg text-xs overflow-x-auto font-mono border border-gray-700 dark:border-carbon-800">docker run -d \
-  -e WIREOPS_SERVER=http://your-wireops-server:8443 \
+  -e WIREOPS_SERVER=https://your-wireops-server.local \
   -e WIREOPS_WORKER_TOKEN={{ issuedToken }} \
   ghcr.io/wireops/wireops-worker:latest</pre>
       </div>
@@ -238,10 +258,10 @@ onUnmounted(() => {
       <template #header>
         <div class="flex items-center justify-between">
           <h3 class="font-semibold text-gray-900 dark:text-wire-200">
-            Seat Tokens
+            Worker Tokens (Pending)
             <span v-if="pendingTokens.length > 0" class="ml-1.5 text-yellow-400">({{ pendingTokens.length }})</span>
           </h3>
-          <p class="text-xs text-gray-400 dark:text-wire-200/40">Active tokens waiting for a worker to connect and register.</p>
+          <p class="text-xs text-gray-400 dark:text-wire-200/40">Pending worker tokens staged until first use/registration.</p>
         </div>
       </template>
 

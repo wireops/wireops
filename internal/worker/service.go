@@ -81,7 +81,10 @@ func (s *Service) ActivateToken(token string, hostname string) (*core.Record, *c
 
 	tokenRecord, err := s.findTokenRecordByHash(HashToken(token))
 	if err != nil {
-		return nil, nil, ErrTokenInvalid
+		if errors.Is(err, ErrTokenInvalid) {
+			return nil, nil, ErrTokenInvalid
+		}
+		return nil, nil, err
 	}
 
 	now := time.Now().UTC()
@@ -153,6 +156,9 @@ func (s *Service) GetTokenForWorker(workerID string) (*core.Record, error) {
 }
 
 func (s *Service) RevokeToken(recordID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	record, err := s.app.FindRecordById("worker_tokens", recordID)
 	if err != nil {
 		return err
@@ -163,6 +169,9 @@ func (s *Service) RevokeToken(recordID string) error {
 }
 
 func (s *Service) RevokeTokensForWorker(workerID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	records, err := s.app.FindAllRecords("worker_tokens", dbx.HashExp{"worker": workerID})
 	if err != nil {
 		return err

@@ -22,7 +22,7 @@ func NewClient() *http.Client {
 func authHeaders(token string) http.Header {
 	headers := make(http.Header)
 	headers.Set("Content-Type", "application/json")
-	headers.Set("X-Wireops-Worker-Token", token)
+	headers.Set("X-Wireops-Worker-Token", strings.TrimSpace(token))
 	return headers
 }
 

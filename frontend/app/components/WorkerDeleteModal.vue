@@ -41,7 +41,7 @@ async function confirmRevoke() {
       <div class="space-y-4">
         <div class="text-sm text-gray-500 space-y-1">
           <p>Are you sure you want to revoke the worker <span class="font-semibold text-gray-800 dark:text-gray-200">{{ worker?.hostname }}</span>?</p>
-          <p class="text-xs">All active client certificates for this worker will be invalidated, dropping its communication to the wireops hub.</p>
+          <p class="text-xs">This worker will be disconnected, dropping its communication with the wireops hub.</p>
           <p class="text-xs text-red-500 font-medium">This action cannot be undone.</p>
         </div>
 

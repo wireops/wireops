@@ -23,10 +23,6 @@ COPY --from=docker-cli /usr/local/libexec/docker/cli-plugins/ /usr/local/libexec
 WORKDIR /app
 COPY --from=go-builder /app/wireops-worker ./wireops-worker
 
-RUN mkdir -p /app/worker_pki \
-    && chown -R appuser:appgroup /app \
-    && chmod -R ug+rwX /app
-
 USER appuser
 
 ENTRYPOINT ["/app/wireops-worker"]

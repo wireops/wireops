@@ -2,27 +2,15 @@ package worker
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
-
-	"github.com/pocketbase/pocketbase/tests"
 )
 
-func newWorkerServerTestApp(t *testing.T) *tests.TestApp {
-	t.Helper()
-	app, err := tests.NewTestApp()
-	if err != nil {
-		t.Fatalf("failed to create test app: %v", err)
-	}
-	ensureWorkerCollections(t, app)
-	t.Cleanup(func() { app.Cleanup() })
-	return app
-}
-
 func TestHandleRegisterRejectsMissingToken(t *testing.T) {
-	app := newWorkerServerTestApp(t)
+	app := newWorkerTestApp(t)
 	svc := NewService(app)
 	server := NewWorkerServer(app, svc)
 
@@ -32,7 +20,7 @@ func TestHandleRegisterRejectsMissingToken(t *testing.T) {
 		"tags":     []string{"edge"},
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/worker/register", bytes.NewBuffer(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/worker/register", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -44,7 +32,7 @@ func TestHandleRegisterRejectsMissingToken(t *testing.T) {
 }
 
 func TestHandleRegisterActivatesStagingToken(t *testing.T) {
-	app := newWorkerServerTestApp(t)
+	app := newWorkerTestApp(t)
 	svc := NewService(app)
 	server := NewWorkerServer(app, svc)
 
@@ -59,7 +47,7 @@ func TestHandleRegisterActivatesStagingToken(t *testing.T) {
 		"tags":     []string{"edge"},
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/worker/register", bytes.NewBuffer(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/worker/register", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Wireops-Worker-Token", token)
 	rec := httptest.NewRecorder()

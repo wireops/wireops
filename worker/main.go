@@ -94,11 +94,23 @@ func runSession(serverURL, workerToken, hostname string, tags []string, sigChan 
 		if errors.Is(err, api.ErrRevoked) || errors.Is(err, api.ErrUnauthorized) {
 			return reasonRevoked
 		}
+
+		select {
+		case <-sigChan:
+			return reasonShutdown
+		default:
+		}
+
 		log.Printf("[WORKER] Registration attempt %d failed: %v. Retrying in 5s...", i, err)
-		time.Sleep(5 * time.Second)
 		if i == 5 {
 			log.Printf("[WORKER] Failed to register after 5 attempts")
 			return reasonUnknown
+		}
+
+		select {
+		case <-sigChan:
+			return reasonShutdown
+		case <-time.After(5 * time.Second):
 		}
 	}
 

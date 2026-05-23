@@ -15,7 +15,7 @@ WORKDIR /app
 COPY wireops ./wireops
 COPY pb_public ./pb_public
 
-RUN mkdir -p /app/pb_data /app/pki_data \
+RUN mkdir -p /app/pb_data \
     && chown -R appuser:appgroup /app \
     && chmod -R ug+rwX /app
 
