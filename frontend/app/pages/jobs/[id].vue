@@ -176,7 +176,7 @@ async function toggleEnabled() {
 
     <!-- Runs tab -->
     <div v-if="activeTab === 'runs'">
-      <JobsJobRunsList :job-id="jobId" ref="jobRunsListRef" />
+      <JobsJobRunsList ref="jobRunsListRef" :job-id="jobId" />
     </div>
 
     <!-- Env Vars tab -->

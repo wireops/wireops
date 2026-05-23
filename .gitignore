@@ -41,7 +41,5 @@ frontend/dist/
 frontend/dist/*
 frontend/node_modules/
 data/
-pki_data/
 repos/
 __debug_bin*
-worker_pki/

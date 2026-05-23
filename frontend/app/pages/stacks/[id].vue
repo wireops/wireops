@@ -5,7 +5,7 @@ const route = useRoute()
 const { $pb } = useNuxtApp()
 const { subscribe } = useRealtime()
 const { copy } = useCopy()
-const { triggerRollback, forceRedeploy, getServices, getStackResources, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, transferStack } = useApi()
+const { triggerRollback, forceRedeploy, getServices, getStackResources, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, transferStack, getWorkers } = useApi()
 const { getStackIntegrationActions } = useIntegrations()
 
 function formatUptime(startedAt: string): string {
@@ -32,9 +32,17 @@ const { data: stack, refresh: refreshStack, error: stackError } = useAsyncData(`
 )
 
 const workerOffline = computed(() => {
+  const workerID = stack.value?.worker
+  if (!workerID) return false
+  const realWorker = (workers.value || []).find((w: any) => w.id === workerID)
+  if (realWorker) {
+    if (realWorker.status) {
+      return realWorker.status !== WORKER_STATUS.ACTIVE
+    }
+  }
   const worker = stack.value?.expand?.worker
   if (!worker) return false
-  if (worker.status && worker.status !== 'ACTIVE') return true
+  if (worker.status && worker.status !== WORKER_STATUS.ACTIVE) return true
   return false
 })
 
@@ -60,14 +68,14 @@ const { data: envVars, refresh: refreshEnv } = useAsyncData(`env_${stackId}`, ()
   })
 )
 
-const { data: workers } = useAsyncData('workers_for_stacks', () =>
-  $pb.collection('workers').getFullList({ filter: 'status = "ACTIVE"', sort: 'hostname' })
-)
+const { data: workers } = useAsyncData('workers_for_stacks', getWorkers)
 
 const { data: webhookUrl } = useAsyncData(`webhook_url_${stackId}`, () => getWebhookUrl(stackId))
 
 const workerOptions = computed(() =>
-  (workers.value || []).map((a: any) => ({ label: a.hostname, value: a.id }))
+  (workers.value || [])
+    .filter((a: any) => a.status === WORKER_STATUS.ACTIVE || a.status === WORKER_STATUS.OFFLINE)
+    .map((a: any) => ({ label: a.hostname, value: a.id }))
 )
 
 const services = ref<any[]>([])
@@ -1038,6 +1046,7 @@ onMounted(() => {
         <DeleteStackModal
           v-if="stack"
           :stack="stack"
+          :worker-offline="workerOffline"
           @deleted="onStackDeleted"
           @cancel="showDeleteModal = false"
         />

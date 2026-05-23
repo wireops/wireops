@@ -23,18 +23,11 @@ services:
     depends_on:
       - wireops
     environment:
-      - WIREOPS_SERVER=${WIREOPS_SERVER:-http://wireops:8090}
-      - WIREOPS_MTLS_SERVER=${WIREOPS_MTLS_SERVER:-https://wireops:8443}
-      - WIREOPS_BOOTSTRAP_TOKEN=${WIREOPS_BOOTSTRAP_TOKEN:-}
-      - WIREOPS_WORKER_PKI_DIR=/var/lib/wireops/pki
+      - WIREOPS_SERVER=${WIREOPS_SERVER:-http://wireops:8443}
+      - WIREOPS_WORKER_TOKEN=${WIREOPS_WORKER_TOKEN:-}
       - WIREOPS_WORKER_WORK_DIR=/tmp/wireops-worker
       - HOSTNAME=${WORKER_HOSTNAME:-}
     volumes:
-      - wireops-worker-pki:/var/lib/wireops/pki
       - /var/run/docker.sock:/var/run/docker.sock
     env_file:
       - .env
-
-volumes:
-  wireops-worker-pki:
-    driver: local

@@ -20,7 +20,7 @@ const (
 	MsgRunJob           MessageType = "run_job"
 	MsgKillJob          MessageType = "kill_job"
 
-	// Server → Worker PKI lifecycle
+	// Server → Worker lifecycle
 	MsgRequestRenewal   MessageType = "request_renewal"
 	MsgForceRebootstrap MessageType = "force_rebootstrap"
 

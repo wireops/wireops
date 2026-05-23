@@ -1,6 +1,6 @@
 # wireops — Agent Context
 
-Self-hosted GitOps platform for managing Docker Compose stacks and scheduled Docker-based jobs. It watches Git repositories for changes and deploys updates via `docker compose up`, either locally (embedded worker) or on remote hosts (remote workers over mTLS/WebSocket).
+Self-hosted GitOps platform for managing Docker Compose stacks and scheduled Docker-based jobs. It watches Git repositories for changes and deploys updates via `docker compose up`, either locally (embedded worker) or on remote hosts (remote workers over a token-authenticated WebSocket connection).
 
 ---
 
@@ -13,14 +13,13 @@ Self-hosted GitOps platform for managing Docker Compose stacks and scheduled Doc
 ├── go.mod                        # Go module (go 1.25)
 ├── worker/                       # Standalone remote-worker binary
 │   ├── main.go
-│   ├── api/client.go             # mTLS HTTP client (register)
+│   ├── api/client.go             # Token-authenticated HTTP client (register)
 │   ├── executor/runner.go        # Executes deploy / teardown / job commands
-│   ├── pki/bootstrap.go          # Worker PKI bootstrap (CSR → signed cert)
 │   └── sync/websocket.go         # Persistent WebSocket connection to server
 ├── internal/
 │   ├── worker/                   # Server-side worker management
-│   │   ├── server.go             # mTLS WebSocket server on :8443
-│   │   └── service.go            # Worker CRUD, seat tokens, health tracking
+│   │   ├── server.go             # Token-authenticated WebSocket server on :8443
+│   │   └── service.go            # Worker CRUD, registration tokens, health tracking
 │   ├── compose/                  # Docker Compose helpers
 │   │   ├── config.go             # Compose YAML parsing
 │   │   ├── runner.go             # RunUp / RunDown / RunForceUp / RunPs
@@ -34,7 +33,6 @@ Self-hosted GitOps platform for managing Docker Compose stacks and scheduled Doc
 │   ├── job/parser.go             # job.yaml parsing & validation
 │   ├── jobscheduler/scheduler.go # Cron scheduler for Docker-based jobs
 │   ├── notify/                   # Outbound notifications (webhook / ntfy)
-│   ├── pki/service.go            # CA, server cert, worker CSR signing
 │   ├── protocol/messages.go      # WebSocket message types (shared)
 │   ├── routes/                   # HTTP route handlers
 │   │   ├── routes.go             # Stack / repo / credential / integration routes
@@ -49,7 +47,6 @@ Self-hosted GitOps platform for managing Docker Compose stacks and scheduled Doc
 │       └── watcher.go            # File-based change detection
 ├── pb_migrations/                # PocketBase SQLite schema migrations
 ├── pb_public/                    # Compiled frontend static assets (served by PocketBase)
-├── pki_data/                     # CA & server TLS certificates
 └── frontend/                     # Nuxt 4 SPA (Vue 3, @nuxt/ui v4, Tailwind)
     └── app/
         ├── pages/                # File-based routing
@@ -67,7 +64,7 @@ Self-hosted GitOps platform for managing Docker Compose stacks and scheduled Doc
 |---|---|
 | Backend language | Go 1.25 |
 | Backend framework | PocketBase v0.36 (embedded SQLite, REST, realtime SSE) |
-| HTTP routing | PocketBase router + Gin (mTLS server only) |
+| HTTP routing | PocketBase router + Gin (worker server only) |
 | Database | SQLite via PocketBase |
 | Git operations | `go-git/go-git/v5` |
 | Docker client | `docker/docker` (Engine API v28) |
@@ -92,13 +89,13 @@ Three deployable components:
 │  │ API :8090  │  │ Scheduler    │  │ Scheduler│ │
 │  └────────────┘  └──────────────┘  └──────────┘ │
 │  ┌────────────────────────────────────────────┐  │
-│  │  mTLS WebSocket Server :8443               │  │
+│  │  Worker WebSocket Server :8443              │  │
 │  └────────────────────────────────────────────┘  │
 │  ┌────────────────────────────────────────────┐  │
 │  │  Embedded Worker (local Docker socket)     │  │
 │  └────────────────────────────────────────────┘  │
 └──────────────────────────────────────────────────┘
-              ↑ mTLS WebSocket ↑
+              ↑ WebSocket + Token ↑
   ┌──────────────────────────────┐
   │   Remote Worker              │
   │   Executes docker compose    │
@@ -109,7 +106,7 @@ Three deployable components:
   ← REST + PocketBase Realtime (SSE)
 ```
 
-- The server **never** runs `docker compose` for remote stacks — it dispatches commands over a persistent mTLS WebSocket to workers.
+- The server **never** runs `docker compose` for remote stacks — it dispatches commands over a persistent WebSocket to workers.
 - The **embedded worker** runs on the same host and accesses Docker directly via `/var/run/docker.sock`.
 - PocketBase handles auth (superusers collection), realtime subscriptions, and the SQLite database.
 - The frontend is statically generated (`nuxt generate`) and served from `pb_public/`.
@@ -159,12 +156,13 @@ repositories ─── 1:N ──→ scheduled_jobs ─── 1:N ──→ job_
 6. Persists a `sync_logs` entry, updates stack status, fires webhook/ntfy notification.
 
 ### Worker Bootstrap & Communication
-1. Admin generates a one-time seat token via `POST /api/custom/worker/seat`.
-2. Worker generates a private key + CSR, calls `POST /api/custom/worker/bootstrap` to receive a signed TLS certificate.
-3. Worker connects to `POST /worker/register` (mTLS, :8443), then opens a WebSocket to `/worker/ws`.
-4. Server dispatches typed commands (`DeployCommand`, `TeardownCommand`, `RunJobCommand`, etc.) as JSON `Envelope` messages.
-5. Worker sends heartbeats every 30s; job completions are pushed as unsolicited `MsgJobCompleted` messages.
-6. If a worker is offline when a change is detected, a `stack_pending_reconciles` record is created and replayed on reconnect.
+1. Admin generates a token via the UI/API.
+2. Worker connects to `POST /worker/register` (using the HTTPS endpoint on port :8443) with the `X-Wireops-Worker-Token` header to register.
+3. The server validates the token (transitioning it from `STAGING` to `ACTIVE`) and associates it with the worker.
+4. Worker opens a persistent WebSocket connection to `/worker/ws` on the worker server, authenticated via the same token.
+5. Server dispatches typed commands (`DeployCommand`, `TeardownCommand`, `RunJobCommand`, etc.) as JSON `Envelope` messages.
+6. Worker sends heartbeats every 30s; job completions are pushed as unsolicited `MsgJobCompleted` messages.
+7. If a worker is offline when a change is detected, a `stack_pending_reconciles` record is created and replayed on reconnect.
 
 ### Scheduled Jobs
 1. A `scheduled_jobs` record points to a `job.yaml` file inside a repository.
@@ -210,10 +208,9 @@ All custom routes are prefixed `/api/custom/`. PocketBase also auto-exposes CRUD
 ### Workers (superuser only)
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/workers` | List all workers |
-| `POST` | `/worker/seat` | Generate bootstrap seat token |
-| `POST` | `/worker/bootstrap` | Worker CSR signing |
-| `POST` | `/workers/{id}/revoke` | Revoke worker |
+| `GET` | `/api/custom/workers` | List all workers (including pending tokens) |
+| `POST` | `/api/custom/worker/tokens` | Generate worker token |
+| `POST` | `/api/custom/workers/{id}/revoke` | Revoke worker or a pending token (using `pending:{tokenRecordId}`) |
 
 ### Scheduled Jobs
 | Method | Path | Description |
@@ -235,16 +232,14 @@ All custom routes are prefixed `/api/custom/`. PocketBase also auto-exposes CRUD
 | `PORT` | PocketBase HTTP port (default: `8090`) |
 | `PB_DATA_DIR` | SQLite data directory (default: `./pb_data`) |
 | `REPOS_WORKSPACE` | Git clone workspace (default: `./repos`) |
-| `WIREOPS_PKI_DIR` | CA and server TLS certs directory (default: `./pki_data`) |
 | `WIREOPS_DISABLE_LOCAL_WORKER` | Disable the embedded worker (default: `false`) |
 | `WIREOPS_WORKER_TAGS` | Comma-separated tags for the embedded worker |
 
 ### Worker
 | Variable | Description |
 |---|---|
-| `WIREOPS_SERVER` | HTTP URL of the wireops server (for bootstrap) |
-| `WIREOPS_MTLS_SERVER` | HTTPS URL for mTLS connections (port 8443) |
-| `WIREOPS_BOOTSTRAP_TOKEN` | One-time seat token for initial PKI setup |
+| `WIREOPS_SERVER` | HTTPS URL of the wireops server |
+| `WIREOPS_WORKER_TOKEN` | Worker authorization token |
 | `WIREOPS_WORKER_TAGS` | Comma-separated tags (used for job routing) |
 
 ---

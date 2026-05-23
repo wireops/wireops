@@ -23,7 +23,6 @@ import (
 	"github.com/wireops/wireops/internal/hooks"
 	"github.com/wireops/wireops/internal/jobscheduler"
 	"github.com/wireops/wireops/internal/oidc"
-	"github.com/wireops/wireops/internal/pki"
 	"github.com/wireops/wireops/internal/protocol"
 	"github.com/wireops/wireops/internal/routes"
 	"github.com/wireops/wireops/internal/sync"
@@ -98,22 +97,6 @@ func Execute() error {
 		dataDir = "./pb_data"
 	}
 
-	pkiDir := os.Getenv("WIREOPS_PKI_DIR")
-	if pkiDir == "" {
-		pkiDir = "./pki_data"
-	}
-	pkiService := pki.NewService(pkiDir)
-	if err := pkiService.EnsurePKI(); err != nil {
-		log.Fatalf("Fatal: could not initialize PKI: %v", err)
-	}
-
-	if pkiService.ServerCertNeedsRenewal(7) {
-		log.Println("[PKI] Server certificate expires within 7 days. Renewing now...")
-		if err := pkiService.RenewServerCert(); err != nil {
-			log.Printf("[PKI] Warning: failed to renew server cert at startup: %v", err)
-		}
-	}
-
 	app := pocketbase.New()
 	app.RootCmd.Use = "wireops"
 
@@ -157,26 +140,25 @@ func Execute() error {
 	}
 
 	workerSvc := worker.NewService(app)
-	mtlsServer := worker.NewMTLSServer(app, pkiService, workerSvc)
-	scheduler := sync.NewScheduler(app, dockerClient, mtlsServer)
-	jobSched := jobscheduler.NewScheduler(app, mtlsServer, dataDir)
+	workerServer := worker.NewWorkerServer(app, workerSvc)
+	scheduler := sync.NewScheduler(app, dockerClient, workerServer)
+	jobSched := jobscheduler.NewScheduler(app, workerServer, dataDir)
 
-	mtlsServer.SetOnConnect(func(workerID string) {
+	workerServer.SetOnConnect(func(workerID string) {
 		scheduler.TriggerPendingReconciles(workerID)
 		// Mark any running job_runs for this worker as failed — they were lost
 		// during the disconnect and the completion message will never arrive.
 		jobSched.HandleWorkerReconnect(workerID)
 	})
 
-	mtlsServer.SetOnJobCompleted(func(msg protocol.JobCompletedMessage) {
+	workerServer.SetOnJobCompleted(func(msg protocol.JobCompletedMessage) {
 		jobSched.HandleJobCompleted(msg)
 	})
 
 	go func() {
-		// Use a dedicated port for worker mTLS traffic
 		addr := ":8443"
-		if err := mtlsServer.Start(addr); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Fatal: mTLS server failed: %v", err)
+		if err := workerServer.Start(addr); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Fatal: worker server failed: %v", err)
 		}
 	}()
 
@@ -201,9 +183,10 @@ func Execute() error {
 				}
 			}
 
-			// Tags must be registered synchronously so the job scheduler can
+			// Tags and ID must be registered synchronously so the job scheduler can
 			// resolve them on the very first cron tick.
-			mtlsServer.SetWorkerTags(embeddedWorker.Id, parseTags(os.Getenv("WIREOPS_WORKER_TAGS")))
+			workerServer.SetEmbeddedWorkerID(embeddedWorker.Id)
+			workerServer.SetWorkerTags(embeddedWorker.Id, parseTags(os.Getenv("WIREOPS_WORKER_TAGS")))
 			log.Printf("[WORKER] Embedded worker tags set: %v", parseTags(os.Getenv("WIREOPS_WORKER_TAGS")))
 
 			// Heartbeat loop runs in the background.
@@ -237,8 +220,8 @@ func Execute() error {
 		se.Router.GET("/{path...}", apis.Static(os.DirFS("./pb_public"), false))
 
 		routes.RegisterSetupRoutes(se.Router, app)
-		routes.Register(se.Router, app, scheduler, dockerClient, mtlsServer)
-		routes.RegisterWorkerRoutes(se.Router, app, workerSvc, pkiService, mtlsServer, mtlsServer)
+		routes.Register(se.Router, app, scheduler, dockerClient, workerServer)
+		routes.RegisterWorkerRoutes(se.Router, app, workerSvc, workerServer, workerServer)
 		routes.RegisterJobRoutes(se.Router, app, jobSched)
 		routes.RegisterAuthRoutes(se.Router, app)
 
@@ -252,17 +235,9 @@ func Execute() error {
 			jobSched.MarkForgottenRuns()
 		})
 
-		// Check PKI certificate expiry daily at 02:00.
-		app.Cron().Add("pki_cert_check", "0 2 * * *", func() {
-			if pkiService.ServerCertNeedsRenewal(30) {
-				log.Println("[PKI] Server certificate expires within 30 days. Renewing...")
-				if err := pkiService.RenewServerCert(); err != nil {
-					log.Printf("[PKI] Failed to renew server cert: %v", err)
-				}
-			}
-			caExpiry := pkiService.GetCACertNotAfter()
-			if time.Until(caExpiry) < 180*24*time.Hour {
-				log.Printf("[PKI] Warning: Root CA expires on %s (less than 180 days)", caExpiry.Format("2006-01-02"))
+		app.Cron().Add("worker_token_expiry", "*/5 * * * *", func() {
+			if err := workerSvc.ExpireStagingTokens(); err != nil {
+				log.Printf("[WORKER] Failed to expire staging tokens: %v", err)
 			}
 		})
 

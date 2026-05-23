@@ -103,7 +103,6 @@ services:
 | `PB_DATA_DIR` | No | `./pb_data` | PocketBase data directory (SQLite database, uploads) |
 | `REPOS_WORKSPACE` | No | `./repos` | Directory where Git repositories are cloned |
 | `STACKS_STORAGE_PATH` | No | `{PB_DATA_DIR}/stacks` | Directory for rendered compose revision files |
-| `WIREOPS_PKI_DIR` | No | `./pki_data` | Directory for CA and server TLS certificates |
 | `WIREOPS_DISABLE_LOCAL_WORKER` | No | `false` | Set to `true` to disable the embedded (local) worker |
 | `WIREOPS_WORKER_TAGS` | No | — | Comma-separated tags for the embedded worker (used for job routing) |
 | `WIREOPS_HEARTBEAT_INTERVAL` | No | `30` | Heartbeat interval in seconds. Remote worker read deadline is 3x this value |
@@ -162,13 +161,10 @@ OIDC_DISPLAY_NAME=Authentik
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `WIREOPS_SERVER` | **Yes** | — | HTTP URL of the wireops server (used for initial bootstrap) |
-| `WIREOPS_BOOTSTRAP_TOKEN` | **Yes** (first run) | — | One-time seat token for PKI bootstrap. Only required when no certificates exist yet |
-| `WIREOPS_MTLS_SERVER` | No | Same as `WIREOPS_SERVER` | HTTPS URL for mTLS connections (port 8443). Set when the mTLS listener is on a different address |
-| `WIREOPS_WORKER_PKI_DIR` | No | `./worker_pki` | Directory where worker certificates (CA cert, worker cert, worker key) are stored |
+| `WIREOPS_SERVER` | **Yes** | — | HTTPS URL of the wireops server (e.g. https://wireops.local) |
+| `WIREOPS_WORKER_TOKEN` | **Yes** | — | Worker registration and authentication token |
 | `HOSTNAME` | No | System hostname | Worker identifier sent during registration |
 | `WIREOPS_WORKER_TAGS` | No | — | Comma-separated tags for job routing (e.g. `gpu,us-east`) |
-| `WIREOPS_CERT_RENEWAL_DAYS` | No | `30` | Days before certificate expiry at which the worker triggers auto-renewal |
 | `WIREOPS_HEARTBEAT_INTERVAL` | No | `30` | Interval in seconds between heartbeats sent to the server |
 
 ### APP_URL Configuration

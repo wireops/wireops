@@ -15,10 +15,6 @@ WORKDIR /app
 # Binaries should be pre-compiled via CI/CD payload or Local Makefile
 COPY wireops-worker ./wireops-worker
 
-RUN mkdir -p /app/worker_pki \
-    && chown -R appuser:appgroup /app \
-    && chmod -R ug+rwX /app
-
 USER appuser
 
 # Expose mTLS port

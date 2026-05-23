@@ -1011,7 +1011,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 
 		// Delete all related records before deleting the stack itself
 		// (PocketBase enforces that relations are deleted first)
-		for _, col := range []string{"sync_logs", "stack_services", "stack_env_vars", "stack_revisions"} {
+		for _, col := range []string{"sync_logs", "stack_services", "stack_env_vars", "stack_revisions", "stack_pending_reconciles"} {
 			records, _ := app.FindAllRecords(col, dbx.HashExp{"stack": stackID})
 			for _, rec := range records {
 				_ = app.Delete(rec)

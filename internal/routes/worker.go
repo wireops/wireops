@@ -1,7 +1,6 @@
 package routes
 
 import (
-	"encoding/json"
 	"log"
 	"net/http"
 
@@ -9,30 +8,36 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/router"
 
-	"github.com/wireops/wireops/internal/pki"
-	"github.com/wireops/wireops/internal/protocol"
 	"github.com/wireops/wireops/internal/sync"
 	"github.com/wireops/wireops/internal/worker"
 )
 
-func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, workerSvc *worker.Service, pkiSvc *pki.Service, dispatcher sync.WorkerDispatcher, mtlsServer *worker.MTLSServer) {
+func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, workerSvc *worker.Service, dispatcher sync.WorkerDispatcher, workerServer *worker.WorkerServer) {
 
-	// POST /worker/seat
-	r.POST("/api/custom/worker/seat", func(e *core.RequestEvent) error {
+	r.POST("/api/custom/worker/tokens", func(e *core.RequestEvent) error {
 		if !e.HasSuperuserAuth() {
 			return e.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized. Admin only."})
 		}
 
-		token, err := workerSvc.GenerateSeat()
-		if err != nil {
-			log.Printf("[WORKER] Error generating seat: %v", err)
-			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to generate seat"})
+		createdBy := ""
+		if e.Auth != nil {
+			createdBy = e.Auth.Id
 		}
 
-		return e.JSON(http.StatusOK, map[string]string{"seat": token})
+		token, record, err := workerSvc.IssueToken(createdBy)
+		if err != nil {
+			log.Printf("[WORKER] Error issuing token: %v", err)
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to issue worker token"})
+		}
+
+		return e.JSON(http.StatusOK, map[string]string{
+			"token":      token,
+			"token_id":   record.Id,
+			"status":     record.GetString("status"),
+			"expires_at": record.GetDateTime("expires_at").String(),
+		})
 	})
 
-	// GET /workers
 	r.GET("/api/custom/workers", func(e *core.RequestEvent) error {
 		if !e.HasSuperuserAuth() {
 			return e.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized. Admin only."})
@@ -56,99 +61,40 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 				status = "OFFLINE"
 			}
 
-			certNotAfter := rec.GetDateTime("cert_not_after").String()
-			certStatus := ""
-			if certNotAfter != "" {
-				certStatus = pki.CertStatus(rec.GetDateTime("cert_not_after").Time())
+			tokenRecord, tokenErr := workerSvc.GetTokenForWorker(rec.Id)
+			tokenStatus := ""
+			expiresAt := ""
+			lastUsedAt := ""
+			if tokenErr == nil && tokenRecord != nil {
+				tokenStatus = tokenRecord.GetString("status")
+				expiresAt = tokenRecord.GetDateTime("expires_at").String()
+				lastUsedAt = tokenRecord.GetDateTime("last_used_at").String()
 			}
 
 			result = append(result, map[string]interface{}{
-				"id":              rec.Id,
-				"hostname":        rec.GetString("hostname"),
-				"fingerprint":     rec.GetString("fingerprint"),
-				"status":          status,
-				"last_seen":       rec.GetDateTime("last_seen").String(),
-				"health_history":  history,
-				"tags":            mtlsServer.GetWorkerTags(rec.Id),
-				"cert_not_after":  certNotAfter,
-				"cert_status":     certStatus,
+				"id":            rec.Id,
+				"hostname":      rec.GetString("hostname"),
+				"status":        status,
+				"last_seen":     rec.GetDateTime("last_seen").String(),
+				"health_history": history,
+				"tags":          workerServer.GetWorkerTags(rec.Id),
+				"is_embedded":   rec.GetString("fingerprint") == "embedded",
+				"token_status":  tokenStatus,
+				"token_expires": expiresAt,
+				"token_last_used": lastUsedAt,
 			})
 		}
 
 		return e.JSON(http.StatusOK, result)
 	})
 
-	// GET /settings/pki
-	r.GET("/api/custom/settings/pki", func(e *core.RequestEvent) error {
-		if !e.HasSuperuserAuth() {
-			return e.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized. Admin only."})
-		}
-
-		details, err := pkiSvc.GetPKIDetails()
-		if err != nil {
-			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		}
-
-		return e.JSON(http.StatusOK, details)
-	})
-
-	// POST /worker/bootstrap
-	r.POST("/api/custom/worker/bootstrap", func(e *core.RequestEvent) error {
-		var req struct {
-			BootstrapToken string `json:"bootstrap_token"`
-			CSR            string `json:"csr"` // PEM encoded
-		}
-		if err := json.NewDecoder(e.Request.Body).Decode(&req); err != nil {
-			return e.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid JSON body"})
-		}
-
-		if !workerSvc.ValidateAndConsumeSeat(req.BootstrapToken) {
-			log.Printf("[WORKER] Bootstrap failed: invalid or expired seat token")
-			return e.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid or expired bootstrap token"})
-		}
-
-		workerRecord, err := workerSvc.RegisterWorker("unknown", "pending")
-		if err != nil {
-			log.Printf("[WORKER] Failed to register worker placeholder: %v", err)
-			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to create worker record"})
-		}
-		workerID := workerRecord.Id
-
-		signed, err := pkiSvc.SignCSR([]byte(req.CSR), workerID)
-		if err != nil {
-			log.Printf("[WORKER] Failed to sign CSR for worker %s: %v", workerID, err)
-			workerSvc.RevokeWorker(workerID) // cleanup
-			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to sign CSR"})
-		}
-
-		workerRecord.Set("cert_not_after", signed.NotAfter)
-		workerRecord.Set("cert_serial", signed.Serial)
-		if saveErr := app.Save(workerRecord); saveErr != nil {
-			log.Printf("[WORKER] Failed to save cert metadata for worker %s: %v", workerID, saveErr)
-		}
-
-		caCertPEM, err := pkiSvc.GetCACertPEM()
-		if err != nil {
-			log.Printf("[WORKER] Failed to get CA cert: %v", err)
-			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to retrieve CA cert"})
-		}
-
-		log.Printf("[WORKER] Successfully exchanged bootstrap token for certificate. Worker ID: %s", workerID)
-
-		return e.JSON(http.StatusOK, map[string]string{
-			"worker_id":   workerID,
-			"worker_cert": string(signed.CertPEM),
-			"ca_cert":     string(caCertPEM),
-		})
-	})
-
-	// POST /workers/:id/revoke
 	r.POST("/api/custom/workers/{id}/revoke", func(e *core.RequestEvent) error {
 		if !e.HasSuperuserAuth() {
 			return e.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized. Admin only."})
 		}
 
 		workerID := e.Request.PathValue("id")
+
 
 		record, err := app.FindRecordById("workers", workerID)
 		if err != nil {
@@ -174,69 +120,8 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to revoke worker"})
 		}
 
-		mtlsServer.DisconnectWorker(workerID)
+		workerServer.DisconnectWorker(workerID)
 
 		return e.JSON(http.StatusOK, map[string]string{"status": "revoked"})
-	})
-
-	// POST /pki/renew-server
-	r.POST("/api/custom/pki/renew-server", func(e *core.RequestEvent) error {
-		if !e.HasSuperuserAuth() {
-			return e.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized. Admin only."})
-		}
-
-		if err := pkiSvc.RenewServerCert(); err != nil {
-			log.Printf("[PKI] Manual server cert renewal failed: %v", err)
-			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to renew server certificate"})
-		}
-
-		return e.JSON(http.StatusOK, map[string]string{"status": "renewed"})
-	})
-
-	// POST /workers/:id/renew-cert
-	r.POST("/api/custom/workers/{id}/renew-cert", func(e *core.RequestEvent) error {
-		if !e.HasSuperuserAuth() {
-			return e.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized. Admin only."})
-		}
-
-		workerID := e.Request.PathValue("id")
-		if !mtlsServer.IsConnected(workerID) {
-			return e.JSON(http.StatusConflict, map[string]string{"error": "Worker is not connected"})
-		}
-
-		if err := mtlsServer.SendMessage(workerID, protocol.MsgRequestRenewal, nil); err != nil {
-			log.Printf("[WORKER] Failed to send renewal request to worker %s: %v", workerID, err)
-			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to send renewal request"})
-		}
-
-		return e.JSON(http.StatusOK, map[string]string{"status": "renewal_requested"})
-	})
-
-	// POST /workers/:id/force-rebootstrap
-	r.POST("/api/custom/workers/{id}/force-rebootstrap", func(e *core.RequestEvent) error {
-		if !e.HasSuperuserAuth() {
-			return e.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized. Admin only."})
-		}
-
-		workerID := e.Request.PathValue("id")
-
-		record, err := app.FindRecordById("workers", workerID)
-		if err != nil {
-			return e.JSON(http.StatusNotFound, map[string]string{"error": "Worker not found"})
-		}
-		if record.GetString("fingerprint") == "embedded" {
-			return e.JSON(http.StatusBadRequest, map[string]string{"error": "Cannot force re-bootstrap on the embedded worker."})
-		}
-
-		if mtlsServer.IsConnected(workerID) {
-			_ = mtlsServer.SendMessage(workerID, protocol.MsgForceRebootstrap, nil)
-			mtlsServer.DisconnectWorker(workerID)
-		}
-
-		if err := workerSvc.RevokeWorker(workerID); err != nil {
-			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to revoke worker"})
-		}
-
-		return e.JSON(http.StatusOK, map[string]string{"status": "rebootstrap_initiated"})
 	})
 }
