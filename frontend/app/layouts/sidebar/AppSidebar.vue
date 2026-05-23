@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { computed, ref, watch } from 'vue'
+
 type NavItem = {
   label: string
   icon: string
@@ -17,9 +19,13 @@ const props = defineProps<{
 const emit = defineEmits<{
   close: []
   help: []
+  accessibility: []
   logout: []
   toggleTheme: []
 }>()
+
+const closeButtonRef = ref<{ $el?: HTMLElement } | HTMLElement | null>(null)
+const previousFocusedElement = ref<HTMLElement | null>(null)
 
 function isActive(to: string) {
   if (to === '/') return props.currentPath === '/'
@@ -68,6 +74,32 @@ const sidebarClasses = computed(() => {
 })
 
 const brandSubtitle = computed(() => props.mobile ? 'Navigation' : 'Control Center')
+
+function resolveButtonElement(target: { $el?: HTMLElement } | HTMLElement | null) {
+  if (!target) return null
+  return target instanceof HTMLElement ? target : target.$el ?? null
+}
+
+function submenuId(item: NavItem) {
+  return `nav-section-${item.to.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase()}`
+}
+
+watch(
+  () => props.open,
+  (isOpen) => {
+    if (!props.mobile) return
+
+    if (isOpen) {
+      previousFocusedElement.value = document.activeElement instanceof HTMLElement ? document.activeElement : null
+      requestAnimationFrame(() => {
+        resolveButtonElement(closeButtonRef.value)?.focus()
+      })
+      return
+    }
+
+    previousFocusedElement.value?.focus()
+  }
+)
 </script>
 
 <template>
@@ -75,9 +107,10 @@ const brandSubtitle = computed(() => props.mobile ? 'Navigation' : 'Control Cent
     v-if="mobile"
     v-show="open"
     class="fixed inset-0 z-50 lg:hidden"
-    aria-label="Mobile navigation"
+    aria-labelledby="mobile-navigation-title"
     role="dialog"
     aria-modal="true"
+    @keydown.esc.prevent="emit('close')"
   >
     <button
       type="button"
@@ -85,28 +118,30 @@ const brandSubtitle = computed(() => props.mobile ? 'Navigation' : 'Control Cent
       aria-label="Close menu"
       @click="emit('close')"
     />
-    <aside :class="sidebarClasses">
+    <aside id="mobile-navigation" :class="sidebarClasses">
       <div class="flex items-center justify-between border-b border-carbon-800 px-5 py-5">
-        <NuxtLink to="/" class="flex items-center gap-3" @click="emit('close')">
+        <NuxtLink to="/" class="flex items-center gap-3" aria-label="Go to dashboard" @click="emit('close')">
           <div class="flex h-10 w-10 items-center justify-center rounded-2xl bg-yellow-400/10 ring-1 ring-yellow-400/20">
             <UIcon name="i-lucide-zap" class="h-5 w-5 text-yellow-400" />
           </div>
           <div>
             <span class="block font-black text-base tracking-[0.24em] uppercase text-yellow-400">wireops</span>
-            <span class="text-xs uppercase tracking-[0.24em] text-wire-200/45">{{ brandSubtitle }}</span>
+            <span id="mobile-navigation-title" class="text-xs uppercase tracking-[0.24em] text-wire-200/45">{{ brandSubtitle }}</span>
           </div>
         </NuxtLink>
         <UButton
+          ref="closeButtonRef"
           icon="i-lucide-x"
           variant="ghost"
           color="neutral"
           size="sm"
+          aria-label="Close navigation menu"
           @click="emit('close')"
         />
       </div>
 
       <div class="flex flex-1 flex-col px-4 py-6">
-        <nav class="space-y-1">
+        <nav aria-label="Primary navigation" class="space-y-1">
           <div v-for="item in navItems" :key="item.to" class="space-y-1">
             <UButton
               v-if="item.children?.length"
@@ -116,6 +151,8 @@ const brandSubtitle = computed(() => props.mobile ? 'Navigation' : 'Control Cent
               size="lg"
               class="w-full justify-start"
               :aria-label="isExpanded(item) ? `Collapse ${item.label}` : `Expand ${item.label}`"
+              :aria-expanded="isExpanded(item)"
+              :aria-controls="submenuId(item)"
               @click="toggleSubmenu(item)"
             >
               <span class="flex min-w-0 flex-1 items-center justify-between gap-3">
@@ -135,11 +172,13 @@ const brandSubtitle = computed(() => props.mobile ? 'Navigation' : 'Control Cent
               :color="isActive(item.to) || hasActiveChild(item) ? 'primary' : 'neutral'"
               size="lg"
               class="w-full justify-start"
+              :aria-current="isActive(item.to) ? 'page' : undefined"
               @click="emit('close')"
             />
 
             <div
               v-if="item.children?.length && isExpanded(item)"
+              :id="submenuId(item)"
               class="ml-5 space-y-1 border-l border-carbon-800 pl-3"
             >
               <UButton
@@ -152,6 +191,7 @@ const brandSubtitle = computed(() => props.mobile ? 'Navigation' : 'Control Cent
                 :color="isActive(child.to) ? 'primary' : 'neutral'"
                 size="md"
                 class="w-full justify-start"
+                :aria-current="isActive(child.to) ? 'page' : undefined"
                 @click="emit('close')"
               />
             </div>
@@ -167,6 +207,15 @@ const brandSubtitle = computed(() => props.mobile ? 'Navigation' : 'Control Cent
             size="lg"
             class="w-full justify-start"
             @click="emit('help')"
+          />
+          <UButton
+            icon="i-lucide-accessibility"
+            label="Accessibility"
+            variant="ghost"
+            color="neutral"
+            size="lg"
+            class="w-full justify-start"
+            @click="emit('accessibility')"
           />
           <UButton
             :icon="colorModeValue === 'dark' ? 'i-lucide-sun' : 'i-lucide-moon'"
@@ -193,7 +242,7 @@ const brandSubtitle = computed(() => props.mobile ? 'Navigation' : 'Control Cent
 
   <aside v-else :class="sidebarClasses">
     <div class="flex h-20 items-center border-b border-carbon-800 px-6">
-      <NuxtLink to="/" class="flex items-center gap-3">
+      <NuxtLink to="/" class="flex items-center gap-3" aria-label="Go to dashboard">
         <div class="flex h-11 w-11 items-center justify-center rounded-2xl bg-yellow-400/10 ring-1 ring-yellow-400/20">
           <UIcon name="i-lucide-zap" class="h-6 w-6 text-yellow-400 drop-shadow-[0_0_6px_rgba(255,198,0,0.6)]" />
         </div>
@@ -207,7 +256,7 @@ const brandSubtitle = computed(() => props.mobile ? 'Navigation' : 'Control Cent
     </div>
 
     <div class="flex flex-1 flex-col px-4 py-6">
-      <nav class="space-y-1">
+      <nav aria-label="Primary navigation" class="space-y-1">
         <div v-for="item in navItems" :key="item.to" class="space-y-1">
           <UButton
             v-if="item.children?.length"
@@ -217,6 +266,8 @@ const brandSubtitle = computed(() => props.mobile ? 'Navigation' : 'Control Cent
             size="lg"
             class="w-full justify-start"
             :aria-label="isExpanded(item) ? `Collapse ${item.label}` : `Expand ${item.label}`"
+            :aria-expanded="isExpanded(item)"
+            :aria-controls="submenuId(item)"
             @click="toggleSubmenu(item)"
           >
             <span class="flex min-w-0 flex-1 items-center justify-between gap-3">
@@ -236,10 +287,12 @@ const brandSubtitle = computed(() => props.mobile ? 'Navigation' : 'Control Cent
             :color="isActive(item.to) || hasActiveChild(item) ? 'primary' : 'neutral'"
             size="lg"
             class="w-full justify-start"
+            :aria-current="isActive(item.to) ? 'page' : undefined"
           />
 
           <div
             v-if="item.children?.length && isExpanded(item)"
+            :id="submenuId(item)"
             class="ml-5 space-y-1 border-l border-carbon-800 pl-3"
           >
             <UButton
@@ -252,6 +305,7 @@ const brandSubtitle = computed(() => props.mobile ? 'Navigation' : 'Control Cent
               :color="isActive(child.to) ? 'primary' : 'neutral'"
               size="md"
               class="w-full justify-start"
+              :aria-current="isActive(child.to) ? 'page' : undefined"
             />
           </div>
         </div>
@@ -266,6 +320,15 @@ const brandSubtitle = computed(() => props.mobile ? 'Navigation' : 'Control Cent
           size="lg"
           class="w-full justify-start"
           @click="emit('help')"
+        />
+        <UButton
+          icon="i-lucide-accessibility"
+          label="Accessibility"
+          variant="ghost"
+          color="neutral"
+          size="lg"
+          class="w-full justify-start"
+          @click="emit('accessibility')"
         />
         <UButton
           :icon="colorModeValue === 'dark' ? 'i-lucide-sun' : 'i-lucide-moon'"

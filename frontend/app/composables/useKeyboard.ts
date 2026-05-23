@@ -1,3 +1,5 @@
+import { onMounted, onUnmounted, ref } from 'vue'
+
 export function useKeyboard() {
   const router = useRouter()
   const isShowingHelp = ref(false)
@@ -18,7 +20,17 @@ export function useKeyboard() {
 
   function handleKeydown(event: KeyboardEvent) {
     const target = event.target as HTMLElement
-    const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable
+    const tagName = target?.tagName?.toUpperCase()
+    const role = target?.getAttribute('role')
+    const isInput = tagName === 'INPUT'
+      || tagName === 'TEXTAREA'
+      || tagName === 'SELECT'
+      || target?.isContentEditable
+      || role === 'textbox'
+      || role === 'combobox'
+      || role === 'listbox'
+      || role === 'menu'
+      || !!target?.closest('[contenteditable="true"]')
 
     // ? - Show help (not in input)
     if (event.key === '?' && !isInput && !event.ctrlKey && !event.metaKey) {

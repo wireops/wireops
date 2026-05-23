@@ -1,7 +1,10 @@
 <script setup lang="ts">
+import { computed, onMounted, ref, watch } from 'vue'
+
 const { $pb } = useNuxtApp()
 const { discoverProjects, importStack } = useApi()
 const toast = useToast()
+const { announce } = useA11yAnnouncer()
 
 const emit = defineEmits<{
   imported: [stackId: string]
@@ -56,8 +59,10 @@ async function runDiscover() {
   selectedProject.value = null
   try {
     discoveredProjects.value = await discoverProjects(selectedWorkerId.value)
+    announce(`${discoveredProjects.value.length} unmanaged Compose projects found`)
   } catch (e: any) {
     discoverError.value = e?.message || 'Failed to discover projects'
+    announce('Failed to discover Compose projects', 'assertive')
   } finally {
     discovering.value = false
   }
@@ -77,6 +82,7 @@ function goToStep2() {
   acknowledgedRestart.value = false
   recreateVolumes.value = false
   step.value = 2
+  announce('Import confirmation step opened')
 }
 
 async function confirmImport() {
@@ -95,9 +101,11 @@ async function confirmImport() {
       description: 'wireops labels will be applied — containers will restart shortly.',
       color: 'success',
     })
+    announce(`Import started for stack ${stackName.value}`)
     emit('imported', result.id)
   } catch (e: any) {
     importError.value = e?.message || 'Unexpected error'
+    announce(`Import failed for stack ${stackName.value || 'new stack'}`, 'assertive')
   } finally {
     importing.value = false
   }
@@ -137,7 +145,7 @@ async function confirmImport() {
       </div>
 
       <!-- Discovery error -->
-      <div v-if="discoverError" class="flex items-start gap-3 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3">
+      <div v-if="discoverError" class="flex items-start gap-3 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3" role="alert" aria-live="assertive">
         <UIcon name="i-lucide-circle-x" class="w-5 h-5 text-red-500 mt-0.5 shrink-0" />
         <p class="text-sm text-red-500">{{ discoverError }}</p>
       </div>
@@ -166,7 +174,7 @@ async function confirmImport() {
         </div>
       </div>
 
-      <div v-else-if="!discovering && selectedWorkerId && discoveredProjects.length === 0 && !discoverError" class="text-sm text-muted text-center py-4">
+      <div v-else-if="!discovering && selectedWorkerId && discoveredProjects.length === 0 && !discoverError" class="text-sm text-muted text-center py-4" role="status" aria-live="polite">
         No unmanaged Compose projects found. You can still enter a path manually below.
       </div>
 
@@ -235,7 +243,7 @@ async function confirmImport() {
       </div>
 
       <!-- Import error -->
-      <div v-if="importError" class="flex items-start gap-3 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3">
+      <div v-if="importError" class="flex items-start gap-3 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3" role="alert" aria-live="assertive">
         <UIcon name="i-lucide-circle-x" class="w-5 h-5 text-red-500 mt-0.5 shrink-0" />
         <p class="text-sm text-red-500">{{ importError }}</p>
       </div>

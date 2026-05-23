@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { computed, ref } from 'vue'
+
 import { parseError, getErrorIcon, getErrorColor } from '~/utils/error-parser'
 
 const props = defineProps<{
@@ -20,7 +22,10 @@ const showDetails = ref(false)
 :class="['border rounded-lg p-3 space-y-2', props.class, {
     'border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950': parsed.type !== 'network',
     'border-orange-200 bg-orange-50 dark:border-orange-900 dark:bg-orange-950': parsed.type === 'network'
-  }]">
+  }]"
+    role="alert"
+    aria-live="assertive"
+  >
     <div class="flex items-start gap-2">
       <UIcon
 :name="getErrorIcon(parsed.type)" class="w-5 h-5 shrink-0 mt-0.5" :class="{
@@ -40,14 +45,14 @@ v-if="parsed.suggestion" class="text-xs mt-1" :class="{
           'text-red-700 dark:text-red-300': parsed.type !== 'network',
           'text-orange-700 dark:text-orange-300': parsed.type === 'network'
         }">
-          💡 {{ parsed.suggestion }}
+          Suggestion: {{ parsed.suggestion }}
         </p>
         <a
 v-if="parsed.docLink" :href="parsed.docLink" target="_blank" rel="noopener noreferrer" class="text-xs underline mt-1 inline-block" :class="{
           'text-red-600 dark:text-red-400 hover:text-red-800': parsed.type !== 'network',
           'text-orange-600 dark:text-orange-400 hover:text-orange-800': parsed.type === 'network'
         }">
-          📖 View documentation
+          View documentation
         </a>
       </div>
       <div class="flex items-center gap-1 shrink-0">
@@ -57,7 +62,7 @@ v-if="parsed.docLink" :href="parsed.docLink" target="_blank" rel="noopener noref
           size="xs" 
           variant="soft"
           :color="getErrorColor(parsed.type)"
-          title="Retry"
+          aria-label="Retry"
           @click="emit('retry')"
         />
         <UButton 
@@ -65,7 +70,8 @@ v-if="parsed.docLink" :href="parsed.docLink" target="_blank" rel="noopener noref
           size="xs" 
           variant="ghost"
           :class="{ 'rotate-180': showDetails }"
-          title="Toggle details"
+          :aria-label="showDetails ? 'Hide technical details' : 'Show technical details'"
+          :aria-expanded="showDetails"
           @click="showDetails = !showDetails"
         />
       </div>
