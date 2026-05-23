@@ -36,7 +36,8 @@ const workerOffline = computed(() => {
   if (!workerID) return false
   const realWorker = (workers.value || []).find((w: any) => w.id === workerID)
   if (realWorker) {
-    return realWorker.status === WORKER_STATUS.OFFLINE || realWorker.status === WORKER_STATUS.REVOKED
+  if (realWorker?.status) {
+    return realWorker.status !== WORKER_STATUS.ACTIVE
   }
   const worker = stack.value?.expand?.worker
   if (!worker) return false
