@@ -141,11 +141,14 @@ watch(mobileMenuOpen, (isOpen) => {
       />
     </div>
 
-    <div v-else class="min-h-screen">
-      <main id="main-content" tabindex="-1" class="max-w-7xl mx-auto px-4 py-6 sm:px-6 lg:px-8">
-        <slot />
-      </main>
-    </div>
+    <main
+      v-else
+      id="main-content"
+      tabindex="-1"
+      class="max-w-7xl mx-auto min-h-screen px-4 py-6 sm:px-6 lg:px-8"
+    >
+      <slot />
+    </main>
 
     <UModal v-model:open="isShowingHelp">
       <template #content>
