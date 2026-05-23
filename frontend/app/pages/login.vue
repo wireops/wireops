@@ -1,7 +1,10 @@
 <script setup lang="ts">
+import { watch } from 'vue'
+
 definePageMeta({ layout: false })
 
 const { login, getSSOProviders, loginWithSSO } = useAuth()
+const { announce } = useA11yAnnouncer()
 
 const email = ref('')
 const password = ref('')
@@ -25,9 +28,11 @@ async function handleLogin() {
   error.value = ''
   try {
     await login(email.value, password.value)
+    announce('Login successful')
     navigateTo('/')
   } catch (e: any) {
     error.value = e?.message || 'Login failed'
+    announce(error.value, 'assertive')
   } finally {
     loading.value = false
   }
@@ -38,9 +43,11 @@ async function handleSSOLogin(providerName: string) {
   error.value = ''
   try {
     await loginWithSSO(providerName)
+    announce(`Continuing with ${providerName}`)
     navigateTo('/')
   } catch (e: any) {
     error.value = e?.message || 'SSO login failed'
+    announce(error.value, 'assertive')
   } finally {
     ssoLoading.value = false
   }
@@ -48,7 +55,7 @@ async function handleSSOLogin(providerName: string) {
 </script>
 
 <template>
-  <div class="min-h-screen flex items-center justify-center bg-carbon-950 relative overflow-hidden">
+  <main id="main-content" tabindex="-1" class="min-h-screen flex items-center justify-center bg-carbon-950 relative overflow-hidden">
     <!-- Decorative lightning grid -->
     <div class="absolute inset-0 pointer-events-none select-none opacity-5">
       <svg width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
@@ -80,7 +87,7 @@ async function handleSSOLogin(providerName: string) {
       <!-- Login card -->
       <div class="rounded-2xl border border-carbon-800 bg-carbon-900 p-6 shadow-2xl">
         <form class="flex flex-col gap-4" @submit.prevent="handleLogin">
-          <UAlert v-if="error" color="error" :title="error" icon="i-lucide-alert-circle" />
+          <UAlert v-if="error" color="error" :title="error" icon="i-lucide-alert-circle" role="alert" aria-live="assertive" />
 
           <UFormField label="Email">
             <UInput
@@ -90,6 +97,7 @@ async function handleSSOLogin(providerName: string) {
               icon="i-lucide-mail"
               required
               class="w-full"
+              aria-label="Email"
             />
           </UFormField>
 
@@ -101,6 +109,7 @@ async function handleSSOLogin(providerName: string) {
               icon="i-lucide-lock"
               required
               class="w-full"
+              aria-label="Password"
             />
           </UFormField>
 
@@ -142,5 +151,5 @@ async function handleSSOLogin(providerName: string) {
         </template>
       </div>
     </div>
-  </div>
+  </main>
 </template>

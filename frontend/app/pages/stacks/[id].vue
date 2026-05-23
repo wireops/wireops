@@ -5,7 +5,7 @@ const route = useRoute()
 const { $pb } = useNuxtApp()
 const { subscribe } = useRealtime()
 const { copy } = useCopy()
-const { triggerSync, triggerRollback, forceRedeploy, getServices, getStackResources, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, transferStack } = useApi()
+const { triggerRollback, forceRedeploy, getServices, getStackResources, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, transferStack } = useApi()
 const { getStackIntegrationActions } = useIntegrations()
 
 function formatUptime(startedAt: string): string {
@@ -296,14 +296,15 @@ async function deleteEnvVar(id: string) {
 }
 
 // Sync & rollback
-async function handleSync() {
-  try {
-    await triggerSync(stackId)
-    toast.add({ title: 'Sync triggered', color: 'success' })
-    setTimeout(() => { refreshLogs(); refreshStack() }, 3000)
-  } catch (e: any) {
-    toast.add({ title: e?.message || 'Sync failed', color: 'error' })
-  }
+const showSyncModal = ref(false)
+
+function openSyncModal() {
+  if (!stack.value) return
+  showSyncModal.value = true
+}
+
+function onSyncTriggered() {
+  setTimeout(() => { refreshLogs(); refreshStack() }, 3000)
 }
 
 const rollbackSha = ref('')
@@ -416,7 +417,7 @@ onMounted(() => {
   const handleKeydown = (event: KeyboardEvent) => {
     if ((event.metaKey || event.ctrlKey) && event.key === 's') {
       event.preventDefault()
-      handleSync()
+      openSyncModal()
     }
   }
   window.addEventListener('keydown', handleKeydown)
@@ -453,7 +454,7 @@ onMounted(() => {
           @click="togglePause"
         />
         <UButton icon="i-lucide-recycle" label="Redeploy" variant="outline" block @click="showForceRedeploy = true" />
-        <UButton icon="i-lucide-refresh-cw" label="Sync Now" block class="shadow-[0_0_16px_rgba(255,198,0,0.35)] hover:shadow-[0_0_24px_rgba(255,198,0,0.55)] transition-shadow" @click="handleSync" />
+        <UButton icon="i-lucide-refresh-cw" label="Sync Now" block class="shadow-[0_0_16px_rgba(255,198,0,0.35)] hover:shadow-[0_0_24px_rgba(255,198,0,0.55)] transition-shadow" @click="openSyncModal" />
       </div>
     </div>
 
@@ -948,6 +949,12 @@ onMounted(() => {
         </div>
       </template>
     </UModal>
+
+    <StackSyncModal
+      v-model:open="showSyncModal"
+      :stack="stack"
+      @synced="onSyncTriggered"
+    />
 
     <!-- Rollback Modal (git stacks only) -->
     <UModal v-model:open="showRollbackModal">

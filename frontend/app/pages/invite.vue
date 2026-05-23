@@ -3,6 +3,7 @@ definePageMeta({ layout: false })
 
 const { $pb } = useNuxtApp()
 const route = useRoute()
+const { announce } = useA11yAnnouncer()
 
 const token = computed(() => (route.query.token as string) || '')
 
@@ -19,6 +20,7 @@ onMounted(async () => {
   if (!token.value) {
     stateError.value = 'No invite token found in the URL.'
     state.value = 'invalid'
+    announce(stateError.value, 'assertive')
     return
   }
   try {
@@ -27,19 +29,23 @@ onMounted(async () => {
     if (!res.ok) {
       stateError.value = data.error || 'This invite link is invalid or has expired.'
       state.value = 'invalid'
+      announce(stateError.value, 'assertive')
       return
     }
     email.value = data.email
     state.value = 'valid'
+    announce('Invite validated')
   } catch {
     stateError.value = 'Could not validate the invite. Please try again.'
     state.value = 'invalid'
+    announce(stateError.value, 'assertive')
   }
 })
 
 async function handleSubmit() {
   if (password.value !== passwordConfirm.value) {
     error.value = 'Passwords do not match.'
+    announce(error.value, 'assertive')
     return
   }
   loading.value = true
@@ -57,9 +63,11 @@ async function handleSubmit() {
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || 'Failed to create account.')
     state.value = 'success'
+    announce('Account created successfully')
     setTimeout(() => navigateTo('/login'), 3000)
   } catch (e: any) {
     error.value = e?.message || 'Something went wrong. Please try again.'
+    announce(error.value, 'assertive')
   } finally {
     loading.value = false
   }
@@ -67,7 +75,7 @@ async function handleSubmit() {
 </script>
 
 <template>
-  <div class="min-h-screen flex items-center justify-center bg-carbon-950 relative overflow-hidden">
+  <main id="main-content" tabindex="-1" class="min-h-screen flex items-center justify-center bg-carbon-950 relative overflow-hidden">
     <div class="absolute inset-0 pointer-events-none select-none opacity-5">
       <svg width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
         <defs>
@@ -93,12 +101,12 @@ async function handleSubmit() {
 
       <div class="rounded-2xl border border-carbon-800 bg-carbon-900 p-6 shadow-2xl">
         <!-- Loading -->
-        <div v-if="state === 'loading'" class="flex items-center justify-center py-6">
+        <div v-if="state === 'loading'" class="flex items-center justify-center py-6" role="status" aria-live="polite">
           <UIcon name="i-lucide-loader-circle" class="w-6 h-6 animate-spin text-yellow-400" />
         </div>
 
         <!-- Invalid token -->
-        <div v-else-if="state === 'invalid'" class="text-center space-y-4">
+        <div v-else-if="state === 'invalid'" class="text-center space-y-4" role="alert" aria-live="assertive">
           <div class="flex items-center justify-center w-12 h-12 rounded-full bg-red-400/10 mx-auto">
             <UIcon name="i-lucide-x-circle" class="w-6 h-6 text-red-400" />
           </div>
@@ -107,7 +115,7 @@ async function handleSubmit() {
         </div>
 
         <!-- Success -->
-        <div v-else-if="state === 'success'" class="text-center space-y-4">
+        <div v-else-if="state === 'success'" class="text-center space-y-4" role="status" aria-live="polite">
           <div class="flex items-center justify-center w-12 h-12 rounded-full bg-green-400/10 mx-auto">
             <UIcon name="i-lucide-check-circle" class="w-6 h-6 text-green-400" />
           </div>
@@ -121,10 +129,10 @@ async function handleSubmit() {
             <p class="text-xs text-gray-500 mt-1">Choose a password to complete your registration.</p>
           </div>
 
-          <UAlert v-if="error" color="error" :title="error" icon="i-lucide-alert-circle" />
+          <UAlert v-if="error" color="error" :title="error" icon="i-lucide-alert-circle" role="alert" aria-live="assertive" />
 
           <UFormField label="Email">
-            <UInput :model-value="email" type="email" icon="i-lucide-mail" disabled class="w-full" />
+            <UInput :model-value="email" type="email" icon="i-lucide-mail" disabled class="w-full" aria-label="Invited email" />
           </UFormField>
 
           <UFormField label="Password">
@@ -135,6 +143,7 @@ async function handleSubmit() {
               icon="i-lucide-lock"
               required
               class="w-full"
+              aria-label="Password"
             />
           </UFormField>
 
@@ -146,6 +155,7 @@ async function handleSubmit() {
               icon="i-lucide-lock"
               required
               class="w-full"
+              aria-label="Confirm password"
             />
           </UFormField>
 
@@ -153,5 +163,5 @@ async function handleSubmit() {
         </form>
       </div>
     </div>
-  </div>
+  </main>
 </template>

@@ -2,6 +2,7 @@
 definePageMeta({ layout: false })
 
 const { $pb } = useNuxtApp()
+const { announce } = useA11yAnnouncer()
 
 const email = ref('')
 const loading = ref(false)
@@ -14,8 +15,10 @@ async function handleSubmit() {
   try {
     await $pb.collection('_superusers').requestPasswordReset(email.value)
     sent.value = true
+    announce('If the account exists, a password reset link has been sent')
   } catch (e: any) {
     error.value = e?.message || 'Something went wrong. Please try again.'
+    announce(error.value, 'assertive')
   } finally {
     loading.value = false
   }
@@ -23,7 +26,7 @@ async function handleSubmit() {
 </script>
 
 <template>
-  <div class="min-h-screen flex items-center justify-center bg-carbon-950 relative overflow-hidden">
+  <main id="main-content" tabindex="-1" class="min-h-screen flex items-center justify-center bg-carbon-950 relative overflow-hidden">
     <div class="absolute inset-0 pointer-events-none select-none opacity-5">
       <svg width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
         <defs>
@@ -48,7 +51,7 @@ async function handleSubmit() {
       </div>
 
       <div class="rounded-2xl border border-carbon-800 bg-carbon-900 p-6 shadow-2xl">
-        <div v-if="sent" class="text-center space-y-4">
+        <div v-if="sent" class="text-center space-y-4" role="status" aria-live="polite">
           <div class="flex items-center justify-center w-12 h-12 rounded-full bg-green-400/10 mx-auto">
             <UIcon name="i-lucide-mail-check" class="w-6 h-6 text-green-400" />
           </div>
@@ -66,7 +69,7 @@ async function handleSubmit() {
             <p class="text-xs text-gray-500 mt-1">Enter your email and we'll send you a reset link.</p>
           </div>
 
-          <UAlert v-if="error" color="error" :title="error" icon="i-lucide-alert-circle" />
+          <UAlert v-if="error" color="error" :title="error" icon="i-lucide-alert-circle" role="alert" aria-live="assertive" />
 
           <UFormField label="Email">
             <UInput
@@ -76,6 +79,7 @@ async function handleSubmit() {
               icon="i-lucide-mail"
               required
               class="w-full"
+              aria-label="Email"
             />
           </UFormField>
 
@@ -89,5 +93,5 @@ async function handleSubmit() {
         </form>
       </div>
     </div>
-  </div>
+  </main>
 </template>

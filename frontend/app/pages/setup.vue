@@ -3,6 +3,7 @@ definePageMeta({ layout: false })
 
 const { customPost } = useApi()
 const { login } = useAuth()
+const { announce } = useA11yAnnouncer()
 
 const email = ref('')
 const password = ref('')
@@ -14,6 +15,7 @@ async function handleSetup() {
   error.value = ''
   if (password.value !== passwordConfirm.value) {
     error.value = 'Passwords do not match'
+    announce(error.value, 'assertive')
     return
   }
   loading.value = true
@@ -25,15 +27,18 @@ async function handleSetup() {
     })
   } catch (e: any) {
     error.value = e?.message || 'Setup failed'
+    announce(error.value, 'assertive')
     loading.value = false
     return
   }
 
   try {
     await login(email.value, password.value)
+    announce('Administrator account created')
     navigateTo('/')
   } catch (e: any) {
     error.value = e?.message || 'Login failed after setup — please sign in manually'
+    announce(error.value, 'assertive')
   } finally {
     loading.value = false
   }
@@ -41,7 +46,7 @@ async function handleSetup() {
 </script>
 
 <template>
-  <div class="min-h-screen flex items-center justify-center bg-carbon-950 relative overflow-hidden">
+  <main id="main-content" tabindex="-1" class="min-h-screen flex items-center justify-center bg-carbon-950 relative overflow-hidden">
     <!-- Decorative lightning grid -->
     <div class="absolute inset-0 pointer-events-none select-none opacity-5">
       <svg width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
@@ -77,7 +82,7 @@ async function handleSetup() {
         </p>
 
         <form class="flex flex-col gap-4" @submit.prevent="handleSetup">
-          <UAlert v-if="error" color="error" :title="error" icon="i-lucide-alert-circle" />
+          <UAlert v-if="error" color="error" :title="error" icon="i-lucide-alert-circle" role="alert" aria-live="assertive" />
 
           <UFormField label="Email">
             <UInput
@@ -87,6 +92,7 @@ async function handleSetup() {
               icon="i-lucide-mail"
               required
               class="w-full"
+              aria-label="Email"
             />
           </UFormField>
 
@@ -98,6 +104,7 @@ async function handleSetup() {
               icon="i-lucide-lock"
               required
               class="w-full"
+              aria-label="Password"
             />
           </UFormField>
 
@@ -109,6 +116,7 @@ async function handleSetup() {
               icon="i-lucide-lock"
               required
               class="w-full"
+              aria-label="Confirm password"
             />
           </UFormField>
 
@@ -123,5 +131,5 @@ async function handleSetup() {
         </form>
       </div>
     </div>
-  </div>
+  </main>
 </template>

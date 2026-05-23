@@ -3,6 +3,7 @@ definePageMeta({ layout: false })
 
 const { $pb } = useNuxtApp()
 const route = useRoute()
+const { announce } = useA11yAnnouncer()
 
 const token = computed(() => (route.query.token as string) || '')
 const password = ref('')
@@ -14,12 +15,14 @@ const error = ref('')
 onMounted(() => {
   if (!token.value) {
     error.value = 'Invalid or missing reset token.'
+    announce(error.value, 'assertive')
   }
 })
 
 async function handleSubmit() {
   if (password.value !== passwordConfirm.value) {
     error.value = 'Passwords do not match.'
+    announce(error.value, 'assertive')
     return
   }
   loading.value = true
@@ -27,9 +30,11 @@ async function handleSubmit() {
   try {
     await $pb.collection('_superusers').confirmPasswordReset(token.value, password.value, passwordConfirm.value)
     success.value = true
+    announce('Password updated successfully')
     setTimeout(() => navigateTo('/login'), 3000)
   } catch (e: any) {
     error.value = e?.message || 'Invalid or expired reset token.'
+    announce(error.value, 'assertive')
   } finally {
     loading.value = false
   }
@@ -37,7 +42,7 @@ async function handleSubmit() {
 </script>
 
 <template>
-  <div class="min-h-screen flex items-center justify-center bg-carbon-950 relative overflow-hidden">
+  <main id="main-content" tabindex="-1" class="min-h-screen flex items-center justify-center bg-carbon-950 relative overflow-hidden">
     <div class="absolute inset-0 pointer-events-none select-none opacity-5">
       <svg width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
         <defs>
@@ -62,7 +67,7 @@ async function handleSubmit() {
       </div>
 
       <div class="rounded-2xl border border-carbon-800 bg-carbon-900 p-6 shadow-2xl">
-        <div v-if="success" class="text-center space-y-4">
+        <div v-if="success" class="text-center space-y-4" role="status" aria-live="polite">
           <div class="flex items-center justify-center w-12 h-12 rounded-full bg-green-400/10 mx-auto">
             <UIcon name="i-lucide-check-circle" class="w-6 h-6 text-green-400" />
           </div>
@@ -75,7 +80,7 @@ async function handleSubmit() {
             <p class="text-xs text-gray-500 mt-1">Choose a strong password for your account.</p>
           </div>
 
-          <UAlert v-if="error" color="error" :title="error" icon="i-lucide-alert-circle" />
+          <UAlert v-if="error" color="error" :title="error" icon="i-lucide-alert-circle" role="alert" aria-live="assertive" />
 
           <UFormField label="New Password">
             <UInput
@@ -86,6 +91,7 @@ async function handleSubmit() {
               required
               :disabled="!token"
               class="w-full"
+              aria-label="New password"
             />
           </UFormField>
 
@@ -98,6 +104,7 @@ async function handleSubmit() {
               required
               :disabled="!token"
               class="w-full"
+              aria-label="Confirm new password"
             />
           </UFormField>
 
@@ -119,5 +126,5 @@ async function handleSubmit() {
         </form>
       </div>
     </div>
-  </div>
+  </main>
 </template>

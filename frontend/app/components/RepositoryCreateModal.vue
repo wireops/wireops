@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 const { PLATFORM_OPTIONS, platformIconUrl } = useRepositoryPlatform()
 
 const { $pb } = useNuxtApp()
 const { testCredentials } = useApi()
 const toast = useToast()
+const { announce } = useA11yAnnouncer()
 
 const isOpen = defineModel<boolean>('open', { default: false })
 
@@ -136,11 +137,14 @@ async function testConnection() {
     })
     if (result.success === 'true') {
       toast.add({ title: 'Connection successful!', color: 'success' })
+      announce('Repository connection test succeeded')
     } else {
       toast.add({ title: 'Connection failed', description: result.error, color: 'error' })
+      announce('Repository connection test failed', 'assertive')
     }
   } catch (error: any) {
     toast.add({ title: 'Test failed', description: error.message, color: 'error' })
+    announce('Repository connection test failed', 'assertive')
   } finally {
     testingConnection.value = false
   }
@@ -183,6 +187,7 @@ async function submit() {
       })
       await saveCredentials(props.repository.id)
       toast.add({ title: 'Repository updated', color: 'success' })
+      announce(`Repository ${form.value.name} updated`)
       isOpen.value = false
       emit('updated')
     } else {
@@ -192,6 +197,7 @@ async function submit() {
       })
       await saveCredentials(repoRecord.id)
       toast.add({ title: 'Repository created', color: 'success' })
+      announce(`Repository ${form.value.name} created`)
       isOpen.value = false
       emit('created')
     }
@@ -201,6 +207,7 @@ async function submit() {
       description: err.message,
       color: 'error',
     })
+    announce(isEditMode.value ? 'Failed to update repository' : 'Failed to create repository', 'assertive')
   } finally {
     saving.value = false
   }
@@ -229,7 +236,7 @@ function cancel() {
         <form class="space-y-4" @submit.prevent="submit">
           <!-- Name -->
           <UFormField label="Name" required class="w-full">
-            <UInput v-model="form.name" placeholder="my-app" class="w-full" />
+            <UInput v-model="form.name" placeholder="my-app" class="w-full" aria-label="Repository name" />
           </UFormField>
 
           <!-- Platform + URL scheme -->
@@ -247,7 +254,7 @@ function cancel() {
                     v-if="platformIconUrl(form.platform)"
                     :src="platformIconUrl(form.platform)!"
                     class="w-4 h-4 object-contain"
-                    alt=""
+                    :alt="`${form.platform} icon`"
                   >
                 </template>
                 <template #item-leading="{ item }">
@@ -255,7 +262,7 @@ function cancel() {
                     v-if="platformIconUrl(item.value)"
                     :src="platformIconUrl(item.value)!"
                     class="w-4 h-4 object-contain"
-                    alt=""
+                    :alt="`${item.value} icon`"
                   >
                 </template>
               </USelectMenu>
@@ -272,12 +279,15 @@ function cancel() {
 
           <!-- Git URL -->
           <UFormField label="Git URL" required class="w-full" :error="gitUrlError">
-            <UInput v-model="form.git_url" :placeholder="urlPlaceholder" class="w-full" />
+            <UInput v-model="form.git_url" :placeholder="urlPlaceholder" class="w-full" aria-describedby="repository-git-url-help" aria-label="Git URL" />
+            <template #help>
+              <span id="repository-git-url-help">Enter the full Git repository URL using the selected protocol.</span>
+            </template>
           </UFormField>
 
           <!-- Branch -->
           <UFormField label="Branch" class="w-full">
-            <UInput v-model="form.branch" placeholder="main" class="w-full" />
+            <UInput v-model="form.branch" placeholder="main" class="w-full" aria-label="Repository branch" />
           </UFormField>
 
           <!-- Private Repository (hidden for SSH — always private) -->
@@ -291,7 +301,7 @@ function cancel() {
           <!-- HTTP credentials: username + password -->
           <div v-if="urlScheme === 'http' && isPrivate" class="space-y-4">
             <UFormField label="Username" required class="w-full">
-              <UInput v-model="credForm.git_username" class="w-full" />
+              <UInput v-model="credForm.git_username" class="w-full" aria-label="Git username" />
             </UFormField>
             <UFormField label="Password / Token" class="w-full">
               <UInput
@@ -299,6 +309,7 @@ function cancel() {
                 type="password"
                 :placeholder="isEditMode ? 'Leave empty to keep current' : ''"
                 class="w-full"
+                aria-label="Git password or token"
               />
             </UFormField>
           </div>
@@ -311,6 +322,7 @@ function cancel() {
                 :placeholder="isEditMode ? 'Leave empty to keep current key' : 'Paste your private key here'"
                 :rows="8"
                 class="font-mono text-xs w-full"
+                aria-label="SSH private key"
               />
             </UFormField>
             <UFormField label="Passphrase" class="w-full">
@@ -319,6 +331,7 @@ function cancel() {
                 type="password"
                 :placeholder="isEditMode ? 'Leave empty to keep current' : 'Optional passphrase for encrypted keys'"
                 class="w-full"
+                aria-label="SSH key passphrase"
               />
             </UFormField>
           </div>

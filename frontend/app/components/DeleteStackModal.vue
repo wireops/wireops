@@ -1,6 +1,9 @@
 <script setup lang="ts">
+import { computed, ref } from 'vue'
+
 const { deleteStack } = useApi()
 const toast = useToast()
+const { announce } = useA11yAnnouncer()
 
 const props = defineProps<{
   stack: any // the stack record (must have .id, .name, and optionally .expand.worker)
@@ -37,9 +40,11 @@ async function confirmDelete() {
       return
     }
     toast.add({ title: `Stack "${props.stack.name}" deleted`, color: 'success' })
+    announce(`Stack ${props.stack.name} deleted`)
     emit('deleted')
   } catch (e: any) {
     errorMsg.value = e?.message || 'Unexpected error'
+    announce(`Failed to delete stack ${props.stack?.name || ''}`.trim(), 'assertive')
   } finally {
     deleting.value = false
   }
@@ -78,7 +83,7 @@ async function confirmDelete() {
       </div>
 
       <!-- API error -->
-      <div v-if="errorMsg" class="flex items-start gap-3 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3">
+      <div v-if="errorMsg" class="flex items-start gap-3 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3" role="alert" aria-live="assertive">
         <UIcon name="i-lucide-circle-x" class="w-5 h-5 text-red-500 mt-0.5 shrink-0" />
         <p class="text-sm text-red-500">{{ errorMsg }}</p>
       </div>
