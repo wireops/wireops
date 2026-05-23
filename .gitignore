@@ -38,6 +38,7 @@ pb_public/
 frontend/.output/
 frontend/.nuxt/
 frontend/dist/
+frontend/dist/*
 frontend/node_modules/
 data/
 pki_data/
