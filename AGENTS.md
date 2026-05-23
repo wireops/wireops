@@ -157,7 +157,7 @@ repositories ─── 1:N ──→ scheduled_jobs ─── 1:N ──→ job_
 
 ### Worker Bootstrap & Communication
 1. Admin generates a token via the UI/API.
-2. Worker connects to `POST /worker/register` (using the HTTP endpoint on port :8443) with the `X-Wireops-Worker-Token` header to register.
+2. Worker connects to `POST /worker/register` (using the HTTPS endpoint on port :8443) with the `X-Wireops-Worker-Token` header to register.
 3. The server validates the token (transitioning it from `STAGING` to `ACTIVE`) and associates it with the worker.
 4. Worker opens a persistent WebSocket connection to `/worker/ws` on the worker server, authenticated via the same token.
 5. Server dispatches typed commands (`DeployCommand`, `TeardownCommand`, `RunJobCommand`, etc.) as JSON `Envelope` messages.
@@ -238,7 +238,7 @@ All custom routes are prefixed `/api/custom/`. PocketBase also auto-exposes CRUD
 ### Worker
 | Variable | Description |
 |---|---|
-| `WIREOPS_SERVER` | HTTP URL of the wireops server |
+| `WIREOPS_SERVER` | HTTPS URL of the wireops server |
 | `WIREOPS_WORKER_TOKEN` | Worker authorization token |
 | `WIREOPS_WORKER_TAGS` | Comma-separated tags (used for job routing) |
 

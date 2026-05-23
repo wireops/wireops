@@ -7,6 +7,9 @@ services:
       # Address of the wireops server
       WIREOPS_SERVER: ${WIREOPS_SERVER}
 
+      # Worker registration and authentication token
+      WIREOPS_WORKER_TOKEN: ${WIREOPS_WORKER_TOKEN}
+
       # Optional: override the hostname reported to the server.
       # Defaults to the container's hostname if not set.
       HOSTNAME: ${WORKER_HOSTNAME:-}

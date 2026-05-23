@@ -16,11 +16,6 @@ const actualWorkers = computed(() => {
   return workers.value.filter(w => w.status !== WORKER_STATUS.PENDING)
 })
 
-const pendingTokens = computed(() => {
-  if (!workers.value) return []
-  return workers.value.filter(w => w.status === WORKER_STATUS.PENDING)
-})
-
 const sortedWorkers = computed(() => {
   return [...actualWorkers.value].sort((a, b) => {
     if (a.status === WORKER_STATUS.REVOKED && b.status !== WORKER_STATUS.REVOKED) return 1
@@ -55,17 +50,13 @@ async function generateToken() {
 
 async function handleRevoke(worker: any) {
   if (worker.is_embedded) return
-  const isPending = worker.status === WORKER_STATUS.PENDING
-  const confirmMessage = isPending
-    ? 'Revoke this pending worker token?'
-    : `Revoke ${worker.hostname}?`
-  if (!window.confirm(confirmMessage)) return
+  if (!window.confirm(`Revoke ${worker.hostname}?`)) return
   try {
     await revokeWorker(worker.id)
-    toast.add({ title: isPending ? 'Token revoked' : 'Worker revoked', color: 'success' })
+    toast.add({ title: 'Worker revoked', color: 'success' })
     refresh()
   } catch (e: any) {
-    toast.add({ title: isPending ? 'Failed to revoke token' : 'Failed to revoke worker', description: e?.message, color: 'error' })
+    toast.add({ title: 'Failed to revoke worker', description: e?.message, color: 'error' })
   }
 }
 
@@ -97,7 +88,7 @@ async function copyToClipboard(text: string) {
 function formatDate(dateStr: string) {
   if (!dateStr) return 'Never'
   try {
-    return new Date(dateStr).toLocaleString()
+    return new Date(dateStr).toISOString()
   } catch {
     return dateStr
   }
@@ -147,13 +138,12 @@ onUnmounted(() => {
         </div>
       </template>
       <p class="text-sm text-gray-500 dark:text-wire-200/60 mb-4">
-        This token is in <strong>{{ issuedTokenStatus }}</strong> state until <strong>{{ formatDate(issuedTokenExpiresAt) }}</strong>. It becomes <strong>ACTIVE</strong> when the worker connects for the first time.
+        This token is valid until <strong>{{ formatDate(issuedTokenExpiresAt) }}</strong>.
       </p>
       <div class="flex items-center gap-2 bg-gray-100 dark:bg-carbon-800/60 p-2 rounded-lg border border-gray-200 dark:border-carbon-700 break-all">
         <code class="text-sm font-mono flex-1 select-all text-wire-400">{{ issuedToken }}</code>
         <UButton icon="i-lucide-copy" variant="ghost" color="neutral" size="sm" @click="copyToClipboard(issuedToken)" />
       </div>
-      <p class="mt-3 text-xs text-gray-400">Expires: {{ formatDate(issuedTokenExpiresAt) }}</p>
       <div class="mt-4 pt-4 border-t border-gray-100 dark:border-carbon-800">
         <p class="text-xs font-semibold mb-2 uppercase text-gray-400 dark:text-wire-200/40 tracking-wider">Example Command (Docker)</p>
         <pre class="bg-gray-900 dark:bg-carbon-950 text-wire-400/80 p-3 rounded-lg text-xs overflow-x-auto font-mono border border-gray-700 dark:border-carbon-800">docker run -d \
@@ -248,58 +238,6 @@ onUnmounted(() => {
           </div>
           <div v-if="!worker.is_embedded && worker.status !== 'REVOKED'">
             <UButton icon="i-lucide-ban" color="error" variant="ghost" size="sm" @click="handleRevoke(worker)" />
-          </div>
-        </div>
-      </div>
-    </UCard>
-
-    <!-- Tokens Section -->
-    <UCard>
-      <template #header>
-        <div class="flex items-center justify-between">
-          <h3 class="font-semibold text-gray-900 dark:text-wire-200">
-            Worker Tokens (Pending)
-            <span v-if="pendingTokens.length > 0" class="ml-1.5 text-yellow-400">({{ pendingTokens.length }})</span>
-          </h3>
-          <p class="text-xs text-gray-400 dark:text-wire-200/40">Pending worker tokens staged until first use/registration.</p>
-        </div>
-      </template>
-
-      <div v-if="pending && !workers" class="space-y-4">
-        <USkeleton v-for="i in 2" :key="i" class="h-16 w-full" />
-      </div>
-
-      <div v-else-if="!workers || pendingTokens.length === 0" class="text-center py-8">
-        <div class="w-12 h-12 rounded-full bg-yellow-400/10 border border-yellow-400/20 flex items-center justify-center mx-auto mb-3">
-          <UIcon name="i-lucide-key-round" class="w-6 h-6 text-yellow-400" />
-        </div>
-        <h3 class="text-base font-medium text-gray-900 dark:text-wire-200 mb-1">No pending tokens</h3>
-        <p class="text-gray-500 dark:text-wire-200/50 text-xs">Generate a token at the top to configure a new worker.</p>
-      </div>
-
-      <div v-else class="space-y-3">
-        <div
-          v-for="token in pendingTokens"
-          :key="token.id"
-          class="flex items-center justify-between p-4 bg-gray-50 dark:bg-carbon-800/40 rounded-xl border border-gray-200 dark:border-carbon-700 hover:shadow-[0_0_0_2px_rgba(255,198,0,0.25),0_0_20px_rgba(255,198,0,0.08)] transition-all"
-        >
-          <div class="flex items-center gap-4">
-            <div class="w-10 h-10 rounded-lg bg-gray-100 dark:bg-carbon-700/60 flex items-center justify-center">
-              <UIcon name="i-lucide-key-round" class="w-5 h-5 text-wire-400" />
-            </div>
-            <div>
-              <div class="flex items-center gap-2">
-                <span class="font-medium text-gray-900 dark:text-wire-200">Pending Worker Token</span>
-              </div>
-              <div class="flex items-center gap-2 mt-1">
-                <p class="text-xs text-gray-400 dark:text-wire-200/40">
-                  Expires: {{ formatDate(token.token_expires) }}
-                </p>
-              </div>
-            </div>
-          </div>
-          <div>
-            <UButton icon="i-lucide-trash" color="error" variant="ghost" size="sm" @click="handleRevoke(token)" />
           </div>
         </div>
       </div>

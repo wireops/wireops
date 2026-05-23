@@ -3,7 +3,6 @@ package routes
 import (
 	"log"
 	"net/http"
-	"strings"
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
@@ -86,28 +85,6 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 			})
 		}
 
-		pendingTokens, err := app.FindAllRecords("worker_tokens", dbx.HashExp{"status": worker.TokenStatusStaging})
-		if err != nil {
-			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		}
-		for _, tokenRecord := range pendingTokens {
-			if tokenRecord.GetString("worker") != "" {
-				continue
-			}
-			result = append(result, map[string]interface{}{
-				"id":              "pending:" + tokenRecord.Id,
-				"hostname":        "Pending worker token",
-				"status":          "PENDING",
-				"last_seen":       "",
-				"health_history":  []worker.HealthEvent{},
-				"tags":            []string{},
-				"is_embedded":     false,
-				"token_status":    tokenRecord.GetString("status"),
-				"token_expires":   tokenRecord.GetDateTime("expires_at").String(),
-				"token_last_used": tokenRecord.GetDateTime("last_used_at").String(),
-			})
-		}
-
 		return e.JSON(http.StatusOK, result)
 	})
 
@@ -118,13 +95,6 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 
 		workerID := e.Request.PathValue("id")
 
-		if strings.HasPrefix(workerID, "pending:") {
-			tokenID := strings.TrimPrefix(workerID, "pending:")
-			if err := workerSvc.RevokeToken(tokenID); err != nil {
-				return e.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to revoke token"})
-			}
-			return e.JSON(http.StatusOK, map[string]string{"status": "revoked"})
-		}
 
 		record, err := app.FindRecordById("workers", workerID)
 		if err != nil {

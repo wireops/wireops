@@ -1,7 +1,7 @@
 # Use Case 2: Standalone Agent
 
-In this mode you run **only the wireops agent** on a remote host.  
-The agent connects to a central wireops server over a mutually-authenticated TLS WebSocket and executes `docker compose up` commands on behalf of the server.
+In this mode you run **only the wireops worker** on a remote host.  
+The worker connects to a central wireops server over a token-authenticated WebSocket connection and executes `docker compose up` commands on behalf of the server.
 
 ## When to use this
 
@@ -18,11 +18,11 @@ The agent connects to a central wireops server over a mutually-authenticated TLS
   │  Git + Scheduler   │
   │  Compose Renderer  │
   └────────┬───────────┘
-           │  mTLS WebSocket (port 8443)
+           │  WebSocket (port 8443)
            │  sends: base64 compose YAML + env vars
            ▼
   ┌────────────────────┐
-  │  wireops-agent       │  ◀── this container
+  │  wireops-worker    │  ◀── this container
   │  container         │
   └────────┬───────────┘
            │
@@ -35,8 +35,8 @@ The agent connects to a central wireops server over a mutually-authenticated TLS
 
 | File | Description |
 |------|-------------|
-| `docker-compose.yml` | Agent compose file |
-| `Dockerfile` | Multi-stage agent image |
+| `docker-compose.yml` | Worker compose file |
+| `Dockerfile` | Multi-stage worker image |
 | `.env.example` | Environment variable template |
 
 ## Quick start
@@ -45,19 +45,20 @@ The agent connects to a central wireops server over a mutually-authenticated TLS
 # 1. Copy env template
 cp .env.example .env
 
-# 2. Fill in your server URLs and bootstrap token
+# 2. Fill in your server URL and worker token
 nano .env
 
-# 3. Start the agent
+# 3. Start the worker
 docker compose up -d
 
-# 4. Verify it appears as ACTIVE in the wireops UI under Agents
+# 4. Verify it appears as ACTIVE in the wireops UI under Workers
 ```
 
 ## Environment variables
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `WIREOPS_SERVER` | ✅ | — | HTTP URL of the wireops server (for bootstrap) |
-| `AGENT_HOSTNAME` | — | container hostname | Label shown in the wireops UI |
-| `WIREOPS_AGENT_WORK_DIR` | — | `/tmp/wireops-agent` | Temp directory for rendered compose files |
+| `WIREOPS_SERVER` | ✅ | — | URL of the wireops server (e.g. http://localhost:8443) |
+| `WIREOPS_WORKER_TOKEN` | ✅ | — | Worker registration and authentication token |
+| `WORKER_HOSTNAME` | — | container hostname | Optional name shown in the wireops UI |
+| `WIREOPS_WORKER_WORK_DIR` | — | `/tmp/wireops-worker` | Temp directory for rendered compose files |

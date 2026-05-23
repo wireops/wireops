@@ -115,6 +115,7 @@ func (s *Service) ActivateToken(token string, hostname string) (*core.Record, *c
 		tokenRecord.Set("worker", workerID)
 		tokenRecord.Set("status", TokenStatusActive)
 		tokenRecord.Set("last_used_at", now)
+		tokenRecord.Set("expires_at", nil)
 		if err := s.app.Save(tokenRecord); err != nil {
 			return nil, nil, err
 		}
@@ -128,6 +129,7 @@ func (s *Service) ActivateToken(token string, hostname string) (*core.Record, *c
 
 	if tokenRecord.GetString("status") == TokenStatusStaging {
 		tokenRecord.Set("status", TokenStatusActive)
+		tokenRecord.Set("expires_at", nil)
 	}
 	tokenRecord.Set("last_used_at", now)
 	if err := s.app.Save(tokenRecord); err != nil {

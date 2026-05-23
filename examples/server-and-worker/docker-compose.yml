@@ -23,9 +23,8 @@ services:
     depends_on:
       - wireops
     environment:
-      - WIREOPS_SERVER=${WIREOPS_SERVER:-http://wireops:8090}
-      - WIREOPS_MTLS_SERVER=${WIREOPS_MTLS_SERVER:-https://wireops:8443}
-      - WIREOPS_BOOTSTRAP_TOKEN=${WIREOPS_BOOTSTRAP_TOKEN:-}
+      - WIREOPS_SERVER=${WIREOPS_SERVER:-http://wireops:8443}
+      - WIREOPS_WORKER_TOKEN=${WIREOPS_WORKER_TOKEN:-}
       - WIREOPS_WORKER_WORK_DIR=/tmp/wireops-worker
       - HOSTNAME=${WORKER_HOSTNAME:-}
     volumes:
