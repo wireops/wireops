@@ -22,13 +22,13 @@ const workerOffline = computed(() => {
   if (props.workerOffline) return true
   if (showForceDeleteOption.value) return true
   const worker = props.stack?.expand?.worker
-  if (!worker) return false // embedded / unknown, allow
+  if (!worker) return true
   // A worker is considered offline if its status is not ACTIVE
   if (worker.status && worker.status !== WORKER_STATUS.ACTIVE) return true
   return false
 })
 
-const workerName = computed(() => props.stack?.expand?.worker?.hostname || 'Worker')
+const workerName = computed(() => props.stack?.expand?.worker?.hostname || 'Assigned worker')
 
 const forceDelete = ref(false)
 const deleting = ref(false)

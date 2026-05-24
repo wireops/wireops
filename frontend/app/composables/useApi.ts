@@ -178,7 +178,7 @@ export function useApi() {
   const getJobDefinition = (jobId: string) =>
     customGet<JobDefinition>(`/api/custom/jobs/${jobId}/definition`)
 
-  const getWorkers = () => customGet<{ id: string; hostname: string; status: string; last_seen: string; health_history: { status: string, timestamp: string }[]; tags: string[]; is_embedded: boolean; token_status: string; token_expires: string; token_last_used: string }[]>('/api/custom/workers')
+  const getWorkers = () => customGet<{ id: string; hostname: string; status: string; last_seen: string; health_history: { status: string, timestamp: string }[]; tags: string[]; token_status: string; token_expires: string; token_last_used: string }[]>('/api/custom/workers')
   const createWorkerToken = () => customPost<{ token: string; token_id: string; status: string; expires_at: string }>('/api/custom/worker/tokens')
   const revokeWorker = (id: string) => customPost(`/api/custom/workers/${id}/revoke`)
   const transferStack = (stackId: string, targetWorkerId: string) =>

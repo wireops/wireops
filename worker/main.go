@@ -201,6 +201,10 @@ func readLoop(conn *websocket.Conn, disconnectCh chan<- disconnectReason) {
 			go handleGetStatus(conn, env.Payload)
 		case protocol.MsgGetResources:
 			go handleGetResources(conn, env.Payload)
+		case protocol.MsgStopContainer:
+			go handleStopContainer(conn, env.Payload)
+		case protocol.MsgRestartContainer:
+			go handleRestartContainer(conn, env.Payload)
 		case protocol.MsgDiscoverProjects:
 			go handleDiscoverProjects(conn, env.Payload)
 		case protocol.MsgReadFile:
@@ -298,6 +302,28 @@ func handleGetStatus(conn *websocket.Conn, payload interface{}) {
 	}
 	log.Printf("[WORKER] get_status project: %s (command: %s)", cmd.ProjectName, cmd.CommandID)
 	result := executor.GetStatus(context.Background(), cmd)
+	sendResult(conn, result)
+}
+
+func handleStopContainer(conn *websocket.Conn, payload interface{}) {
+	cmd, err := unmarshalPayload[protocol.ContainerActionCommand](payload)
+	if err != nil {
+		log.Printf("[WORKER] Invalid stop_container payload: %v", err)
+		return
+	}
+	log.Printf("[WORKER] stop_container stack: %s project: %s container: %s (command: %s)", cmd.StackID, cmd.ProjectName, cmd.ContainerID, cmd.CommandID)
+	result := executor.StopContainer(context.Background(), cmd)
+	sendResult(conn, result)
+}
+
+func handleRestartContainer(conn *websocket.Conn, payload interface{}) {
+	cmd, err := unmarshalPayload[protocol.ContainerActionCommand](payload)
+	if err != nil {
+		log.Printf("[WORKER] Invalid restart_container payload: %v", err)
+		return
+	}
+	log.Printf("[WORKER] restart_container stack: %s project: %s container: %s (command: %s)", cmd.StackID, cmd.ProjectName, cmd.ContainerID, cmd.CommandID)
+	result := executor.RestartContainer(context.Background(), cmd)
 	sendResult(conn, result)
 }
 

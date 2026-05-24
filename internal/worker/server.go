@@ -32,12 +32,11 @@ type WorkerServer struct {
 	upgrader  websocket.Upgrader
 
 	// connMu protects connections, connWriteMu, pending, and workerTags maps.
-	connMu           sync.RWMutex
-	connections      map[string]*websocket.Conn // workerID → conn
-	connWriteMu      map[string]*sync.Mutex     // workerID → write mutex
-	pending          map[string]*pendingResult  // commandID → pending
-	workerTags       map[string][]string        // workerID → tags declared via WIREOPS_WORKER_TAGS
-	embeddedWorkerID string
+	connMu      sync.RWMutex
+	connections map[string]*websocket.Conn // workerID → conn
+	connWriteMu map[string]*sync.Mutex     // workerID → write mutex
+	pending     map[string]*pendingResult  // commandID → pending
+	workerTags  map[string][]string        // workerID → tags declared via WIREOPS_WORKER_TAGS
 
 	onConnect      func(workerID string)
 	onJobCompleted func(protocol.JobCompletedMessage)
@@ -59,17 +58,9 @@ func (s *WorkerServer) SetOnJobCompleted(f func(protocol.JobCompletedMessage)) {
 }
 
 // SetWorkerTags stores the tags reported by the worker at registration time.
-// For the embedded worker this is called directly from the server bootstrap.
 func (s *WorkerServer) SetWorkerTags(workerID string, tags []string) {
 	s.connMu.Lock()
 	s.workerTags[workerID] = tags
-	s.connMu.Unlock()
-}
-
-// SetEmbeddedWorkerID caches the ID of the embedded worker to avoid DB queries.
-func (s *WorkerServer) SetEmbeddedWorkerID(id string) {
-	s.connMu.Lock()
-	s.embeddedWorkerID = id
 	s.connMu.Unlock()
 }
 
@@ -164,33 +155,6 @@ func (s *WorkerServer) registerRoutes() {
 	s.engine.GET("/worker/ws", s.handleWebSocket)
 }
 
-// IsEmbedded reports whether the given workerID corresponds to the embedded worker.
-func (s *WorkerServer) IsEmbedded(workerID string) bool {
-	if workerID == "" {
-		return true
-	}
-	s.connMu.RLock()
-	cachedID := s.embeddedWorkerID
-	s.connMu.RUnlock()
-
-	if cachedID != "" {
-		return workerID == cachedID
-	}
-
-	worker, err := s.app.FindRecordById("workers", workerID)
-	if err != nil {
-		logger.SafeLogf("[WORKER] IsEmbedded: failed to look up worker %s: %v", workerID, err)
-		return false
-	}
-	isEmbedded := worker != nil && worker.GetString("fingerprint") == "embedded"
-	if isEmbedded {
-		s.connMu.Lock()
-		s.embeddedWorkerID = workerID
-		s.connMu.Unlock()
-	}
-	return isEmbedded
-}
-
 // DisconnectWorker forcefully closes the active WebSocket connection for the given workerID, if any.
 // Used immediately after revoking a worker so the connection drops without waiting for a heartbeat timeout.
 func (s *WorkerServer) DisconnectWorker(workerID string) {
@@ -220,11 +184,7 @@ func (s *WorkerServer) DisconnectWorker(workerID string) {
 }
 
 // IsConnected reports whether the worker currently has an active WebSocket connection.
-// Embedded workers are always considered connected since they run in-process.
 func (s *WorkerServer) IsConnected(workerID string) bool {
-	if s.IsEmbedded(workerID) {
-		return true
-	}
 	s.connMu.RLock()
 	_, ok := s.connections[workerID]
 	s.connMu.RUnlock()
@@ -289,6 +249,16 @@ func (s *WorkerServer) Dispatch(ctx context.Context, workerID string, cmd interf
 	case protocol.GetResourcesCommand:
 		msgType = protocol.MsgGetResources
 		commandID = v.CommandID
+	case protocol.ContainerActionCommand:
+		commandID = v.CommandID
+		if strings.HasPrefix(v.CommandID, "stop-container-") {
+			msgType = protocol.MsgStopContainer
+		} else if strings.HasPrefix(v.CommandID, "restart-container-") {
+			msgType = protocol.MsgRestartContainer
+		} else {
+			logger.SafeLogf("[WORKER] unknown or malformed container action command ID: %s", v.CommandID)
+			return protocol.CommandResult{}, fmt.Errorf("unknown or malformed container action command ID: %s", v.CommandID)
+		}
 	case protocol.DiscoverProjectsCommand:
 		msgType = protocol.MsgDiscoverProjects
 		commandID = v.CommandID

@@ -34,8 +34,6 @@ onMounted(async () => {
       filter: 'status = "ACTIVE"',
       sort: 'hostname',
     })
-    const embedded = workers.value.find((a: any) => a.fingerprint === 'embedded')
-    if (embedded) selectedWorkerId.value = embedded.id
   } catch {
     workers.value = []
   }

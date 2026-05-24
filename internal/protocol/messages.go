@@ -14,6 +14,8 @@ const (
 	MsgInspect      MessageType = "inspect"
 	MsgGetStatus    MessageType = "get_status"
 	MsgGetResources MessageType = "get_resources"
+	MsgStopContainer    MessageType = "stop_container"
+	MsgRestartContainer MessageType = "restart_container"
 
 	MsgDiscoverProjects MessageType = "discover_projects"
 	MsgReadFile         MessageType = "read_file"
@@ -55,8 +57,7 @@ type DeployCommand struct {
 	// EnvFileB64 is the base64-encoded content of a .env file to be written by
 	// the worker in its working directory before running docker compose.
 	// If empty, the worker should remove any existing .env file in the work dir.
-	// This mirrors the behavior of the embedded worker, which writes the .env
-	// directly into the repository clone directory.
+	// This keeps .env handling consistent across deploy commands.
 	EnvFileB64 string `json:"env_file_b64,omitempty"`
 }
 
@@ -177,6 +178,15 @@ type NetworkInfo struct {
 type GetResourcesResult struct {
 	Volumes  []VolumeInfo  `json:"volumes"`
 	Networks []NetworkInfo `json:"networks"`
+}
+
+// ContainerActionCommand asks the worker to stop or restart a specific
+// container after verifying it belongs to the compose project.
+type ContainerActionCommand struct {
+	CommandID   string `json:"command_id"`
+	StackID     string `json:"stack_id"`
+	ProjectName string `json:"project_name"`
+	ContainerID string `json:"container_id"`
 }
 
 // DiscoverProjectsCommand asks the worker to list Docker Compose projects on this

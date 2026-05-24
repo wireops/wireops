@@ -5,8 +5,8 @@ const toast = useToast()
 const { data: workers, pending, refresh } = useAsyncData('workers', getWorkers)
 
 const issuedToken = ref('')
-const issuedTokenStatus = ref('')
 const issuedTokenExpiresAt = ref('')
+const showTokenModal = ref(false)
 const isGenerating = ref(false)
 const showRevoked = ref(false)
 const isAutoRefreshPaused = ref(false)
@@ -37,8 +37,8 @@ async function generateToken() {
   try {
     const res = await createWorkerToken()
     issuedToken.value = res.token
-    issuedTokenStatus.value = res.status
     issuedTokenExpiresAt.value = res.expires_at
+    showTokenModal.value = true
     toast.add({ title: 'Worker token generated', color: 'success' })
     refresh()
   } catch (e: any) {
@@ -49,7 +49,6 @@ async function generateToken() {
 }
 
 async function handleRevoke(worker: any) {
-  if (worker.is_embedded) return
   if (!window.confirm(`Revoke ${worker.hostname}?`)) return
   try {
     await revokeWorker(worker.id)
@@ -57,31 +56,6 @@ async function handleRevoke(worker: any) {
     refresh()
   } catch (e: any) {
     toast.add({ title: 'Failed to revoke worker', description: e?.message, color: 'error' })
-  }
-}
-
-async function copyToClipboard(text: string) {
-  try {
-    await navigator.clipboard.writeText(text)
-    toast.add({ title: 'Copied!', color: 'success' })
-  } catch {
-    try {
-      const textarea = document.createElement('textarea')
-      textarea.value = text
-      textarea.style.position = 'fixed'
-      document.body.appendChild(textarea)
-      textarea.focus()
-      textarea.select()
-      const successful = document.execCommand('copy')
-      document.body.removeChild(textarea)
-      if (successful) {
-        toast.add({ title: 'Copied!', color: 'success' })
-      } else {
-        throw new Error()
-      }
-    } catch {
-      toast.add({ title: 'Copy failed', description: 'Please copy the token manually.', color: 'error' })
-    }
   }
 }
 
@@ -103,7 +77,19 @@ function formatRelative(dateStr: string) {
   return `${Math.floor(diff / 86_400_000)}d ago`
 }
 
+function hasVisibleTokenExpiry(worker: any) {
+  if (!worker?.token_expires) return false
+  if (worker.token_status === TOKEN_STATUS.ACTIVE) return false
+  if (worker.token_expires.startsWith('0001-01-01')) return false
+  return true
+}
 
+const workerBootstrapCommand = computed(() =>
+  `docker run -d \\
+  -e WIREOPS_SERVER=https://your-wireops-server.local \\
+  -e WIREOPS_WORKER_TOKEN=${issuedToken.value} \\
+  ghcr.io/wireops/wireops-worker:latest`
+)
 
 let refreshInterval: any
 
@@ -129,29 +115,6 @@ onUnmounted(() => {
       </h1>
       <UButton icon="i-lucide-key-round" label="Generate Token" :loading="isGenerating" class="shadow-[0_0_16px_rgba(255,198,0,0.35)] hover:shadow-[0_0_24px_rgba(255,198,0,0.55)] transition-shadow" @click="generateToken" />
     </div>
-
-    <UCard v-if="issuedToken" class="border border-yellow-400/30 shadow-[0_0_24px_rgba(255,198,0,0.08)]">
-      <template #header>
-        <div class="flex items-center gap-2 text-yellow-400 font-semibold">
-          <UIcon name="i-lucide-key" class="w-4 h-4" />
-          <span>New Worker Token</span>
-        </div>
-      </template>
-      <p class="text-sm text-gray-500 dark:text-wire-200/60 mb-4">
-        This token is valid until <strong>{{ formatDate(issuedTokenExpiresAt) }}</strong>.
-      </p>
-      <div class="flex items-center gap-2 bg-gray-100 dark:bg-carbon-800/60 p-2 rounded-lg border border-gray-200 dark:border-carbon-700 break-all">
-        <code class="text-sm font-mono flex-1 select-all text-wire-400">{{ issuedToken }}</code>
-        <UButton icon="i-lucide-copy" variant="ghost" color="neutral" size="sm" @click="copyToClipboard(issuedToken)" />
-      </div>
-      <div class="mt-4 pt-4 border-t border-gray-100 dark:border-carbon-800">
-        <p class="text-xs font-semibold mb-2 uppercase text-gray-400 dark:text-wire-200/40 tracking-wider">Example Command (Docker)</p>
-        <pre class="bg-gray-900 dark:bg-carbon-950 text-wire-400/80 p-3 rounded-lg text-xs overflow-x-auto font-mono border border-gray-700 dark:border-carbon-800">docker run -d \
-  -e WIREOPS_SERVER=https://your-wireops-server.local \
-  -e WIREOPS_WORKER_TOKEN={{ issuedToken }} \
-  ghcr.io/wireops/wireops-worker:latest</pre>
-      </div>
-    </UCard>
 
     <UCard>
       <template #header>
@@ -214,7 +177,6 @@ onUnmounted(() => {
               <div class="flex items-center gap-2">
                 <h3 class="font-medium text-gray-900 dark:text-wire-200">{{ worker.hostname }}</h3>
                 <BadgeStatus :status="worker.status" />
-                <UBadge v-if="worker.token_status" :label="`token: ${worker.token_status}`" :color="tokenBadgeColor(worker.token_status)" size="xs" variant="subtle" />
               </div>
               <div class="hidden sm:flex items-center gap-2 mt-1">
                 <p class="text-xs text-gray-400 dark:text-wire-200/40 font-mono w-36 truncate" :title="worker.id">
@@ -224,7 +186,7 @@ onUnmounted(() => {
                 <p class="text-xs text-gray-400 dark:text-wire-200/40">
                   Last seen: {{ formatRelative(worker.last_seen) }}
                 </p>
-                <template v-if="worker.token_expires">
+                <template v-if="hasVisibleTokenExpiry(worker)">
                   <span class="text-gray-300 dark:text-carbon-700 text-xs">•</span>
                   <p class="text-xs text-gray-400 dark:text-wire-200/40">
                     Token expires: {{ formatDate(worker.token_expires) }}
@@ -236,11 +198,38 @@ onUnmounted(() => {
               </div>
             </div>
           </div>
-          <div v-if="!worker.is_embedded && worker.status !== 'REVOKED'">
+          <div v-if="worker.status !== 'REVOKED'">
             <UButton icon="i-lucide-ban" color="error" variant="ghost" size="sm" @click="handleRevoke(worker)" />
           </div>
         </div>
       </div>
     </UCard>
+
+    <UModal v-model:open="showTokenModal" :ui="{ content: 'sm:max-w-4xl' }">
+      <template #content>
+        <UCard v-if="issuedToken" class="w-full">
+          <template #header>
+            <div class="flex items-center gap-2 text-yellow-400 font-semibold">
+              <UIcon name="i-lucide-key" class="w-4 h-4" />
+              <span>New Worker Token</span>
+            </div>
+          </template>
+
+          <div class="flex w-full flex-col gap-4">
+            <p class="text-sm text-gray-500 dark:text-wire-200/60">
+              This token is valid until <strong>{{ formatDate(issuedTokenExpiresAt) }}</strong>.
+            </p>
+            <ExecutableCommand label="Token" :content="issuedToken" />
+            <ExecutableCommand label="Executable Command" :content="workerBootstrapCommand" button-label="Copy Command" multiline />
+          </div>
+
+          <template #footer>
+            <div class="flex justify-end gap-2">
+              <UButton label="Close" variant="outline" @click="showTokenModal = false" />
+            </div>
+          </template>
+        </UCard>
+      </template>
+    </UModal>
   </div>
 </template>

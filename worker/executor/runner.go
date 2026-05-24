@@ -283,6 +283,56 @@ func GetStatus(ctx context.Context, cmd protocol.GetStatusCommand) protocol.Comm
 	return protocol.CommandResult{CommandID: cmd.CommandID, Output: string(encoded)}
 }
 
+// StopContainer stops a container on the worker host after confirming it
+// belongs to the requested compose project.
+func StopContainer(ctx context.Context, cmd protocol.ContainerActionCommand) protocol.CommandResult {
+	return executeContainerAction(ctx, cmd, "stop")
+}
+
+// RestartContainer restarts a container on the worker host after confirming it
+// belongs to the requested compose project.
+func RestartContainer(ctx context.Context, cmd protocol.ContainerActionCommand) protocol.CommandResult {
+	return executeContainerAction(ctx, cmd, "restart")
+}
+
+func executeContainerAction(ctx context.Context, cmd protocol.ContainerActionCommand, action string) protocol.CommandResult {
+	log.Printf("[executor] %s_container start stack=%s project=%s container=%s command=%s", action, cmd.StackID, cmd.ProjectName, cmd.ContainerID, cmd.CommandID)
+
+	cli, err := docker.NewClient()
+	if err != nil {
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
+	}
+	defer cli.Close()
+
+	belongs, err := compose.ContainerBelongsToProject(ctx, cli.Raw(), cmd.ContainerID, cmd.ProjectName)
+	if err != nil {
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
+	}
+	if !belongs {
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: "container does not belong to stack"}
+	}
+
+	timeout := 10
+	var actionErr error
+	var output string
+	switch action {
+	case "stop":
+		actionErr = cli.Raw().ContainerStop(ctx, cmd.ContainerID, container.StopOptions{Timeout: &timeout})
+		output = "stopped"
+	case "restart":
+		actionErr = cli.Raw().ContainerRestart(ctx, cmd.ContainerID, container.StopOptions{Timeout: &timeout})
+		output = "restarted"
+	default:
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: "invalid container action"}
+	}
+
+	if actionErr != nil {
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: actionErr.Error()}
+	}
+
+	return protocol.CommandResult{CommandID: cmd.CommandID, Output: output}
+}
+
 // DiscoverProjects lists Docker Compose projects on this host that are not managed
 // by wireops (containers without the wireops.managed=true label). Results are grouped
 // by project name and returned as JSON-encoded DiscoverProjectsResult.

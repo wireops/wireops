@@ -5,22 +5,8 @@ const route = useRoute()
 const { $pb } = useNuxtApp()
 const { subscribe } = useRealtime()
 const { copy } = useCopy()
-const { triggerRollback, forceRedeploy, getServices, getStackResources, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, transferStack, getWorkers } = useApi()
+const { triggerRollback, forceRedeploy, deleteStack, getServices, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, transferStack, getWorkers } = useApi()
 const { getStackIntegrationActions } = useIntegrations()
-
-function formatUptime(startedAt: string): string {
-  if (!startedAt) return '-'
-  const start = new Date(startedAt).getTime()
-  const now = Date.now()
-  const diff = Math.floor((now - start) / 1000)
-  if (diff < 0) return '-'
-  const days = Math.floor(diff / 86400)
-  const hours = Math.floor((diff % 86400) / 3600)
-  const mins = Math.floor((diff % 3600) / 60)
-  if (days > 0) return `${days}d ${hours}h`
-  if (hours > 0) return `${hours}h ${mins}m`
-  return `${mins}m`
-}
 const { validateComposePath, validateComposeFile } = useValidation()
 const toast = useToast()
 const { platformIconUrl } = useRepositoryPlatform()
@@ -80,17 +66,9 @@ const workerOptions = computed(() =>
 
 const services = ref<any[]>([])
 const containerStats = ref<Record<string, any>>({})
-const volumes = ref<{ name: string; driver: string; mountpoint: string; scope: string }[]>([])
-const networks = ref<{ name: string; driver: string; scope: string; subnet?: string; gateway?: string }[]>([])
-
-function formatBytes(bytes: number): string {
-  if (bytes == null || isNaN(bytes)) return '-'
-  if (bytes === 0) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`
-}
+const showWebhookIntegration = ref(false)
+const showDangerZone = ref(false)
+const servicesCard = ref<InstanceType<typeof StackServicesCard> | null>(null)
 
 async function loadServices() {
   try {
@@ -111,17 +89,6 @@ async function loadIntegrationActions() {
   }
 }
 
-async function loadResources() {
-  try {
-    const res = await getStackResources(stackId)
-    volumes.value = res.volumes ?? []
-    networks.value = res.networks ?? []
-  } catch {
-    volumes.value = []
-    networks.value = []
-  }
-}
-
 async function loadAllStats() {
   for (const s of services.value) {
     if (s.status === 'running' && s.container_id) {
@@ -132,15 +99,6 @@ async function loadAllStats() {
     }
   }
 }
-
-const serviceTree = computed(() => {
-  const map: Record<string, any[]> = {}
-  for (const s of services.value || []) {
-    if (!map[s.service_name]) map[s.service_name] = []
-    map[s.service_name]?.push(s)
-  }
-  return Object.entries(map).map(([name, containers]) => ({ name, containers }))
-})
 
 // Container logs viewer
 const showLogsModal = ref(false)
@@ -357,7 +315,7 @@ async function handleForceRedeploy() {
     showForceRedeploy.value = false
     toast.add({ title: 'Force redeploy triggered', color: 'info' })
     forceOpts.value = { recreate_containers: true, recreate_volumes: false, recreate_networks: false }
-    setTimeout(() => { refreshStack(); loadServices(); loadResources() }, 5000)
+    setTimeout(() => { refreshStack(); servicesCard.value?.refresh() }, 5000)
   } catch (e: any) {
     toast.add({ title: e?.message || 'Force redeploy failed', color: 'error' })
   }
@@ -396,14 +354,12 @@ const statusColor = (s: string) => {
 
 onMounted(() => {
   loadServices()
-  loadResources()
   
   // Subscribe to stack changes
   subscribe('stacks', (e) => {
     if (e.record?.id === stackId) {
       refreshStack()
-      loadServices()
-      loadResources()
+      servicesCard.value?.refresh()
     }
   })
 
@@ -495,10 +451,12 @@ onMounted(() => {
               {{ stack.expand.repository.name }}
             </NuxtLink>
           </div>
-          <div>
-            <span class="text-gray-500">Worker:</span>
-            <span class="ml-1">{{ stack?.expand?.worker?.hostname || 'Unknown' }}</span>
-          </div>
+            <div>
+              <span class="text-gray-500">Worker:</span>
+              <span class="ml-1">
+                <WorkerNameLabel :name="stack?.expand?.worker?.hostname || 'Unknown'" />
+              </span>
+            </div>
           <div><span class="text-gray-500">Compose Path:</span> {{ stack?.compose_path || '.' }}</div>
           <div>
             <span class="text-gray-500">Compose File:</span>
@@ -536,14 +494,21 @@ onMounted(() => {
         </form>
       </UCard>
 
+      <StackServicesCard
+        ref="servicesCard"
+        :stack-id="stackId"
+        :services="services"
+        :container-stats="containerStats"
+        :integration-actions="integrationActions"
+        :containers-list="stack?.containers_list"
+        @refresh="loadServices"
+        @copy-container-id="copy($event, 'Container ID')"
+        @show-logs="openContainerLogs"
+        @container-action="openContainerActionModal($event.containerId, $event.containerName, $event.action)"
+      />
+
       <!-- Webhook Integration -->
-      <UCard>
-        <template #header>
-          <div class="flex items-center gap-2">
-            <UIcon name="i-lucide-webhook" class="w-5 h-5" />
-            <h3 class="font-semibold">Webhook Integration</h3>
-          </div>
-        </template>
+      <AccordionCard v-model:open="showWebhookIntegration" title="Webhook Integration" icon="i-lucide-webhook">
         <div class="space-y-3">
           <div>
             <label class="text-xs text-gray-500 uppercase tracking-wide font-semibold">Webhook URL</label>
@@ -577,161 +542,15 @@ onMounted(() => {
             </div>
           </details>
         </div>
-      </UCard>
-
-      <!-- Services / Containers (Tree) -->
-      <UCard>
-        <template #header>
-          <div class="flex justify-between items-center">
-            <h3 class="font-semibold">Services</h3>
-            <UTooltip text="Refresh services">
-              <UButton icon="i-lucide-refresh-cw" variant="ghost" size="xs" @click="loadServices" />
-            </UTooltip>
-          </div>
-        </template>
-        <div v-if="serviceTree.length" class="space-y-4">
-          <div v-for="svc in serviceTree" :key="svc.name">
-            <div class="flex items-center gap-2 py-1">
-              <UIcon name="i-lucide-box" class="text-gray-400 w-4 h-4" />
-              <span class="font-semibold text-sm">{{ svc.name }}</span>
-            </div>
-            <div class="ml-6 border-l border-gray-200 dark:border-gray-700 pl-3 space-y-2">
-              <div
-                v-for="c in svc.containers"
-                :key="c.container_id"
-                class="py-2 px-2 rounded-md transition-colors hover:bg-gray-100 dark:hover:bg-gray-800 group"
-              >
-                <div class="flex items-center justify-between">
-                  <div class="flex items-center gap-2 min-w-0">
-                    <BadgeStatus :status="c.status" />
-                    <span class="text-sm font-medium truncate">{{ c.container_name || c.container_id }}</span>
-                    <button 
-                      v-if="c.container_name"
-                      class="text-xs text-gray-400 font-mono hover:bg-gray-100 dark:hover:bg-gray-800 px-1 py-0.5 rounded transition-colors cursor-pointer shrink-0"
-                      :title="`Copy ${c.container_id}`"
-                      @click="copy(c.container_id, 'Container ID')"
-                    >
-                      {{ c.container_id.slice(0, 12) }}
-                    </button>
-                  </div>
-                  <div class="flex items-center gap-1 shrink-0">
-                    <UButton
-                      v-if="c.status === 'running'"
-                      icon="i-lucide-square"
-                      variant="ghost"
-                      color="warning"
-                      size="xs"
-                      title="Stop"
-                      @click="openContainerActionModal(c.container_id, c.container_name, 'stop')"
-                    />
-                    <UButton
-                      icon="i-lucide-rotate-cw"
-                      variant="ghost"
-                      color="info"
-                      size="xs"
-                      title="Restart"
-                      @click="openContainerActionModal(c.container_id, c.container_name, 'restart')"
-                    />
-                  </div>
-                </div>
-                <div v-if="containerStats[c.container_id]" class="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1 text-xs text-gray-400">
-                  <span class="flex items-center gap-1">
-                    <UIcon name="i-lucide-cpu" class="w-3 h-3" />
-                    {{ containerStats[c.container_id].cpu_percent != null ? containerStats[c.container_id].cpu_percent.toFixed(2) : '-' }}%
-                  </span>
-                  <span class="flex items-center gap-1">
-                    <UIcon name="i-lucide-memory-stick" class="w-3 h-3" />
-                    {{ formatBytes(containerStats[c.container_id].mem_usage) }} / {{ formatBytes(containerStats[c.container_id].mem_limit) }}
-                  </span>
-                  <span class="flex items-center gap-1">
-                    <UIcon name="i-lucide-clock" class="w-3 h-3" />
-                    {{ formatUptime(containerStats[c.container_id].started_at) }}
-                  </span>
-                  <ContainerIntegrationActions
-                    :actions="integrationActions[c.container_id] || []"
-                    :container-id="c.container_id"
-                    :container-name="c.container_name"
-                    @show-logs="openContainerLogs"
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-        <p v-else class="text-sm text-gray-500 py-4 text-center">No services found. Run a sync first.</p>
-      </UCard>
-
-      <!-- Volumes -->
-      <UCard>
-        <template #header>
-          <div class="flex justify-between items-center">
-            <div class="flex items-center gap-2">
-              <UIcon name="i-lucide-hard-drive" class="w-5 h-5" />
-              <h3 class="font-semibold">Volumes</h3>
-            </div>
-            <UTooltip text="Refresh volumes">
-              <UButton icon="i-lucide-refresh-cw" variant="ghost" size="xs" @click="loadResources" />
-            </UTooltip>
-          </div>
-        </template>
-        <div v-if="volumes.length" class="divide-y divide-gray-100 dark:divide-gray-800">
-          <div
-            v-for="vol in volumes"
-            :key="vol.name"
-            class="py-2 px-1 flex flex-col gap-0.5 text-sm"
-          >
-            <div class="flex items-center gap-2">
-              <UIcon name="i-lucide-database" class="w-4 h-4 text-gray-400 shrink-0" />
-              <span class="font-medium">{{ vol.name }}</span>
-              <UBadge :label="vol.driver" variant="subtle" size="xs" />
-              <UBadge :label="vol.scope" variant="outline" size="xs" color="neutral" />
-            </div>
-            <p v-if="vol.mountpoint" class="ml-6 text-xs text-gray-400 font-mono truncate" :title="vol.mountpoint">
-              {{ vol.mountpoint }}
-            </p>
-          </div>
-        </div>
-        <p v-else class="text-sm text-gray-500 py-4 text-center">No volumes found. Run a sync first.</p>
-      </UCard>
-
-      <!-- Networks -->
-      <UCard>
-        <template #header>
-          <div class="flex justify-between items-center">
-            <div class="flex items-center gap-2">
-              <UIcon name="i-lucide-network" class="w-5 h-5" />
-              <h3 class="font-semibold">Networks</h3>
-            </div>
-            <UTooltip text="Refresh networks">
-              <UButton icon="i-lucide-refresh-cw" variant="ghost" size="xs" @click="loadResources" />
-            </UTooltip>
-          </div>
-        </template>
-        <div v-if="networks.length" class="divide-y divide-gray-100 dark:divide-gray-800">
-          <div
-            v-for="net in networks"
-            :key="net.name"
-            class="py-2 px-1 flex flex-col gap-0.5 text-sm"
-          >
-            <div class="flex items-center gap-2">
-              <UIcon name="i-lucide-waypoints" class="w-4 h-4 text-gray-400 shrink-0" />
-              <span class="font-medium">{{ net.name }}</span>
-              <UBadge :label="net.driver" variant="subtle" size="xs" />
-              <UBadge :label="net.scope" variant="outline" size="xs" color="neutral" />
-            </div>
-            <p v-if="net.subnet || net.gateway" class="ml-6 text-xs text-gray-400 font-mono">
-              <span v-if="net.subnet">{{ net.subnet }}</span>
-              <span v-if="net.subnet && net.gateway"> · </span>
-              <span v-if="net.gateway">gw {{ net.gateway }}</span>
-            </p>
-          </div>
-        </div>
-        <p v-else class="text-sm text-gray-500 py-4 text-center">No networks found. Run a sync first.</p>
-      </UCard>
+      </AccordionCard>
 
       <!-- Danger Zone -->
-      <UCard>
-        <template #header><h3 class="font-semibold text-red-500">Danger Zone</h3></template>
+      <AccordionCard
+        v-model:open="showDangerZone"
+        title="Danger Zone"
+        title-class="text-red-500"
+        chevron-class="text-red-500"
+      >
         <div class="space-y-4">
           <!-- Transfer Stack -->
           <div class="flex items-center justify-between">
@@ -764,7 +583,7 @@ onMounted(() => {
             />
           </div>
         </div>
-      </UCard>
+      </AccordionCard>
     </div>
 
     <!-- Variables -->
