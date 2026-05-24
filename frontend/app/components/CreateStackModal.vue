@@ -33,7 +33,7 @@ const form = ref(defaultForm())
 const repoFiles = ref<string[]>([])
 const loadingFiles = ref(false)
 const saving = ref(false)
-const createErrors = ref<{ compose_path?: string; compose_file?: string; selected_file?: string }>({})
+const createErrors = ref<{ worker?: string; compose_path?: string; compose_file?: string; selected_file?: string }>({})
 
 const repoOptions = computed(() =>
   (repos.value || []).map((r: any) => ({ label: `${r.name} (${r.git_url})`, value: r.id }))
@@ -50,8 +50,7 @@ const fileOptions = computed(() =>
 watch(() => props.open, async (val) => {
   if (!val) return
   await Promise.all([refreshRepos(), refreshWorkers()])
-  const embedded = workers.value?.find((a: any) => a.fingerprint === 'embedded')
-  form.value = { ...defaultForm(), worker: embedded ? embedded.id : '' }
+  form.value = defaultForm()
   repoFiles.value = []
   createErrors.value = {}
 })
@@ -87,6 +86,10 @@ async function handleSubmit() {
   const selected = form.value.selected_file
   if (!selected) {
     createErrors.value.selected_file = 'Please select a compose file'
+    return
+  }
+  if (!form.value.worker) {
+    createErrors.value.worker = 'Please select a worker'
     return
   }
 
@@ -137,7 +140,7 @@ async function handleSubmit() {
         <UFormField label="Repository" required>
           <USelect v-model="form.repository" :items="repoOptions" placeholder="Select a repository" />
         </UFormField>
-        <UFormField label="Worker" required>
+        <UFormField label="Worker" :error="createErrors.worker" required>
           <USelect v-model="form.worker" :items="workerOptions" placeholder="Select a worker" />
         </UFormField>
         <div class="grid grid-cols-1 gap-4">

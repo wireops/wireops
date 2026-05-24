@@ -163,53 +163,6 @@ func Execute() error {
 	}()
 
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
-		// Sync embedded worker status and register its tags before starting the job
-		// scheduler so the first cron tick always sees the worker as available.
-		embeddedWorkers, _ := app.FindAllRecords("workers", dbx.HashExp{"fingerprint": "embedded"})
-		if len(embeddedWorkers) > 0 {
-			embeddedWorker := embeddedWorkers[0]
-
-			disableLocal := os.Getenv("WIREOPS_DISABLE_LOCAL_WORKER") == "true" || os.Getenv("WIREOPS_DISABLE_LOCAL_WORKER") == "1"
-			targetStatus := "ACTIVE"
-			if disableLocal {
-				targetStatus = "REVOKED"
-			}
-			if embeddedWorker.GetString("status") != targetStatus {
-				embeddedWorker.Set("status", targetStatus)
-				if saveErr := app.Save(embeddedWorker); saveErr != nil {
-					log.Printf("[WORKER] Failed to update embedded worker status: %v", saveErr)
-				} else {
-					log.Printf("[WORKER] Embedded worker status updated to %s", targetStatus)
-				}
-			}
-
-			// Tags and ID must be registered synchronously so the job scheduler can
-			// resolve them on the very first cron tick.
-			workerServer.SetEmbeddedWorkerID(embeddedWorker.Id)
-			workerServer.SetWorkerTags(embeddedWorker.Id, parseTags(os.Getenv("WIREOPS_WORKER_TAGS")))
-			log.Printf("[WORKER] Embedded worker tags set: %v", parseTags(os.Getenv("WIREOPS_WORKER_TAGS")))
-
-			// Heartbeat loop runs in the background.
-			go func(workerID string) {
-				intervalStr := os.Getenv("WIREOPS_HEARTBEAT_INTERVAL")
-				if intervalStr == "" {
-					intervalStr = "30"
-				}
-				intervalSecs, parseErr := strconv.Atoi(intervalStr)
-				if parseErr != nil || intervalSecs <= 0 {
-					intervalSecs = 30
-				}
-
-				_ = workerSvc.RecordHealthEvent(workerID, "online")
-				scheduler.TriggerPendingReconciles(workerID)
-
-				ticker := time.NewTicker(time.Duration(intervalSecs) * time.Second)
-				for range ticker.C {
-					_ = workerSvc.RecordHealthEvent(workerID, "online")
-				}
-			}(embeddedWorker.Id)
-		}
-
 		// OIDC client secret lives only in OIDC_CLIENT_SECRET; inject into the collection cache
 		// for OAuth handlers, then reload the cache so it is not retained for other routes.
 		se.Router.BindFunc(hooks.SSOUsersOAuthRuntimeMiddleware(app))

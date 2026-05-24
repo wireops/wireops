@@ -103,10 +103,7 @@ services:
 | `PB_DATA_DIR` | No | `./pb_data` | PocketBase data directory (SQLite database, uploads) |
 | `REPOS_WORKSPACE` | No | `./repos` | Directory where Git repositories are cloned |
 | `STACKS_STORAGE_PATH` | No | `{PB_DATA_DIR}/stacks` | Directory for rendered compose revision files |
-| `WIREOPS_DISABLE_LOCAL_WORKER` | No | `false` | Set to `true` to disable the embedded (local) worker |
-| `WIREOPS_WORKER_TAGS` | No | — | Comma-separated tags for the embedded worker (used for job routing) |
 | `WIREOPS_HEARTBEAT_INTERVAL` | No | `30` | Heartbeat interval in seconds. Remote worker read deadline is 3x this value |
-| `DOCKER_HOST` | No | `/var/run/docker.sock` | Docker Engine API host for the embedded worker |
 | `ALLOWED_PRIVATE_IP_RANGES` | No | — | Comma-separated CIDR ranges allowed for SSH host key scanning |
 
 #### SMTP (optional)

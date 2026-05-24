@@ -1,61 +1,46 @@
 # wireops — Deployment Examples
 
-This directory contains ready-to-use Docker deployment setups for each supported architecture.
+This directory contains ready-to-use Docker deployment setups for the supported remote-worker architectures.
 
 ---
 
-## [1. server-embedded](./server-embedded/)
+## [1. worker](./worker/)
 
-**Server with the built-in embedded agent.**
+**Standalone remote worker.**
 
-Everything in a single container. The simplest way to get started.
+Run a wireops worker on a remote host that connects to a central server.
+Requires a running wireops server and a worker token from the admin panel.
 
 ```bash
-cd server-embedded
-cp .env.example .env && nano .env
+cd worker
+cp .env.example .env && nano .env   # set WIREOPS_SERVER and WIREOPS_WORKER_TOKEN
 docker compose up -d
 ```
 
 ---
 
-## [2. agent](./agent/)
+## [2. server-and-worker](./server-and-worker/)
 
-**Standalone remote agent.**
+**Server + dedicated worker on the same host.**
 
-Run a wireops agent on a remote host that connects to a central server.  
-Requires a running wireops server and a bootstrap token from the admin panel.
-
-```bash
-cd agent
-cp .env.example .env && nano .env   # set WIREOPS_SERVER, WIREOPS_MTLS_SERVER, WIREOPS_BOOTSTRAP_TOKEN
-docker compose up -d
-```
-
----
-
-## [3. server-and-agent](./server-and-agent/)
-
-**Server + dedicated agent on the same host.**
-
-The embedded agent is disabled. A separate agent container connects to the server over mTLS and handles all `docker compose` execution. This gives you the cleanest architectural separation.
+A separate worker container connects to the server and handles all `docker compose` execution.
 
 ```bash
-cd server-and-agent
+cd server-and-worker
 cp .env.example .env && nano .env   # set SECRET_KEY
-# First: start the server only, create a bootstrap token in the UI
+# First: start the server only, create a worker token in the UI
 docker compose up -d wireops
-# Then: set WIREOPS_BOOTSTRAP_TOKEN in .env and start the agent
-docker compose up -d wireops-agent
+# Then: set WIREOPS_WORKER_TOKEN in .env and start the worker
+docker compose up -d wireops-worker
 ```
 
 ---
 
 ## Choosing a deployment
 
-| | server-embedded | agent | server-and-agent |
-|---|---|---|---|
-| Single host | ✅ | ❌ | ✅ |
-| Multiple hosts | ❌ | ✅ | ✅ |
-| Clean separation | ❌ | ✅ | ✅ |
-| Simplest setup | ✅ | — | — |
-| Remote agents supported later | ✅ | — | ✅ |
+| | worker | server-and-worker |
+|---|---|---|
+| Single host | ❌ | ✅ |
+| Multiple hosts | ✅ | ✅ |
+| Clean separation | ✅ | ✅ |
+| Simplest setup | — | ✅ |

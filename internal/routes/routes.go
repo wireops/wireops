@@ -18,7 +18,6 @@ import (
 	stdsync "sync"
 
 	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
@@ -41,29 +40,37 @@ import (
 )
 
 func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *sync.Scheduler, dockerClient *docker.Client, workerSvc sync.WorkerDispatcher) {
+	resolveWorker := func(workerID string) (*core.Record, error) {
+		if workerID == "" {
+			return nil, fmt.Errorf("stack has no worker assigned")
+		}
+		worker, err := app.FindRecordById("workers", workerID)
+		if err != nil {
+			return nil, fmt.Errorf("worker %s not found", workerID)
+		}
+		return worker, nil
+	}
 
 	// workerOnline checks if the worker assigned to the given stack is currently connected.
-	// It returns true if online. If offline, writes a 503 JSON error and returns false.
-	// Embedded workers and nil dispatchers are always considered online.
+	// It returns true if online. If offline or missing, writes a JSON error and returns false.
 	workerOnline := func(e *core.RequestEvent, stackID string) bool {
 		if workerSvc == nil {
-			return true
+			e.JSON(http.StatusServiceUnavailable, map[string]string{"error": "worker service is unavailable"})
+			return false
 		}
 		stack, findErr := app.FindRecordById("stacks", stackID)
 		if findErr != nil {
 			return true // stack not found is handled by the individual handler
 		}
 		assignedWorkerID := stack.GetString("worker")
-		if assignedWorkerID == "" || workerSvc.IsEmbedded(assignedWorkerID) {
-			return true
+		worker, err := resolveWorker(assignedWorkerID)
+		if err != nil {
+			e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return false
 		}
 		if !workerSvc.IsConnected(assignedWorkerID) {
-			workerHost := assignedWorkerID
-			if a, err := app.FindRecordById("workers", assignedWorkerID); err == nil {
-				workerHost = a.GetString("hostname")
-			}
 			e.JSON(http.StatusServiceUnavailable, map[string]string{
-				"error": fmt.Sprintf("worker '%s' is offline — connect the worker before performing this action", workerHost),
+				"error": fmt.Sprintf("worker '%s' is offline — connect the worker before performing this action", worker.GetString("hostname")),
 			})
 			return false
 		}
@@ -175,27 +182,27 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 	// Get stack services (live container statuses from Docker)
 	r.GET("/api/custom/stacks/{id}/services", func(e *core.RequestEvent) error {
 		stackID := e.Request.PathValue("id")
-
-		isOffline := false
-		if workerSvc != nil {
-			if stack, err := app.FindRecordById("stacks", stackID); err == nil {
-				assignedWorkerID := stack.GetString("worker")
-				if assignedWorkerID != "" && !workerSvc.IsEmbedded(assignedWorkerID) && !workerSvc.IsConnected(assignedWorkerID) {
-					isOffline = true
-				}
-			}
+		stack, err := app.FindRecordById("stacks", stackID)
+		if err != nil {
+			return e.JSON(http.StatusNotFound, map[string]string{"error": "stack not found"})
+		}
+		workerID := stack.GetString("worker")
+		worker, err := resolveWorker(workerID)
+		if err != nil {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+		}
+		if workerSvc == nil || !workerSvc.IsConnected(workerID) {
+			return e.JSON(http.StatusServiceUnavailable, map[string]string{"error": fmt.Sprintf("worker '%s' is offline", worker.GetString("hostname"))})
 		}
 
-		// Try live Docker query first
-		if dockerClient != nil && !isOffline {
-			stack, err := app.FindRecordById("stacks", stackID)
-			if err != nil {
-				return e.JSON(http.StatusNotFound, map[string]string{"error": "stack not found"})
-			}
-			workDir := stackWorkDir(app, stack)
-			projectName := compose.ProjectName(workDir)
-			statuses, err := compose.GetStackStatus(context.Background(), dockerClient.Raw(), projectName)
-			if err == nil {
+		projectName := compose.ProjectName(stackWorkDir(app, stack))
+		res, dispatchErr := workerSvc.Dispatch(e.Request.Context(), workerID, protocol.GetStatusCommand{
+			CommandID:   fmt.Sprintf("status-%s", stackID),
+			ProjectName: projectName,
+		})
+		if dispatchErr == nil && res.Error == "" {
+			var statuses []compose.ServiceStatus
+			if err := json.Unmarshal([]byte(res.Output), &statuses); err == nil {
 				result := make([]map[string]interface{}, 0, len(statuses))
 				for _, s := range statuses {
 					result = append(result, map[string]interface{}{
@@ -207,7 +214,6 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 				}
 				return e.JSON(http.StatusOK, result)
 			}
-			log.Printf("[routes] live docker query failed, falling back to DB: %v", err)
 		}
 
 		// Fallback to DB records
@@ -219,13 +225,9 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		}
 		result := make([]map[string]interface{}, 0, len(services))
 		for _, s := range services {
-			status := s.GetString("status")
-			if isOffline {
-				status = "unknown"
-			}
 			result = append(result, map[string]interface{}{
 				"service_name":   s.GetString("service_name"),
-				"status":         status,
+				"status":         s.GetString("status"),
 				"container_id":   s.GetString("container_id"),
 				"container_name": s.GetString("container_name"),
 			})
@@ -242,63 +244,44 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			return e.JSON(http.StatusNotFound, map[string]string{"error": "stack not found"})
 		}
 
-		workerID := stack.GetString("worker")
-		isRemote := workerSvc != nil && workerID != "" && !workerSvc.IsEmbedded(workerID)
-		isOffline := isRemote && !workerSvc.IsConnected(workerID)
-
 		empty := protocol.GetResourcesResult{
 			Volumes:  []protocol.VolumeInfo{},
 			Networks: []protocol.NetworkInfo{},
 		}
 
-		if isOffline {
-			return e.JSON(http.StatusOK, empty)
+		workerID := stack.GetString("worker")
+		worker, err := resolveWorker(workerID)
+		if err != nil {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+		}
+		if workerSvc == nil || !workerSvc.IsConnected(workerID) {
+			return e.JSON(http.StatusServiceUnavailable, map[string]string{
+				"error": fmt.Sprintf("worker '%s' is offline", worker.GetString("hostname")),
+			})
 		}
 
 		// Derive project name from the stack's working directory.
 		projectName := compose.ProjectName(stackWorkDir(app, stack))
-
-		if isRemote {
-			// Remote agent: dispatch command and decode result
-			cmdID := fmt.Sprintf("resources-%s", stackID)
-			result, dispatchErr := workerSvc.Dispatch(e.Request.Context(), workerID, protocol.GetResourcesCommand{
-				CommandID:   cmdID,
-				StackID:     stackID,
-				ProjectName: projectName,
-			})
-			if dispatchErr != nil {
-				log.Printf("[routes] get_resources dispatch error stack=%s: %v", stackID, dispatchErr)
-				return e.JSON(http.StatusOK, empty)
-			}
-			if result.Error != "" {
-				log.Printf("[routes] get_resources agent error stack=%s: %s", stackID, result.Error)
-				return e.JSON(http.StatusOK, empty)
-			}
-			var resources protocol.GetResourcesResult
-			if err := json.Unmarshal([]byte(result.Output), &resources); err != nil {
-				log.Printf("[routes] get_resources decode error stack=%s: %v", stackID, err)
-				return e.JSON(http.StatusOK, empty)
-			}
-			return e.JSON(http.StatusOK, resources)
-		}
-
-		// Embedded mode: query Docker directly
-		if dockerClient == nil {
+		cmdID := fmt.Sprintf("resources-%s", stackID)
+		result, dispatchErr := workerSvc.Dispatch(e.Request.Context(), workerID, protocol.GetResourcesCommand{
+			CommandID:   cmdID,
+			StackID:     stackID,
+			ProjectName: projectName,
+		})
+		if dispatchErr != nil {
+			log.Printf("[routes] get_resources dispatch error stack=%s: %v", stackID, dispatchErr)
 			return e.JSON(http.StatusOK, empty)
 		}
-
-		volumes, err := compose.GetStackVolumes(e.Request.Context(), dockerClient.Raw(), projectName)
-		if err != nil {
-			log.Printf("[routes] get_resources volumes error stack=%s: %v", stackID, err)
-			volumes = []protocol.VolumeInfo{}
+		if result.Error != "" {
+			log.Printf("[routes] get_resources worker error stack=%s: %s", stackID, result.Error)
+			return e.JSON(http.StatusOK, empty)
 		}
-		networks, err := compose.GetStackNetworks(e.Request.Context(), dockerClient.Raw(), projectName)
-		if err != nil {
-			log.Printf("[routes] get_resources networks error stack=%s: %v", stackID, err)
-			networks = []protocol.NetworkInfo{}
+		var resources protocol.GetResourcesResult
+		if err := json.Unmarshal([]byte(result.Output), &resources); err != nil {
+			log.Printf("[routes] get_resources decode error stack=%s: %v", stackID, err)
+			return e.JSON(http.StatusOK, empty)
 		}
-
-		return e.JSON(http.StatusOK, protocol.GetResourcesResult{Volumes: volumes, Networks: networks})
+		return e.JSON(http.StatusOK, resources)
 	})
 
 	// Get container stats (CPU, memory, network)
@@ -794,12 +777,28 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			log.Printf("[routes] rendered compose v%d missing for stack %s: %v. Falling back to repo file.", currentVersion, stackID, err)
 		}
 
-		// For local stacks, fall back to reading from import_path directly.
 		if stack.GetString("source_type") == "local" {
-			importPath := stack.GetString("import_path")
-			data, err := os.ReadFile(importPath)
+			workerID := stack.GetString("worker")
+			worker, err := resolveWorker(workerID)
 			if err != nil {
+				return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+			}
+			if workerSvc == nil || !workerSvc.IsConnected(workerID) {
+				return e.JSON(http.StatusServiceUnavailable, map[string]string{
+					"error": fmt.Sprintf("worker '%s' is offline", worker.GetString("hostname")),
+				})
+			}
+			importPath := stack.GetString("import_path")
+			result, dispatchErr := workerSvc.Dispatch(e.Request.Context(), workerID, protocol.ReadFileCommand{
+				CommandID: fmt.Sprintf("compose-%s", stackID),
+				Path:      importPath,
+			})
+			if dispatchErr != nil || result.Error != "" {
 				return e.JSON(http.StatusNotFound, map[string]string{"error": "compose file not found"})
+			}
+			data, decodeErr := base64.StdEncoding.DecodeString(result.Output)
+			if decodeErr != nil {
+				return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to decode compose file"})
 			}
 			return e.JSON(http.StatusOK, map[string]string{
 				"content":  string(data),
@@ -837,9 +836,6 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 
 	// Stop a container
 	r.POST("/api/custom/stacks/{id}/container/stop", func(e *core.RequestEvent) error {
-		if dockerClient == nil {
-			return e.JSON(http.StatusServiceUnavailable, map[string]string{"error": "docker not available"})
-		}
 		stackID := e.Request.PathValue("id")
 		var body struct {
 			ContainerID string `json:"container_id"`
@@ -847,29 +843,39 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		if err := json.NewDecoder(e.Request.Body).Decode(&body); err != nil || body.ContainerID == "" {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "container_id required"})
 		}
+		if !workerOnline(e, stackID) {
+			return nil
+		}
 
 		stack, err := app.FindRecordById("stacks", stackID)
 		if err != nil {
 			return e.JSON(http.StatusNotFound, map[string]string{"error": "stack not found"})
 		}
 		projectName := compose.ProjectName(stackWorkDir(app, stack))
-		belongs, err := compose.ContainerBelongsToProject(e.Request.Context(), dockerClient.Raw(), body.ContainerID, projectName)
-		if err != nil || !belongs {
-			return e.JSON(http.StatusForbidden, map[string]string{"error": "container does not belong to stack"})
+		workerID := stack.GetString("worker")
+
+		res, dispatchErr := workerSvc.Dispatch(e.Request.Context(), workerID, protocol.ContainerActionCommand{
+			CommandID:   fmt.Sprintf("stop-container-%s", body.ContainerID),
+			StackID:     stackID,
+			ProjectName: projectName,
+			ContainerID: body.ContainerID,
+		})
+		if dispatchErr != nil {
+			return e.JSON(http.StatusServiceUnavailable, map[string]string{"error": dispatchErr.Error()})
+		}
+		if res.Error != "" {
+			status := http.StatusInternalServerError
+			if strings.Contains(strings.ToLower(res.Error), "does not belong to stack") {
+				status = http.StatusForbidden
+			}
+			return e.JSON(status, map[string]string{"error": res.Error})
 		}
 
-		timeout := 10
-		if err := dockerClient.Raw().ContainerStop(e.Request.Context(), body.ContainerID, container.StopOptions{Timeout: &timeout}); err != nil {
-			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		}
 		return e.JSON(http.StatusOK, map[string]string{"status": "stopped"})
 	})
 
 	// Restart a container
 	r.POST("/api/custom/stacks/{id}/container/restart", func(e *core.RequestEvent) error {
-		if dockerClient == nil {
-			return e.JSON(http.StatusServiceUnavailable, map[string]string{"error": "docker not available"})
-		}
 		stackID := e.Request.PathValue("id")
 		var body struct {
 			ContainerID string `json:"container_id"`
@@ -877,21 +883,34 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		if err := json.NewDecoder(e.Request.Body).Decode(&body); err != nil || body.ContainerID == "" {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "container_id required"})
 		}
+		if !workerOnline(e, stackID) {
+			return nil
+		}
 
 		stack, err := app.FindRecordById("stacks", stackID)
 		if err != nil {
 			return e.JSON(http.StatusNotFound, map[string]string{"error": "stack not found"})
 		}
 		projectName := compose.ProjectName(stackWorkDir(app, stack))
-		belongs, err := compose.ContainerBelongsToProject(e.Request.Context(), dockerClient.Raw(), body.ContainerID, projectName)
-		if err != nil || !belongs {
-			return e.JSON(http.StatusForbidden, map[string]string{"error": "container does not belong to stack"})
+		workerID := stack.GetString("worker")
+
+		res, dispatchErr := workerSvc.Dispatch(e.Request.Context(), workerID, protocol.ContainerActionCommand{
+			CommandID:   fmt.Sprintf("restart-container-%s", body.ContainerID),
+			StackID:     stackID,
+			ProjectName: projectName,
+			ContainerID: body.ContainerID,
+		})
+		if dispatchErr != nil {
+			return e.JSON(http.StatusServiceUnavailable, map[string]string{"error": dispatchErr.Error()})
+		}
+		if res.Error != "" {
+			status := http.StatusInternalServerError
+			if strings.Contains(strings.ToLower(res.Error), "does not belong to stack") {
+				status = http.StatusForbidden
+			}
+			return e.JSON(status, map[string]string{"error": res.Error})
 		}
 
-		timeout := 10
-		if err := dockerClient.Raw().ContainerRestart(e.Request.Context(), body.ContainerID, container.StopOptions{Timeout: &timeout}); err != nil {
-			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		}
 		return e.JSON(http.StatusOK, map[string]string{"status": "restarted"})
 	})
 
@@ -915,7 +934,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			if workerSvc != nil {
 				if stack, err := app.FindRecordById("stacks", stackID); err == nil {
 					assignedWorkerID := stack.GetString("worker")
-					if assignedWorkerID != "" && !workerSvc.IsEmbedded(assignedWorkerID) && !workerSvc.IsConnected(assignedWorkerID) {
+					if assignedWorkerID == "" || !workerSvc.IsConnected(assignedWorkerID) {
 						agentIsOnline = false
 					}
 				}
@@ -928,6 +947,9 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		}
 
 		workerID := stack.GetString("worker")
+		if workerID == "" && !force {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "stack has no worker assigned"})
+		}
 
 		// Read the current rendered compose file to send to the worker
 		var composeContent []byte
@@ -944,65 +966,46 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			// Generate a unique command ID for this teardown
 			cmdID := fmt.Sprintf("teardown-%s", stackID)
 
-			if workerSvc == nil || workerSvc.IsEmbedded(workerID) {
-				// Embedded worker: run compose down directly using the rendered file
-				tmpDir, err := os.MkdirTemp("", "wireops-teardown-*")
-				if err == nil {
-					defer os.RemoveAll(tmpDir)
-					composeFilePath := filepath.Join(tmpDir, "docker-compose.yml")
-					if writeErr := os.WriteFile(composeFilePath, composeContent, 0600); writeErr == nil {
-						out, downErr := compose.RunDown(e.Request.Context(), compose.RunOptions{
-							WorkDir:     tmpDir,
-							ComposeFile: "docker-compose.yml",
-						})
-						teardownOutput = out
-						if downErr != nil {
-							log.Printf("[routes] compose down for stack %s: %v (output: %s)", stackID, downErr, out)
-						}
+			// Remote worker: dispatch TeardownCommand and wait for result
+			var teardownEnvFileB64 string
+			if envRecords, envLoadErr := app.FindAllRecords("stack_env_vars", dbx.HashExp{"stack": stackID}); envLoadErr == nil {
+				secretKey := []byte(os.Getenv("SECRET_KEY"))
+				var envVars []string
+				for _, rec := range envRecords {
+					key := rec.GetString("key")
+					if key == "" {
+						continue
 					}
-				}
-			} else {
-				// Remote worker: dispatch TeardownCommand and wait for result
-				var teardownEnvFileB64 string
-				if envRecords, envLoadErr := app.FindAllRecords("stack_env_vars", dbx.HashExp{"stack": stackID}); envLoadErr == nil {
-					secretKey := []byte(os.Getenv("SECRET_KEY"))
-					var envVars []string
-					for _, rec := range envRecords {
-						key := rec.GetString("key")
-						if key == "" {
+					val := rec.GetString("value")
+					if rec.GetBool("secret") {
+						dec, decErr := crypto.Decrypt(val, secretKey)
+						if decErr != nil {
+							log.Printf("[routes] teardown: skipping secret env var %q for stack %s: %v", key, stackID, decErr)
 							continue
 						}
-						val := rec.GetString("value")
-						if rec.GetBool("secret") {
-							dec, decErr := crypto.Decrypt(val, secretKey)
-							if decErr != nil {
-								log.Printf("[routes] teardown: skipping secret env var %q for stack %s: %v", key, stackID, decErr)
-								continue
-							}
-							val = string(dec)
-						}
-						envVars = append(envVars, key+"="+val)
+						val = string(dec)
 					}
-					teardownEnvFileB64, _ = sync.BuildEnvFileB64(envVars)
+					envVars = append(envVars, key+"="+val)
 				}
-				result, dispatchErr := workerSvc.Dispatch(e.Request.Context(), workerID, protocol.TeardownCommand{
-					CommandID:      cmdID,
-					StackID:        stackID,
-					ComposeFileB64: base64.StdEncoding.EncodeToString(composeContent),
-					EnvFileB64:     teardownEnvFileB64,
+				teardownEnvFileB64, _ = sync.BuildEnvFileB64(envVars)
+			}
+			result, dispatchErr := workerSvc.Dispatch(e.Request.Context(), workerID, protocol.TeardownCommand{
+				CommandID:      cmdID,
+				StackID:        stackID,
+				ComposeFileB64: base64.StdEncoding.EncodeToString(composeContent),
+				EnvFileB64:     teardownEnvFileB64,
+			})
+			teardownOutput = result.Output
+			if dispatchErr != nil {
+				return e.JSON(http.StatusInternalServerError, map[string]string{
+					"error": fmt.Sprintf("teardown dispatch failed: %v", dispatchErr),
 				})
-				teardownOutput = result.Output
-				if dispatchErr != nil {
-					return e.JSON(http.StatusInternalServerError, map[string]string{
-						"error": fmt.Sprintf("teardown dispatch failed: %v", dispatchErr),
-					})
-				}
-				if result.Error != "" {
-					return e.JSON(http.StatusInternalServerError, map[string]string{
-						"error":          fmt.Sprintf("agent teardown failed: %s", result.Error),
-						"compose_output": result.Output,
-					})
-				}
+			}
+			if result.Error != "" {
+				return e.JSON(http.StatusInternalServerError, map[string]string{
+					"error":          fmt.Sprintf("worker teardown failed: %s", result.Error),
+					"compose_output": result.Output,
+				})
 			}
 		}
 
@@ -1321,88 +1324,30 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 	// Discover unmanaged Docker Compose projects on a given worker host
 	r.GET("/api/custom/stacks/import/discover", func(e *core.RequestEvent) error {
 		workerID := e.Request.URL.Query().Get("worker")
-
-		isRemote := workerSvc != nil && workerID != "" && !workerSvc.IsEmbedded(workerID)
-		if isRemote && !workerSvc.IsConnected(workerID) {
-			workerHost := workerID
-			if a, err := app.FindRecordById("workers", workerID); err == nil {
-				workerHost = a.GetString("hostname")
-			}
+		worker, err := resolveWorker(workerID)
+		if err != nil {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+		}
+		if workerSvc == nil || !workerSvc.IsConnected(workerID) {
 			return e.JSON(http.StatusServiceUnavailable, map[string]string{
-				"error": fmt.Sprintf("worker '%s' is offline", workerHost),
+				"error": fmt.Sprintf("worker '%s' is offline", worker.GetString("hostname")),
 			})
 		}
-
-		if isRemote {
-			cmdID := fmt.Sprintf("discover-%s", workerID)
-			result, err := workerSvc.Dispatch(e.Request.Context(), workerID, protocol.DiscoverProjectsCommand{
-				CommandID: cmdID,
-			})
-			if err != nil {
-				return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
-			}
-			if result.Error != "" {
-				return e.JSON(http.StatusInternalServerError, map[string]string{"error": result.Error})
-			}
-			var res protocol.DiscoverProjectsResult
-			if err := json.Unmarshal([]byte(result.Output), &res); err != nil {
-				return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to decode worker response"})
-			}
-			return e.JSON(http.StatusOK, res.Projects)
-		}
-
-		// Embedded mode: query Docker directly
-		if dockerClient == nil {
-			return e.JSON(http.StatusServiceUnavailable, map[string]string{"error": "docker not available"})
-		}
-		f := filters.NewArgs()
-		f.Add("label", "com.docker.compose.project")
-		containers, err := dockerClient.Raw().ContainerList(e.Request.Context(), container.ListOptions{
-			All:     true,
-			Filters: f,
+		cmdID := fmt.Sprintf("discover-%s", workerID)
+		result, err := workerSvc.Dispatch(e.Request.Context(), workerID, protocol.DiscoverProjectsCommand{
+			CommandID: cmdID,
 		})
 		if err != nil {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
-
-		projects := make(map[string]*protocol.DiscoveredProject)
-		for _, cnt := range containers {
-			if cnt.Labels["dev.wireops.managed"] == "true" {
-				continue
-			}
-			projectName := cnt.Labels["com.docker.compose.project"]
-			if projectName == "" {
-				continue
-			}
-			if _, exists := projects[projectName]; !exists {
-				projects[projectName] = &protocol.DiscoveredProject{
-					ProjectName: projectName,
-					ComposePath: cnt.Labels["com.docker.compose.project.working_dir"],
-					Services:    []string{},
-				}
-			}
-			svcName := cnt.Labels["com.docker.compose.service"]
-			if svcName == "" {
-				continue
-			}
-			proj := projects[projectName]
-			found := false
-			for _, s := range proj.Services {
-				if s == svcName {
-					found = true
-					break
-				}
-			}
-			if !found {
-				proj.Services = append(proj.Services, svcName)
-			}
+		if result.Error != "" {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": result.Error})
 		}
-
-		result := make([]protocol.DiscoveredProject, 0, len(projects))
-		for _, p := range projects {
-			result = append(result, *p)
+		var res protocol.DiscoverProjectsResult
+		if err := json.Unmarshal([]byte(result.Output), &res); err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to decode worker response"})
 		}
-		return e.JSON(http.StatusOK, result)
+		return e.JSON(http.StatusOK, res.Projects)
 	})
 
 	// Import a local Docker Compose stack into wireops
@@ -1435,30 +1380,21 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "worker not found"})
 		}
 
-		isEmbedded := workerRecord.GetString("fingerprint") == "embedded" || workerSvc == nil || workerSvc.IsEmbedded(body.WorkerID)
-		isRemote := !isEmbedded
-
-		if isRemote && !workerSvc.IsConnected(body.WorkerID) {
+		if workerSvc == nil || !workerSvc.IsConnected(body.WorkerID) {
 			return e.JSON(http.StatusServiceUnavailable, map[string]string{
 				"error": fmt.Sprintf("worker '%s' is offline", workerRecord.GetString("hostname")),
 			})
 		}
 
 		// Validate the file exists by reading it
-		if isEmbedded {
-			if _, err := os.Stat(body.ImportPath); err != nil {
-				return e.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("compose file not found: %v", err)})
-			}
-		} else {
-			validateID := fmt.Sprintf("validate-import-%s", body.WorkerID)
-			result, dispatchErr := workerSvc.Dispatch(e.Request.Context(), body.WorkerID, protocol.ReadFileCommand{
-				CommandID: validateID,
-				Path:      body.ImportPath,
-			})
-			if dispatchErr != nil || result.Error != "" {
-				errMsg := fmt.Sprintf("cannot access compose file on worker: %v %s", dispatchErr, result.Error)
-				return e.JSON(http.StatusBadRequest, map[string]string{"error": errMsg})
-			}
+		validateID := fmt.Sprintf("validate-import-%s", body.WorkerID)
+		result, dispatchErr := workerSvc.Dispatch(e.Request.Context(), body.WorkerID, protocol.ReadFileCommand{
+			CommandID: validateID,
+			Path:      body.ImportPath,
+		})
+		if dispatchErr != nil || result.Error != "" {
+			errMsg := fmt.Sprintf("cannot access compose file on worker: %v %s", dispatchErr, result.Error)
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": errMsg})
 		}
 
 		// Create the stack record
@@ -1630,39 +1566,25 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		projectName := compose.ProjectName(stackWorkDir(app, stack))
 		var statuses []compose.ServiceStatus
 
-		isOffline := false
-		if workerSvc != nil {
-			assignedWorkerID := stack.GetString("worker")
-			if assignedWorkerID != "" && !workerSvc.IsEmbedded(assignedWorkerID) && !workerSvc.IsConnected(assignedWorkerID) {
-				isOffline = true
-			}
-		}
-
 		assignedWorkerID := stack.GetString("worker")
-		if assignedWorkerID != "" && workerSvc != nil && !workerSvc.IsEmbedded(assignedWorkerID) {
-			if !workerSvc.IsConnected(assignedWorkerID) {
-				return e.JSON(http.StatusServiceUnavailable, map[string]string{"error": "agent is offline or not connected"})
-			}
-			res, err := workerSvc.Dispatch(e.Request.Context(), assignedWorkerID, protocol.GetStatusCommand{
-				CommandID:   fmt.Sprintf("status-actions-%s", stackID),
-				ProjectName: projectName,
-			})
-			if err != nil || res.Error != "" {
-				log.Printf("[routes] remote status dispatch failed for agent %s stack %s: %v (res.Error=%s)", assignedWorkerID, stackID, err, res.Error)
-				return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to get remote stack status"})
-			}
-			if err := json.Unmarshal([]byte(res.Output), &statuses); err != nil {
-				log.Printf("[routes] failed to unmarshal remote status for agent %s stack %s: %v", assignedWorkerID, stackID, err)
-				return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to unmarshal agent response"})
-			}
-		} else if dockerClient != nil && !isOffline {
-			statuses, err = compose.GetStackStatus(e.Request.Context(), dockerClient.Raw(), projectName)
-			if err != nil {
-				log.Printf("[routes] failed to get local stack status for project %s: %v", projectName, err)
-				return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to get stack status"})
-			}
-		} else {
-			return e.JSON(http.StatusServiceUnavailable, map[string]string{"error": "no docker client or agent service available"})
+		worker, err := resolveWorker(assignedWorkerID)
+		if err != nil {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+		}
+		if workerSvc == nil || !workerSvc.IsConnected(assignedWorkerID) {
+			return e.JSON(http.StatusServiceUnavailable, map[string]string{"error": fmt.Sprintf("worker '%s' is offline", worker.GetString("hostname"))})
+		}
+		res, err := workerSvc.Dispatch(e.Request.Context(), assignedWorkerID, protocol.GetStatusCommand{
+			CommandID:   fmt.Sprintf("status-actions-%s", stackID),
+			ProjectName: projectName,
+		})
+		if err != nil || res.Error != "" {
+			log.Printf("[routes] remote status dispatch failed for worker %s stack %s: %v (res.Error=%s)", assignedWorkerID, stackID, err, res.Error)
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to get remote stack status"})
+		}
+		if err := json.Unmarshal([]byte(res.Output), &statuses); err != nil {
+			log.Printf("[routes] failed to unmarshal remote status for worker %s stack %s: %v", assignedWorkerID, stackID, err)
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to unmarshal worker response"})
 		}
 
 		if len(statuses) == 0 {

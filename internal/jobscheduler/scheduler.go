@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	gosync "sync"
 	"time"
@@ -29,7 +28,6 @@ import (
 // WorkerDispatcher is the subset of worker.MTLSServer used by the scheduler.
 type WorkerDispatcher interface {
 	GetWorkersByTags(tags []string) []string
-	IsEmbedded(workerID string) bool
 	IsConnected(workerID string) bool
 	Dispatch(ctx context.Context, workerID string, cmd interface{}) (protocol.CommandResult, error)
 }
@@ -175,8 +173,7 @@ func (s *Scheduler) TriggerManual(jobID string) {
 	go s.executeJob(jobID, "manual")
 }
 
-// CancelRun stops a running job container. For the embedded worker it runs docker stop
-// on the server; for remote workers it dispatches KillJobCommand.
+// CancelRun stops a running job container on the assigned remote worker.
 func (s *Scheduler) CancelRun(runID string) error {
 	rec, err := s.app.FindRecordById("job_runs", runID)
 	if err != nil {
@@ -188,19 +185,6 @@ func (s *Scheduler) CancelRun(runID string) error {
 	workerID := rec.GetString("worker")
 	if workerID == "" {
 		return fmt.Errorf("job run has no worker")
-	}
-
-	containerName := "wireops-job-" + runID
-
-	if s.dispatcher.IsEmbedded(workerID) {
-		stopCtx, stopCancel := context.WithTimeout(s.rootCtx, 30*time.Second)
-		defer stopCancel()
-		out, runErr := exec.CommandContext(stopCtx, "docker", "stop", containerName).CombinedOutput()
-		if runErr != nil {
-			return fmt.Errorf("docker stop failed: %w\n%s", runErr, string(out))
-		}
-		log.Printf("[jobscheduler] cancelled embedded run %s", runID)
-		return nil
 	}
 
 	cmd := protocol.KillJobCommand{
@@ -294,9 +278,8 @@ func (s *Scheduler) executeJob(jobID, trigger string) {
 }
 
 // dispatchToWorker creates a job_run record and sends RunJobCommand to the worker.
-// For remote workers it only waits for the start ack (≤30s), not job completion.
+// It only waits for the start ack (≤30s), not job completion.
 // Completion is delivered via HandleJobCompleted when the worker pushes MsgJobCompleted.
-// For the embedded worker the container runs in a goroutine inside this call.
 func (s *Scheduler) dispatchToWorker(ctx context.Context, jobID, trigger, workerID string, p jobRunParams) {
 	runID, err := s.createJobRun(jobID, workerID, trigger, "pending")
 	if err != nil {
@@ -322,12 +305,6 @@ func (s *Scheduler) dispatchToWorker(ctx context.Context, jobID, trigger, worker
 		Network:          p.def.Network,
 	}
 
-	if s.dispatcher.IsEmbedded(workerID) {
-		s.setJobRunStatus(runID, "running")
-		s.runJobEmbedded(ctx, runID, cmd)
-		return
-	}
-
 	// Remote worker: wait only for the start ack (worker immediately returns "started").
 	// Actual completion arrives later via HandleJobCompleted.
 	ackCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -349,33 +326,6 @@ func (s *Scheduler) dispatchToWorker(ctx context.Context, jobID, trigger, worker
 	s.setJobRunStatus(runID, "running")
 	log.Printf("[jobscheduler] job %s run %s started on worker %s", jobID, runID, workerID)
 }
-
-// runJobEmbedded starts the container asynchronously on the server (embedded worker).
-// When the container exits it updates the job_run directly without WebSocket round-trips.
-func (s *Scheduler) runJobEmbedded(ctx context.Context, runID string, cmd protocol.RunJobCommand) {
-	go func() {
-		start := time.Now()
-		args := cmd.BuildDockerRunArgs()
-		out, runErr := exec.CommandContext(ctx, "docker", args...).CombinedOutput()
-		elapsed := time.Since(start).Milliseconds()
-
-		output := string(out)
-		status := "success"
-		if runErr != nil {
-			status = "error"
-			if output != "" {
-				output += "\n"
-			}
-			output += runErr.Error()
-			log.Printf("[jobscheduler] embedded run %s error elapsed=%dms: %v", runID, elapsed, runErr)
-		} else {
-			log.Printf("[jobscheduler] embedded run %s done elapsed=%dms", runID, elapsed)
-		}
-		s.updateJobRun(runID, status, output, elapsed)
-	}()
-}
-
-
 
 // HandleJobCompleted is called by the MTLSServer when a remote worker pushes
 // a MsgJobCompleted message. It updates the job_run record with the final result.

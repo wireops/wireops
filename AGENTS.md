@@ -1,6 +1,6 @@
 # wireops — Agent Context
 
-Self-hosted GitOps platform for managing Docker Compose stacks and scheduled Docker-based jobs. It watches Git repositories for changes and deploys updates via `docker compose up`, either locally (embedded worker) or on remote hosts (remote workers over a token-authenticated WebSocket connection).
+Self-hosted GitOps platform for managing Docker Compose stacks and scheduled Docker-based jobs. It watches Git repositories for changes and deploys updates on remote hosts through token-authenticated WebSocket workers.
 
 ---
 
@@ -107,7 +107,7 @@ Three deployable components:
 ```
 
 - The server **never** runs `docker compose` for remote stacks — it dispatches commands over a persistent WebSocket to workers.
-- The **embedded worker** runs on the same host and accesses Docker directly via `/var/run/docker.sock`.
+- All deploy and job execution happens through connected remote workers.
 - PocketBase handles auth (superusers collection), realtime subscriptions, and the SQLite database.
 - The frontend is statically generated (`nuxt generate`) and served from `pb_public/`.
 
@@ -232,9 +232,6 @@ All custom routes are prefixed `/api/custom/`. PocketBase also auto-exposes CRUD
 | `PORT` | PocketBase HTTP port (default: `8090`) |
 | `PB_DATA_DIR` | SQLite data directory (default: `./pb_data`) |
 | `REPOS_WORKSPACE` | Git clone workspace (default: `./repos`) |
-| `WIREOPS_DISABLE_LOCAL_WORKER` | Disable the embedded worker (default: `false`) |
-| `WIREOPS_WORKER_TAGS` | Comma-separated tags for the embedded worker |
-
 ### Worker
 | Variable | Description |
 |---|---|

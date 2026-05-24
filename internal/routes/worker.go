@@ -72,15 +72,14 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 			}
 
 			result = append(result, map[string]interface{}{
-				"id":            rec.Id,
-				"hostname":      rec.GetString("hostname"),
-				"status":        status,
-				"last_seen":     rec.GetDateTime("last_seen").String(),
-				"health_history": history,
-				"tags":          workerServer.GetWorkerTags(rec.Id),
-				"is_embedded":   rec.GetString("fingerprint") == "embedded",
-				"token_status":  tokenStatus,
-				"token_expires": expiresAt,
+				"id":              rec.Id,
+				"hostname":        rec.GetString("hostname"),
+				"status":          status,
+				"last_seen":       rec.GetDateTime("last_seen").String(),
+				"health_history":  history,
+				"tags":            workerServer.GetWorkerTags(rec.Id),
+				"token_status":    tokenStatus,
+				"token_expires":   expiresAt,
 				"token_last_used": lastUsedAt,
 			})
 		}
@@ -95,16 +94,9 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 
 		workerID := e.Request.PathValue("id")
 
-
-		record, err := app.FindRecordById("workers", workerID)
-		if err != nil {
+		if _, err := app.FindRecordById("workers", workerID); err != nil {
 			return e.JSON(http.StatusNotFound, map[string]string{"error": "Worker not found"})
 		}
-
-		if record.GetString("fingerprint") == "embedded" {
-			return e.JSON(http.StatusBadRequest, map[string]string{"error": "Cannot revoke the embedded worker."})
-		}
-
 		stacks, err := app.FindAllRecords("stacks", dbx.HashExp{"worker": workerID})
 		if err != nil && err.Error() != "sql: no rows in result set" {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to query stacks: " + err.Error()})

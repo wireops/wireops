@@ -62,6 +62,31 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 		return e.Next()
 	})
 
+	validateAssignedWorker := func(rec *core.Record) error {
+		workerID := rec.GetString("worker")
+		if workerID == "" {
+			return fmt.Errorf("worker is required")
+		}
+		if _, err := app.FindRecordById("workers", workerID); err != nil {
+			return fmt.Errorf("worker not found")
+		}
+		return nil
+	}
+
+	app.OnRecordCreate("stacks").BindFunc(func(e *core.RecordEvent) error {
+		if err := validateAssignedWorker(e.Record); err != nil {
+			return err
+		}
+		return e.Next()
+	})
+
+	app.OnRecordUpdate("stacks").BindFunc(func(e *core.RecordEvent) error {
+		if err := validateAssignedWorker(e.Record); err != nil {
+			return err
+		}
+		return e.Next()
+	})
+
 	// Repository hooks
 	app.OnRecordAfterCreateSuccess("repositories").BindFunc(func(e *core.RecordEvent) error {
 		repoID := e.Record.Id

@@ -32,9 +32,7 @@ import (
 // The MTLSServer implements this interface.
 type WorkerDispatcher interface {
 	Dispatch(ctx context.Context, workerID string, cmd interface{}) (protocol.CommandResult, error)
-	IsEmbedded(workerID string) bool
 	// IsConnected reports whether the worker currently has an active WebSocket connection.
-	// Always returns true for the embedded worker.
 	IsConnected(workerID string) bool
 }
 
@@ -69,11 +67,11 @@ func NewReconciler(app core.App, dockerClient *docker.Client, notifier *notify.N
 	}
 }
 
-// resolveWorker returns the worker record for a stack, plus whether it's embedded.
+// resolveWorker returns the assigned worker id and fingerprint for a stack.
 func (r *Reconciler) resolveWorker(stack *core.Record) (workerID, fingerprint string, err error) {
 	workerID = stack.GetString("worker")
 	if workerID == "" {
-		return "", "embedded", nil
+		return "", "", fmt.Errorf("stack has no worker assigned")
 	}
 	worker, err := r.app.FindRecordById("workers", workerID)
 	if err != nil {
@@ -168,7 +166,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		r.markError(stack, "stacks")
 		return fmt.Errorf("%s", errMsg)
 	}
-	isOnline := workerFingerprint == "embedded" || (r.dispatcher != nil && r.dispatcher.IsConnected(workerID))
+	isOnline := r.dispatcher != nil && r.dispatcher.IsConnected(workerID)
 
 	neverSynced := stack.GetString("last_synced_at") == ""
 	repoChanged := gitpkg.HasChanged(remoteSHA, lastSHA)
@@ -195,7 +193,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	// leaving a stale commit_sha label. The renderer-based skip below handles that.
 	containerSHA := ""
 	if !neverSynced {
-		containerSHA = r.inspectStackCommit(ctx, workerID, workerFingerprint, stackID)
+		containerSHA = r.inspectStackCommit(ctx, workerID, stackID)
 	}
 
 	if trigger == "cron" && !neverSynced && !repoChanged && containerSHA == remoteSHA {
@@ -304,46 +302,33 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	maxRetries := 3
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		start := time.Now()
-		if workerFingerprint == "embedded" || (r.dispatcher != nil && r.dispatcher.IsEmbedded(workerID)) {
-			// Embedded: write .env to the rendered compose dir (where docker compose up runs).
-			renderedDir := filepath.Dir(renderedFilePath)
-			if envErr := WriteEnvFile(renderedDir, envVars); envErr != nil {
-				log.Printf("[reconciler] warning: failed to write .env for stack %s: %v", stackID, envErr)
-			}
-			output, runErr = compose.RunUp(ctx, compose.RunOptions{
-				WorkDir:     renderedDir,
-				ComposeFile: renderRes.RenderedPath,
-			})
+		composeContent, readErr := os.ReadFile(renderedFilePath)
+		if readErr != nil {
+			errMsg := fmt.Sprintf("failed to read rendered compose file: %v", readErr)
+			r.logFailure(stackID, trigger, remoteSHA, errMsg)
+			r.markError(stack, "stacks")
+			return fmt.Errorf("%s", errMsg)
+		}
+		envFileB64, b64Err := buildEnvFileB64(envVars)
+		if b64Err != nil {
+			runErr = fmt.Errorf("failed to serialize env vars for remote deploy: %w", b64Err)
 		} else {
-			// Remote worker: send command over WebSocket
-			composeContent, readErr := os.ReadFile(renderedFilePath)
-			if readErr != nil {
-				errMsg := fmt.Sprintf("failed to read rendered compose file: %v", readErr)
-				r.logFailure(stackID, trigger, remoteSHA, errMsg)
-				r.markError(stack, "stacks")
-				return fmt.Errorf("%s", errMsg)
+			result, dispatchErr := r.dispatcher.Dispatch(ctx, workerID, protocol.DeployCommand{
+				CommandID:      syncLog.Id,
+				StackID:        stackID,
+				CommitSHA:      remoteSHA,
+				Trigger:        trigger,
+				QueueTotal:     queueTotal,
+				ComposeFileB64: base64.StdEncoding.EncodeToString(composeContent),
+				EnvFileB64:     envFileB64,
+			})
+			output = result.Output
+			runErr = nil
+			if result.Error != "" {
+				runErr = fmt.Errorf("%s", result.Error)
 			}
-			envFileB64, b64Err := buildEnvFileB64(envVars)
-			if b64Err != nil {
-				runErr = fmt.Errorf("failed to serialize env vars for remote deploy: %w", b64Err)
-			} else {
-				result, dispatchErr := r.dispatcher.Dispatch(ctx, workerID, protocol.DeployCommand{
-					CommandID:      syncLog.Id,
-					StackID:        stackID,
-					CommitSHA:      remoteSHA,
-					Trigger:        trigger,
-					QueueTotal:     queueTotal,
-					ComposeFileB64: base64.StdEncoding.EncodeToString(composeContent),
-					EnvFileB64:     envFileB64,
-				})
-				output = result.Output
-				runErr = nil
-				if result.Error != "" {
-					runErr = fmt.Errorf("%s", result.Error)
-				}
-				if dispatchErr != nil {
-					runErr = dispatchErr
-				}
+			if dispatchErr != nil {
+				runErr = dispatchErr
 			}
 		}
 
@@ -397,10 +382,6 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	stack.Set("last_synced_at", time.Now().UTC().Format(time.RFC3339))
 	stack.Set("status", "active")
 	_ = r.app.Save(stack)
-
-	if workerFingerprint == "embedded" || (r.dispatcher != nil && r.dispatcher.IsEmbedded(workerID)) {
-		r.refreshServiceStatus(ctx, stackID, workDir)
-	}
 
 	return nil
 }
@@ -530,46 +511,35 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 	var output string
 	var runErr error
 
-	if workerFingerprint == "embedded" || (r.dispatcher != nil && r.dispatcher.IsEmbedded(workerID)) {
-		renderedDir := filepath.Dir(renderedFilePath)
-		if envErr := WriteEnvFile(renderedDir, envVars); envErr != nil {
-			log.Printf("[reconciler] warning: failed to write .env for stack %s (rollback): %v", stackID, envErr)
-		}
-		output, runErr = compose.RunUp(ctx, compose.RunOptions{
-			WorkDir:     renderedDir,
-			ComposeFile: renderRes.RenderedPath,
-		})
+	composeContent, readErr := os.ReadFile(renderedFilePath)
+	if readErr != nil {
+		errMsg := fmt.Sprintf("failed to read rendered compose file: %v", readErr)
+		r.logFailure(stackID, "manual", commitSHA, errMsg)
+		r.markError(stack, "stacks")
+		return fmt.Errorf("%s", errMsg)
+	}
+	var cmdID string
+	if syncLog != nil {
+		cmdID = syncLog.Id
+	}
+	envFileB64, b64Err := buildEnvFileB64(envVars)
+	if b64Err != nil {
+		runErr = fmt.Errorf("failed to serialize env vars for remote rollback: %w", b64Err)
 	} else {
-		composeContent, readErr := os.ReadFile(renderedFilePath)
-		if readErr != nil {
-			errMsg := fmt.Sprintf("failed to read rendered compose file: %v", readErr)
-			r.logFailure(stackID, "manual", commitSHA, errMsg)
-			r.markError(stack, "stacks")
-			return fmt.Errorf("%s", errMsg)
+		result, dispatchErr := r.dispatcher.Dispatch(ctx, workerID, protocol.DeployCommand{
+			CommandID:      cmdID,
+			StackID:        stackID,
+			CommitSHA:      commitSHA,
+			Trigger:        "rollback",
+			ComposeFileB64: base64.StdEncoding.EncodeToString(composeContent),
+			EnvFileB64:     envFileB64,
+		})
+		output = result.Output
+		if result.Error != "" {
+			runErr = fmt.Errorf("%s", result.Error)
 		}
-		var cmdID string
-		if syncLog != nil {
-			cmdID = syncLog.Id
-		}
-		envFileB64, b64Err := buildEnvFileB64(envVars)
-		if b64Err != nil {
-			runErr = fmt.Errorf("failed to serialize env vars for remote rollback: %w", b64Err)
-		} else {
-			result, dispatchErr := r.dispatcher.Dispatch(ctx, workerID, protocol.DeployCommand{
-				CommandID:      cmdID,
-				StackID:        stackID,
-				CommitSHA:      commitSHA,
-				Trigger:        "rollback",
-				ComposeFileB64: base64.StdEncoding.EncodeToString(composeContent),
-				EnvFileB64:     envFileB64,
-			})
-			output = result.Output
-			if result.Error != "" {
-				runErr = fmt.Errorf("%s", result.Error)
-			}
-			if dispatchErr != nil {
-				runErr = dispatchErr
-			}
+		if dispatchErr != nil {
+			runErr = dispatchErr
 		}
 	}
 
@@ -614,10 +584,6 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 	stack.Set("last_synced_at", time.Now().UTC().Format(time.RFC3339))
 	stack.Set("status", "paused")
 	_ = r.app.Save(stack)
-
-	if workerFingerprint == "embedded" || (r.dispatcher != nil && r.dispatcher.IsEmbedded(workerID)) {
-		r.refreshServiceStatus(ctx, stackID, workDir)
-	}
 
 	return nil
 }
@@ -708,56 +674,40 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 	var output string
 	var runErr error
 
-	if workerFingerprint == "embedded" || (r.dispatcher != nil && r.dispatcher.IsEmbedded(workerID)) {
-		renderedDir := filepath.Dir(renderedFilePath)
-		if envErr := WriteEnvFile(renderedDir, envVars); envErr != nil {
-			log.Printf("[reconciler] warning: failed to write .env for stack %s (redeploy): %v", stackID, envErr)
-		}
-		output, runErr = compose.RunForceUp(ctx, compose.ForceUpOptions{
-			RunOptions: compose.RunOptions{
-				WorkDir:     renderedDir,
-				ComposeFile: renderRes.RenderedPath,
+	composeContent, readErr := os.ReadFile(renderedFilePath)
+	if readErr != nil {
+		errMsg := fmt.Sprintf("failed to read rendered compose file: %v", readErr)
+		r.logFailure(stackID, "redeploy", lastSHA, errMsg)
+		r.markError(stack, "stacks")
+		return fmt.Errorf("%s", errMsg)
+	}
+	var cmdID string
+	if syncLog != nil {
+		cmdID = syncLog.Id
+	}
+	envFileB64, b64Err := buildEnvFileB64(envVars)
+	if b64Err != nil {
+		runErr = fmt.Errorf("failed to serialize env vars for remote redeploy: %w", b64Err)
+	} else {
+		result, dispatchErr := r.dispatcher.Dispatch(ctx, workerID, protocol.RedeployCommand{
+			DeployCommand: protocol.DeployCommand{
+				CommandID:      cmdID,
+				StackID:        stackID,
+				CommitSHA:      lastSHA,
+				Trigger:        "force-redeploy",
+				ComposeFileB64: base64.StdEncoding.EncodeToString(composeContent),
+				EnvFileB64:     envFileB64,
 			},
 			RecreateContainers: recreateContainers,
 			RecreateVolumes:    recreateVolumes,
 			RecreateNetworks:   recreateNetworks,
 		})
-	} else {
-		composeContent, readErr := os.ReadFile(renderedFilePath)
-		if readErr != nil {
-			errMsg := fmt.Sprintf("failed to read rendered compose file: %v", readErr)
-			r.logFailure(stackID, "redeploy", lastSHA, errMsg)
-			r.markError(stack, "stacks")
-			return fmt.Errorf("%s", errMsg)
+		output = result.Output
+		if result.Error != "" {
+			runErr = fmt.Errorf("%s", result.Error)
 		}
-		var cmdID string
-		if syncLog != nil {
-			cmdID = syncLog.Id
-		}
-		envFileB64, b64Err := buildEnvFileB64(envVars)
-		if b64Err != nil {
-			runErr = fmt.Errorf("failed to serialize env vars for remote redeploy: %w", b64Err)
-		} else {
-			result, dispatchErr := r.dispatcher.Dispatch(ctx, workerID, protocol.RedeployCommand{
-				DeployCommand: protocol.DeployCommand{
-					CommandID:      cmdID,
-					StackID:        stackID,
-					CommitSHA:      lastSHA,
-					Trigger:        "force-redeploy",
-					ComposeFileB64: base64.StdEncoding.EncodeToString(composeContent),
-					EnvFileB64:     envFileB64,
-				},
-				RecreateContainers: recreateContainers,
-				RecreateVolumes:    recreateVolumes,
-				RecreateNetworks:   recreateNetworks,
-			})
-			output = result.Output
-			if result.Error != "" {
-				runErr = fmt.Errorf("%s", result.Error)
-			}
-			if dispatchErr != nil {
-				runErr = dispatchErr
-			}
+		if dispatchErr != nil {
+			runErr = dispatchErr
 		}
 	}
 
@@ -798,10 +748,6 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 	stack.Set("last_synced_at", time.Now().UTC().Format(time.RFC3339))
 	stack.Set("status", "paused")
 	_ = r.app.Save(stack)
-
-	if workerFingerprint == "embedded" || (r.dispatcher != nil && r.dispatcher.IsEmbedded(workerID)) {
-		r.refreshServiceStatus(ctx, stackID, workDir)
-	}
 
 	return nil
 }
@@ -844,7 +790,7 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 		r.markError(stack, "stacks")
 		return fmt.Errorf("%s", errMsg)
 	}
-	isOnline := workerFingerprint == "embedded" || (r.dispatcher != nil && r.dispatcher.IsConnected(workerID))
+	isOnline := r.dispatcher != nil && r.dispatcher.IsConnected(workerID)
 	if !isOnline {
 		log.Printf("[reconciler] worker %s is offline, queueing pending reconcile for local stack %s", workerID, stackID)
 		r.queuePendingReconcile(stackID, trigger, "")
@@ -855,61 +801,47 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 	stack.Set("status", "syncing")
 	_ = r.app.Save(stack)
 
-	// Read the compose file from the host (direct for embedded, via ReadFileCommand for remote).
+	// Read the compose file from the worker host via ReadFileCommand.
 	var composeContent []byte
 	var workDir, composeFile string
 
-	isEmbedded := workerFingerprint == "embedded" || (r.dispatcher != nil && r.dispatcher.IsEmbedded(workerID))
-	if isEmbedded {
-		data, err := os.ReadFile(importPath)
-		if err != nil {
-			errMsg := fmt.Sprintf("failed to read compose file %s: %v", importPath, err)
-			r.logFailure(stackID, trigger, "", errMsg)
-			r.markError(stack, "stacks")
-			return fmt.Errorf("%s", errMsg)
-		}
-		composeContent = data
-		workDir = filepath.Dir(importPath)
-		composeFile = filepath.Base(importPath)
-	} else {
-		cmdID := fmt.Sprintf("readfile-%s", stackID)
-		result, dispatchErr := r.dispatcher.Dispatch(ctx, workerID, protocol.ReadFileCommand{
-			CommandID: cmdID,
-			Path:      importPath,
-		})
-		if dispatchErr != nil || result.Error != "" {
-			errMsg := fmt.Sprintf("failed to read remote compose file %s: %v %s", importPath, dispatchErr, result.Error)
-			r.logFailure(stackID, trigger, "", errMsg)
-			r.markError(stack, "stacks")
-			return fmt.Errorf("%s", errMsg)
-		}
-		data, err := base64.StdEncoding.DecodeString(result.Output)
-		if err != nil {
-			errMsg := fmt.Sprintf("failed to decode remote compose file: %v", err)
-			r.logFailure(stackID, trigger, "", errMsg)
-			r.markError(stack, "stacks")
-			return fmt.Errorf("%s", errMsg)
-		}
-		composeContent = data
-
-		// Store a local copy so compose.Config can run on the server side.
-		sourceDir := filepath.Join(r.app.DataDir(), "stacks", stackID)
-		if mkErr := os.MkdirAll(sourceDir, 0755); mkErr != nil {
-			errMsg := fmt.Sprintf("failed to create source dir: %v", mkErr)
-			r.logFailure(stackID, trigger, "", errMsg)
-			r.markError(stack, "stacks")
-			return fmt.Errorf("%s", errMsg)
-		}
-		sourceFile := filepath.Join(sourceDir, "source.yml")
-		if writeErr := os.WriteFile(sourceFile, composeContent, 0644); writeErr != nil {
-			errMsg := fmt.Sprintf("failed to write source file: %v", writeErr)
-			r.logFailure(stackID, trigger, "", errMsg)
-			r.markError(stack, "stacks")
-			return fmt.Errorf("%s", errMsg)
-		}
-		workDir = sourceDir
-		composeFile = "source.yml"
+	cmdID := fmt.Sprintf("readfile-%s", stackID)
+	result, dispatchErr := r.dispatcher.Dispatch(ctx, workerID, protocol.ReadFileCommand{
+		CommandID: cmdID,
+		Path:      importPath,
+	})
+	if dispatchErr != nil || result.Error != "" {
+		errMsg := fmt.Sprintf("failed to read remote compose file %s: %v %s", importPath, dispatchErr, result.Error)
+		r.logFailure(stackID, trigger, "", errMsg)
+		r.markError(stack, "stacks")
+		return fmt.Errorf("%s", errMsg)
 	}
+	data, err := base64.StdEncoding.DecodeString(result.Output)
+	if err != nil {
+		errMsg := fmt.Sprintf("failed to decode remote compose file: %v", err)
+		r.logFailure(stackID, trigger, "", errMsg)
+		r.markError(stack, "stacks")
+		return fmt.Errorf("%s", errMsg)
+	}
+	composeContent = data
+
+	// Store a local copy so compose.Config can run on the server side.
+	sourceDir := filepath.Join(r.app.DataDir(), "stacks", stackID)
+	if mkErr := os.MkdirAll(sourceDir, 0755); mkErr != nil {
+		errMsg := fmt.Sprintf("failed to create source dir: %v", mkErr)
+		r.logFailure(stackID, trigger, "", errMsg)
+		r.markError(stack, "stacks")
+		return fmt.Errorf("%s", errMsg)
+	}
+	sourceFile := filepath.Join(sourceDir, "source.yml")
+	if writeErr := os.WriteFile(sourceFile, composeContent, 0644); writeErr != nil {
+		errMsg := fmt.Sprintf("failed to write source file: %v", writeErr)
+		r.logFailure(stackID, trigger, "", errMsg)
+		r.markError(stack, "stacks")
+		return fmt.Errorf("%s", errMsg)
+	}
+	workDir = sourceDir
+	composeFile = "source.yml"
 
 	// Change detection: compare SHA256 of raw file content with stored checksum.
 	newChecksum := fmt.Sprintf("%x", sha256bytes(composeContent))
@@ -960,75 +892,54 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 	var runErr error
 	start := time.Now()
 
-	if isEmbedded {
-		renderedDir := filepath.Dir(renderedFilePath)
-		if envErr := WriteEnvFile(renderedDir, envVars); envErr != nil {
-			log.Printf("[reconciler] warning: failed to write .env for stack %s (local sync): %v", stackID, envErr)
-		}
-		opts := compose.RunOptions{
-			WorkDir:     renderedDir,
-			ComposeFile: renderRes.RenderedPath,
-		}
-		if recreateContainers {
-			output, runErr = compose.RunForceUp(ctx, compose.ForceUpOptions{
-				RunOptions:         opts,
-				RecreateContainers: true,
-				RecreateVolumes:    recreateVolumes,
-			})
-		} else {
-			output, runErr = compose.RunUp(ctx, opts)
-		}
-	} else {
-		composeBytes, readErr := os.ReadFile(renderedFilePath)
-		if readErr != nil {
-			errMsg := fmt.Sprintf("failed to read rendered compose file: %v", readErr)
-			r.logFailure(stackID, trigger, "", errMsg)
-			r.markError(stack, "stacks")
-			return fmt.Errorf("%s", errMsg)
-		}
-		b64 := base64.StdEncoding.EncodeToString(composeBytes)
+	composeBytes, readErr := os.ReadFile(renderedFilePath)
+	if readErr != nil {
+		errMsg := fmt.Sprintf("failed to read rendered compose file: %v", readErr)
+		r.logFailure(stackID, trigger, "", errMsg)
+		r.markError(stack, "stacks")
+		return fmt.Errorf("%s", errMsg)
+	}
+	b64 := base64.StdEncoding.EncodeToString(composeBytes)
 
-		envFileB64, b64Err := buildEnvFileB64(envVars)
-		if b64Err != nil {
-			runErr = fmt.Errorf("failed to serialize env vars for remote local-sync: %w", b64Err)
-		} else if recreateContainers {
-			result, dispatchErr := r.dispatcher.Dispatch(ctx, workerID, protocol.RedeployCommand{
-				DeployCommand: protocol.DeployCommand{
-					CommandID:      syncLog.Id,
-					StackID:        stackID,
-					CommitSHA:      "imported",
-					Trigger:        trigger,
-					ComposeFileB64: b64,
-					EnvFileB64:     envFileB64,
-				},
-				RecreateContainers: true,
-				RecreateVolumes:    recreateVolumes,
-			})
-			output = result.Output
-			if result.Error != "" {
-				runErr = fmt.Errorf("%s", result.Error)
-			}
-			if dispatchErr != nil {
-				runErr = dispatchErr
-			}
-		} else {
-			result, dispatchErr := r.dispatcher.Dispatch(ctx, workerID, protocol.DeployCommand{
+	envFileB64, b64Err := buildEnvFileB64(envVars)
+	if b64Err != nil {
+		runErr = fmt.Errorf("failed to serialize env vars for remote local-sync: %w", b64Err)
+	} else if recreateContainers {
+		result, dispatchErr := r.dispatcher.Dispatch(ctx, workerID, protocol.RedeployCommand{
+			DeployCommand: protocol.DeployCommand{
 				CommandID:      syncLog.Id,
 				StackID:        stackID,
 				CommitSHA:      "imported",
 				Trigger:        trigger,
 				ComposeFileB64: b64,
 				EnvFileB64:     envFileB64,
-			})
-			output = result.Output
-			if result.Error != "" {
-				runErr = fmt.Errorf("%s", result.Error)
-			}
-			if dispatchErr != nil {
-				runErr = dispatchErr
-			}
+			},
+			RecreateContainers: true,
+			RecreateVolumes:    recreateVolumes,
+		})
+		output = result.Output
+		if result.Error != "" {
+			runErr = fmt.Errorf("%s", result.Error)
 		}
-
+		if dispatchErr != nil {
+			runErr = dispatchErr
+		}
+	} else {
+		result, dispatchErr := r.dispatcher.Dispatch(ctx, workerID, protocol.DeployCommand{
+			CommandID:      syncLog.Id,
+			StackID:        stackID,
+			CommitSHA:      "imported",
+			Trigger:        trigger,
+			ComposeFileB64: b64,
+			EnvFileB64:     envFileB64,
+		})
+		output = result.Output
+		if result.Error != "" {
+			runErr = fmt.Errorf("%s", result.Error)
+		}
+		if dispatchErr != nil {
+			runErr = dispatchErr
+		}
 	}
 
 	duration := time.Since(start).Milliseconds()
@@ -1047,10 +958,6 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 	stack.Set("last_synced_at", time.Now().UTC().Format(time.RFC3339))
 	stack.Set("status", "active")
 	_ = r.app.Save(stack)
-
-	if isEmbedded {
-		r.refreshServiceStatus(ctx, stackID, workDir)
-	}
 
 	return nil
 }
@@ -1091,19 +998,7 @@ func (r *Reconciler) queuePendingReconcile(stackID, trigger, commitSHA string) {
 	}
 }
 
-func (r *Reconciler) inspectStackCommit(ctx context.Context, workerID, workerFingerprint, stackID string) string {
-	if workerFingerprint == "embedded" || (r.dispatcher != nil && r.dispatcher.IsEmbedded(workerID)) {
-		if r.dockerClient != nil {
-			sha, err := r.dockerClient.GetRunningStackCommit(ctx, stackID)
-			if err != nil {
-				log.Printf("[reconciler] failed to inspect embedded stack %s: %v", stackID, err)
-				return ""
-			}
-			return sha
-		}
-		return ""
-	}
-
+func (r *Reconciler) inspectStackCommit(ctx context.Context, workerID, stackID string) string {
 	result, err := r.dispatcher.Dispatch(ctx, workerID, protocol.InspectCommand{
 		CommandID: "inspect-" + stackID + "-" + fmt.Sprint(time.Now().UnixNano()),
 		StackID:   stackID,
@@ -1362,6 +1257,9 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 	}
 
 	sourceWorkerID := stack.GetString("worker")
+	if sourceWorkerID == "" {
+		return fmt.Errorf("stack has no worker assigned")
+	}
 	if sourceWorkerID == targetWorkerID {
 		return fmt.Errorf("target worker is the same as the current worker")
 	}
@@ -1383,8 +1281,6 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 		return fmt.Errorf("stack has no rendered compose file — sync the stack at least once before transferring")
 	}
 
-	workDir := filepath.Dir(composeFilePath)
-
 	envVars, envErr := r.loadEnvVars(ctx, stackID)
 	if envErr != nil {
 		log.Printf("[reconciler] failed to load env vars for stack %s: %v", stackID, envErr)
@@ -1399,27 +1295,17 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 
 	// Resolve worker hostnames and fingerprints for human-friendly sync log messages.
 	sourceHostname := sourceWorkerID
-	sourceFingerprint := ""
-	if sourceWorkerID == "" {
-		sourceFingerprint = "embedded"
-		sourceHostname = "Server (Embedded)"
-	} else if a, err := r.app.FindRecordById("workers", sourceWorkerID); err != nil {
+	if a, err := r.app.FindRecordById("workers", sourceWorkerID); err != nil {
 		return fmt.Errorf("failed to find source worker %s: %w", sourceWorkerID, err)
 	} else {
 		sourceHostname = a.GetString("hostname")
-		sourceFingerprint = a.GetString("fingerprint")
 	}
 
 	targetHostname := targetWorkerID
-	targetFingerprint := ""
-	if targetWorkerID == "" {
-		targetFingerprint = "embedded"
-		targetHostname = "Server (Embedded)"
-	} else if a, err := r.app.FindRecordById("workers", targetWorkerID); err != nil {
+	if a, err := r.app.FindRecordById("workers", targetWorkerID); err != nil {
 		return fmt.Errorf("failed to find target worker %s: %w", targetWorkerID, err)
 	} else {
 		targetHostname = a.GetString("hostname")
-		targetFingerprint = a.GetString("fingerprint")
 	}
 
 	prevStatus := stack.GetString("status")
@@ -1476,45 +1362,29 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 	// If containers (any state) already exist for this project on the target host,
 	// we abort early to avoid conflicting volumes, networks, or port bindings.
 	var probeErrMsg string
-	if targetFingerprint == "embedded" || (r.dispatcher != nil && r.dispatcher.IsEmbedded(targetWorkerID)) {
-		log.Printf("[transfer] probe: running locally for target_agent=%s stack=%s", targetWorkerID, stackID)
-		services, _ := compose.RunPs(ctx, compose.RunOptions{
-			WorkDir:     workDir,
-			ComposeFile: composeFilePath,
-		})
-		log.Printf("[transfer] probe: target_agent=%s containers=%d services=%v", targetWorkerID, len(services), services)
-		if len(services) > 0 {
-			probeErrMsg = fmt.Sprintf(
-				"target agent %s already has %d container(s) for this stack (services: %s) — "+
-					"remove them manually before transferring",
-				targetHostname, len(services), strings.Join(services, ", "),
-			)
-		}
-	} else {
-		probeID := fmt.Sprintf("probe-%s", stackID)
-		log.Printf("[transfer] probe: dispatching to target_agent=%s stack=%s", targetWorkerID, stackID)
-		probeResult, probeErr := r.dispatcher.Dispatch(ctx, targetWorkerID, protocol.ProbeCommand{
-			CommandID:      probeID,
-			StackID:        stackID,
-			ComposeFileB64: composeB64,
-			EnvFileB64:     envFileB64,
-		})
-		if probeErr == nil && probeResult.Error == "" && probeResult.Output != "" {
-			var probe protocol.ProbeResult
-			if jsonErr := json.Unmarshal([]byte(probeResult.Output), &probe); jsonErr == nil {
-				log.Printf("[transfer] probe: target_agent=%s containers=%d services=%v", targetWorkerID, probe.ContainerCount, probe.Services)
-				if probe.ContainerCount > 0 {
-					probeErrMsg = fmt.Sprintf(
-						"target agent %s already has %d container(s) for this stack (services: %s) — "+
-							"remove them manually before transferring",
-						targetHostname, probe.ContainerCount, strings.Join(probe.Services, ", "),
-					)
-				}
+	probeID := fmt.Sprintf("probe-%s", stackID)
+	log.Printf("[transfer] probe: dispatching to target_agent=%s stack=%s", targetWorkerID, stackID)
+	probeResult, probeErr := r.dispatcher.Dispatch(ctx, targetWorkerID, protocol.ProbeCommand{
+		CommandID:      probeID,
+		StackID:        stackID,
+		ComposeFileB64: composeB64,
+		EnvFileB64:     envFileB64,
+	})
+	if probeErr == nil && probeResult.Error == "" && probeResult.Output != "" {
+		var probe protocol.ProbeResult
+		if jsonErr := json.Unmarshal([]byte(probeResult.Output), &probe); jsonErr == nil {
+			log.Printf("[transfer] probe: target_agent=%s containers=%d services=%v", targetWorkerID, probe.ContainerCount, probe.Services)
+			if probe.ContainerCount > 0 {
+				probeErrMsg = fmt.Sprintf(
+					"target agent %s already has %d container(s) for this stack (services: %s) — "+
+						"remove them manually before transferring",
+					targetHostname, probe.ContainerCount, strings.Join(probe.Services, ", "),
+				)
 			}
 		}
-		if probeErr != nil {
-			log.Printf("[transfer] probe error target_agent=%s (non-blocking): %v", targetWorkerID, probeErr)
-		}
+	}
+	if probeErr != nil {
+		log.Printf("[transfer] probe error target_agent=%s (non-blocking): %v", targetWorkerID, probeErr)
 	}
 
 	if probeErrMsg != "" {
@@ -1549,30 +1419,18 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 	var deployErr error
 	var dispatchErr error
 
-	if targetFingerprint == "embedded" || (r.dispatcher != nil && r.dispatcher.IsEmbedded(targetWorkerID)) {
-		log.Printf("[transfer] step 1/2: deploy running locally for target_agent=%s (%s) stack=%s", targetWorkerID, targetHostname, stackID)
-		renderedDir := filepath.Dir(composeFilePath)
-		if envErr := WriteEnvFile(renderedDir, envVars); envErr != nil {
-			log.Printf("[reconciler] warning: failed to write .env for stack %s (transfer): %v", stackID, envErr)
-		}
-		deployOutput, deployErr = compose.RunUp(ctx, compose.RunOptions{
-			WorkDir:     renderedDir,
-			ComposeFile: composeFilePath,
-		})
-	} else {
-		log.Printf("[transfer] step 1/2: deploy dispatching to target_agent=%s (%s) stack=%s", targetWorkerID, targetHostname, stackID)
-		deployResult, dErr := r.dispatcher.Dispatch(ctx, targetWorkerID, protocol.DeployCommand{
-			CommandID:      cmdID,
-			StackID:        stackID,
-			Trigger:        "transfer",
-			ComposeFileB64: composeB64,
-			EnvFileB64:     envFileB64,
-		})
-		deployOutput = deployResult.Output
-		dispatchErr = dErr
-		if deployResult.Error != "" {
-			deployErr = fmt.Errorf("%s", deployResult.Error)
-		}
+	log.Printf("[transfer] step 1/2: deploy dispatching to target_agent=%s (%s) stack=%s", targetWorkerID, targetHostname, stackID)
+	deployResult, dErr := r.dispatcher.Dispatch(ctx, targetWorkerID, protocol.DeployCommand{
+		CommandID:      cmdID,
+		StackID:        stackID,
+		Trigger:        "transfer",
+		ComposeFileB64: composeB64,
+		EnvFileB64:     envFileB64,
+	})
+	deployOutput = deployResult.Output
+	dispatchErr = dErr
+	if deployResult.Error != "" {
+		deployErr = fmt.Errorf("%s", deployResult.Error)
 	}
 
 	if dispatchErr != nil || deployErr != nil {
@@ -1583,21 +1441,7 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 		fmt.Fprintf(&outputBuf, "\n=== Step 2/2: Cleanup on target agent (%s) ===\n", targetHostname)
 
 		// Best-effort cleanup on agent B — remove any partial containers it may have started.
-		if targetFingerprint == "embedded" || (r.dispatcher != nil && r.dispatcher.IsEmbedded(targetWorkerID)) {
-			log.Printf("[transfer] step 2/2: cleanup running locally for target_agent=%s stack=%s", targetWorkerID, stackID)
-			cleanupOutput, cleanupErr := compose.RunDown(ctx, compose.RunOptions{
-				WorkDir:     workDir,
-				ComposeFile: composeFilePath,
-			})
-			if cleanupErr != nil {
-				log.Printf("[transfer] step 2/2: cleanup error target_agent=%s: %v", targetWorkerID, cleanupErr)
-				fmt.Fprintf(&outputBuf, "cleanup teardown failed: %v\n", cleanupErr)
-			} else {
-				log.Printf("[transfer] step 2/2: cleanup done target_agent=%s", targetWorkerID)
-				outputBuf.WriteString(cleanupOutput)
-				fmt.Fprintf(&outputBuf, "cleanup teardown succeeded.\n")
-			}
-		} else if r.dispatcher != nil && r.dispatcher.IsConnected(targetWorkerID) {
+		if r.dispatcher != nil && r.dispatcher.IsConnected(targetWorkerID) {
 			log.Printf("[transfer] step 2/2: cleanup dispatching to target_agent=%s stack=%s", targetWorkerID, stackID)
 			cleanupResult, cleanupErr := r.dispatcher.Dispatch(ctx, targetWorkerID, protocol.TeardownCommand{
 				CommandID:      fmt.Sprintf("teardown-cleanup-%s", stackID),
@@ -1641,21 +1485,7 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 
 	// --- Step 2: Teardown on source agent (agent A) ---
 	fmt.Fprintf(&outputBuf, "\n=== Step 2/2: Teardown on source agent (%s) ===\n", sourceHostname)
-	if sourceFingerprint == "embedded" || (r.dispatcher != nil && r.dispatcher.IsEmbedded(sourceWorkerID)) {
-		log.Printf("[transfer] step 2/2: teardown running locally for source_agent=%s (%s) stack=%s", sourceWorkerID, sourceHostname, stackID)
-		teardownOutput, teardownErr := compose.RunDown(ctx, compose.RunOptions{
-			WorkDir:     workDir,
-			ComposeFile: composeFilePath,
-		})
-		outputBuf.WriteString(teardownOutput)
-		if teardownErr != nil {
-			log.Printf("[transfer] step 2/2: teardown error source_agent=%s: %v — containers may be orphaned", sourceWorkerID, teardownErr)
-			fmt.Fprintf(&outputBuf, "teardown failed: %v — containers may be orphaned.\n", teardownErr)
-		} else {
-			log.Printf("[transfer] step 2/2: teardown done source_agent=%s", sourceWorkerID)
-			fmt.Fprintf(&outputBuf, "teardown on %s: done.\n", sourceHostname)
-		}
-	} else if sourceWorkerID != "" && r.dispatcher != nil && r.dispatcher.IsConnected(sourceWorkerID) {
+	if sourceWorkerID != "" && r.dispatcher != nil && r.dispatcher.IsConnected(sourceWorkerID) {
 		log.Printf("[transfer] step 2/2: teardown dispatching to source_agent=%s (%s) stack=%s", sourceWorkerID, sourceHostname, stackID)
 		teardownResult, teardownErr := r.dispatcher.Dispatch(ctx, sourceWorkerID, protocol.TeardownCommand{
 			CommandID:      fmt.Sprintf("teardown-transfer-%s", stackID),
@@ -1683,10 +1513,6 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 	stack.Set("status", "active")
 	stack.Set("last_synced_at", time.Now().UTC().Format(time.RFC3339))
 	_ = r.app.Save(stack)
-
-	if targetFingerprint == "embedded" || (r.dispatcher != nil && r.dispatcher.IsEmbedded(targetWorkerID)) {
-		r.refreshServiceStatus(ctx, stackID, workDir)
-	}
 
 	if syncLog != nil {
 		r.updateSyncLog(syncLog.Id, "done", outputBuf.String(), duration)
