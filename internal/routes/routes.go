@@ -39,6 +39,8 @@ import (
 	"github.com/wireops/wireops/internal/sync"
 )
 
+const OfflineWorkerMsg = "worker '%s' is offline"
+
 func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *sync.Scheduler, dockerClient *docker.Client, workerSvc sync.WorkerDispatcher) {
 	resolveWorker := func(workerID string) (*core.Record, error) {
 		if workerID == "" {
@@ -192,7 +194,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 		}
 		if workerSvc == nil || !workerSvc.IsConnected(workerID) {
-			return e.JSON(http.StatusServiceUnavailable, map[string]string{"error": fmt.Sprintf("worker '%s' is offline", worker.GetString("hostname"))})
+			return e.JSON(http.StatusServiceUnavailable, map[string]string{"error": fmt.Sprintf(OfflineWorkerMsg, worker.GetString("hostname"))})
 		}
 
 		projectName := compose.ProjectName(stackWorkDir(app, stack))
@@ -256,7 +258,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		}
 		if workerSvc == nil || !workerSvc.IsConnected(workerID) {
 			return e.JSON(http.StatusServiceUnavailable, map[string]string{
-				"error": fmt.Sprintf("worker '%s' is offline", worker.GetString("hostname")),
+				"error": fmt.Sprintf(OfflineWorkerMsg, worker.GetString("hostname")),
 			})
 		}
 
@@ -785,7 +787,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			}
 			if workerSvc == nil || !workerSvc.IsConnected(workerID) {
 				return e.JSON(http.StatusServiceUnavailable, map[string]string{
-					"error": fmt.Sprintf("worker '%s' is offline", worker.GetString("hostname")),
+					"error": fmt.Sprintf(OfflineWorkerMsg, worker.GetString("hostname")),
 				})
 			}
 			importPath := stack.GetString("import_path")
@@ -1330,7 +1332,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		}
 		if workerSvc == nil || !workerSvc.IsConnected(workerID) {
 			return e.JSON(http.StatusServiceUnavailable, map[string]string{
-				"error": fmt.Sprintf("worker '%s' is offline", worker.GetString("hostname")),
+				"error": fmt.Sprintf(OfflineWorkerMsg, worker.GetString("hostname")),
 			})
 		}
 		cmdID := fmt.Sprintf("discover-%s", workerID)
@@ -1382,7 +1384,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 
 		if workerSvc == nil || !workerSvc.IsConnected(body.WorkerID) {
 			return e.JSON(http.StatusServiceUnavailable, map[string]string{
-				"error": fmt.Sprintf("worker '%s' is offline", workerRecord.GetString("hostname")),
+				"error": fmt.Sprintf(OfflineWorkerMsg, workerRecord.GetString("hostname")),
 			})
 		}
 
@@ -1572,7 +1574,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 		}
 		if workerSvc == nil || !workerSvc.IsConnected(assignedWorkerID) {
-			return e.JSON(http.StatusServiceUnavailable, map[string]string{"error": fmt.Sprintf("worker '%s' is offline", worker.GetString("hostname"))})
+			return e.JSON(http.StatusServiceUnavailable, map[string]string{"error": fmt.Sprintf(OfflineWorkerMsg, worker.GetString("hostname"))})
 		}
 		res, err := workerSvc.Dispatch(e.Request.Context(), assignedWorkerID, protocol.GetStatusCommand{
 			CommandID:   fmt.Sprintf("status-actions-%s", stackID),

@@ -15,6 +15,7 @@ const props = defineProps<{
       <button
         type="button"
         class="flex w-full items-center justify-between gap-3 text-left"
+        :aria-expanded="open"
         @click="open = !open"
       >
         <div class="flex items-center gap-2">
@@ -37,6 +38,7 @@ const props = defineProps<{
       <button
         type="button"
         class="flex w-full items-center justify-between gap-3 text-left"
+        :aria-expanded="open"
         @click="open = !open"
       >
         <div class="flex items-center gap-2">

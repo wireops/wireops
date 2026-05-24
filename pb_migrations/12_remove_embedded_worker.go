@@ -17,11 +17,12 @@ func init() {
 
 		for _, worker := range embeddedWorkers {
 			tokens, tokenErr := app.FindAllRecords("worker_tokens", dbx.HashExp{"worker": worker.Id})
-			if tokenErr == nil {
-				for _, token := range tokens {
-					if err := app.Delete(token); err != nil {
-						return err
-					}
+			if tokenErr != nil {
+				return tokenErr
+			}
+			for _, token := range tokens {
+				if err := app.Delete(token); err != nil {
+					return err
 				}
 			}
 

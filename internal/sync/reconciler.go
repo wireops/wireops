@@ -1301,7 +1301,7 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 		sourceHostname = a.GetString("hostname")
 	}
 
-	targetHostname := targetWorkerID
+	var targetHostname string
 	if a, err := r.app.FindRecordById("workers", targetWorkerID); err != nil {
 		return fmt.Errorf("failed to find target worker %s: %w", targetWorkerID, err)
 	} else {

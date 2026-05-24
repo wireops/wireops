@@ -253,8 +253,11 @@ func (s *WorkerServer) Dispatch(ctx context.Context, workerID string, cmd interf
 		commandID = v.CommandID
 		if strings.HasPrefix(v.CommandID, "stop-container-") {
 			msgType = protocol.MsgStopContainer
-		} else {
+		} else if strings.HasPrefix(v.CommandID, "restart-container-") {
 			msgType = protocol.MsgRestartContainer
+		} else {
+			logger.SafeLogf("[WORKER] unknown or malformed container action command ID: %s", v.CommandID)
+			return protocol.CommandResult{}, fmt.Errorf("unknown or malformed container action command ID: %s", v.CommandID)
 		}
 	case protocol.DiscoverProjectsCommand:
 		msgType = protocol.MsgDiscoverProjects

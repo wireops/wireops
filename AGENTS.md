@@ -79,7 +79,7 @@ Self-hosted GitOps platform for managing Docker Compose stacks and scheduled Doc
 
 ## Architecture
 
-Three deployable components:
+Two deployable components:
 
 ```
 ┌──────────────────────────────────────────────────┐
@@ -90,9 +90,6 @@ Three deployable components:
 │  └────────────┘  └──────────────┘  └──────────┘ │
 │  ┌────────────────────────────────────────────┐  │
 │  │  Worker WebSocket Server :8443              │  │
-│  └────────────────────────────────────────────┘  │
-│  ┌────────────────────────────────────────────┐  │
-│  │  Embedded Worker (local Docker socket)     │  │
 │  └────────────────────────────────────────────┘  │
 └──────────────────────────────────────────────────┘
               ↑ WebSocket + Token ↑
@@ -106,7 +103,7 @@ Three deployable components:
   ← REST + PocketBase Realtime (SSE)
 ```
 
-- The server **never** runs `docker compose` for remote stacks — it dispatches commands over a persistent WebSocket to workers.
+- The server **never** runs `docker compose` or `docker run` directly — all stack deployments and job executions are dispatched over a persistent WebSocket to connected remote workers.
 - All deploy and job execution happens through connected remote workers.
 - PocketBase handles auth (superusers collection), realtime subscriptions, and the SQLite database.
 - The frontend is statically generated (`nuxt generate`) and served from `pb_public/`.
@@ -151,8 +148,8 @@ repositories ─── 1:N ──→ scheduled_jobs ─── 1:N ──→ job_
 1. `sync/scheduler.go` polls each stack on its `poll_interval` (default 60s).
 2. `sync/reconciler.go` runs `git.CloneOrFetch` and compares the latest commit SHA with the stored one.
 3. `sync/renderer.go` reads the compose YAML, injects `dev.wireops.*` labels, and writes a versioned revision file to `pb_data/stacks/<id>/v<n>.yml`.
-4. **Embedded worker**: calls `compose.RunUp` → `docker compose up` locally.
-5. **Remote worker**: base64-encodes the compose file, sends a `DeployCommand` over WebSocket, waits up to 5 minutes for `CommandResult`.
+4. The server base64-encodes the compose file, sends a `DeployCommand` over WebSocket to the worker assigned to the stack, and waits up to 5 minutes for `CommandResult`.
+5. The worker decodes the compose file and executes `docker compose up`.
 6. Persists a `sync_logs` entry, updates stack status, fires webhook/ntfy notification.
 
 ### Worker Bootstrap & Communication

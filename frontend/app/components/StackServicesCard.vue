@@ -201,6 +201,8 @@ watch(() => props.stackId, refreshResources, { immediate: true })
                     <UIcon name="i-lucide-clock" class="w-3 h-3" />
                     {{ formatUptime(containerStats[container.container_id].started_at) }}
                   </span>
+                </div>
+                <div class="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1 text-xs text-gray-400">
                   <ContainerIntegrationActions
                     :actions="integrationActions[container.container_id] || []"
                     :container-id="container.container_id"

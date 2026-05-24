@@ -286,34 +286,17 @@ func GetStatus(ctx context.Context, cmd protocol.GetStatusCommand) protocol.Comm
 // StopContainer stops a container on the worker host after confirming it
 // belongs to the requested compose project.
 func StopContainer(ctx context.Context, cmd protocol.ContainerActionCommand) protocol.CommandResult {
-	log.Printf("[executor] stop_container start stack=%s project=%s container=%s command=%s", cmd.StackID, cmd.ProjectName, cmd.ContainerID, cmd.CommandID)
-
-	cli, err := docker.NewClient()
-	if err != nil {
-		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
-	}
-	defer cli.Close()
-
-	belongs, err := compose.ContainerBelongsToProject(ctx, cli.Raw(), cmd.ContainerID, cmd.ProjectName)
-	if err != nil {
-		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
-	}
-	if !belongs {
-		return protocol.CommandResult{CommandID: cmd.CommandID, Error: "container does not belong to stack"}
-	}
-
-	timeout := 10
-	if err := cli.Raw().ContainerStop(ctx, cmd.ContainerID, container.StopOptions{Timeout: &timeout}); err != nil {
-		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
-	}
-
-	return protocol.CommandResult{CommandID: cmd.CommandID, Output: "stopped"}
+	return executeContainerAction(ctx, cmd, "stop")
 }
 
 // RestartContainer restarts a container on the worker host after confirming it
 // belongs to the requested compose project.
 func RestartContainer(ctx context.Context, cmd protocol.ContainerActionCommand) protocol.CommandResult {
-	log.Printf("[executor] restart_container start stack=%s project=%s container=%s command=%s", cmd.StackID, cmd.ProjectName, cmd.ContainerID, cmd.CommandID)
+	return executeContainerAction(ctx, cmd, "restart")
+}
+
+func executeContainerAction(ctx context.Context, cmd protocol.ContainerActionCommand, action string) protocol.CommandResult {
+	log.Printf("[executor] %s_container start stack=%s project=%s container=%s command=%s", action, cmd.StackID, cmd.ProjectName, cmd.ContainerID, cmd.CommandID)
 
 	cli, err := docker.NewClient()
 	if err != nil {
@@ -330,11 +313,24 @@ func RestartContainer(ctx context.Context, cmd protocol.ContainerActionCommand) 
 	}
 
 	timeout := 10
-	if err := cli.Raw().ContainerRestart(ctx, cmd.ContainerID, container.StopOptions{Timeout: &timeout}); err != nil {
-		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
+	var actionErr error
+	var output string
+	switch action {
+	case "stop":
+		actionErr = cli.Raw().ContainerStop(ctx, cmd.ContainerID, container.StopOptions{Timeout: &timeout})
+		output = "stopped"
+	case "restart":
+		actionErr = cli.Raw().ContainerRestart(ctx, cmd.ContainerID, container.StopOptions{Timeout: &timeout})
+		output = "restarted"
+	default:
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: "invalid container action"}
 	}
 
-	return protocol.CommandResult{CommandID: cmd.CommandID, Output: "restarted"}
+	if actionErr != nil {
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: actionErr.Error()}
+	}
+
+	return protocol.CommandResult{CommandID: cmd.CommandID, Output: output}
 }
 
 // DiscoverProjects lists Docker Compose projects on this host that are not managed
