@@ -58,6 +58,6 @@ func Register(client *http.Client, serverURL, token, hostname, version string, t
 		return fmt.Errorf("registration failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
-	log.Printf("[WORKER] Completed initial registration with server.")
+	log.Printf("[worker] registered")
 	return nil
 }

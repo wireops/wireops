@@ -126,7 +126,12 @@ func workerHasAllTags(workerTags, required []string) bool {
 }
 
 func NewWorkerServer(app core.App, workerSvc *Service) *WorkerServer {
-	r := gin.Default()
+	gin.SetMode(gin.ReleaseMode)
+	r := gin.New()
+	r.Use(gin.Recovery())
+	if logger.IsDebug() {
+		r.Use(gin.Logger())
+	}
 	s := &WorkerServer{
 		app:       app,
 		workerSvc: workerSvc,
@@ -474,14 +479,14 @@ func (s *WorkerServer) handleWebSocket(c *gin.Context) {
 			payloadBytes, _ := json.Marshal(env.Payload)
 			var hb protocol.HeartbeatPayload
 			if jsonErr := json.Unmarshal(payloadBytes, &hb); jsonErr == nil && len(hb.ActiveJobRunIDs) > 0 {
-				logger.SafeLogf("[WORKER] %s heartbeat: %d active job(s) %v", workerID, len(hb.ActiveJobRunIDs), hb.ActiveJobRunIDs)
+				logger.SafeLogf("[worker] heartbeat worker=%s active_jobs=%d runs=%v", workerID, len(hb.ActiveJobRunIDs), hb.ActiveJobRunIDs)
 			}
 
 		case protocol.MsgJobCompleted:
 			payloadBytes, _ := json.Marshal(env.Payload)
 			var msg protocol.JobCompletedMessage
 			if jsonErr := json.Unmarshal(payloadBytes, &msg); jsonErr == nil {
-				logger.SafeLogf("[WORKER] job_completed from %s run=%s success=%v elapsed=%dms", workerID, msg.JobRunID, msg.Success, msg.DurationMs)
+				logger.SafeLogf("[WORKER] job_completed run=%s worker=%s success=%v elapsed=%dms", msg.JobRunID, workerID, msg.Success, msg.DurationMs)
 				if s.onJobCompleted != nil {
 					go s.onJobCompleted(msg)
 				}

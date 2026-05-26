@@ -152,7 +152,7 @@ func (s *Scheduler) UnregisterJob(jobID string) {
 	}
 }
 
-// SyncJobsForRepo re-registers all jobs pointing to the given repository.
+// SyncJobsForRepo syncs all jobs pointing to the given repository.
 // Called when a repository is git-pulled so the scheduler picks up updated cron expressions.
 func (s *Scheduler) SyncJobsForRepo(repoID string) {
 	records, err := s.app.FindAllRecords("scheduled_jobs", dbx.HashExp{"repository": repoID})
@@ -164,7 +164,7 @@ func (s *Scheduler) SyncJobsForRepo(repoID string) {
 		s.RegisterJob(rec.Id)
 	}
 	if len(records) > 0 {
-		log.Printf("[jobscheduler] re-registered %d job(s) after repo %s update", len(records), repoID)
+		log.Printf("[jobscheduler] synced %d job(s) after repo %s update", len(records), repoID)
 	}
 }
 
@@ -324,7 +324,7 @@ func (s *Scheduler) dispatchToWorker(ctx context.Context, jobID, trigger, worker
 
 	// Ack received — container is starting.
 	s.setJobRunStatus(runID, "running")
-	log.Printf("[jobscheduler] job %s run %s started on worker %s", jobID, runID, workerID)
+	log.Printf("[jobscheduler] job run=%s worker=%s job=%s started", runID, workerID, jobID)
 }
 
 // HandleJobCompleted is called by the MTLSServer when a remote worker pushes
@@ -335,7 +335,7 @@ func (s *Scheduler) HandleJobCompleted(msg protocol.JobCompletedMessage) {
 		status = "error"
 	}
 	s.updateJobRun(msg.JobRunID, status, msg.Output, msg.DurationMs)
-	log.Printf("[jobscheduler] HandleJobCompleted run=%s status=%s elapsed=%dms", msg.JobRunID, status, msg.DurationMs)
+	log.Printf("[jobscheduler] job_completed run=%s status=%s elapsed=%dms", msg.JobRunID, status, msg.DurationMs)
 }
 
 // maxJobRunDuration is the wall-clock ceiling for a single job run.
@@ -401,7 +401,7 @@ func (s *Scheduler) createStalledRun(jobID, trigger string, tags []string) {
 		log.Printf("[jobscheduler] createStalledRun: failed to create stalled run for job %s: %v", jobID, err)
 		return
 	}
-	log.Printf("[jobscheduler] job %s stalled (no matching workers), run %s", jobID, runID)
+	log.Printf("[jobscheduler] job job=%s run=%s stalled (no matching workers)", jobID, runID)
 
 	rec, err := s.app.FindRecordById("scheduled_jobs", jobID)
 	if err == nil && rec.GetString("status") != "paused" {
