@@ -5,7 +5,7 @@ const route = useRoute()
 const { $pb } = useNuxtApp()
 const { subscribe } = useRealtime()
 const { copy } = useCopy()
-const { triggerRollback, forceRedeploy, deleteStack, getServices, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, transferStack, getWorkers } = useApi()
+const { triggerRollback, forceRedeploy, deleteStack, getServices, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, transferStack, getWorkers, stopContainer, restartContainer } = useApi()
 const { getStackIntegrationActions } = useIntegrations()
 const { validateComposePath, validateComposeFile } = useValidation()
 const toast = useToast()
@@ -104,6 +104,7 @@ async function loadAllStats() {
 const showLogsModal = ref(false)
 const logsContent = ref('')
 const logsContainerName = ref('')
+const logsWordWrap = ref(false)
 async function openContainerLogs(containerId: string, containerName: string) {
   logsContainerName.value = containerName || containerId
   logsContent.value = 'Loading...'
@@ -131,6 +132,44 @@ function openContainerActionModal(containerId: string, containerName: string, ac
     action
   }
   showContainerConfirmModal.value = true
+}
+
+// Bulk container action confirmation
+const showBulkActionModal = ref(false)
+const bulkActionState = ref<{ containers: { containerId: string, containerName: string }[], action: 'stop' | 'restart' }>({
+  containers: [],
+  action: 'restart'
+})
+const bulkActionLoading = ref(false)
+
+function handleBulkContainerAction(payload: { containers: { containerId: string, containerName: string }[], action: 'stop' | 'restart' }) {
+  bulkActionState.value = payload
+  showBulkActionModal.value = true
+}
+
+async function executeBulkContainerAction() {
+  const { containers, action } = bulkActionState.value
+  bulkActionLoading.value = true
+  try {
+    const results = await Promise.allSettled(
+      containers.map(c =>
+        action === 'stop'
+          ? stopContainer(stackId, c.containerId)
+          : restartContainer(stackId, c.containerId)
+      )
+    )
+    const failed = results.filter(r => r.status === 'rejected').length
+    const succeeded = results.length - failed
+    showBulkActionModal.value = false
+    if (failed === 0) {
+      toast.add({ title: `${action === 'stop' ? 'Stopped' : 'Restarted'} ${succeeded} container${succeeded !== 1 ? 's' : ''}`, color: action === 'stop' ? 'warning' : 'success' })
+    } else {
+      toast.add({ title: `${succeeded} succeeded, ${failed} failed`, color: 'error' })
+    }
+    setTimeout(() => servicesCard.value?.refresh(), 1500)
+  } finally {
+    bulkActionLoading.value = false
+  }
 }
 
 // Repo commits for rollback
@@ -505,6 +544,7 @@ onMounted(() => {
         @copy-container-id="copy($event, 'Container ID')"
         @show-logs="openContainerLogs"
         @container-action="openContainerActionModal($event.containerId, $event.containerName, $event.action)"
+        @bulk-container-action="handleBulkContainerAction($event)"
       />
 
       <!-- Webhook Integration -->
@@ -727,18 +767,31 @@ onMounted(() => {
       </template>
     </UModal>
 
-    <!-- Container Logs Modal -->
-    <UModal v-model:open="showLogsModal">
+    <!-- Container Logs Drawer -->
+    <USlideover v-model:open="showLogsModal" title="Container Logs" class="w-full sm:w-[800px] md:w-[1000px] max-w-full">
       <template #content>
-        <div class="p-4 space-y-3">
-          <div class="flex items-center justify-between">
-            <h3 class="font-semibold text-sm">{{ logsContainerName }}</h3>
-            <UButton icon="i-lucide-x" variant="ghost" size="xs" @click="showLogsModal = false" />
+        <div class="p-4 h-full flex flex-col space-y-4">
+          <div class="flex items-center justify-between shrink-0">
+            <h3 class="font-semibold text-lg">{{ logsContainerName }}</h3>
+            <div class="flex items-center gap-2">
+              <UTooltip :text="logsWordWrap ? 'Disable Word Wrap' : 'Enable Word Wrap'">
+                <UButton
+                  :icon="logsWordWrap ? 'i-lucide-wrap-text' : 'i-lucide-align-left'"
+                  variant="soft"
+                  color="neutral"
+                  size="sm"
+                  @click="logsWordWrap = !logsWordWrap"
+                />
+              </UTooltip>
+              <UButton icon="i-lucide-x" variant="ghost" size="sm" @click="showLogsModal = false" />
+            </div>
           </div>
-          <pre class="p-3 bg-gray-100 dark:bg-gray-800 rounded text-xs font-mono overflow-auto max-h-[70vh] whitespace-pre">{{ logsContent }}</pre>
+          <div class="flex-1 overflow-hidden bg-gray-900 rounded-lg">
+            <pre class="h-full p-4 text-gray-100 text-xs font-mono overflow-auto" :class="{'whitespace-pre-wrap break-all': logsWordWrap, 'whitespace-pre': !logsWordWrap}">{{ logsContent }}</pre>
+          </div>
         </div>
       </template>
-    </UModal>
+    </USlideover>
 
     <!-- Force Redeploy Modal -->
     <UModal v-model:open="showForceRedeploy">
@@ -880,5 +933,67 @@ onMounted(() => {
       :action="containerActionState.action"
       @done="loadServices"
     />
+
+    <!-- Bulk container action confirm modal -->
+    <UModal v-model:open="showBulkActionModal">
+      <template #content>
+        <div class="p-6 space-y-5">
+          <!-- Header -->
+          <div class="flex items-start gap-4">
+            <div
+              class="flex items-center justify-center w-10 h-10 rounded-lg shrink-0"
+              :class="bulkActionState.action === 'stop' ? 'bg-yellow-400/10' : 'bg-blue-400/10'"
+            >
+              <UIcon
+                :name="bulkActionState.action === 'stop' ? 'i-lucide-square' : 'i-lucide-rotate-cw'"
+                class="w-5 h-5"
+                :class="bulkActionState.action === 'stop' ? 'text-yellow-400' : 'text-blue-400'"
+              />
+            </div>
+            <div>
+              <h3 class="font-semibold text-gray-900 dark:text-white text-base">
+                {{ bulkActionState.action === 'stop' ? 'Stop All Containers' : 'Restart All Containers' }}
+              </h3>
+              <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                The following {{ bulkActionState.containers.length }} container{{ bulkActionState.containers.length !== 1 ? 's' : '' }} will be affected:
+              </p>
+            </div>
+          </div>
+
+          <!-- Container list -->
+          <div class="rounded-lg border border-gray-200 dark:border-gray-700 divide-y divide-gray-100 dark:divide-gray-700/60 max-h-64 overflow-y-auto">
+            <div
+              v-for="c in bulkActionState.containers"
+              :key="c.containerId"
+              class="flex items-center gap-3 px-3 py-2"
+            >
+              <UIcon name="i-lucide-container" class="w-4 h-4 shrink-0 text-gray-400" />
+              <span class="text-sm font-medium text-gray-900 dark:text-white truncate flex-1 min-w-0">{{ c.containerName }}</span>
+              <code class="text-xs font-mono text-gray-400 dark:text-gray-500 bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded shrink-0">
+                {{ c.containerId.slice(0, 12) }}
+              </code>
+            </div>
+          </div>
+
+          <!-- Actions -->
+          <div class="flex justify-end gap-2 pt-1">
+            <UButton
+              label="Cancel"
+              variant="outline"
+              color="neutral"
+              :disabled="bulkActionLoading"
+              @click="showBulkActionModal = false"
+            />
+            <UButton
+              :label="bulkActionState.action === 'stop' ? 'Stop All' : 'Restart All'"
+              :color="bulkActionState.action === 'stop' ? 'warning' : 'info'"
+              :icon="bulkActionState.action === 'stop' ? 'i-lucide-square' : 'i-lucide-rotate-cw'"
+              :loading="bulkActionLoading"
+              @click="executeBulkContainerAction"
+            />
+          </div>
+        </div>
+      </template>
+    </UModal>
   </div>
 </template>

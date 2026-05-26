@@ -92,7 +92,8 @@ const { data: webhookConfig, refresh: refreshWebhook } = useAsyncData('sync_even
       webhookForm.value.webhook.secret = cfg.secret || ''
       webhookHasSecret.value = cfg.secret === '••••••••'
       try {
-        webhookForm.value.webhook.headers = cfg.headers ? JSON.parse(cfg.headers) : []
+        const parsed = cfg.headers ? JSON.parse(cfg.headers) : []
+        webhookForm.value.webhook.headers = Array.isArray(parsed) ? parsed : []
       } catch { webhookForm.value.webhook.headers = [] }
       webhookForm.value.ntfy.url = 'https://ntfy.sh'
       webhookForm.value.ntfy.topic = ''

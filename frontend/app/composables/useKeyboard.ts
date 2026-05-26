@@ -1,11 +1,13 @@
 import { onMounted, onUnmounted, ref } from 'vue'
 
+const isShowingHelp = ref(false)
+const isShowingCommandPalette = ref(false)
+
 export function useKeyboard() {
   const router = useRouter()
-  const isShowingHelp = ref(false)
 
   const shortcuts = [
-    { key: 'Cmd/Ctrl + K', description: 'Quick search (coming soon)' },
+    { key: 'Cmd/Ctrl + K', description: 'Quick search (Command Palette)' },
     { key: 'Cmd/Ctrl + R', description: 'Refresh current page' },
     { key: 'Cmd/Ctrl + S', description: 'Trigger sync (on stack page)' },
     { key: 'Escape', description: 'Close modals' },
@@ -46,26 +48,29 @@ export function useKeyboard() {
         isShowingHelp.value = false
         return
       }
+      if (isShowingCommandPalette.value) {
+        event.preventDefault()
+        isShowingCommandPalette.value = false
+        return
+      }
       // Let other components handle escape (for closing their modals)
       return
     }
 
-    // Cmd/Ctrl + K - Quick search (placeholder for now)
+    // Cmd/Ctrl + K - Quick search
     if ((event.metaKey || event.ctrlKey) && event.key === 'k') {
       event.preventDefault()
-      // TODO: Implement global search when ready
+      isShowingCommandPalette.value = !isShowingCommandPalette.value
       return
     }
 
-    // Cmd/Ctrl + R - Refresh (let browser handle, but we could add custom logic)
+    // Cmd/Ctrl + R - Refresh (let browser handle)
     if ((event.metaKey || event.ctrlKey) && event.key === 'r') {
-      // Let browser handle default refresh
       return
     }
 
-    // Cmd/Ctrl + S - Trigger sync (only on stack page, handled by page component)
+    // Cmd/Ctrl + S - Trigger sync
     if ((event.metaKey || event.ctrlKey) && event.key === 's') {
-      // Handled by stack detail page
       return
     }
 
@@ -103,16 +108,19 @@ export function useKeyboard() {
   }
 
   onMounted(() => {
-    window.addEventListener('keydown', handleKeydown)
+    if (typeof window !== 'undefined' && !window.__keyboardListenerRegistered) {
+      window.addEventListener('keydown', handleKeydown)
+      window.__keyboardListenerRegistered = true
+    }
   })
 
   onUnmounted(() => {
-    window.removeEventListener('keydown', handleKeydown)
     if (gTimeout) clearTimeout(gTimeout)
   })
 
   return {
     isShowingHelp,
+    isShowingCommandPalette,
     shortcuts,
   }
 }

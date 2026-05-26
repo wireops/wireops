@@ -1,10 +1,25 @@
 <script setup lang="ts">
+import { computed, ref } from 'vue'
+
 const props = defineProps<{
   code: string
   class?: string
 }>()
 
 const colorMode = useColorMode()
+
+const copied = ref(false)
+const wordWrap = ref(false)
+
+async function copyCode() {
+  try {
+    await navigator.clipboard.writeText(props.code || '')
+    copied.value = true
+    setTimeout(() => { copied.value = false }, 2000)
+  } catch (err) {
+    console.error('Failed to copy text: ', err)
+  }
+}
 
 function escapeHtml(text: string): string {
   return text
@@ -97,8 +112,30 @@ const highlightedCode = computed(() => highlightYaml(props.code))
 </script>
 
 <template>
-  <!-- eslint-disable-next-line vue/no-v-html -->
-  <pre :class="['yaml-highlighter', colorMode.value === 'dark' ? 'dark-mode' : 'light-mode', props.class]"><code v-html="highlightedCode"/></pre>
+  <div class="relative group">
+    <div class="absolute right-2 top-2 z-10 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity focus-within:opacity-100">
+      <UTooltip :text="wordWrap ? 'Disable Word Wrap' : 'Enable Word Wrap'">
+        <UButton
+          :icon="wordWrap ? 'i-lucide-wrap-text' : 'i-lucide-align-left'"
+          variant="soft"
+          color="neutral"
+          size="xs"
+          @click="wordWrap = !wordWrap"
+        />
+      </UTooltip>
+      <UTooltip :text="copied ? 'Copied!' : 'Copy to Clipboard'">
+        <UButton
+          :icon="copied ? 'i-lucide-check' : 'i-lucide-copy'"
+          :color="copied ? 'success' : 'neutral'"
+          variant="soft"
+          size="xs"
+          @click="copyCode"
+        />
+      </UTooltip>
+    </div>
+    <!-- eslint-disable-next-line vue/no-v-html -->
+    <pre :class="['yaml-highlighter', colorMode.value === 'dark' ? 'dark-mode' : 'light-mode', props.class]"><code :class="{'wrap-text': wordWrap}" v-html="highlightedCode"/></pre>
+  </div>
 </template>
 
 <style scoped>
@@ -118,6 +155,11 @@ const highlightedCode = computed(() => highlightYaml(props.code))
   display: block;
   white-space: pre;
   color: inherit;
+}
+
+.yaml-highlighter code.wrap-text {
+  white-space: pre-wrap !important;
+  word-break: break-word;
 }
 
 /* Keys - yellow to match project primary */

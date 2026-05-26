@@ -6,9 +6,14 @@ const { isAuthenticated, logout } = useAuth()
 const route = useRoute()
 const colorMode = useColorMode()
 const mobileMenuOpen = ref(false)
+const sidebarCollapsed = useCookie<boolean>('sidebar_collapsed', { default: () => false })
 const { isShowingHelp, shortcuts } = useKeyboard()
 const { announce } = useA11yAnnouncer()
 const isShowingAccessibility = ref(false)
+
+function toggleSidebar() {
+  sidebarCollapsed.value = !sidebarCollapsed.value
+}
 
 const navItems = [
   { label: 'Dashboard', icon: 'i-lucide-layout-dashboard', to: '/' },
@@ -89,6 +94,8 @@ watch(mobileMenuOpen, (isOpen) => {
           :nav-items="navItems"
           :current-path="route.path"
           :color-mode-value="colorMode.value"
+          :collapsed="sidebarCollapsed"
+          @toggle-collapse="toggleSidebar"
           @help="openHelp"
           @accessibility="openAccessibility"
           @toggle-theme="toggleTheme"
@@ -228,5 +235,7 @@ watch(mobileMenuOpen, (isOpen) => {
         </UCard>
       </template>
     </UModal>
+
+    <AppCommandPalette v-if="isAuthenticated" />
   </div>
 </template>
