@@ -91,8 +91,14 @@ func configureCORSMiddleware(e *core.RequestEvent) error {
 }
 
 func Execute() error {
+	// Load .env before InitLogger so LOG_LEVEL and other vars are visible
+	// when the logger initialises. The error is intentionally ignored: .env is
+	// optional in production (env vars may be injected by the runtime instead).
+	err := godotenv.Load()
 	logger.InitLogger()
-	_ = godotenv.Load()
+	if err == nil {
+		log.Println("[config] loaded environment from .env")
+	}
 
 	dataDir := os.Getenv("PB_DATA_DIR")
 	if dataDir == "" {

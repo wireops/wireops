@@ -126,6 +126,8 @@ func (w *ColorWriter) writeLine(p []byte) error {
 
 	// PocketBase slog emits HTTP access lines as "INFO GET /path ..." or "INFO POST /path ..."
 	// without a category bracket. Detect them by the leading level word followed by a method.
+	// Error checks take priority: if the line carries a 4xx/5xx status or error keywords it is
+	// NOT demoted to Debug regardless of the PocketBase HTTP prefix.
 	isPocketBaseHTTPLog := false
 	for _, method := range []string{"GET", "POST", "PATCH", "DELETE", "PUT"} {
 		if strings.HasPrefix(cleanMsgForClassify, "INFO "+method+" ") ||
@@ -133,6 +135,12 @@ func (w *ColorWriter) writeLine(p []byte) error {
 			isPocketBaseHTTPLog = true
 			break
 		}
+	}
+	if isPocketBaseHTTPLog && (hasApiErrorStatus(cleanMsgForClassify) ||
+		strings.Contains(lowerMsg, "error") ||
+		strings.Contains(lowerMsg, "failed") ||
+		strings.Contains(lowerMsg, "panic")) {
+		isPocketBaseHTTPLog = false
 	}
 
 	isDbQuery := false
@@ -257,7 +265,7 @@ func (w *ColorWriter) writeLine(p []byte) error {
 
 	var finalMsg string
 	if category != "" {
-		colorCode := "\033[1;36m" // default cyan bold
+		var colorCode string
 		switch strings.ToLower(category) {
 		case "worker":
 			colorCode = "\033[1;36m" // Cyan Bold
@@ -403,6 +411,10 @@ func parseTimestamp(line string) (string, string, bool) {
 			return "", line, false
 		}
 	}
+	// Index 19 must be a space separator; also ensure there is a message after it.
+	if len(line) < 21 || line[19] != ' ' {
+		return "", line, false
+	}
 	return line[:19], line[20:], true
 }
 
@@ -431,7 +443,7 @@ func hasApiErrorStatus(msg string) bool {
 		if msg[i] >= '0' && msg[i] <= '9' &&
 			msg[i+1] >= '0' && msg[i+1] <= '9' &&
 			msg[i+2] >= '0' && msg[i+2] <= '9' {
-			leftOk := i == 0 || msg[i-1] == ' ' || msg[i-1] == '|' || msg[i-1] == '\t' || msg[i-1] == '\x1b' || msg[i-1] == '['
+			leftOk := i == 0 || msg[i-1] == ' ' || msg[i-1] == '|' || msg[i-1] == '\t' || msg[i-1] == '\x1b' || msg[i-1] == '[' || msg[i-1] == '='
 			rightOk := i+3 == len(msg) || msg[i+3] == ' ' || msg[i+3] == '|' || msg[i+3] == '\t' || msg[i+3] == '\x1b' || msg[i+3] == ']'
 			if leftOk && rightOk {
 				num := int(msg[i]-'0')*100 + int(msg[i+1]-'0')*10 + int(msg[i+2]-'0')
