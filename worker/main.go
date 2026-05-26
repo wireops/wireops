@@ -18,6 +18,7 @@ import (
 	"github.com/wireops/wireops/worker/api"
 	"github.com/wireops/wireops/worker/executor"
 	wsync "github.com/wireops/wireops/worker/sync"
+	"github.com/wireops/wireops/pkg/logger"
 )
 
 var activeJobs gosync.Map
@@ -37,6 +38,7 @@ const (
 )
 
 func main() {
+	logger.InitLogger()
 	serverURL := os.Getenv("WIREOPS_SERVER")
 	workerToken := os.Getenv("WIREOPS_WORKER_TOKEN")
 	hostname := os.Getenv("HOSTNAME")
@@ -67,14 +69,14 @@ func main() {
 
 		switch reason {
 		case reasonRevoked:
-			log.Fatal("[WORKER] This worker token has been rejected by the server. Issue a new token to continue.")
+			log.Fatal("[worker] token rejected by server. Issue a new token to continue.")
 
 		case reasonShutdown:
-			log.Println("[WORKER] Shutting down...")
+			log.Println("[worker] shutting down")
 			return
 
 		default:
-			log.Printf("[WORKER] Disconnected. Reconnecting in %v...", backoff)
+			log.Printf("[worker] disconnected reconnecting_in=%v", backoff)
 			time.Sleep(backoff)
 			backoff = min(backoff*2, maxBackoff)
 		}
@@ -101,9 +103,9 @@ func runSession(serverURL, workerToken, hostname string, tags []string, sigChan 
 		default:
 		}
 
-		log.Printf("[WORKER] Registration attempt %d failed: %v. Retrying in 5s...", i, err)
+		log.Printf("[worker] registration attempt=%d error=%v retrying_in=5s", i, err)
 		if i == 5 {
-			log.Printf("[WORKER] Failed to register after 5 attempts")
+			log.Printf("[worker] registration failed after 5 attempts")
 			return reasonUnknown
 		}
 
@@ -116,12 +118,12 @@ func runSession(serverURL, workerToken, hostname string, tags []string, sigChan 
 
 	conn, err := wsync.Connect(serverURL, workerToken)
 	if err != nil {
-		log.Printf("[WORKER] Failed to connect WebSocket: %v", err)
+		log.Printf("[worker] websocket connect error=%v", err)
 		return reasonUnknown
 	}
 	defer conn.Close()
 
-	log.Println("[WORKER] Worker is running and connected.")
+	log.Println("[worker] connected")
 
 	disconnectCh := make(chan disconnectReason, 1)
 
@@ -161,7 +163,7 @@ func runSession(serverURL, workerToken, hostname string, tags []string, sigChan 
 			writeErr := conn.WriteMessage(websocket.TextMessage, heartbeat)
 			connWriteMu.Unlock()
 			if writeErr != nil {
-				log.Printf("[WORKER] Heartbeat failed: %v", writeErr)
+				log.Printf("[worker] heartbeat error=%v", writeErr)
 			}
 		}
 	}
@@ -175,14 +177,14 @@ func readLoop(conn *websocket.Conn, disconnectCh chan<- disconnectReason) {
 				disconnectCh <- reasonRevoked
 				return
 			}
-			log.Printf("[WORKER] WebSocket read error: %v", err)
+			log.Printf("[worker] websocket read error=%v", err)
 			disconnectCh <- reasonUnknown
 			return
 		}
 
 		var env protocol.Envelope
 		if err := json.Unmarshal(msg, &env); err != nil {
-			log.Printf("[WORKER] Failed to parse message: %v", err)
+			log.Printf("[worker] message parse error=%v", err)
 			continue
 		}
 
@@ -215,7 +217,7 @@ func readLoop(conn *websocket.Conn, disconnectCh chan<- disconnectReason) {
 			go handleKillJob(conn, env.Payload)
 
 		default:
-			log.Printf("[WORKER] Unknown message type: %s", env.Type)
+			log.Printf("[worker] unknown message type=%s", env.Type)
 		}
 	}
 }
@@ -223,14 +225,9 @@ func readLoop(conn *websocket.Conn, disconnectCh chan<- disconnectReason) {
 func handleDeploy(conn *websocket.Conn, payload interface{}) {
 	cmd, err := unmarshalPayload[protocol.DeployCommand](payload)
 	if err != nil {
-		log.Printf("[WORKER] Invalid deploy payload: %v", err)
+		log.Printf("[worker] invalid deploy payload error=%v", err)
 		return
 	}
-	trigger := cmd.Trigger
-	if trigger == "" {
-		trigger = "unknown"
-	}
-	log.Printf("[WORKER] deploy (trigger: %s) stack: %s, commit: %s (command: %s)", trigger, cmd.StackID, cmd.CommitSHA, cmd.CommandID)
 	result := executor.Deploy(context.Background(), cmd)
 	sendResult(conn, result)
 }
@@ -238,14 +235,9 @@ func handleDeploy(conn *websocket.Conn, payload interface{}) {
 func handleRedeploy(conn *websocket.Conn, payload interface{}) {
 	cmd, err := unmarshalPayload[protocol.RedeployCommand](payload)
 	if err != nil {
-		log.Printf("[WORKER] Invalid redeploy payload: %v", err)
+		log.Printf("[worker] invalid redeploy payload error=%v", err)
 		return
 	}
-	trigger := cmd.Trigger
-	if trigger == "" {
-		trigger = "force-redeploy"
-	}
-	log.Printf("[WORKER] redeploy (trigger: %s) stack: %s, commit: %s (command: %s)", trigger, cmd.StackID, cmd.CommitSHA, cmd.CommandID)
 	result := executor.Redeploy(context.Background(), cmd)
 	sendResult(conn, result)
 }
@@ -253,10 +245,9 @@ func handleRedeploy(conn *websocket.Conn, payload interface{}) {
 func handleTeardown(conn *websocket.Conn, payload interface{}) {
 	cmd, err := unmarshalPayload[protocol.TeardownCommand](payload)
 	if err != nil {
-		log.Printf("[WORKER] Invalid teardown payload: %v", err)
+		log.Printf("[worker] invalid teardown payload error=%v", err)
 		return
 	}
-	log.Printf("[WORKER] teardown stack: %s (command: %s)", cmd.StackID, cmd.CommandID)
 	result := executor.Teardown(context.Background(), cmd)
 	sendResult(conn, result)
 }
@@ -264,10 +255,9 @@ func handleTeardown(conn *websocket.Conn, payload interface{}) {
 func handleProbe(conn *websocket.Conn, payload interface{}) {
 	cmd, err := unmarshalPayload[protocol.ProbeCommand](payload)
 	if err != nil {
-		log.Printf("[WORKER] Invalid probe payload: %v", err)
+		log.Printf("[worker] invalid probe payload error=%v", err)
 		return
 	}
-	log.Printf("[WORKER] probe stack: %s (command: %s)", cmd.StackID, cmd.CommandID)
 	result := executor.Probe(context.Background(), cmd)
 	sendResult(conn, result)
 }
@@ -275,10 +265,9 @@ func handleProbe(conn *websocket.Conn, payload interface{}) {
 func handleInspect(conn *websocket.Conn, payload interface{}) {
 	cmd, err := unmarshalPayload[protocol.InspectCommand](payload)
 	if err != nil {
-		log.Printf("[WORKER] Invalid inspect payload: %v", err)
+		log.Printf("[worker] invalid inspect payload error=%v", err)
 		return
 	}
-	log.Printf("[WORKER] inspect stack: %s (command: %s)", cmd.StackID, cmd.CommandID)
 	result := executor.Inspect(context.Background(), cmd)
 	sendResult(conn, result)
 }
@@ -286,10 +275,9 @@ func handleInspect(conn *websocket.Conn, payload interface{}) {
 func handleGetResources(conn *websocket.Conn, payload interface{}) {
 	cmd, err := unmarshalPayload[protocol.GetResourcesCommand](payload)
 	if err != nil {
-		log.Printf("[WORKER] Invalid get_resources payload: %v", err)
+		log.Printf("[worker] invalid get_resources payload error=%v", err)
 		return
 	}
-	log.Printf("[WORKER] get_resources stack: %s project: %s (command: %s)", cmd.StackID, cmd.ProjectName, cmd.CommandID)
 	result := executor.GetResources(context.Background(), cmd)
 	sendResult(conn, result)
 }
@@ -297,10 +285,9 @@ func handleGetResources(conn *websocket.Conn, payload interface{}) {
 func handleGetStatus(conn *websocket.Conn, payload interface{}) {
 	cmd, err := unmarshalPayload[protocol.GetStatusCommand](payload)
 	if err != nil {
-		log.Printf("[WORKER] Invalid get_status payload: %v", err)
+		log.Printf("[worker] invalid get_status payload error=%v", err)
 		return
 	}
-	log.Printf("[WORKER] get_status project: %s (command: %s)", cmd.ProjectName, cmd.CommandID)
 	result := executor.GetStatus(context.Background(), cmd)
 	sendResult(conn, result)
 }
@@ -308,10 +295,9 @@ func handleGetStatus(conn *websocket.Conn, payload interface{}) {
 func handleStopContainer(conn *websocket.Conn, payload interface{}) {
 	cmd, err := unmarshalPayload[protocol.ContainerActionCommand](payload)
 	if err != nil {
-		log.Printf("[WORKER] Invalid stop_container payload: %v", err)
+		log.Printf("[worker] invalid stop_container payload error=%v", err)
 		return
 	}
-	log.Printf("[WORKER] stop_container stack: %s project: %s container: %s (command: %s)", cmd.StackID, cmd.ProjectName, cmd.ContainerID, cmd.CommandID)
 	result := executor.StopContainer(context.Background(), cmd)
 	sendResult(conn, result)
 }
@@ -319,10 +305,9 @@ func handleStopContainer(conn *websocket.Conn, payload interface{}) {
 func handleRestartContainer(conn *websocket.Conn, payload interface{}) {
 	cmd, err := unmarshalPayload[protocol.ContainerActionCommand](payload)
 	if err != nil {
-		log.Printf("[WORKER] Invalid restart_container payload: %v", err)
+		log.Printf("[worker] invalid restart_container payload error=%v", err)
 		return
 	}
-	log.Printf("[WORKER] restart_container stack: %s project: %s container: %s (command: %s)", cmd.StackID, cmd.ProjectName, cmd.ContainerID, cmd.CommandID)
 	result := executor.RestartContainer(context.Background(), cmd)
 	sendResult(conn, result)
 }
@@ -330,10 +315,9 @@ func handleRestartContainer(conn *websocket.Conn, payload interface{}) {
 func handleDiscoverProjects(conn *websocket.Conn, payload interface{}) {
 	cmd, err := unmarshalPayload[protocol.DiscoverProjectsCommand](payload)
 	if err != nil {
-		log.Printf("[WORKER] Invalid discover_projects payload: %v", err)
+		log.Printf("[worker] invalid discover_projects payload error=%v", err)
 		return
 	}
-	log.Printf("[WORKER] discover_projects (command: %s)", cmd.CommandID)
 	result := executor.DiscoverProjects(context.Background(), cmd)
 	sendResult(conn, result)
 }
@@ -341,10 +325,9 @@ func handleDiscoverProjects(conn *websocket.Conn, payload interface{}) {
 func handleReadFile(conn *websocket.Conn, payload interface{}) {
 	cmd, err := unmarshalPayload[protocol.ReadFileCommand](payload)
 	if err != nil {
-		log.Printf("[WORKER] Invalid read_file payload: %v", err)
+		log.Printf("[worker] invalid read_file payload error=%v", err)
 		return
 	}
-	log.Printf("[WORKER] read_file path=%s (command: %s)", cmd.Path, cmd.CommandID)
 	result := executor.ReadFile(context.Background(), cmd)
 	sendResult(conn, result)
 }
@@ -352,10 +335,9 @@ func handleReadFile(conn *websocket.Conn, payload interface{}) {
 func handleRunJob(conn *websocket.Conn, payload interface{}) {
 	cmd, err := unmarshalPayload[protocol.RunJobCommand](payload)
 	if err != nil {
-		log.Printf("[WORKER] Invalid run_job payload: %v", err)
+		log.Printf("[worker] invalid run_job payload error=%v", err)
 		return
 	}
-	log.Printf("[WORKER] run_job job_run=%s image=%s (command: %s)", cmd.JobRunID, cmd.Image, cmd.CommandID)
 
 	activeJobs.Store(cmd.JobRunID, struct{}{})
 
@@ -363,14 +345,14 @@ func handleRunJob(conn *websocket.Conn, payload interface{}) {
 		activeJobs.Delete(cmd.JobRunID)
 		msg, marshalErr := json.Marshal(protocol.Envelope{Type: msgType, Payload: p})
 		if marshalErr != nil {
-			log.Printf("[WORKER] Failed to marshal job completion: %v", marshalErr)
+			log.Printf("[worker] job completion marshal error=%v", marshalErr)
 			return
 		}
 		connWriteMu.Lock()
 		writeErr := conn.WriteMessage(websocket.TextMessage, msg)
 		connWriteMu.Unlock()
 		if writeErr != nil {
-			log.Printf("[WORKER] Failed to send job completion for run %s: %v", cmd.JobRunID, writeErr)
+			log.Printf("[worker] job completion send error job_run=%s error=%v", cmd.JobRunID, writeErr)
 		}
 	})
 
@@ -380,10 +362,9 @@ func handleRunJob(conn *websocket.Conn, payload interface{}) {
 func handleKillJob(conn *websocket.Conn, payload interface{}) {
 	cmd, err := unmarshalPayload[protocol.KillJobCommand](payload)
 	if err != nil {
-		log.Printf("[WORKER] Invalid kill_job payload: %v", err)
+		log.Printf("[worker] invalid kill_job payload error=%v", err)
 		return
 	}
-	log.Printf("[WORKER] kill_job job_run=%s (command: %s)", cmd.JobRunID, cmd.CommandID)
 	result := executor.KillJob(cmd)
 	sendResult(conn, result)
 }
@@ -391,14 +372,14 @@ func handleKillJob(conn *websocket.Conn, payload interface{}) {
 func sendResult(conn *websocket.Conn, result protocol.CommandResult) {
 	msg, err := json.Marshal(protocol.Envelope{Type: protocol.MsgResult, Payload: result})
 	if err != nil {
-		log.Printf("[WORKER] Failed to marshal result: %v", err)
+		log.Printf("[worker] result marshal error=%v", err)
 		return
 	}
 	connWriteMu.Lock()
 	err = conn.WriteMessage(websocket.TextMessage, msg)
 	connWriteMu.Unlock()
 	if err != nil {
-		log.Printf("[WORKER] Failed to send result: %v", err)
+		log.Printf("[worker] result send error=%v", err)
 	}
 }
 

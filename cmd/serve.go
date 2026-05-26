@@ -27,6 +27,7 @@ import (
 	"github.com/wireops/wireops/internal/routes"
 	"github.com/wireops/wireops/internal/sync"
 	"github.com/wireops/wireops/internal/worker"
+	"github.com/wireops/wireops/pkg/logger"
 
 	_ "github.com/wireops/wireops/internal/integrations/dozzle"
 	_ "github.com/wireops/wireops/internal/integrations/traefik"
@@ -90,7 +91,14 @@ func configureCORSMiddleware(e *core.RequestEvent) error {
 }
 
 func Execute() error {
-	_ = godotenv.Load()
+	// Load .env before InitLogger so LOG_LEVEL and other vars are visible
+	// when the logger initialises. The error is intentionally ignored: .env is
+	// optional in production (env vars may be injected by the runtime instead).
+	err := godotenv.Load()
+	logger.InitLogger()
+	if err == nil {
+		log.Println("[config] loaded environment from .env")
+	}
 
 	dataDir := os.Getenv("PB_DATA_DIR")
 	if dataDir == "" {
@@ -105,9 +113,47 @@ func Execute() error {
 	})
 
 	app.OnBootstrap().BindFunc(func(e *core.BootstrapEvent) error {
+		isMigrationCmd := false
+		if len(os.Args) < 2 {
+			isMigrationCmd = true // default command is serve
+		} else {
+			cmd := os.Args[1]
+			if cmd == "serve" || cmd == "migrate" {
+				isMigrationCmd = true
+			}
+		}
+
+		if isMigrationCmd {
+			log.Println("[db] Running database migrations...")
+		}
+
 		if err := e.Next(); err != nil {
+			if isMigrationCmd {
+				log.Printf("[db] Database migrations failed: %v", err)
+			}
 			return err
 		}
+
+		// Disable all PocketBase dbx SQL logging. All three hooks (LogFunc,
+		// QueryLogFunc, ExecLogFunc) pass the full SQL body including parameter
+		// values to the logger, which would leak sensitive data from the output
+		// and other fields stored in job_runs and sync_logs.
+		redirectDB := func(dbConn *dbx.DB) {
+			dbConn.LogFunc = nil
+			dbConn.QueryLogFunc = nil
+			dbConn.ExecLogFunc = nil
+		}
+
+		if dbConn, ok := app.DB().(*dbx.DB); ok {
+			redirectDB(dbConn)
+		}
+		if dbConn, ok := app.ConcurrentDB().(*dbx.DB); ok {
+			redirectDB(dbConn)
+		}
+		if dbConn, ok := app.NonconcurrentDB().(*dbx.DB); ok {
+			redirectDB(dbConn)
+		}
+
 		smtpHost := os.Getenv("SMTP_HOST")
 		if smtpHost != "" {
 			smtpPort := 587
@@ -163,8 +209,17 @@ func Execute() error {
 	}()
 
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
+		log.Println("[db] Database migrations completed successfully.")
+
 		// OIDC client secret lives only in OIDC_CLIENT_SECRET; inject into the collection cache
 		// for OAuth handlers, then reload the cache so it is not retained for other routes.
+		// Suppress HTTP access logs (activity logger) unless running in DEBUG mode.
+		// PocketBase's native SkipSuccessActivityLog middleware prevents successful
+		// requests from being recorded — the equivalent of an access log filter.
+		if !logger.IsDebug() {
+			se.Router.Bind(apis.SkipSuccessActivityLog())
+		}
+
 		se.Router.BindFunc(hooks.SSOUsersOAuthRuntimeMiddleware(app))
 
 		// Configure CORS middleware based on APP_URL

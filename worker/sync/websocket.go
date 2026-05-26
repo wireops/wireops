@@ -29,7 +29,7 @@ func Connect(serverURL, token string) (*websocket.Conn, error) {
 	headers := make(http.Header)
 	headers.Set("X-Wireops-Worker-Token", strings.TrimSpace(token))
 
-	log.Printf("[WORKER] Dialing WebSocket %s...", u.String())
+	log.Printf("[worker] websocket dialing url=%s", u.String())
 	conn, resp, err := dialer.Dial(u.String(), headers)
 	if err != nil {
 		if resp != nil {
@@ -38,6 +38,6 @@ func Connect(serverURL, token string) (*websocket.Conn, error) {
 		return nil, fmt.Errorf("websocket dial failed: %w", err)
 	}
 
-	log.Printf("[WORKER] Completed WebSocket connection establishment.")
+	log.Printf("[worker] websocket connected")
 	return conn, nil
 }
