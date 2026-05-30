@@ -22,6 +22,10 @@ describe('default layout accessibility', () => {
     ;(globalThis as any).useA11yAnnouncer = () => ({
       announce: vi.fn(),
     })
+    ;(globalThis as any).useCookie = (_key: string, opts?: { default?: () => any }) => {
+      const val = opts?.default ? opts.default() : undefined
+      return { value: val }
+    }
   })
 
   it('renders a single main landmark with the skip-link target id', async () => {
@@ -33,6 +37,7 @@ describe('default layout accessibility', () => {
       global: {
         stubs: {
           AppSidebar: { template: '<aside />' },
+          AppCommandPalette: { template: '<div />' },
           UButton: {
             props: ['label', 'icon'],
             template: '<button v-bind="$attrs">{{ label }}<slot /></button>',

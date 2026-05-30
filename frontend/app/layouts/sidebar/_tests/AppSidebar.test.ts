@@ -1,8 +1,16 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import AppSidebar from '../AppSidebar.vue'
 
 describe('AppSidebar', () => {
+  beforeEach(() => {
+    ;(globalThis as any).useRouter = () => ({ push: () => {} })
+    ;(globalThis as any).useKeyboard = () => ({
+      isShowingHelp: { value: false },
+      isShowingCommandPalette: { value: false },
+      shortcuts: [],
+    })
+  })
   const navItems = [
     { label: 'Dashboard', icon: 'i-home', to: '/' },
     {
@@ -26,6 +34,7 @@ describe('AppSidebar', () => {
         stubs: {
           NuxtLink: { template: '<a v-bind="$attrs"><slot /></a>' },
           UIcon: { template: '<span />' },
+          UTooltip: { template: '<div><slot /></div>' },
           UButton: {
             inheritAttrs: false,
             props: ['label', 'icon', 'to'],

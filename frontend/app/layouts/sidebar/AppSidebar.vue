@@ -296,6 +296,7 @@ watch(
           <UButton
             icon="i-lucide-search"
             :label="collapsed ? undefined : 'Search'"
+            :aria-label="collapsed ? 'Search' : undefined"
             variant="soft"
             color="neutral"
             size="lg"
@@ -337,6 +338,7 @@ watch(
               :to="item.to"
               :icon="item.icon"
               :label="collapsed ? undefined : item.label"
+              :aria-label="collapsed ? item.label : undefined"
               :variant="isActive(item.to) || hasActiveChild(item) ? 'soft' : 'ghost'"
               :color="isActive(item.to) || hasActiveChild(item) ? 'primary' : 'neutral'"
               size="lg"
@@ -371,6 +373,7 @@ watch(
           <UButton
             icon="i-lucide-keyboard"
             :label="collapsed ? undefined : 'Keyboard Shortcuts'"
+            :aria-label="collapsed ? 'Keyboard Shortcuts' : undefined"
             variant="ghost"
             color="neutral"
             size="lg"
@@ -382,6 +385,7 @@ watch(
           <UButton
             icon="i-lucide-accessibility"
             :label="collapsed ? undefined : 'Accessibility'"
+            :aria-label="collapsed ? 'Accessibility' : undefined"
             variant="ghost"
             color="neutral"
             size="lg"
@@ -393,6 +397,7 @@ watch(
           <UButton
             :icon="colorModeValue === 'dark' ? 'i-lucide-sun' : 'i-lucide-moon'"
             :label="collapsed ? undefined : (colorModeValue === 'dark' ? 'Light Mode' : 'Dark Mode')"
+            :aria-label="collapsed ? (colorModeValue === 'dark' ? 'Light Mode' : 'Dark Mode') : undefined"
             variant="ghost"
             color="neutral"
             size="lg"
@@ -404,6 +409,7 @@ watch(
           <UButton
             icon="i-lucide-log-out"
             :label="collapsed ? undefined : 'Logout'"
+            :aria-label="collapsed ? 'Logout' : undefined"
             variant="ghost"
             color="neutral"
             size="lg"

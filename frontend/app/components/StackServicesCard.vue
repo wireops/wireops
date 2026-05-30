@@ -213,6 +213,7 @@ watch(() => props.stackId, refreshResources, { immediate: true })
                       variant="ghost"
                       color="warning"
                       size="xs"
+                      title="Stop"
                       @click="emit('container-action', { containerId: container.container_id, containerName: container.container_name || container.container_id, action: 'stop' })"
                     />
                   </UTooltip>
@@ -222,6 +223,7 @@ watch(() => props.stackId, refreshResources, { immediate: true })
                       variant="ghost"
                       color="info"
                       size="xs"
+                      title="Restart"
                       @click="emit('container-action', { containerId: container.container_id, containerName: container.container_name || container.container_id, action: 'restart' })"
                     />
                   </UTooltip>
