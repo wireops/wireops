@@ -5,18 +5,18 @@ services:
     restart: unless-stopped
     environment:
       # Address of the wireops server
-      WIREOPS_SERVER: ${WIREOPS_SERVER}
+      SERVER_URL: ${SERVER_URL}
 
       # Worker registration and authentication token
-      WIREOPS_WORKER_TOKEN: ${WIREOPS_WORKER_TOKEN}
+      WORKER_TOKEN: ${WORKER_TOKEN}
 
       # Optional: override the hostname reported to the server.
       # Defaults to the container's hostname if not set.
       HOSTNAME: ${WORKER_HOSTNAME:-}
 
-      # Optional: override where the worker writes temporary rendered compose files.
-      # Defaults to /tmp/wireops-worker inside the container.
-      WIREOPS_WORKER_WORK_DIR: /tmp/wireops-worker
+      # Optional: override where the worker writes temporary compose files.
+      # Defaults to <os.TempDir()>/wireops (e.g. /tmp/wireops on Linux).
+      # WORKER_STACK_DIR: /custom/path
 
     volumes:
       # Give the worker access to the Docker socket so it can run

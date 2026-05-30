@@ -22,9 +22,9 @@ services:
     depends_on:
       - wireops
     environment:
-      - WIREOPS_SERVER=${WIREOPS_SERVER:-http://wireops:8443}
-      - WIREOPS_WORKER_TOKEN=${WIREOPS_WORKER_TOKEN:-}
-      - WIREOPS_WORKER_WORK_DIR=/tmp/wireops-worker
+      - SERVER_URL=${SERVER_URL:-http://wireops:8443}
+      - WORKER_TOKEN=${WORKER_TOKEN:-}
+      - WORKER_STACK_DIR=/tmp/wireops-worker
       - HOSTNAME=${WORKER_HOSTNAME:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock

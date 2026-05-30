@@ -21,12 +21,25 @@ import (
 )
 
 // stackDir is the root directory under which per-stack compose work dirs are created.
-// Defaults to <os.TempDir()>/wireops and can be overridden via WIREOPS_WORKER_STACK_DIR.
+// Defaults to <os.TempDir()>/wireops and can be overridden via WORKER_STACK_DIR.
+// The supplied path must be absolute and must not contain ".." segments;
+// invalid values are rejected with a warning and the default is used instead.
 var stackDir = func() string {
-	if d := os.Getenv("WIREOPS_WORKER_STACK_DIR"); d != "" {
-		return d
+	defaultDir := filepath.Join(os.TempDir(), "wireops")
+	d := strings.TrimSpace(os.Getenv("WORKER_STACK_DIR"))
+	if d == "" {
+		return defaultDir
 	}
-	return filepath.Join(os.TempDir(), "wireops")
+	cleaned := filepath.Clean(d)
+	if !filepath.IsAbs(cleaned) {
+		log.Printf("[worker] WORKER_STACK_DIR %q is not an absolute path — using default %s", d, defaultDir)
+		return defaultDir
+	}
+	if strings.Contains(cleaned, "..") {
+		log.Printf("[worker] WORKER_STACK_DIR %q contains invalid traversal — using default %s", d, defaultDir)
+		return defaultDir
+	}
+	return cleaned
 }()
 
 // Deploy decodes the base64 compose file, writes it to a temp file, and runs

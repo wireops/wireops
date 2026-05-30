@@ -58,7 +58,8 @@ docker compose up -d
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `WIREOPS_SERVER` | ✅ | — | URL of the wireops server (e.g. http://localhost:8443) |
-| `WIREOPS_WORKER_TOKEN` | ✅ | — | Worker registration and authentication token |
+| `SERVER_URL` | ✅ | — | URL of the wireops server (e.g. `http://localhost:8443`) |
+| `WORKER_TOKEN` | ✅ | — | Worker registration and authentication token |
 | `WORKER_HOSTNAME` | — | container hostname | Optional name shown in the wireops UI |
-| `WIREOPS_WORKER_WORK_DIR` | — | `/tmp/wireops-worker` | Temp directory for rendered compose files |
+| `WORKER_STACK_DIR` | — | `<os.TempDir()>/wireops` | Directory for temporary rendered compose files |
+| `WORKER_TLS_SKIP_VERIFY` | — | `false` | Set to `true` to accept self-signed TLS certificates from the server |

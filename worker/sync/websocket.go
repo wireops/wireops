@@ -8,11 +8,19 @@ import (
 	"strings"
 
 	"github.com/gorilla/websocket"
+	wiretls "github.com/wireops/wireops/pkg/tls"
 )
 
-// Connect establishes a WebSocket connection authenticated by worker token.
+// Connect establishes a WebSocket connection authenticated by the worker token.
+// TLS behaviour (e.g. skip-verify for self-signed certs) is controlled via the
+// WORKER_TLS_SKIP_VERIFY environment variable, handled centrally by pkg/tls.
 func Connect(serverURL, token string) (*websocket.Conn, error) {
 	dialer := *websocket.DefaultDialer
+
+	if tlsCfg := wiretls.BuildClientTLSConfig(); tlsCfg != nil {
+		log.Printf("[worker] custom TLS client config applied (WORKER_TLS_SKIP_VERIFY)")
+		dialer.TLSClientConfig = tlsCfg
+	}
 
 	u, err := url.Parse(serverURL)
 	if err != nil {
