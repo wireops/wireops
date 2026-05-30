@@ -23,7 +23,16 @@ var ErrUnauthorized = errors.New("worker token is invalid or expired")
 func NewClient() *http.Client {
 	transport := http.DefaultTransport
 	if tlsCfg := wiretls.BuildClientTLSConfig(); tlsCfg != nil {
-		transport = &http.Transport{TLSClientConfig: tlsCfg}
+		// Clone DefaultTransport so connection pooling, proxy, idle timeouts
+		// and HTTP/2 support are preserved — only TLSClientConfig is overridden.
+		if dt, ok := http.DefaultTransport.(*http.Transport); ok {
+			cloned := dt.Clone()
+			cloned.TLSClientConfig = tlsCfg
+			transport = cloned
+		} else {
+			// Defensive fallback: should never happen with the stdlib default.
+			transport = &http.Transport{TLSClientConfig: tlsCfg}
+		}
 	}
 	return &http.Client{Timeout: 30 * time.Second, Transport: transport}
 }
