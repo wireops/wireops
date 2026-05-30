@@ -14,6 +14,7 @@ const props = defineProps<{
   colorModeValue: string
   mobile?: boolean
   open?: boolean
+  collapsed?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -22,7 +23,10 @@ const emit = defineEmits<{
   accessibility: []
   logout: []
   toggleTheme: []
+  toggleCollapse: []
 }>()
+
+const { isShowingCommandPalette } = useKeyboard()
 
 const closeButtonRef = ref<{ $el?: HTMLElement } | HTMLElement | null>(null)
 const previousFocusedElement = ref<HTMLElement | null>(null)
@@ -70,7 +74,8 @@ const sidebarClasses = computed(() => {
     return 'dark relative flex h-full w-full max-w-xs flex-col border-r border-carbon-800 bg-carbon-900 shadow-2xl'
   }
 
-  return 'dark hidden lg:flex lg:w-72 lg:flex-col lg:border-r lg:border-carbon-800 lg:bg-carbon-900'
+  const width = props.collapsed ? 'lg:w-20' : 'lg:w-72'
+  return `dark hidden lg:flex ${width} lg:flex-col lg:border-r lg:border-carbon-800 lg:bg-carbon-900 lg:sticky lg:top-0 lg:h-screen transition-[width] duration-300 ease-in-out z-40`
 })
 
 const brandSubtitle = computed(() => props.mobile ? 'Navigation' : 'Control Center')
@@ -142,6 +147,22 @@ watch(
 
       <div class="flex flex-1 flex-col px-4 py-6">
         <nav aria-label="Primary navigation" class="space-y-1">
+          <UButton
+            icon="i-lucide-search"
+            label="Search"
+            variant="soft"
+            color="neutral"
+            size="lg"
+            class="w-full justify-start mb-4 text-gray-500 dark:text-gray-400"
+            @click="isShowingCommandPalette = true; emit('close')"
+          >
+            <template #trailing>
+              <div class="flex items-center gap-1 ml-auto">
+                <kbd class="px-1.5 py-0.5 text-[10px] font-semibold text-gray-500 bg-gray-100 dark:bg-carbon-800 border border-gray-200 dark:border-carbon-700 rounded-md shadow-sm">⌘K</kbd>
+              </div>
+            </template>
+          </UButton>
+          
           <div v-for="item in navItems" :key="item.to" class="space-y-1">
             <UButton
               v-if="item.children?.length"
@@ -241,12 +262,12 @@ watch(
   </div>
 
   <aside v-else :class="sidebarClasses">
-    <div class="flex h-20 items-center border-b border-carbon-800 px-6">
-      <NuxtLink to="/" class="flex items-center gap-3" aria-label="Go to dashboard">
-        <div class="flex h-11 w-11 items-center justify-center rounded-2xl bg-yellow-400/10 ring-1 ring-yellow-400/20">
+    <div :class="['flex h-20 items-center border-b border-carbon-800 shrink-0 relative transition-all duration-300', collapsed ? 'justify-center px-0' : 'justify-between px-6']">
+      <NuxtLink to="/" class="flex items-center gap-3 shrink-0" aria-label="Go to dashboard">
+        <div :class="['flex shrink-0 items-center justify-center rounded-2xl bg-yellow-400/10 ring-1 ring-yellow-400/20 transition-all duration-300', collapsed ? 'h-10 w-10' : 'h-11 w-11']">
           <UIcon name="i-lucide-zap" class="h-6 w-6 text-yellow-400 drop-shadow-[0_0_6px_rgba(255,198,0,0.6)]" />
         </div>
-        <div>
+        <div v-show="!collapsed" class="whitespace-nowrap transition-opacity duration-300">
           <span class="block font-black text-lg tracking-widest uppercase text-yellow-400 drop-shadow-[0_0_8px_rgba(255,198,0,0.4)]">
             wireops
           </span>
@@ -255,43 +276,79 @@ watch(
       </NuxtLink>
     </div>
 
-    <div class="flex flex-1 flex-col px-4 py-6">
-      <nav aria-label="Primary navigation" class="space-y-1">
-        <div v-for="item in navItems" :key="item.to" class="space-y-1">
+    <!-- Floating Toggle Button (Used for both Collapsed and Expanded states) -->
+    <div class="absolute -right-3 top-[1.6rem] z-50 flex items-center justify-center">
+      <UButton
+        :icon="collapsed ? 'i-lucide-chevron-right' : 'i-lucide-chevron-left'"
+        variant="ghost"
+        color="neutral"
+        size="xs"
+        class="rounded-full shadow-lg border border-carbon-800 bg-carbon-900 text-wire-200/50 hover:text-white hover:bg-carbon-800"
+        :aria-label="collapsed ? 'Expand sidebar' : 'Collapse sidebar'"
+        :title="collapsed ? 'Expand sidebar' : 'Collapse sidebar'"
+        @click="emit('toggleCollapse')"
+      />
+    </div>
+
+    <div class="flex flex-1 flex-col px-4 py-6 min-h-0">
+      <nav aria-label="Primary navigation" class="space-y-1 overflow-y-auto overflow-x-hidden no-scrollbar flex-1 min-h-0 pb-4">
+        <UTooltip :text="collapsed ? 'Search' : ''" :prevent="!collapsed" placement="right">
           <UButton
-            v-if="item.children?.length"
-            :icon="item.icon"
-            :variant="isActive(item.to) || hasActiveChild(item) ? 'soft' : 'ghost'"
-            :color="isActive(item.to) || hasActiveChild(item) ? 'primary' : 'neutral'"
+            icon="i-lucide-search"
+            :label="collapsed ? undefined : 'Search'"
+            :aria-label="collapsed ? 'Search' : undefined"
+            variant="soft"
+            color="neutral"
             size="lg"
-            class="w-full justify-start"
-            :aria-label="isExpanded(item) ? `Collapse ${item.label}` : `Expand ${item.label}`"
-            :aria-expanded="isExpanded(item)"
-            :aria-controls="submenuId(item)"
-            @click="toggleSubmenu(item)"
+            :class="['w-full mb-4 text-gray-500 dark:text-gray-400 transition-all duration-300', collapsed ? 'justify-center px-0' : 'justify-start']"
+            @click="isShowingCommandPalette = true; emit('close')"
           >
-            <span class="flex min-w-0 flex-1 items-center justify-between gap-3">
-              <span class="truncate">{{ item.label }}</span>
-              <UIcon
-                :name="isExpanded(item) ? 'i-lucide-chevron-down' : 'i-lucide-chevron-right'"
-                class="h-4 w-4 shrink-0"
-              />
-            </span>
+            <template #trailing v-if="!collapsed">
+              <div class="flex items-center gap-1 ml-auto">
+                <kbd class="px-1.5 py-0.5 text-[10px] font-semibold text-gray-500 bg-gray-100 dark:bg-carbon-800 border border-gray-200 dark:border-carbon-700 rounded-md shadow-sm">⌘K</kbd>
+              </div>
+            </template>
           </UButton>
-          <UButton
-            v-else
-            :to="item.to"
-            :icon="item.icon"
-            :label="item.label"
-            :variant="isActive(item.to) || hasActiveChild(item) ? 'soft' : 'ghost'"
-            :color="isActive(item.to) || hasActiveChild(item) ? 'primary' : 'neutral'"
-            size="lg"
-            class="w-full justify-start"
-            :aria-current="isActive(item.to) ? 'page' : undefined"
-          />
+        </UTooltip>
+
+        <div v-for="item in navItems" :key="item.to" class="space-y-1">
+          <UTooltip :text="collapsed ? item.label : ''" :prevent="!collapsed" placement="right">
+            <UButton
+              v-if="item.children?.length"
+              :icon="item.icon"
+              :variant="isActive(item.to) || hasActiveChild(item) ? 'soft' : 'ghost'"
+              :color="isActive(item.to) || hasActiveChild(item) ? 'primary' : 'neutral'"
+              size="lg"
+              :class="['w-full transition-all duration-300', collapsed ? 'justify-center px-0' : 'justify-start']"
+              :aria-label="isExpanded(item) ? `Collapse ${item.label}` : `Expand ${item.label}`"
+              :aria-expanded="isExpanded(item)"
+              :aria-controls="submenuId(item)"
+              @click="collapsed ? emit('toggleCollapse') : toggleSubmenu(item)"
+            >
+              <span v-if="!collapsed" class="flex min-w-0 flex-1 items-center justify-between gap-3">
+                <span class="truncate">{{ item.label }}</span>
+                <UIcon
+                  :name="isExpanded(item) ? 'i-lucide-chevron-down' : 'i-lucide-chevron-right'"
+                  class="h-4 w-4 shrink-0"
+                />
+              </span>
+            </UButton>
+            <UButton
+              v-else
+              :to="item.to"
+              :icon="item.icon"
+              :label="collapsed ? undefined : item.label"
+              :aria-label="collapsed ? item.label : undefined"
+              :variant="isActive(item.to) || hasActiveChild(item) ? 'soft' : 'ghost'"
+              :color="isActive(item.to) || hasActiveChild(item) ? 'primary' : 'neutral'"
+              size="lg"
+              :class="['w-full transition-all duration-300', collapsed ? 'justify-center px-0' : 'justify-start']"
+              :aria-current="isActive(item.to) ? 'page' : undefined"
+            />
+          </UTooltip>
 
           <div
-            v-if="item.children?.length && isExpanded(item)"
+            v-if="item.children?.length && isExpanded(item) && !collapsed"
             :id="submenuId(item)"
             class="ml-5 space-y-1 border-l border-carbon-800 pl-3"
           >
@@ -311,43 +368,55 @@ watch(
         </div>
       </nav>
 
-      <div class="mt-auto space-y-3 border-t border-carbon-800 pt-5">
-        <UButton
-          icon="i-lucide-keyboard"
-          label="Keyboard Shortcuts"
-          variant="ghost"
-          color="neutral"
-          size="lg"
-          class="w-full justify-start"
-          @click="emit('help')"
-        />
-        <UButton
-          icon="i-lucide-accessibility"
-          label="Accessibility"
-          variant="ghost"
-          color="neutral"
-          size="lg"
-          class="w-full justify-start"
-          @click="emit('accessibility')"
-        />
-        <UButton
-          :icon="colorModeValue === 'dark' ? 'i-lucide-sun' : 'i-lucide-moon'"
-          :label="colorModeValue === 'dark' ? 'Light Mode' : 'Dark Mode'"
-          variant="ghost"
-          color="neutral"
-          size="lg"
-          class="w-full justify-start"
-          @click="emit('toggleTheme')"
-        />
-        <UButton
-          icon="i-lucide-log-out"
-          label="Logout"
-          variant="ghost"
-          color="neutral"
-          size="lg"
-          class="w-full justify-start"
-          @click="emit('logout')"
-        />
+      <div class="mt-auto space-y-3 border-t border-carbon-800 pt-5 overflow-hidden shrink-0">
+        <UTooltip :text="collapsed ? 'Keyboard Shortcuts' : ''" :prevent="!collapsed" placement="right">
+          <UButton
+            icon="i-lucide-keyboard"
+            :label="collapsed ? undefined : 'Keyboard Shortcuts'"
+            :aria-label="collapsed ? 'Keyboard Shortcuts' : undefined"
+            variant="ghost"
+            color="neutral"
+            size="lg"
+            :class="['w-full transition-all duration-300', collapsed ? 'justify-center px-0' : 'justify-start']"
+            @click="emit('help')"
+          />
+        </UTooltip>
+        <UTooltip :text="collapsed ? 'Accessibility' : ''" :prevent="!collapsed" placement="right">
+          <UButton
+            icon="i-lucide-accessibility"
+            :label="collapsed ? undefined : 'Accessibility'"
+            :aria-label="collapsed ? 'Accessibility' : undefined"
+            variant="ghost"
+            color="neutral"
+            size="lg"
+            :class="['w-full transition-all duration-300', collapsed ? 'justify-center px-0' : 'justify-start']"
+            @click="emit('accessibility')"
+          />
+        </UTooltip>
+        <UTooltip :text="collapsed ? (colorModeValue === 'dark' ? 'Light Mode' : 'Dark Mode') : ''" :prevent="!collapsed" placement="right">
+          <UButton
+            :icon="colorModeValue === 'dark' ? 'i-lucide-sun' : 'i-lucide-moon'"
+            :label="collapsed ? undefined : (colorModeValue === 'dark' ? 'Light Mode' : 'Dark Mode')"
+            :aria-label="collapsed ? (colorModeValue === 'dark' ? 'Light Mode' : 'Dark Mode') : undefined"
+            variant="ghost"
+            color="neutral"
+            size="lg"
+            :class="['w-full transition-all duration-300', collapsed ? 'justify-center px-0' : 'justify-start']"
+            @click="emit('toggleTheme')"
+          />
+        </UTooltip>
+        <UTooltip :text="collapsed ? 'Logout' : ''" :prevent="!collapsed" placement="right">
+          <UButton
+            icon="i-lucide-log-out"
+            :label="collapsed ? undefined : 'Logout'"
+            :aria-label="collapsed ? 'Logout' : undefined"
+            variant="ghost"
+            color="neutral"
+            size="lg"
+            :class="['w-full transition-all duration-300', collapsed ? 'justify-center px-0' : 'justify-start']"
+            @click="emit('logout')"
+          />
+        </UTooltip>
       </div>
     </div>
   </aside>

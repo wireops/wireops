@@ -92,7 +92,14 @@ const { data: webhookConfig, refresh: refreshWebhook } = useAsyncData('sync_even
       webhookForm.value.webhook.secret = cfg.secret || ''
       webhookHasSecret.value = cfg.secret === '••••••••'
       try {
-        webhookForm.value.webhook.headers = cfg.headers ? JSON.parse(cfg.headers) : []
+        const parsed = cfg.headers ? JSON.parse(cfg.headers) : []
+        webhookForm.value.webhook.headers = Array.isArray(parsed)
+          ? parsed
+              .filter((item: unknown): item is Record<string, unknown> =>
+                typeof item === 'object' && item !== null && 'key' in item && 'value' in item,
+              )
+              .map(item => ({ key: String(item.key ?? ''), value: String(item.value ?? '') }))
+          : []
       } catch { webhookForm.value.webhook.headers = [] }
       webhookForm.value.ntfy.url = 'https://ntfy.sh'
       webhookForm.value.ntfy.topic = ''

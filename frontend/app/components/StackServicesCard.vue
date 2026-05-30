@@ -39,6 +39,7 @@ const emit = defineEmits<{
   (e: 'copy-container-id', containerId: string): void
   (e: 'show-logs', containerId: string, containerName: string): void
   (e: 'container-action', payload: { containerId: string, containerName: string, action: 'stop' | 'restart' }): void
+  (e: 'bulk-container-action', payload: { containers: { containerId: string, containerName: string }[], action: 'stop' | 'restart' }): void
 }>()
 
 const { getStackResources } = useApi()
@@ -88,6 +89,13 @@ const serviceTree = computed(() => {
   return Object.entries(map).map(([name, containers]) => ({ name, containers }))
 })
 
+// Track open state per container
+const openContainers = ref<Record<string, boolean>>({})
+
+function toggleContainer(id: string) {
+  openContainers.value[id] = !openContainers.value[id]
+}
+
 const volumes = ref<VolumeInfo[]>([])
 const networks = ref<NetworkInfo[]>([])
 
@@ -107,6 +115,14 @@ function refresh() {
   refreshResources()
 }
 
+function emitBulkAction(action: 'stop' | 'restart') {
+  const targets = (props.services || [])
+    .filter(svc => action !== 'stop' || svc.status === 'running')
+    .map(svc => ({ containerId: svc.container_id, containerName: svc.container_name || svc.container_id }))
+  if (targets.length === 0) return
+  emit('bulk-container-action', { containers: targets, action })
+}
+
 defineExpose({ refresh })
 
 watch(() => props.stackId, refreshResources, { immediate: true })
@@ -117,13 +133,24 @@ watch(() => props.stackId, refreshResources, { immediate: true })
     <template #header>
       <div class="flex justify-between items-center">
         <h3 class="font-semibold">Services & Resources</h3>
-        <UTooltip text="Refresh services and resources">
-          <UButton icon="i-lucide-refresh-cw" variant="ghost" size="xs" @click="refresh" />
-        </UTooltip>
+        <div class="flex items-center gap-2">
+          <template v-if="serviceTree.length">
+            <UTooltip text="Restart All">
+              <UButton icon="i-lucide-rotate-cw" variant="ghost" size="xs" color="info" @click="emitBulkAction('restart')" />
+            </UTooltip>
+            <UTooltip text="Stop All">
+              <UButton icon="i-lucide-square" variant="ghost" size="xs" color="warning" @click="emitBulkAction('stop')" />
+            </UTooltip>
+          </template>
+          <UTooltip text="Refresh services and resources">
+            <UButton icon="i-lucide-refresh-cw" variant="ghost" size="xs" @click="refresh" />
+          </UTooltip>
+        </div>
       </div>
     </template>
 
     <div class="space-y-6">
+      <!-- Containers section -->
       <section class="space-y-4">
         <div class="flex flex-col gap-0.5">
           <div class="flex items-center gap-2.5">
@@ -135,36 +162,51 @@ watch(() => props.stackId, refreshResources, { immediate: true })
           <p class="text-xs text-gray-500 dark:text-gray-400 pl-[42px]">Active services and runtime status</p>
         </div>
 
-        <div v-if="serviceTree.length" class="space-y-4">
-          <div v-for="svc in serviceTree" :key="svc.name">
-            <div class="flex items-center gap-2 py-1">
-              <ContainerIcon
-                :name="svc.name"
-                :slug="svc.containers[0] ? getContainerSlug(svc.containers[0]) : undefined"
-                wrapper-class="w-7 h-7 flex flex-shrink-0 items-center justify-center rounded bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 overflow-hidden"
-                icon-class="w-4 h-4 object-contain"
-              />
-              <span class="font-semibold text-sm">{{ svc.name }}</span>
-            </div>
-            <div class="ml-[14px] border-l border-gray-200 dark:border-gray-700 pl-[22px] space-y-2">
-              <div
-                v-for="container in svc.containers"
-                :key="container.container_id"
-                class="py-2 px-2 rounded-md transition-colors hover:bg-gray-100 dark:hover:bg-gray-800 group"
+        <div v-if="serviceTree.length" class="flex flex-col gap-1.5">
+          <template v-for="svc in serviceTree" :key="svc.name">
+            <div
+              v-for="container in svc.containers"
+              :key="container.container_id"
+              class="rounded-lg border border-gray-200 dark:border-gray-700/60 overflow-hidden"
+            >
+              <!-- Accordion Header -->
+              <button
+                type="button"
+                class="flex w-full items-center gap-2 px-3 py-2.5 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/60 text-left"
+                :class="openContainers[container.container_id] ? 'bg-gray-50 dark:bg-gray-800/50' : 'bg-transparent'"
+                :aria-expanded="openContainers[container.container_id]"
+                @click="toggleContainer(container.container_id)"
               >
-                <div class="flex items-center justify-between">
-                  <div class="flex items-center gap-2 min-w-0">
-                    <BadgeStatus :status="container.status" />
-                    <span class="text-sm font-mono truncate">{{ container.container_id.slice(0, 12) }}</span>
-                    <button
-                      class="text-xs text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 p-1 rounded transition-colors cursor-pointer shrink-0"
-                      :title="`Copy ${container.container_id}`"
-                      @click="emit('copy-container-id', container.container_id)"
-                    >
-                      <UIcon name="i-lucide-copy" class="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                  <div class="flex items-center gap-1 shrink-0">
+                <!-- Container Icon -->
+                <ContainerIcon
+                  :name="container.service_name"
+                  :slug="getContainerSlug(container)"
+                  wrapper-class="w-6 h-6 flex shrink-0 items-center justify-center rounded bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 overflow-hidden"
+                  icon-class="w-4 h-4 object-contain"
+                />
+
+                <!-- Container Name -->
+                <span class="font-medium text-sm text-gray-900 dark:text-white truncate flex-1 min-w-0">
+                  {{ container.container_name || container.service_name }}
+                </span>
+
+                <!-- Status badge -->
+                <BadgeStatus :status="container.status" class="shrink-0" />
+
+                <!-- Container ID as code -->
+                <code class="hidden sm:inline-flex text-xs font-mono text-gray-400 dark:text-gray-500 bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded shrink-0">
+                  {{ container.container_id.slice(0, 12) }}
+                </code>
+
+                <!-- Action buttons — @click.stop prevents accordion toggle -->
+                <div class="flex items-center gap-0.5 shrink-0 ml-1" @click.stop>
+                  <ContainerIntegrationActions
+                    :actions="integrationActions[container.container_id] || []"
+                    :container-id="container.container_id"
+                    :container-name="container.container_name || container.container_id"
+                    @show-logs="(cid, cname) => emit('show-logs', cid, cname)"
+                  />
+                  <UTooltip text="Stop container">
                     <UButton
                       v-if="container.status === 'running'"
                       icon="i-lucide-square"
@@ -174,6 +216,8 @@ watch(() => props.stackId, refreshResources, { immediate: true })
                       title="Stop"
                       @click="emit('container-action', { containerId: container.container_id, containerName: container.container_name || container.container_id, action: 'stop' })"
                     />
+                  </UTooltip>
+                  <UTooltip text="Restart container">
                     <UButton
                       icon="i-lucide-rotate-cw"
                       variant="ghost"
@@ -182,43 +226,83 @@ watch(() => props.stackId, refreshResources, { immediate: true })
                       title="Restart"
                       @click="emit('container-action', { containerId: container.container_id, containerName: container.container_name || container.container_id, action: 'restart' })"
                     />
+                  </UTooltip>
+                </div>
+
+                <!-- Chevron indicator -->
+                <UIcon
+                  name="i-lucide-chevron-down"
+                  class="w-4 h-4 shrink-0 text-gray-400 transition-transform duration-200"
+                  :class="openContainers[container.container_id] ? 'rotate-180' : ''"
+                />
+              </button>
+
+              <!-- Accordion Body -->
+              <div
+                v-if="openContainers[container.container_id]"
+                class="px-3 pb-3 pt-2.5 border-t border-gray-200 dark:border-gray-700/60 bg-gray-50/50 dark:bg-gray-800/20"
+              >
+                <div
+                  v-if="containerStats[container.container_id]"
+                  class="grid grid-cols-2 sm:grid-cols-3 gap-2"
+                >
+                  <!-- CPU stat -->
+                  <div class="flex flex-col gap-1 bg-white dark:bg-gray-900/60 rounded-lg px-3 py-2 border border-gray-100 dark:border-gray-700/40">
+                    <div class="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
+                      <UIcon name="i-lucide-cpu" class="w-3.5 h-3.5" />
+                      <span>CPU</span>
+                    </div>
+                    <span class="text-sm font-semibold text-gray-900 dark:text-white tabular-nums">
+                      {{ containerStats[container.container_id].cpu_percent != null
+                        ? containerStats[container.container_id].cpu_percent!.toFixed(2) + '%'
+                        : '-' }}
+                    </span>
+                  </div>
+
+                  <!-- Memory stat -->
+                  <div class="flex flex-col gap-1 bg-white dark:bg-gray-900/60 rounded-lg px-3 py-2 border border-gray-100 dark:border-gray-700/40">
+                    <div class="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
+                      <UIcon name="i-lucide-memory-stick" class="w-3.5 h-3.5" />
+                      <span>Memory</span>
+                    </div>
+                    <span class="text-sm font-semibold text-gray-900 dark:text-white tabular-nums">
+                      {{ formatBytes(containerStats[container.container_id].mem_usage) }}
+                      <span class="text-xs font-normal text-gray-400">/ {{ formatBytes(containerStats[container.container_id].mem_limit) }}</span>
+                    </span>
+                    <span
+                      v-if="containerStats[container.container_id].mem_usage != null && containerStats[container.container_id].mem_limit"
+                      class="text-xs text-gray-500 dark:text-gray-400"
+                    >
+                      {{ formatMemPercent(containerStats[container.container_id].mem_usage, containerStats[container.container_id].mem_limit) }}
+                    </span>
+                  </div>
+
+                  <!-- Uptime stat -->
+                  <div class="flex flex-col gap-1 bg-white dark:bg-gray-900/60 rounded-lg px-3 py-2 border border-gray-100 dark:border-gray-700/40 col-span-2 sm:col-span-1">
+                    <div class="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
+                      <UIcon name="i-lucide-clock" class="w-3.5 h-3.5" />
+                      <span>Uptime</span>
+                    </div>
+                    <span class="text-sm font-semibold text-gray-900 dark:text-white tabular-nums">
+                      {{ formatUptime(containerStats[container.container_id].started_at) }}
+                    </span>
                   </div>
                 </div>
 
-                <div v-if="containerStats[container.container_id]" class="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1 text-xs text-gray-400">
-                  <span class="flex items-center gap-1">
-                    <UIcon name="i-lucide-cpu" class="w-3 h-3" />
-                    {{ containerStats[container.container_id].cpu_percent != null ? containerStats[container.container_id].cpu_percent.toFixed(2) : '-' }}%
-                  </span>
-                  <span class="flex items-center gap-1">
-                    <UIcon name="i-lucide-memory-stick" class="w-3 h-3" />
-                    {{ formatBytes(containerStats[container.container_id].mem_usage) }} / {{ formatBytes(containerStats[container.container_id].mem_limit) }}
-                    <span v-if="containerStats[container.container_id].mem_usage != null && containerStats[container.container_id].mem_limit" class="text-xs text-gray-500 dark:text-gray-400 font-medium">
-                      ({{ formatMemPercent(containerStats[container.container_id].mem_usage, containerStats[container.container_id].mem_limit) }})
-                    </span>
-                  </span>
-                  <span class="flex items-center gap-1">
-                    <UIcon name="i-lucide-clock" class="w-3 h-3" />
-                    {{ formatUptime(containerStats[container.container_id].started_at) }}
-                  </span>
-                </div>
-                <div class="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1 text-xs text-gray-400">
-                  <ContainerIntegrationActions
-                    :actions="integrationActions[container.container_id] || []"
-                    :container-id="container.container_id"
-                    :container-name="container.container_name || container.container_id"
-                    @show-logs="(containerId, containerName) => emit('show-logs', containerId, containerName)"
-                  />
-                </div>
+                <!-- No stats fallback -->
+                <p v-else class="text-xs text-gray-400 italic py-1">
+                  No runtime stats available for this container.
+                </p>
               </div>
             </div>
-          </div>
+          </template>
         </div>
         <p v-else class="text-sm text-gray-500 py-2 text-center">No services found. Run a sync first.</p>
       </section>
 
-      <hr class="border-gray-200 dark:border-carbon-800 my-4" />
+      <hr class="border-gray-200 dark:border-carbon-800 my-4">
 
+      <!-- Volumes section -->
       <section class="space-y-3">
         <div class="flex flex-col gap-0.5">
           <div class="flex items-center gap-2.5">
@@ -250,8 +334,9 @@ watch(() => props.stackId, refreshResources, { immediate: true })
         <p v-else class="text-sm text-gray-500 py-2 text-center">No volumes found. Run a sync first.</p>
       </section>
 
-      <hr class="border-gray-200 dark:border-carbon-800 my-4" />
+      <hr class="border-gray-200 dark:border-carbon-800 my-4">
 
+      <!-- Networks section -->
       <section class="space-y-3">
         <div class="flex flex-col gap-0.5">
           <div class="flex items-center gap-2.5">

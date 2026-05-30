@@ -219,11 +219,12 @@ function formatRelative(dateStr: string) {
     </UCard>
   </div>
 
-  <UModal :open="showCreate" @update:open="(v) => { if (!v) showCreate = false }">
-    <template #content>
-      <JobCreateModal :repos="repos || []" @created="onCreated" @cancel="showCreate = false" />
-    </template>
-  </UModal>
+  <JobCreateModal 
+    v-if="showCreate"
+    :repos="repos || []" 
+    @created="onCreated" 
+    @cancel="showCreate = false" 
+  />
 
   <UModal :open="!!selectedDelete" @update:open="(v) => { if (!v) selectedDelete = null }">
     <template #content>
