@@ -28,6 +28,7 @@ import (
 	"github.com/wireops/wireops/internal/sync"
 	"github.com/wireops/wireops/internal/worker"
 	"github.com/wireops/wireops/pkg/logger"
+	wiretls "github.com/wireops/wireops/pkg/tls"
 
 	_ "github.com/wireops/wireops/internal/integrations/dozzle"
 	_ "github.com/wireops/wireops/internal/integrations/traefik"
@@ -203,7 +204,25 @@ func Execute() error {
 
 	go func() {
 		addr := ":8443"
-		if err := workerServer.Start(addr); err != nil && err != http.ErrServerClosed {
+		if port := os.Getenv("TLS_WORKER_PORT"); port != "" {
+			addr = ":" + strings.TrimPrefix(port, ":")
+		}
+
+		tlsCfg, tlsErr := wiretls.BuildServerTLSConfig()
+		if tlsErr != nil {
+			log.Fatalf("Fatal: failed to build TLS config for worker server: %v", tlsErr)
+		}
+
+		if tlsCfg != nil {
+			certFile := os.Getenv("TLS_CERT_FILE")
+			if certFile != "" {
+				log.Printf("[TLS] Worker server TLS enabled using certificate: %s", certFile)
+			} else {
+				log.Printf("[TLS] Worker server TLS enabled with self-signed certificate (workers need WORKER_TLS_SKIP_VERIFY=true)")
+			}
+		}
+
+		if err := workerServer.Start(addr, tlsCfg); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Fatal: worker server failed: %v", err)
 		}
 	}()

@@ -13,7 +13,7 @@ Requires a running wireops server and a worker token from the admin panel.
 
 ```bash
 cd worker
-cp .env.example .env && nano .env   # set WIREOPS_SERVER and WIREOPS_WORKER_TOKEN
+cp .env.example .env && nano .env   # set SERVER_URL and WORKER_TOKEN
 docker compose up -d
 ```
 
@@ -30,7 +30,7 @@ cd server-and-worker
 cp .env.example .env && nano .env   # set SECRET_KEY
 # First: start the server only, create a worker token in the UI
 docker compose up -d wireops
-# Then: set WIREOPS_WORKER_TOKEN in .env and start the worker
+# Then: set WORKER_TOKEN in .env and start the worker
 docker compose up -d wireops-worker
 ```
 

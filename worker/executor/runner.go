@@ -21,9 +21,9 @@ import (
 )
 
 // stackDir is the root directory under which per-stack compose work dirs are created.
-// Defaults to <os.TempDir()>/wireops and can be overridden via WIREOPS_WORKER_STACK_DIR.
+// Defaults to <os.TempDir()>/wireops and can be overridden via WORKER_STACK_DIR.
 var stackDir = func() string {
-	if d := os.Getenv("WIREOPS_WORKER_STACK_DIR"); d != "" {
+	if d := os.Getenv("WORKER_STACK_DIR"); d != "" {
 		return d
 	}
 	return filepath.Join(os.TempDir(), "wireops")

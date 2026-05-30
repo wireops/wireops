@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -36,7 +37,7 @@ type WorkerServer struct {
 	connections map[string]*websocket.Conn // workerID → conn
 	connWriteMu map[string]*sync.Mutex     // workerID → write mutex
 	pending     map[string]*pendingResult  // commandID → pending
-	workerTags  map[string][]string        // workerID → tags declared via WIREOPS_WORKER_TAGS
+	workerTags  map[string][]string        // workerID → tags declared via WORKER_TAGS
 
 	onConnect      func(workerID string)
 	onJobCompleted func(protocol.JobCompletedMessage)
@@ -439,7 +440,7 @@ func (s *WorkerServer) handleWebSocket(c *gin.Context) {
 		go s.onConnect(workerID)
 	}
 
-	intervalStr := os.Getenv("WIREOPS_HEARTBEAT_INTERVAL")
+	intervalStr := os.Getenv("HEARTBEAT_INTERVAL")
 	if intervalStr == "" {
 		intervalStr = "30"
 	}
@@ -518,12 +519,23 @@ func (s *WorkerServer) handleWebSocket(c *gin.Context) {
 	}
 }
 
-func (s *WorkerServer) Start(addr string) error {
+// Start launches the worker HTTP(S) server on the given address.
+// When tlsCfg is non-nil the server uses TLS (HTTPS/WSS); otherwise it
+// falls back to plain HTTP/WS for backwards compatibility.
+func (s *WorkerServer) Start(addr string, tlsCfg *tls.Config) error {
 	server := &http.Server{
-		Addr:    addr,
-		Handler: s.engine,
+		Addr:      addr,
+		Handler:   s.engine,
+		TLSConfig: tlsCfg,
 	}
 
-	logger.SafeLogf("[WORKER] Starting worker server on %s", addr)
+	if tlsCfg != nil {
+		logger.SafeLogf("[WORKER] Starting worker server with TLS on %s", addr)
+		// Certificate is already embedded in tlsCfg.Certificates — pass empty
+		// paths so the standard library reads from the config directly.
+		return server.ListenAndServeTLS("", "")
+	}
+
+	logger.SafeLogf("[WORKER] Starting worker server on %s (plain HTTP)", addr)
 	return server.ListenAndServe()
 }

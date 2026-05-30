@@ -10,14 +10,24 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	wiretls "github.com/wireops/wireops/pkg/tls"
 )
 
 var ErrRevoked = errors.New("worker token is revoked by the server")
 var ErrUnauthorized = errors.New("worker token is invalid or expired")
 
+// NewClient returns an HTTP client. TLS behaviour (e.g. skip-verify for
+// self-signed certs) is controlled via the WORKER_TLS_SKIP_VERIFY environment
+// variable, handled centrally by pkg/tls.
 func NewClient() *http.Client {
-	return &http.Client{Timeout: 30 * time.Second}
+	transport := http.DefaultTransport
+	if tlsCfg := wiretls.BuildClientTLSConfig(); tlsCfg != nil {
+		transport = &http.Transport{TLSClientConfig: tlsCfg}
+	}
+	return &http.Client{Timeout: 30 * time.Second, Transport: transport}
 }
+
 
 func authHeaders(token string) http.Header {
 	headers := make(http.Header)

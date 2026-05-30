@@ -39,15 +39,15 @@ const (
 
 func main() {
 	logger.InitLogger()
-	serverURL := os.Getenv("WIREOPS_SERVER")
-	workerToken := os.Getenv("WIREOPS_WORKER_TOKEN")
+	serverURL := os.Getenv("SERVER_URL")
+	workerToken := os.Getenv("WORKER_TOKEN")
 	hostname := os.Getenv("HOSTNAME")
 
 	if serverURL == "" {
-		log.Fatal("WIREOPS_SERVER must be set")
+		log.Fatal("SERVER_URL must be set")
 	}
 	if workerToken == "" {
-		log.Fatal("WIREOPS_WORKER_TOKEN must be set")
+		log.Fatal("WORKER_TOKEN must be set")
 	}
 	if hostname == "" {
 		h, err := os.Hostname()
@@ -61,7 +61,7 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	tags := parseTags(os.Getenv("WIREOPS_WORKER_TAGS"))
+	tags := parseTags(os.Getenv("WORKER_TAGS"))
 	backoff := initialBackoff
 
 	for {
@@ -129,7 +129,7 @@ func runSession(serverURL, workerToken, hostname string, tags []string, sigChan 
 
 	go readLoop(conn, disconnectCh)
 
-	intervalStr := os.Getenv("WIREOPS_HEARTBEAT_INTERVAL")
+	intervalStr := os.Getenv("HEARTBEAT_INTERVAL")
 	if intervalStr == "" {
 		intervalStr = "30"
 	}

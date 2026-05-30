@@ -232,9 +232,9 @@ All custom routes are prefixed `/api/custom/`. PocketBase also auto-exposes CRUD
 ### Worker
 | Variable | Description |
 |---|---|
-| `WIREOPS_SERVER` | HTTPS URL of the wireops server |
-| `WIREOPS_WORKER_TOKEN` | Worker authorization token |
-| `WIREOPS_WORKER_TAGS` | Comma-separated tags (used for job routing) |
+| `SERVER_URL` | HTTPS URL of the wireops server |
+| `WORKER_TOKEN` | Worker authorization token |
+| `WORKER_TAGS` | Comma-separated tags (used for job routing) |
 
 ---
 

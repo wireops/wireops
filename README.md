@@ -103,7 +103,7 @@ services:
 | `PB_DATA_DIR` | No | `./pb_data` | PocketBase data directory (SQLite database, uploads) |
 | `REPOS_WORKSPACE` | No | `./repos` | Directory where Git repositories are cloned |
 | `STACKS_STORAGE_PATH` | No | `{PB_DATA_DIR}/stacks` | Directory for rendered compose revision files |
-| `WIREOPS_HEARTBEAT_INTERVAL` | No | `30` | Heartbeat interval in seconds. Remote worker read deadline is 3x this value |
+| `HEARTBEAT_INTERVAL` | No | `30` | Heartbeat interval in seconds. Remote worker read deadline is 3x this value |
 | `ALLOWED_PRIVATE_IP_RANGES` | No | — | Comma-separated CIDR ranges allowed for SSH host key scanning |
 
 #### SMTP (optional)
@@ -158,11 +158,13 @@ OIDC_DISPLAY_NAME=Authentik
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `WIREOPS_SERVER` | **Yes** | — | HTTPS URL of the wireops server (e.g. https://wireops.local) |
-| `WIREOPS_WORKER_TOKEN` | **Yes** | — | Worker registration and authentication token |
+| `SERVER_URL` | **Yes** | — | URL of the wireops server (e.g. `https://wireops.example.com:8443`) |
+| `WORKER_TOKEN` | **Yes** | — | Worker registration and authentication token |
 | `HOSTNAME` | No | System hostname | Worker identifier sent during registration |
-| `WIREOPS_WORKER_TAGS` | No | — | Comma-separated tags for job routing (e.g. `gpu,us-east`) |
-| `WIREOPS_HEARTBEAT_INTERVAL` | No | `30` | Interval in seconds between heartbeats sent to the server |
+| `WORKER_TAGS` | No | — | Comma-separated tags for job routing (e.g. `gpu,us-east`) |
+| `HEARTBEAT_INTERVAL` | No | `30` | Interval in seconds between heartbeats sent to the server |
+| `WORKER_STACK_DIR` | No | `<os.TempDir()>/wireops` | Directory where the worker writes temporary compose files |
+| `WORKER_TLS_SKIP_VERIFY` | No | `false` | Skip TLS certificate verification. Set to `true` when the server uses a self-signed certificate |
 
 ### APP_URL Configuration
 
