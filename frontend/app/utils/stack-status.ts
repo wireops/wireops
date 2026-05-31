@@ -10,6 +10,14 @@ export type StackStatusDisplay = {
   iconClass: string
 }
 
+const UNKNOWN_STATUS: StackStatusDisplay = {
+  key: 'unknown',
+  label: 'Unknown',
+  color: 'neutral',
+  icon: 'i-lucide-circle-help',
+  iconClass: 'text-gray-400',
+}
+
 export type StackSourceDisplay = StackStatusDisplay & {
   dotClass: string
   title: string
@@ -122,13 +130,7 @@ export function stackDeployStatus(status?: string): StackStatusDisplay {
         iconClass: 'text-rose-500',
       }
     default:
-      return {
-        key: 'unknown',
-        label: 'Unknown',
-        color: 'neutral',
-        icon: 'i-lucide-circle-help',
-        iconClass: 'text-gray-400',
-      }
+      return { ...UNKNOWN_STATUS }
   }
 }
 
@@ -137,13 +139,7 @@ export function stackVisibleDeployStatus(stack: any, workersById?: WorkerLookup)
   const worker = stackWorkerStatus(stack, workersById)
 
   if ((deploy.key === 'deployed' || deploy.key === 'syncing') && worker.key !== 'online') {
-    return {
-      key: 'unknown',
-      label: 'Unknown',
-      color: 'neutral',
-      icon: 'i-lucide-circle-help',
-      iconClass: 'text-gray-400',
-    }
+    return { ...UNKNOWN_STATUS }
   }
 
   return deploy
@@ -185,12 +181,6 @@ export function stackWorkerStatus(stack: any, workersById?: WorkerLookup): Stack
         iconClass: 'text-rose-500',
       }
     default:
-      return {
-        key: 'unknown',
-        label: 'Unknown',
-        color: 'neutral',
-        icon: 'i-lucide-circle-help',
-        iconClass: 'text-gray-400',
-      }
+      return { ...UNKNOWN_STATUS }
   }
 }

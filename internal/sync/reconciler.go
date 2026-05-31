@@ -229,23 +229,9 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		return fmt.Errorf("%s", errMsg)
 	}
 
-	composeFile := stack.GetString("compose_file")
-	if composeFile == "" {
-		composeFile = "docker-compose.yml"
-	}
-	if err := safepath.ValidateComposeFile(composeFile); err != nil {
-		errMsg := fmt.Sprintf("invalid compose_file: %v", err)
-		r.logFailure(stackID, trigger, remoteSHA, errMsg)
-		r.markError(stack, "stacks")
-		return fmt.Errorf("%s", errMsg)
-	}
-
-	composeFullPath := filepath.Join(workDir, composeFile)
-	if _, statErr := os.Stat(composeFullPath); os.IsNotExist(statErr) {
-		errMsg := fmt.Sprintf("compose file not found: %s (workdir: %s)", composeFile, workDir)
-		r.logFailure(stackID, trigger, remoteSHA, errMsg)
-		r.markError(stack, "stacks")
-		return fmt.Errorf("%s", errMsg)
+	composeFile, err := r.resolveComposeFile(stack, workDir, stackID, trigger, remoteSHA)
+	if err != nil {
+		return err
 	}
 
 	envVars, envErr := r.loadEnvVars(ctx, stackID)
@@ -316,12 +302,9 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	maxRetries := 3
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		start := time.Now()
-		composeContent, readErr := os.ReadFile(renderedFilePath)
-		if readErr != nil {
-			errMsg := fmt.Sprintf("failed to read rendered compose file: %v", readErr)
-			r.logFailure(stackID, trigger, remoteSHA, errMsg)
-			r.markError(stack, "stacks")
-			return fmt.Errorf("%s", errMsg)
+		composeContent, err := r.readRenderedCompose(stack, stackID, trigger, remoteSHA, renderedFilePath)
+		if err != nil {
+			return err
 		}
 		envFileB64, b64Err := buildEnvFileB64(envVars)
 		if b64Err != nil {
@@ -336,14 +319,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 				ComposeFileB64: base64.StdEncoding.EncodeToString(composeContent),
 				EnvFileB64:     envFileB64,
 			})
-			output = result.Output
-			runErr = nil
-			if result.Error != "" {
-				runErr = fmt.Errorf("%s", result.Error)
-			}
-			if dispatchErr != nil {
-				runErr = dispatchErr
-			}
+			output, runErr = extractDispatchResult(result, dispatchErr)
 		}
 
 		duration += time.Since(start).Milliseconds()
@@ -472,23 +448,9 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 		r.markError(stack, "stacks")
 		return fmt.Errorf("%s", errMsg)
 	}
-	composeFile := stack.GetString("compose_file")
-	if composeFile == "" {
-		composeFile = "docker-compose.yml"
-	}
-	if err := safepath.ValidateComposeFile(composeFile); err != nil {
-		errMsg := fmt.Sprintf("invalid compose_file: %v", err)
-		r.logFailure(stackID, "manual", commitSHA, errMsg)
-		r.markError(stack, "stacks")
-		return fmt.Errorf("%s", errMsg)
-	}
-
-	composeFullPath := filepath.Join(workDir, composeFile)
-	if _, statErr := os.Stat(composeFullPath); os.IsNotExist(statErr) {
-		errMsg := fmt.Sprintf("compose file not found after rollback: %s (workdir: %s)", composeFile, workDir)
-		r.logFailure(stackID, "manual", commitSHA, errMsg)
-		r.markError(stack, "stacks")
-		return fmt.Errorf("%s", errMsg)
+	composeFile, err := r.resolveComposeFile(stack, workDir, stackID, "manual", commitSHA)
+	if err != nil {
+		return err
 	}
 
 	envVars, envErr := r.loadEnvVars(ctx, stackID)
@@ -541,12 +503,9 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 	var output string
 	var runErr error
 
-	composeContent, readErr := os.ReadFile(renderedFilePath)
-	if readErr != nil {
-		errMsg := fmt.Sprintf("failed to read rendered compose file: %v", readErr)
-		r.logFailure(stackID, "manual", commitSHA, errMsg)
-		r.markError(stack, "stacks")
-		return fmt.Errorf("%s", errMsg)
+	composeContent, err := r.readRenderedCompose(stack, stackID, "manual", commitSHA, renderedFilePath)
+	if err != nil {
+		return err
 	}
 	var cmdID string
 	if syncLog != nil {
@@ -564,13 +523,7 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 			ComposeFileB64: base64.StdEncoding.EncodeToString(composeContent),
 			EnvFileB64:     envFileB64,
 		})
-		output = result.Output
-		if result.Error != "" {
-			runErr = fmt.Errorf("%s", result.Error)
-		}
-		if dispatchErr != nil {
-			runErr = dispatchErr
-		}
+		output, runErr = extractDispatchResult(result, dispatchErr)
 	}
 
 	duration := time.Since(start).Milliseconds()
@@ -716,12 +669,9 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 	var output string
 	var runErr error
 
-	composeContent, readErr := os.ReadFile(renderedFilePath)
-	if readErr != nil {
-		errMsg := fmt.Sprintf("failed to read rendered compose file: %v", readErr)
-		r.logFailure(stackID, "redeploy", lastSHA, errMsg)
-		r.markError(stack, "stacks")
-		return fmt.Errorf("%s", errMsg)
+	composeContent, err := r.readRenderedCompose(stack, stackID, "redeploy", lastSHA, renderedFilePath)
+	if err != nil {
+		return err
 	}
 	var cmdID string
 	if syncLog != nil {
@@ -744,13 +694,7 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 			RecreateVolumes:    recreateVolumes,
 			RecreateNetworks:   recreateNetworks,
 		})
-		output = result.Output
-		if result.Error != "" {
-			runErr = fmt.Errorf("%s", result.Error)
-		}
-		if dispatchErr != nil {
-			runErr = dispatchErr
-		}
+		output, runErr = extractDispatchResult(result, dispatchErr)
 	}
 
 	duration := time.Since(start).Milliseconds()
@@ -949,12 +893,9 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 	var runErr error
 	start := time.Now()
 
-	composeBytes, readErr := os.ReadFile(renderedFilePath)
-	if readErr != nil {
-		errMsg := fmt.Sprintf("failed to read rendered compose file: %v", readErr)
-		r.logFailure(stackID, trigger, "", errMsg)
-		r.markError(stack, "stacks")
-		return fmt.Errorf("%s", errMsg)
+	composeBytes, err := r.readRenderedCompose(stack, stackID, trigger, "", renderedFilePath)
+	if err != nil {
+		return err
 	}
 	b64 := base64.StdEncoding.EncodeToString(composeBytes)
 
@@ -974,13 +915,7 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 			RecreateContainers: true,
 			RecreateVolumes:    recreateVolumes,
 		})
-		output = result.Output
-		if result.Error != "" {
-			runErr = fmt.Errorf("%s", result.Error)
-		}
-		if dispatchErr != nil {
-			runErr = dispatchErr
-		}
+		output, runErr = extractDispatchResult(result, dispatchErr)
 	} else {
 		result, dispatchErr := r.dispatcher.Dispatch(ctx, workerID, protocol.DeployCommand{
 			CommandID:      syncLog.Id,
@@ -990,13 +925,7 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 			ComposeFileB64: b64,
 			EnvFileB64:     envFileB64,
 		})
-		output = result.Output
-		if result.Error != "" {
-			runErr = fmt.Errorf("%s", result.Error)
-		}
-		if dispatchErr != nil {
-			runErr = dispatchErr
-		}
+		output, runErr = extractDispatchResult(result, dispatchErr)
 	}
 
 	duration := time.Since(start).Milliseconds()
@@ -1287,6 +1216,55 @@ func buildErrorOutput(output string, runErr, envErr error) string {
 		fmt.Fprintf(&b, "\nerror: %v", runErr)
 	}
 	return b.String()
+}
+
+// extractDispatchResult unpacks a dispatcher response into (output, error).
+// dispatchErr takes precedence over a non-empty result.Error field.
+func extractDispatchResult(result protocol.CommandResult, dispatchErr error) (string, error) {
+	var runErr error
+	if result.Error != "" {
+		runErr = fmt.Errorf("%s", result.Error)
+	}
+	if dispatchErr != nil {
+		runErr = dispatchErr
+	}
+	return result.Output, runErr
+}
+
+// readRenderedCompose reads the rendered compose file at path. On failure it logs
+// the error, marks the stack as error, and returns a non-nil error.
+func (r *Reconciler) readRenderedCompose(stack *core.Record, stackID, trigger, sha, path string) ([]byte, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		errMsg := fmt.Sprintf("failed to read rendered compose file: %v", err)
+		r.logFailure(stackID, trigger, sha, errMsg)
+		r.markError(stack, "stacks")
+		return nil, fmt.Errorf("%s", errMsg)
+	}
+	return content, nil
+}
+
+// resolveComposeFile returns the validated compose filename for a stack, applying
+// the default name, checking path safety, and verifying the file exists.
+// On any failure it logs the error, marks the stack as error, and returns a non-nil error.
+func (r *Reconciler) resolveComposeFile(stack *core.Record, workDir, stackID, trigger, sha string) (string, error) {
+	composeFile := stack.GetString("compose_file")
+	if composeFile == "" {
+		composeFile = "docker-compose.yml"
+	}
+	if err := safepath.ValidateComposeFile(composeFile); err != nil {
+		errMsg := fmt.Sprintf("invalid compose_file: %v", err)
+		r.logFailure(stackID, trigger, sha, errMsg)
+		r.markError(stack, "stacks")
+		return "", fmt.Errorf("%s", errMsg)
+	}
+	if _, statErr := os.Stat(filepath.Join(workDir, composeFile)); os.IsNotExist(statErr) {
+		errMsg := fmt.Sprintf("compose file not found: %s (workdir: %s)", composeFile, workDir)
+		r.logFailure(stackID, trigger, sha, errMsg)
+		r.markError(stack, "stacks")
+		return "", fmt.Errorf("%s", errMsg)
+	}
+	return composeFile, nil
 }
 
 func (r *Reconciler) refreshServiceStatus(_ context.Context, stackID, workDir string) {

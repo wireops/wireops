@@ -105,6 +105,31 @@ func newJobSchedulerTestApp(t *testing.T) *tests.TestApp {
 	return app
 }
 
+// mustSaveCollection saves a collection and fails the test on error.
+func mustSaveCollection(t *testing.T, app core.App, col *core.Collection) {
+	t.Helper()
+	if err := app.Save(col); err != nil {
+		t.Fatalf("failed to save collection %q: %v", col.Name, err)
+	}
+}
+
+// mustCreateRecord finds a collection, creates a record with the given fields, saves it, and returns it.
+func mustCreateRecord(t *testing.T, app core.App, collectionName string, fields map[string]any) *core.Record {
+	t.Helper()
+	col, err := app.FindCollectionByNameOrId(collectionName)
+	if err != nil {
+		t.Fatalf("failed to find collection %q: %v", collectionName, err)
+	}
+	rec := core.NewRecord(col)
+	for k, v := range fields {
+		rec.Set(k, v)
+	}
+	if err := app.Save(rec); err != nil {
+		t.Fatalf("failed to save record in %q: %v", collectionName, err)
+	}
+	return rec
+}
+
 func ensureJobSchedulerCollections(t *testing.T, app core.App) {
 	t.Helper()
 
@@ -115,17 +140,13 @@ func ensureJobSchedulerCollections(t *testing.T, app core.App) {
 	repos := core.NewBaseCollection("repositories")
 	repos.Fields.Add(&core.TextField{Name: "name"})
 	repos.Fields.Add(&core.TextField{Name: "branch"})
-	if err := app.Save(repos); err != nil {
-		t.Fatalf("failed to create repositories collection: %v", err)
-	}
+	mustSaveCollection(t, app, repos)
 
 	workers := core.NewBaseCollection("workers")
 	workers.Fields.Add(&core.TextField{Name: "hostname"})
 	workers.Fields.Add(&core.TextField{Name: "fingerprint"})
 	workers.Fields.Add(&core.TextField{Name: "status"})
-	if err := app.Save(workers); err != nil {
-		t.Fatalf("failed to create workers collection: %v", err)
-	}
+	mustSaveCollection(t, app, workers)
 
 	jobs := core.NewBaseCollection("scheduled_jobs")
 	jobs.Fields.Add(&core.RelationField{Name: "repository", CollectionId: repos.Id, Required: true, MaxSelect: 1})
@@ -133,9 +154,7 @@ func ensureJobSchedulerCollections(t *testing.T, app core.App) {
 	jobs.Fields.Add(&core.BoolField{Name: "enabled"})
 	jobs.Fields.Add(&core.SelectField{Name: "status", Values: []string{"active", "paused", "stalled", "error"}})
 	jobs.Fields.Add(&core.DateField{Name: "last_run_at"})
-	if err := app.Save(jobs); err != nil {
-		t.Fatalf("failed to create scheduled_jobs collection: %v", err)
-	}
+	mustSaveCollection(t, app, jobs)
 
 	runs := core.NewBaseCollection("job_runs")
 	runs.Fields.Add(&core.RelationField{Name: "job", CollectionId: jobs.Id, Required: true, MaxSelect: 1})
@@ -147,50 +166,32 @@ func ensureJobSchedulerCollections(t *testing.T, app core.App) {
 	runs.Fields.Add(&core.DateField{Name: "expires_at"})
 	runs.Fields.Add(&core.TextField{Name: "container_name"})
 	runs.Fields.Add(&core.TextField{Name: "commit_sha"})
-	if err := app.Save(runs); err != nil {
-		t.Fatalf("failed to create job_runs collection: %v", err)
-	}
+	mustSaveCollection(t, app, runs)
 
 	env := core.NewBaseCollection("job_env_vars")
 	env.Fields.Add(&core.RelationField{Name: "job", CollectionId: jobs.Id, Required: true, MaxSelect: 1})
 	env.Fields.Add(&core.TextField{Name: "key"})
 	env.Fields.Add(&core.TextField{Name: "value"})
 	env.Fields.Add(&core.BoolField{Name: "secret"})
-	if err := app.Save(env); err != nil {
-		t.Fatalf("failed to create job_env_vars collection: %v", err)
-	}
+	mustSaveCollection(t, app, env)
 }
 
 func createJobRepoRecord(t *testing.T, app core.App) *core.Record {
 	t.Helper()
-	col, err := app.FindCollectionByNameOrId("repositories")
-	if err != nil {
-		t.Fatalf("failed to find repositories collection: %v", err)
-	}
-	rec := core.NewRecord(col)
-	rec.Set("name", "repo")
-	rec.Set("branch", "main")
-	if err := app.Save(rec); err != nil {
-		t.Fatalf("failed to create repository: %v", err)
-	}
-	return rec
+	return mustCreateRecord(t, app, "repositories", map[string]any{
+		"name":   "repo",
+		"branch": "main",
+	})
 }
 
 func createScheduledJobRecord(t *testing.T, app core.App, repoID, jobFile string) *core.Record {
 	t.Helper()
-	col, err := app.FindCollectionByNameOrId("scheduled_jobs")
-	if err != nil {
-		t.Fatalf("failed to find scheduled_jobs collection: %v", err)
-	}
-	rec := core.NewRecord(col)
-	rec.Set("repository", repoID)
-	rec.Set("job_file", jobFile)
-	rec.Set("enabled", true)
-	rec.Set("status", "active")
-	if err := app.Save(rec); err != nil {
-		t.Fatalf("failed to create scheduled job: %v", err)
-	}
-	return rec
+	return mustCreateRecord(t, app, "scheduled_jobs", map[string]any{
+		"repository": repoID,
+		"job_file":   jobFile,
+		"enabled":    true,
+		"status":     "active",
+	})
 }
 
 func writeJobFile(t *testing.T, dataDir, repoID, name string) {

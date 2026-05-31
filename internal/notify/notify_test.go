@@ -26,8 +26,8 @@ func (c *captureTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 	}, nil
 }
 
-// TestWebhookProvider verifies the webhook implementation.
-func TestWebhookProvider_Send(t *testing.T) {
+// TestWebhookProviderSend verifies the webhook implementation.
+func TestWebhookProviderSend(t *testing.T) {
 	var received struct {
 		method  string
 		body    []byte
@@ -90,8 +90,8 @@ func TestWebhookProvider_Send(t *testing.T) {
 	}
 }
 
-// TestWebhookProvider_EventFiltering verifies subscription logic + test event bypass.
-func TestWebhookProvider_EventFiltering(t *testing.T) {
+// TestWebhookProviderEventFiltering verifies subscription logic + test event bypass.
+func TestWebhookProviderEventFiltering(t *testing.T) {
 	transport := &captureTransport{}
 
 	provider := &WebhookProvider{client: &http.Client{Transport: transport}}
@@ -126,8 +126,8 @@ func TestWebhookProvider_EventFiltering(t *testing.T) {
 	}
 }
 
-// TestNtfyProvider verifies ntfy integration.
-func TestNtfyProvider_Send(t *testing.T) {
+// TestNtfyProviderSend verifies ntfy integration.
+func TestNtfyProviderSend(t *testing.T) {
 	var received struct {
 		path    string
 		headers http.Header
@@ -192,8 +192,8 @@ func TestNtfyProvider_Send(t *testing.T) {
 	}
 }
 
-// TestNtfyProvider_Template verifies custom template rendering.
-func TestNtfyProvider_Template(t *testing.T) {
+// TestNtfyProviderTemplate verifies custom template rendering.
+func TestNtfyProviderTemplate(t *testing.T) {
 	transport := &captureTransport{}
 
 	provider := &NtfyProvider{client: &http.Client{Transport: transport}}
