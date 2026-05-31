@@ -4,11 +4,27 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 )
+
+type captureTransport struct {
+	requests []*http.Request
+	bodies   [][]byte
+}
+
+func (c *captureTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	body, _ := io.ReadAll(req.Body)
+	_ = req.Body.Close()
+	c.requests = append(c.requests, req.Clone(req.Context()))
+	c.bodies = append(c.bodies, body)
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader("ok")),
+		Request:    req,
+	}, nil
+}
 
 // TestWebhookProvider verifies the webhook implementation.
 func TestWebhookProvider_Send(t *testing.T) {
@@ -17,22 +33,15 @@ func TestWebhookProvider_Send(t *testing.T) {
 		body    []byte
 		headers http.Header
 	}
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		received.method = r.Method
-		received.headers = r.Header.Clone()
-		received.body, _ = io.ReadAll(r.Body)
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
+	transport := &captureTransport{}
 
 	provider := &WebhookProvider{
-		client: &http.Client{Timeout: 5 * time.Second},
+		client: &http.Client{Transport: transport},
 	}
 
 	cfg := &Config{
 		Provider: "webhook",
-		URL:      server.URL,
+		URL:      "http://webhook.local/sync",
 		Secret:   "supersecret",
 		Events:   []string{SyncDone},
 		Headers:  []Header{{Key: "X-Custom", Value: "hello"}},
@@ -48,6 +57,12 @@ func TestWebhookProvider_Send(t *testing.T) {
 	if err := provider.Send(cfg, p); err != nil {
 		t.Fatalf("Send error: %v", err)
 	}
+	if len(transport.requests) != 1 {
+		t.Fatalf("requests = %d, want 1", len(transport.requests))
+	}
+	received.method = transport.requests[0].Method
+	received.headers = transport.requests[0].Header
+	received.body = transport.bodies[0]
 
 	// Verify method
 	if received.method != http.MethodPost {
@@ -77,16 +92,11 @@ func TestWebhookProvider_Send(t *testing.T) {
 
 // TestWebhookProvider_EventFiltering verifies subscription logic + test event bypass.
 func TestWebhookProvider_EventFiltering(t *testing.T) {
-	callCount := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		callCount++
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
+	transport := &captureTransport{}
 
-	provider := &WebhookProvider{client: &http.Client{}}
+	provider := &WebhookProvider{client: &http.Client{Transport: transport}}
 	cfg := &Config{
-		URL:     server.URL,
+		URL:     "http://webhook.local/sync",
 		Events:  []string{SyncDone},
 		Enabled: true,
 	}
@@ -95,24 +105,24 @@ func TestWebhookProvider_EventFiltering(t *testing.T) {
 	if err := provider.Send(cfg, Payload{Event: SyncError}); err != nil {
 		t.Fatalf("Send error: %v", err)
 	}
-	if callCount != 0 {
-		t.Errorf("expected 0 calls for unsubscribed event, got %d", callCount)
+	if got := len(transport.requests); got != 0 {
+		t.Errorf("expected 0 calls for unsubscribed event, got %d", got)
 	}
 
 	// Subscribed event -> call
 	if err := provider.Send(cfg, Payload{Event: SyncDone}); err != nil {
 		t.Fatalf("Send error: %v", err)
 	}
-	if callCount != 1 {
-		t.Errorf("expected 1 call for subscribed event, got %d", callCount)
+	if got := len(transport.requests); got != 1 {
+		t.Errorf("expected 1 call for subscribed event, got %d", got)
 	}
 
 	// Test event (not in list) -> call (bypass)
 	if err := provider.Send(cfg, Payload{Event: SyncTest}); err != nil {
 		t.Fatalf("Send error: %v", err)
 	}
-	if callCount != 2 {
-		t.Errorf("expected 2 calls after sync.test, got %d", callCount)
+	if got := len(transport.requests); got != 2 {
+		t.Errorf("expected 2 calls after sync.test, got %d", got)
 	}
 }
 
@@ -124,24 +134,15 @@ func TestNtfyProvider_Send(t *testing.T) {
 		body    string
 		auth    string
 	}
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		received.path = r.URL.Path
-		received.headers = r.Header.Clone()
-		b, _ := io.ReadAll(r.Body)
-		received.body = string(b)
-		received.auth = r.Header.Get("Authorization")
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
+	transport := &captureTransport{}
 
 	provider := &NtfyProvider{
-		client: &http.Client{},
+		client: &http.Client{Transport: transport},
 	}
 
 	cfg := &Config{
 		Provider:  "ntfy",
-		URL:       server.URL,
+		URL:       "http://ntfy.local",
 		NtfyTopic: "mytopic",
 		NtfyUser:  "user",
 		Secret:    "pass",
@@ -159,6 +160,13 @@ func TestNtfyProvider_Send(t *testing.T) {
 	if err := provider.Send(cfg, p); err != nil {
 		t.Fatalf("Send error: %v", err)
 	}
+	if len(transport.requests) != 1 {
+		t.Fatalf("requests = %d, want 1", len(transport.requests))
+	}
+	received.path = transport.requests[0].URL.Path
+	received.headers = transport.requests[0].Header
+	received.body = string(transport.bodies[0])
+	received.auth = transport.requests[0].Header.Get("Authorization")
 
 	// Verify URL path construction
 	if received.path != "/mytopic" {
@@ -186,17 +194,11 @@ func TestNtfyProvider_Send(t *testing.T) {
 
 // TestNtfyProvider_Template verifies custom template rendering.
 func TestNtfyProvider_Template(t *testing.T) {
-	var body string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
-		body = string(b)
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
+	transport := &captureTransport{}
 
-	provider := &NtfyProvider{client: &http.Client{}}
+	provider := &NtfyProvider{client: &http.Client{Transport: transport}}
 	cfg := &Config{
-		URL:          server.URL,
+		URL:          "http://ntfy.local",
 		NtfyTopic:    "topic",
 		NtfyTemplate: "Hello {{.StackName}}, status is {{.Event}}",
 		Events:       []string{SyncDone},
@@ -210,8 +212,12 @@ func TestNtfyProvider_Template(t *testing.T) {
 	if err := provider.Send(cfg, p); err != nil {
 		t.Fatalf("Send error: %v", err)
 	}
+	if len(transport.bodies) != 1 {
+		t.Fatalf("requests = %d, want 1", len(transport.bodies))
+	}
 
 	expected := "Hello world, status is sync.done"
+	body := string(transport.bodies[0])
 	if body != expected {
 		t.Errorf("expected body %q, got %q", expected, body)
 	}

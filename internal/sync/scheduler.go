@@ -154,7 +154,9 @@ func (s *Scheduler) TriggerPendingReconciles(workerID string) {
 			created := rec.GetDateTime("created").Time()
 			if existing, ok := stackEvents[stackID]; !ok || created.After(existing.Created) {
 				if ok {
-					_ = s.app.Delete(existing.Record)
+					if err := s.app.Delete(existing.Record); err != nil {
+						return fmt.Errorf("failed to delete superseded pending reconcile %s for stack %s: %w", existing.Record.Id, stackID, err)
+					}
 				}
 				stackEvents[stackID] = pendingEvent{
 					Record:  rec,
@@ -162,7 +164,9 @@ func (s *Scheduler) TriggerPendingReconciles(workerID string) {
 					Created: created,
 				}
 			} else {
-				_ = s.app.Delete(rec)
+				if err := s.app.Delete(rec); err != nil {
+					return fmt.Errorf("failed to delete stale pending reconcile %s for stack %s: %w", rec.Id, stackID, err)
+				}
 			}
 		}
 
@@ -173,7 +177,9 @@ func (s *Scheduler) TriggerPendingReconciles(workerID string) {
 		queueTotal := len(stackEvents)
 		for stackID, event := range stackEvents {
 			log.Printf("[scheduler] triggering pending %s reconcile for stack %s upon worker %s reconnect (queue total: %d)", event.Trigger, stackID, workerID, queueTotal)
-			_ = s.app.Delete(event.Record)
+			if err := s.app.Delete(event.Record); err != nil {
+				return fmt.Errorf("failed to delete pending reconcile %s for stack %s before dispatch: %w", event.Record.Id, stackID, err)
+			}
 			s.TriggerSync(stackID, event.Trigger, queueTotal)
 		}
 		return nil

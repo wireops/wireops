@@ -50,6 +50,7 @@ function statusColor(status: string) {
   switch (status) {
     case 'active': return 'success'
     case 'stalled': return 'warning'
+    case 'error': return 'error'
     case 'paused': return 'neutral'
     default: return 'neutral'
   }

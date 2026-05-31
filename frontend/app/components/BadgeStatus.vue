@@ -8,7 +8,6 @@ const statusColor = computed(() => {
     case 'active':
     case 'success':
     case 'connected':
-    case 'done':
     case 'running':
       return 'success'
     case 'error':

@@ -19,7 +19,7 @@ const triggerIcon = computed(() => {
 
 const statusColor = computed(() => {
   switch (props.status) {
-    case 'done': case 'success': return 'success'
+    case 'success': return 'success'
     case 'syncing': case 'running': return 'primary'
     case 'error': return 'error'
     case 'pending': case 'queued': return 'warning'

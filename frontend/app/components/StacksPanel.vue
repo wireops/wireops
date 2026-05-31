@@ -1,20 +1,28 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { stackRepositorySubtitle, stackSourceStatus, stackVisibleDeployStatus, stackWorkerName, stackWorkerStatus } from '../utils/stack-status'
 
 const { $pb } = useNuxtApp()
-const { listOrphans, purgeOrphan } = useApi()
+const { getWorkers, listOrphans, purgeOrphan } = useApi()
 const { subscribe } = useRealtime()
 const toast = useToast()
 const { announce } = useA11yAnnouncer()
-const { platformIconUrl } = useRepositoryPlatform()
 
 const { data: stacks, refresh } = useAsyncData('stacks_list', () =>
   $pb.collection('stacks').getFullList({ sort: '-updated', expand: 'repository,worker' })
+)
+const { data: workers, refresh: refreshWorkers } = useAsyncData('stack_card_workers', () =>
+  getWorkers().catch(() => [])
 )
 
 const isUpdating = ref(false)
 
 let updateTimer: ReturnType<typeof setTimeout> | undefined
+
+function refreshList() {
+  refresh()
+  refreshWorkers()
+}
 
 onMounted(() => {
   window.addEventListener('keydown', handleSlashShortcut)
@@ -22,11 +30,15 @@ onMounted(() => {
     isUpdating.value = true
     announce('Stacks list updating')
     refresh()
+    refreshWorkers()
     clearTimeout(updateTimer)
     updateTimer = setTimeout(() => {
       isUpdating.value = false
       announce('Stacks list updated')
     }, 500)
+  })
+  subscribe('workers', () => {
+    refreshWorkers()
   })
 })
 
@@ -42,7 +54,7 @@ function openCreate() {
 }
 
 function onCreated() {
-  refresh()
+  refreshList()
 }
 
 const showDelete = ref(false)
@@ -58,7 +70,7 @@ function openDelete(stack: any) {
 function onDeleted() {
   showDelete.value = false
   deleteTarget.value = null
-  refresh()
+  refreshList()
 }
 
 function openSyncConfirm(stack: any) {
@@ -77,16 +89,6 @@ watch(showSyncConfirm, (isOpen) => {
   }
 })
 
-const statusColor = (s: string) => {
-  switch (s) {
-    case 'active': return 'success'
-    case 'syncing': return 'info'
-    case 'error': return 'error'
-    case 'paused': case 'pending': return 'warning'
-    default: return 'neutral'
-  }
-}
-
 const cardAccentClass = (s: string) => {
   switch (s) {
     case 'active': return 'border-l-emerald-400 dark:border-l-emerald-400'
@@ -98,16 +100,9 @@ const cardAccentClass = (s: string) => {
   }
 }
 
-const stackStatusLabel = (s: string) => {
-  switch (s) {
-    case 'active': return 'Synced'
-    case 'syncing': return 'Syncing'
-    case 'error': return 'Error'
-    case 'paused': return 'Paused'
-    case 'pending': return 'Pending'
-    default: return s || 'Unknown'
-  }
-}
+const workersById = computed(() =>
+  Object.fromEntries((workers.value || []).map((worker: any) => [worker.id, worker]))
+)
 
 const searchQuery = ref('')
 const searchInputRef = ref<{ $el?: HTMLElement } | HTMLElement | null>(null)
@@ -156,7 +151,7 @@ const filteredStacks = computed(() => {
     const query = searchQuery.value.toLowerCase()
     filtered = filtered.filter((s: any) =>
       s.name.toLowerCase().includes(query) ||
-      s.expand?.repository?.name?.toLowerCase().includes(query)
+      stackRepositorySubtitle(s).toLowerCase().includes(query)
     )
   }
 
@@ -188,7 +183,7 @@ const showImport = ref(false)
 
 function onImported(_stackId: string) {
   showImport.value = false
-  refresh()
+  refreshList()
 }
 
 const showOrphans = ref(false)
@@ -251,7 +246,7 @@ async function handlePurge(dirName: string) {
           <div class="flex items-center gap-3">
             <UButton icon="i-lucide-package-search" label="Manage Orphans" variant="outline" color="warning" size="xs" class="hidden sm:inline-flex" @click="openOrphans" />
             <UTooltip text="Refresh">
-              <UButton icon="i-lucide-refresh-cw" variant="ghost" size="xs" color="neutral" aria-label="Refresh stacks" @click="refresh()" />
+              <UButton icon="i-lucide-refresh-cw" variant="ghost" size="xs" color="neutral" aria-label="Refresh stacks" @click="refreshList()" />
             </UTooltip>
           </div>
         </div>
@@ -335,59 +330,50 @@ async function handlePurge(dirName: string) {
                 class="group block rounded-md pr-32 focus:outline-none sm:pr-16"
                 :aria-label="`Open stack ${stack.name}`"
               >
-                <div class="mb-3 inline-flex max-w-full items-center">
+                <div class="mb-3 min-w-0">
                   <h3 class="truncate text-base font-bold tracking-tight text-gray-950 transition-colors group-hover:text-yellow-500 group-focus-visible:text-yellow-500 dark:text-white">
                     {{ stack.name }}
                   </h3>
+                  <div class="mt-1 flex min-w-0 items-center gap-2 text-xs text-gray-500 dark:text-wire-200/50">
+                    <span class="inline-flex min-w-0 items-center gap-1.5">
+                      <UIcon
+                        :name="stackSourceStatus(stack).icon"
+                        class="h-3.5 w-3.5 shrink-0"
+                        :class="stackSourceStatus(stack).iconClass"
+                        :title="stackSourceStatus(stack).title"
+                        :aria-label="stackSourceStatus(stack).title"
+                      />
+                      <span class="truncate">{{ stackRepositorySubtitle(stack) }}</span>
+                    </span>
+                  </div>
                 </div>
                 <div class="space-y-1.5 bg-gray-50/90 px-3 py-2.5 transition-colors group-hover:bg-yellow-50/80 group-focus-visible:bg-yellow-50/80 dark:bg-carbon-900/55 dark:group-hover:bg-carbon-900/80 dark:group-focus-visible:bg-carbon-900/80">
                   <div class="grid grid-cols-[78px_1fr] items-start gap-2 text-sm">
-                    <span class="text-gray-500 dark:text-wire-200/45">Status</span>
+                    <span class="text-gray-500 dark:text-wire-200/45">Deploy</span>
                     <div class="flex min-w-0 items-center gap-2">
                       <UIcon
-                        name="i-lucide-badge-check"
+                        :name="stackVisibleDeployStatus(stack, workersById).icon"
                         class="h-3.5 w-3.5 shrink-0"
-                        :class="{
-                          'text-emerald-500': statusColor(stack.status) === 'success',
-                          'text-sky-500': statusColor(stack.status) === 'info',
-                          'text-rose-500': statusColor(stack.status) === 'error',
-                          'text-amber-500': statusColor(stack.status) === 'warning',
-                          'text-gray-400': statusColor(stack.status) === 'neutral',
-                        }"
+                        :class="stackVisibleDeployStatus(stack, workersById).iconClass"
                       />
-                      <span class="truncate font-medium text-gray-900 dark:text-wire-200">{{ stackStatusLabel(stack.status) }}</span>
-                    </div>
-                  </div>
-
-                  <div class="grid grid-cols-[78px_1fr] items-start gap-2 text-sm">
-                    <span class="text-gray-500 dark:text-wire-200/45">Repository</span>
-                    <div class="min-w-0">
-                      <template v-if="stack.source_type === 'local'">
-                        <span class="inline-flex items-center gap-1.5 text-gray-900 dark:text-wire-200">
-                          <UIcon name="i-lucide-hard-drive" class="h-3.5 w-3.5 shrink-0 text-sky-500" />
-                          <span class="truncate">{{ stack.import_path || 'local import' }}</span>
-                        </span>
-                      </template>
-                      <template v-else>
-                        <span class="inline-flex items-center gap-1.5 text-gray-900 dark:text-wire-200">
-                          <img
-                            v-if="platformIconUrl(stack.expand?.repository?.platform)"
-                            :src="platformIconUrl(stack.expand?.repository?.platform)!"
-                            class="h-3.5 w-3.5 shrink-0 object-contain"
-                            alt=""
-                          >
-                          <UIcon v-else name="i-lucide-git-branch" class="h-3.5 w-3.5 shrink-0 text-gray-400" />
-                          <span class="truncate">{{ stack.expand?.repository?.name || 'Unknown repo' }}</span>
-                        </span>
-                      </template>
+                      <span class="truncate font-medium text-gray-900 dark:text-wire-200">{{ stackVisibleDeployStatus(stack, workersById).label }}</span>
                     </div>
                   </div>
 
                   <div class="grid grid-cols-[78px_1fr] items-start gap-2 text-sm">
                     <span class="text-gray-500 dark:text-wire-200/45">Worker</span>
-                    <span class="truncate text-gray-900 dark:text-wire-200">
-                      {{ stack.expand?.worker?.hostname || 'Unknown worker' }}
-                    </span>
+                    <div class="flex min-w-0 items-center gap-2">
+                      <UTooltip :text="stackWorkerName(stack)">
+                        <UIcon
+                          :name="stackWorkerStatus(stack, workersById).icon"
+                          class="h-3.5 w-3.5 shrink-0"
+                          :class="stackWorkerStatus(stack, workersById).iconClass"
+                          :title="stackWorkerName(stack)"
+                          :aria-label="`Worker: ${stackWorkerName(stack)}`"
+                        />
+                      </UTooltip>
+                      <span class="truncate font-medium text-gray-900 dark:text-wire-200">{{ stackWorkerStatus(stack, workersById).label }}</span>
+                    </div>
                   </div>
 
                   <div v-if="stack.containers_list?.length" class="grid grid-cols-[78px_1fr] items-start gap-2 text-sm">

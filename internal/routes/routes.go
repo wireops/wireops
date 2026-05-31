@@ -959,7 +959,13 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		currentVersion := stack.GetInt("current_version")
 		if currentVersion > 0 {
 			filePath := renderer.GetRevisionFilePath(stackID, currentVersion)
-			composeContent, _ = os.ReadFile(filePath)
+			var readErr error
+			composeContent, readErr = os.ReadFile(filePath)
+			if readErr != nil && !force {
+				return e.JSON(http.StatusInternalServerError, map[string]string{
+					"error": fmt.Sprintf("failed to read rendered compose file for teardown: %v", readErr),
+				})
+			}
 		}
 
 		// If no rendered file exists (stack was never synced), skip teardown
@@ -989,7 +995,13 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 					}
 					envVars = append(envVars, key+"="+val)
 				}
-				teardownEnvFileB64, _ = sync.BuildEnvFileB64(envVars)
+				var b64Err error
+				teardownEnvFileB64, b64Err = sync.BuildEnvFileB64(envVars)
+				if b64Err != nil {
+					return e.JSON(http.StatusInternalServerError, map[string]string{
+						"error": fmt.Sprintf("failed to serialize env vars for teardown: %v", b64Err),
+					})
+				}
 			}
 			result, dispatchErr := workerSvc.Dispatch(e.Request.Context(), workerID, protocol.TeardownCommand{
 				CommandID:      cmdID,
@@ -1017,9 +1029,18 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		// Delete all related records before deleting the stack itself
 		// (PocketBase enforces that relations are deleted first)
 		for _, col := range []string{"sync_logs", "stack_services", "stack_env_vars", "stack_revisions", "stack_pending_reconciles"} {
-			records, _ := app.FindAllRecords(col, dbx.HashExp{"stack": stackID})
+			records, err := app.FindAllRecords(col, dbx.HashExp{"stack": stackID})
+			if err != nil {
+				return e.JSON(http.StatusInternalServerError, map[string]string{
+					"error": fmt.Sprintf("failed to query related %s records: %v", col, err),
+				})
+			}
 			for _, rec := range records {
-				_ = app.Delete(rec)
+				if err := app.Delete(rec); err != nil {
+					return e.JSON(http.StatusInternalServerError, map[string]string{
+						"error": fmt.Sprintf("failed to delete related %s record %s: %v", col, rec.Id, err),
+					})
+				}
 			}
 		}
 

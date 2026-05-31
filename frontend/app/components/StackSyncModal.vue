@@ -5,6 +5,8 @@ const { announce } = useA11yAnnouncer()
 
 const props = defineProps<{
   stack: any
+  disabled?: boolean
+  disabledReason?: string
 }>()
 
 const emit = defineEmits<{
@@ -20,6 +22,14 @@ function close() {
 
 async function confirmSync() {
   if (!props.stack?.id) return
+  if (props.disabled) {
+    toast.add({
+      title: 'Sync unavailable',
+      description: props.disabledReason || 'The assigned worker is unavailable.',
+      color: 'warning',
+    })
+    return
+  }
 
   syncing.value = true
   try {
@@ -77,6 +87,7 @@ async function confirmSync() {
           icon="i-lucide-refresh-cw"
           class="ml-auto"
           :loading="syncing"
+          :disabled="disabled"
           @click="confirmSync"
         />
       </div>

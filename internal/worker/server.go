@@ -381,7 +381,9 @@ func (s *WorkerServer) handleRegister(c *gin.Context) {
 		return
 	}
 
-	s.workerSvc.UpdateLastSeen(record.Id)
+	if err := s.workerSvc.UpdateLastSeen(record.Id); err != nil {
+		logger.SafeLogf("[WORKER] best_effort last_seen failed worker_id=%s event=register error=%v", record.Id, err)
+	}
 	s.SetWorkerTags(record.Id, req.Tags)
 	logger.SafeLogf("[WORKER] Initial registration completed for Worker: %s (%s) tags=%v", req.Hostname, record.Id, req.Tags)
 
@@ -402,7 +404,9 @@ func (s *WorkerServer) handleWebSocket(c *gin.Context) {
 		return
 	}
 
-	s.workerSvc.UpdateLastSeen(workerID)
+	if err := s.workerSvc.UpdateLastSeen(workerID); err != nil {
+		logger.SafeLogf("[WORKER] best_effort last_seen failed worker_id=%s event=websocket_connect error=%v", workerID, err)
+	}
 	logger.SafeLogf("[WORKER] Worker connected via WebSocket: %s", workerID)
 
 	conn, err := s.upgrader.Upgrade(c.Writer, c.Request, nil)
@@ -434,7 +438,9 @@ func (s *WorkerServer) handleWebSocket(c *gin.Context) {
 	s.connWriteMu[workerID] = &sync.Mutex{}
 	s.connMu.Unlock()
 
-	_ = s.workerSvc.RecordHealthEvent(workerID, "online")
+	if err := s.workerSvc.RecordHealthEvent(workerID, "online"); err != nil {
+		logger.SafeLogf("[WORKER] best_effort health failed worker_id=%s event=online error=%v", workerID, err)
+	}
 
 	if s.onConnect != nil {
 		go s.onConnect(workerID)
@@ -456,13 +462,17 @@ func (s *WorkerServer) handleWebSocket(c *gin.Context) {
 		messageType, p, err := conn.ReadMessage()
 		if err != nil {
 			logger.SafeLogf("[WORKER] Worker %s disconnected: %v", workerID, err)
-			_ = s.workerSvc.RecordHealthEvent(workerID, "offline")
+			if err := s.workerSvc.RecordHealthEvent(workerID, "offline"); err != nil {
+				logger.SafeLogf("[WORKER] best_effort health failed worker_id=%s event=offline error=%v", workerID, err)
+			}
 			break
 		}
 
 		_ = conn.SetReadDeadline(time.Now().Add(timeoutDuration))
 
-		s.workerSvc.UpdateLastSeen(workerID)
+		if err := s.workerSvc.UpdateLastSeen(workerID); err != nil {
+			logger.SafeLogf("[WORKER] best_effort last_seen failed worker_id=%s event=message error=%v", workerID, err)
+		}
 
 		if messageType != websocket.TextMessage {
 			continue
@@ -476,7 +486,9 @@ func (s *WorkerServer) handleWebSocket(c *gin.Context) {
 
 		switch env.Type {
 		case protocol.MsgHeartbeat:
-			_ = s.workerSvc.RecordHealthEvent(workerID, "online")
+			if err := s.workerSvc.RecordHealthEvent(workerID, "online"); err != nil {
+				logger.SafeLogf("[WORKER] best_effort health failed worker_id=%s event=heartbeat error=%v", workerID, err)
+			}
 			payloadBytes, _ := json.Marshal(env.Payload)
 			var hb protocol.HeartbeatPayload
 			if jsonErr := json.Unmarshal(payloadBytes, &hb); jsonErr == nil && len(hb.ActiveJobRunIDs) > 0 {
