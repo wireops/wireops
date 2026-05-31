@@ -224,19 +224,35 @@ func (s *Scheduler) executeJob(jobID, trigger string) {
 
 	def, err := job.ParseJobFile(repoWorkspace, repoID, jobFile)
 	if err != nil {
-		log.Printf("[jobscheduler] executeJob: cannot parse job.yaml for job %s: %v", jobID, err)
+		msg := fmt.Sprintf("cannot parse job.yaml %s for job %s: %v", jobFile, jobID, err)
+		log.Printf("[jobscheduler] executeJob: %s", msg)
+		if _, saveErr := s.createJobRun(jobID, "", trigger, "error", msg); saveErr != nil {
+			log.Printf("[jobscheduler] executeJob: failed to persist definition error job=%s: %v", jobID, saveErr)
+		}
+		if saveErr := s.setScheduledJobStatus(jobID, "error"); saveErr != nil {
+			log.Printf("[jobscheduler] executeJob: failed to mark job error job=%s: %v", jobID, saveErr)
+		}
 		return
 	}
 
 	workers := s.dispatcher.GetWorkersByTags(def.Tags)
 	if len(workers) == 0 {
-		s.createStalledRun(jobID, trigger, def.Tags)
+		if err := s.createStalledRun(jobID, trigger, def.Tags); err != nil {
+			log.Printf("[jobscheduler] executeJob: failed to persist stalled job=%s: %v", jobID, err)
+		}
 		return
 	}
 
 	envMap, err := s.loadEnvVars(jobID)
 	if err != nil {
-		log.Printf("[jobscheduler] executeJob: cannot load env vars for job %s: %v", jobID, err)
+		msg := fmt.Sprintf("cannot load env vars for job %s: %v", jobID, err)
+		log.Printf("[jobscheduler] executeJob: %s", msg)
+		if _, saveErr := s.createJobRun(jobID, "", trigger, "error", msg); saveErr != nil {
+			log.Printf("[jobscheduler] executeJob: failed to persist env error job=%s: %v", jobID, saveErr)
+		}
+		if saveErr := s.setScheduledJobStatus(jobID, "error"); saveErr != nil {
+			log.Printf("[jobscheduler] executeJob: failed to mark job error job=%s: %v", jobID, saveErr)
+		}
 		return
 	}
 
@@ -271,10 +287,12 @@ func (s *Scheduler) executeJob(jobID, trigger string) {
 
 	// Update last_run_at and status immediately; run completion is async.
 	rec.Set("last_run_at", time.Now())
-	if rec.GetString("status") == "stalled" {
+	if rec.GetString("status") == "stalled" || rec.GetString("status") == "error" {
 		rec.Set("status", "active")
 	}
-	_ = s.app.Save(rec)
+	if err := s.app.Save(rec); err != nil {
+		log.Printf("[jobscheduler] executeJob: failed to persist last_run_at job=%s: %v", jobID, err)
+	}
 }
 
 // dispatchToWorker creates a job_run record and sends RunJobCommand to the worker.
@@ -288,7 +306,13 @@ func (s *Scheduler) dispatchToWorker(ctx context.Context, jobID, trigger, worker
 	}
 
 	containerName := "wireops-job-" + runID
-	s.patchJobRunMeta(runID, containerName, p.commitSHA)
+	if err := s.patchJobRunMeta(runID, containerName, p.commitSHA); err != nil {
+		log.Printf("[jobscheduler] dispatchToWorker: failed to persist metadata job=%s run=%s: %v", jobID, runID, err)
+		if updateErr := s.updateJobRun(runID, "error", err.Error(), 0); updateErr != nil {
+			log.Printf("[jobscheduler] dispatchToWorker: failed to mark metadata error run=%s: %v", runID, updateErr)
+		}
+		return
+	}
 
 	cmd := protocol.RunJobCommand{
 		CommandID:        fmt.Sprintf("job-%s", runID),
@@ -313,17 +337,33 @@ func (s *Scheduler) dispatchToWorker(ctx context.Context, jobID, trigger, worker
 	result, dispatchErr := s.dispatcher.Dispatch(ackCtx, workerID, cmd)
 	if dispatchErr != nil {
 		log.Printf("[jobscheduler] dispatchToWorker: ack error job=%s run=%s: %v", jobID, runID, dispatchErr)
-		s.updateJobRun(runID, "error", dispatchErr.Error(), 0)
+		if err := s.updateJobRun(runID, "error", dispatchErr.Error(), 0); err != nil {
+			log.Printf("[jobscheduler] dispatchToWorker: failed to persist ack error run=%s: %v", runID, err)
+		}
 		return
 	}
 	if result.Error != "" {
 		log.Printf("[jobscheduler] dispatchToWorker: worker error job=%s run=%s: %s", jobID, runID, result.Error)
-		s.updateJobRun(runID, "error", result.Error, 0)
+		if err := s.updateJobRun(runID, "error", result.Error, 0); err != nil {
+			log.Printf("[jobscheduler] dispatchToWorker: failed to persist worker error run=%s: %v", runID, err)
+		}
 		return
 	}
 
 	// Ack received — container is starting.
-	s.setJobRunStatus(runID, "running")
+	if err := s.setJobRunStatus(runID, "running"); err != nil {
+		log.Printf("[jobscheduler] dispatchToWorker: failed to persist running status run=%s worker=%s: %v", runID, workerID, err)
+		killCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+		killResult, killErr := s.dispatcher.Dispatch(killCtx, workerID, protocol.KillJobCommand{
+			CommandID: fmt.Sprintf("kill-%s", runID),
+			JobRunID:  runID,
+		})
+		if killErr != nil || killResult.Error != "" {
+			log.Printf("[jobscheduler] dispatchToWorker: best-effort kill failed run=%s worker=%s error=%v worker_error=%s", runID, workerID, killErr, killResult.Error)
+		}
+		return
+	}
 	log.Printf("[jobscheduler] job run=%s worker=%s job=%s started", runID, workerID, jobID)
 }
 
@@ -334,7 +374,10 @@ func (s *Scheduler) HandleJobCompleted(msg protocol.JobCompletedMessage) {
 	if !msg.Success {
 		status = "error"
 	}
-	s.updateJobRun(msg.JobRunID, status, msg.Output, msg.DurationMs)
+	if err := s.updateJobRun(msg.JobRunID, status, msg.Output, msg.DurationMs); err != nil {
+		log.Printf("[jobscheduler] HandleJobCompleted: failed to persist completion run=%s status=%s: %v", msg.JobRunID, status, err)
+		return
+	}
 	log.Printf("[jobscheduler] job_completed run=%s status=%s elapsed=%dms", msg.JobRunID, status, msg.DurationMs)
 }
 
@@ -346,68 +389,84 @@ const maxJobRunDuration = time.Hour
 // longer than maxJobRunDuration and marks it as "forgotten". This is a safety
 // net for short-execution jobs: a 1-hour wall-clock limit signals something
 // went wrong silently (worker crash with no reconnect, zombie container, etc.).
-func (s *Scheduler) MarkForgottenRuns() {
+func (s *Scheduler) MarkForgottenRuns() error {
 	cutoff := time.Now().Add(-maxJobRunDuration)
 
 	records, err := s.app.FindAllRecords("job_runs",
 		dbx.HashExp{"status": "running"},
 	)
 	if err != nil {
-		log.Printf("[jobscheduler] MarkForgottenRuns: query failed: %v", err)
-		return
+		return fmt.Errorf("MarkForgottenRuns query failed: %w", err)
 	}
 
+	var firstErr error
 	for _, rec := range records {
 		if rec.GetDateTime("updated").Time().Before(cutoff) {
 			rec.Set("status", "forgotten")
 			rec.Set("output", "job forgotten: still running after 1 hour with no completion signal")
 			if err := s.app.Save(rec); err != nil {
 				log.Printf("[jobscheduler] MarkForgottenRuns: failed to save run %s: %v", rec.Id, err)
+				if firstErr == nil {
+					firstErr = fmt.Errorf("mark forgotten run=%s: %w", rec.Id, err)
+				}
 			} else {
 				log.Printf("[jobscheduler] run %s marked forgotten (started >1h ago)", rec.Id)
 			}
 		}
 	}
+	return firstErr
 }
 
 // HandleWorkerReconnect marks any job_runs that were left in "running" state for the
 // given worker as "error". This handles the case where the worker restarted mid-job.
-func (s *Scheduler) HandleWorkerReconnect(workerID string) {
+func (s *Scheduler) HandleWorkerReconnect(workerID string) error {
 	records, err := s.app.FindAllRecords("job_runs", dbx.HashExp{
 		"worker": workerID,
 		"status": "running",
 	})
 	if err != nil {
-		log.Printf("[jobscheduler] HandleWorkerReconnect: query failed: %v", err)
-		return
+		return fmt.Errorf("HandleWorkerReconnect query failed worker=%s: %w", workerID, err)
 	}
+	var firstErr error
 	for _, rec := range records {
 		rec.Set("status", "error")
 		rec.Set("output", "job lost: worker disconnected or restarted during execution")
-		_ = s.app.Save(rec)
+		if err := s.app.Save(rec); err != nil {
+			log.Printf("[jobscheduler] HandleWorkerReconnect: failed to save run %s worker=%s: %v", rec.Id, workerID, err)
+			if firstErr == nil {
+				firstErr = fmt.Errorf("worker reconnect run=%s worker=%s: %w", rec.Id, workerID, err)
+			}
+			continue
+		}
 		log.Printf("[jobscheduler] run %s marked error: worker %s reconnected", rec.Id, workerID)
 	}
+	return firstErr
 }
 
 // createStalledRun writes a job_run with status=stalled when no workers are available.
 // It also updates the scheduled_jobs record's status to "stalled".
-func (s *Scheduler) createStalledRun(jobID, trigger string, tags []string) {
+func (s *Scheduler) createStalledRun(jobID, trigger string, tags []string) error {
 	reason := "no matching workers available for the specified tags"
 	if len(tags) > 0 {
 		reason = fmt.Sprintf("no matching workers available for the required tags: %v", tags)
 	}
 	runID, err := s.createJobRun(jobID, "", trigger, "stalled", reason)
 	if err != nil {
-		log.Printf("[jobscheduler] createStalledRun: failed to create stalled run for job %s: %v", jobID, err)
-		return
+		return fmt.Errorf("create stalled run job=%s: %w", jobID, err)
 	}
 	log.Printf("[jobscheduler] job job=%s run=%s stalled (no matching workers)", jobID, runID)
 
 	rec, err := s.app.FindRecordById("scheduled_jobs", jobID)
-	if err == nil && rec.GetString("status") != "paused" {
-		rec.Set("status", "stalled")
-		_ = s.app.Save(rec)
+	if err != nil {
+		return fmt.Errorf("create stalled run load job=%s: %w", jobID, err)
 	}
+	if rec.GetString("status") != "paused" {
+		rec.Set("status", "stalled")
+		if err := s.app.Save(rec); err != nil {
+			return fmt.Errorf("create stalled run update job=%s status=stalled: %w", jobID, err)
+		}
+	}
+	return nil
 }
 
 // createJobRun inserts a job_run record and returns its ID.
@@ -433,32 +492,47 @@ func (s *Scheduler) createJobRun(jobID, workerID, trigger, status string, output
 	return rec.Id, nil
 }
 
-// setJobRunStatus updates only the status field of a job_run record.
-func (s *Scheduler) setJobRunStatus(runID, status string) {
-	rec, err := s.app.FindRecordById("job_runs", runID)
+func (s *Scheduler) setScheduledJobStatus(jobID, status string) error {
+	rec, err := s.app.FindRecordById("scheduled_jobs", jobID)
 	if err != nil {
-		log.Printf("[jobscheduler] setJobRunStatus: run %s not found: %v", runID, err)
-		return
+		return fmt.Errorf("set scheduled job status job=%s status=%s: %w", jobID, status, err)
+	}
+	if rec.GetString("status") == "paused" {
+		return nil
 	}
 	rec.Set("status", status)
 	if err := s.app.Save(rec); err != nil {
-		log.Printf("[jobscheduler] setJobRunStatus: failed to save run %s: %v", runID, err)
+		return fmt.Errorf("set scheduled job status job=%s status=%s: %w", jobID, status, err)
 	}
+	return nil
+}
+
+// setJobRunStatus updates only the status field of a job_run record.
+func (s *Scheduler) setJobRunStatus(runID, status string) error {
+	rec, err := s.app.FindRecordById("job_runs", runID)
+	if err != nil {
+		return fmt.Errorf("set job_run status run=%s status=%s: %w", runID, status, err)
+	}
+	rec.Set("status", status)
+	if err := s.app.Save(rec); err != nil {
+		return fmt.Errorf("set job_run status run=%s status=%s: %w", runID, status, err)
+	}
+	return nil
 }
 
 // updateJobRun sets the final status, output, and duration on a job_run record.
-func (s *Scheduler) updateJobRun(runID, status, output string, durationMs int64) {
+func (s *Scheduler) updateJobRun(runID, status, output string, durationMs int64) error {
 	rec, err := s.app.FindRecordById("job_runs", runID)
 	if err != nil {
-		log.Printf("[jobscheduler] updateJobRun: run %s not found: %v", runID, err)
-		return
+		return fmt.Errorf("update job_run run=%s status=%s: %w", runID, status, err)
 	}
 	rec.Set("status", status)
 	rec.Set("output", output)
 	rec.Set("duration_ms", durationMs)
 	if err := s.app.Save(rec); err != nil {
-		log.Printf("[jobscheduler] updateJobRun: failed to save run %s: %v", runID, err)
+		return fmt.Errorf("update job_run run=%s status=%s: %w", runID, status, err)
 	}
+	return nil
 }
 
 // loadEnvVars fetches and decrypts job_env_vars for the given job.
@@ -503,16 +577,17 @@ func (s *Scheduler) repoHeadSHA(repoID string) string {
 }
 
 // patchJobRunMeta stores the container name and commit SHA on an existing job_run record.
-func (s *Scheduler) patchJobRunMeta(runID, containerName, commitSHA string) {
+func (s *Scheduler) patchJobRunMeta(runID, containerName, commitSHA string) error {
 	rec, err := s.app.FindRecordById("job_runs", runID)
 	if err != nil {
-		return
+		return fmt.Errorf("patch job_run metadata run=%s: %w", runID, err)
 	}
 	rec.Set("container_name", containerName)
 	rec.Set("commit_sha", commitSHA)
 	if err := s.app.Save(rec); err != nil {
-		log.Printf("[jobscheduler] patchJobRunMeta: failed to save run %s: %v", runID, err)
+		return fmt.Errorf("patch job_run metadata run=%s: %w", runID, err)
 	}
+	return nil
 }
 
 // pickWorker selects one worker from the list deterministically by hashing jobID.

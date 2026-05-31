@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import type { IntegrationAction } from '~/composables/useIntegrations'
+import { stackSourceStatus, stackVisibleDeployStatus, stackWorkerStatus } from '../../utils/stack-status'
+import { WORKER_STATUS } from '../../utils/worker'
 
 const route = useRoute()
 const { $pb } = useNuxtApp()
@@ -17,25 +19,26 @@ const { data: stack, refresh: refreshStack, error: stackError } = useAsyncData(`
   $pb.collection('stacks').getOne(stackId, { expand: 'repository,worker' })
 )
 
-const workerOffline = computed(() => {
-  const workerID = stack.value?.worker
-  if (!workerID) return false
-  const realWorker = (workers.value || []).find((w: any) => w.id === workerID)
-  if (realWorker) {
-    if (realWorker.status) {
-      return realWorker.status !== WORKER_STATUS.ACTIVE
-    }
+const { data: workers, refresh: refreshWorkers } = useAsyncData('workers_for_stacks', getWorkers)
+const workersById = computed(() =>
+  Object.fromEntries((workers.value || []).map((worker: any) => [worker.id, worker]))
+)
+const sourceStatus = computed(() => stackSourceStatus(stack.value))
+const deployStatus = computed(() => stackVisibleDeployStatus(stack.value, workersById.value))
+const workerStatus = computed(() => stackWorkerStatus(stack.value, workersById.value))
+const workerOffline = computed(() => ['offline', 'revoked'].includes(workerStatus.value.key))
+const canSyncDeploy = computed(() => workerStatus.value.key === 'online')
+const syncDisabledReason = computed(() => {
+  switch (workerStatus.value.key) {
+    case 'offline':
+      return 'Worker offline'
+    case 'revoked':
+      return 'Worker revoked'
+    default:
+      return 'Worker unavailable'
   }
-  const worker = stack.value?.expand?.worker
-  if (!worker) return false
-  if (worker.status && worker.status !== WORKER_STATUS.ACTIVE) return true
-  return false
 })
 
-const effectiveStackStatus = computed(() => {
-  if (workerOffline.value) return 'unknown'
-  return stack.value?.status || 'unknown'
-})
 watch(stackError, (err) => {
   if (err) navigateTo('/stacks')
 })
@@ -53,8 +56,6 @@ const { data: envVars, refresh: refreshEnv } = useAsyncData(`env_${stackId}`, ()
     sort: 'key',
   })
 )
-
-const { data: workers } = useAsyncData('workers_for_stacks', getWorkers)
 
 const { data: webhookUrl } = useAsyncData(`webhook_url_${stackId}`, () => getWebhookUrl(stackId))
 
@@ -305,6 +306,14 @@ const showSyncModal = ref(false)
 
 function openSyncModal() {
   if (!stack.value) return
+  if (!canSyncDeploy.value) {
+    toast.add({
+      title: 'Sync unavailable',
+      description: `${syncDisabledReason.value}. Reconnect the worker before syncing this stack.`,
+      color: 'warning',
+    })
+    return
+  }
   showSyncModal.value = true
 }
 
@@ -331,7 +340,7 @@ async function handleRollback() {
 const showPauseModal = ref(false)
 
 async function togglePause() {
-  if (effectiveStackStatus.value !== 'paused') {
+  if (stack.value?.status !== 'paused') {
     showPauseModal.value = true
     return
   }
@@ -381,18 +390,11 @@ function onTransferDone() {
   setTimeout(() => { refreshStack(); refreshLogs() }, 4000)
 }
 
-const statusColor = (s: string) => {
-  switch (s) {
-    case 'active': case 'success': case 'done': case 'running': return 'success'
-    case 'syncing': return 'info'
-    case 'error': case 'exited': return 'error'
-    case 'paused': case 'pending': case 'queued': return 'warning'
-    default: return 'neutral'
-  }
-}
-
 onMounted(() => {
   loadServices()
+  const workerRefreshTimer = window.setInterval(() => {
+    refreshWorkers()
+  }, 15000)
   
   // Subscribe to stack changes
   subscribe('stacks', (e) => {
@@ -416,6 +418,10 @@ onMounted(() => {
     }
   })
 
+  subscribe('workers', () => {
+    refreshWorkers()
+  })
+
   // Keyboard shortcut: Cmd/Ctrl + S to trigger sync
   const handleKeydown = (event: KeyboardEvent) => {
     if ((event.metaKey || event.ctrlKey) && event.key === 's') {
@@ -425,6 +431,7 @@ onMounted(() => {
   }
   window.addEventListener('keydown', handleKeydown)
   onUnmounted(() => {
+    window.clearInterval(workerRefreshTimer)
     window.removeEventListener('keydown', handleKeydown)
   })
 })
@@ -442,22 +449,25 @@ onMounted(() => {
           </div>
           {{ stack?.name }}
         </h1>
-        <BadgeStatus v-if="stack" :status="effectiveStackStatus" />
       </div>
       <div v-if="stack?.containers_list?.length" class="mt-2 sm:mt-0 sm:ml-4 flex-1">
         <StackContainersList :containers="stack.containers_list" />
       </div>
       <div class="grid grid-cols-3 sm:flex sm:items-center gap-2 sm:shrink-0">
         <UButton
-          :icon="effectiveStackStatus === 'paused' ? 'i-lucide-play' : 'i-lucide-pause'"
-          :label="effectiveStackStatus === 'paused' ? 'Resume' : 'Pause'"
-          :color="effectiveStackStatus === 'paused' ? 'success' : 'primary'"
+          :icon="stack?.status === 'paused' ? 'i-lucide-play' : 'i-lucide-pause'"
+          :label="stack?.status === 'paused' ? 'Resume' : 'Pause'"
+          :color="stack?.status === 'paused' ? 'success' : 'primary'"
           variant="outline"
           block
           @click="togglePause"
         />
         <UButton icon="i-lucide-recycle" label="Redeploy" variant="outline" block @click="showForceRedeploy = true" />
-        <UButton icon="i-lucide-refresh-cw" label="Sync Now" block class="shadow-[0_0_16px_rgba(255,198,0,0.35)] hover:shadow-[0_0_24px_rgba(255,198,0,0.55)] transition-shadow" @click="openSyncModal" />
+        <StackSyncButton
+          :can-sync="canSyncDeploy"
+          :disabled-reason="syncDisabledReason"
+          @click="openSyncModal"
+        />
       </div>
     </div>
 
@@ -465,10 +475,31 @@ onMounted(() => {
 
     <!-- Overview -->
     <div v-if="activeTab === 'overview'" class="space-y-4">
+      <UCard v-if="stack">
+        <template #header>
+          <h3 class="font-semibold">Status</h3>
+        </template>
+        <div class="grid grid-cols-3 gap-2 sm:gap-3">
+          <StackStatusCard
+            title="Git"
+            :status="sourceStatus"
+          />
+          <StackStatusCard
+            title="Deploy"
+            :status="deployStatus"
+          />
+          <StackStatusCard
+            title="Worker"
+            :status="workerStatus"
+            :tooltip="stack?.expand?.worker?.hostname || 'Unknown worker'"
+          />
+        </div>
+      </UCard>
+
       <UCard>
         <template #header>
           <div class="flex justify-between items-center">
-            <h3 class="font-semibold">Stack Configuration</h3>
+            <h3 class="font-semibold">Configuration</h3>
             <UButton v-if="!editing" icon="i-lucide-pencil" variant="ghost" size="xs" @click="startEdit" />
           </div>
         </template>
@@ -833,6 +864,8 @@ onMounted(() => {
     <StackSyncModal
       v-model:open="showSyncModal"
       :stack="stack"
+      :disabled="!canSyncDeploy"
+      :disabled-reason="`${syncDisabledReason}. Reconnect the worker before syncing this stack.`"
       @synced="onSyncTriggered"
     />
 

@@ -5,6 +5,7 @@ import StacksPanel from '../StacksPanel.vue'
 
 describe('StacksPanel', () => {
   it('renders a keyboard-focusable link for each stack and keeps sync separate', () => {
+    const refresh = vi.fn()
     ;(globalThis as any).useNuxtApp = () => ({
       $pb: {
         collection: () => ({
@@ -13,6 +14,7 @@ describe('StacksPanel', () => {
       },
     })
     ;(globalThis as any).useApi = () => ({
+      getWorkers: vi.fn(),
       listOrphans: vi.fn(),
       purgeOrphan: vi.fn(),
     })
@@ -28,21 +30,33 @@ describe('StacksPanel', () => {
     ;(globalThis as any).useRepositoryPlatform = () => ({
       platformIconUrl: vi.fn(),
     })
-    ;(globalThis as any).useAsyncData = () => ({
-      data: ref([
-        {
-          id: 'stack-1',
-          name: 'Payments',
-          status: 'active',
-          expand: {
-            repository: { name: 'repo-a', platform: 'github' },
-            worker: { hostname: 'worker-a' },
+    ;(globalThis as any).useAsyncData = (key: string) => {
+      if (key === 'stack_card_workers') {
+        return {
+          data: ref([
+            { id: 'worker-1', hostname: 'worker-a', status: 'OFFLINE' },
+          ]),
+          refresh,
+        }
+      }
+
+      return {
+        data: ref([
+          {
+            id: 'stack-1',
+            name: 'Payments',
+            worker: 'worker-1',
+            status: 'active',
+            expand: {
+              repository: { name: 'repo-a', platform: 'github', status: 'connected' },
+              worker: { id: 'worker-1', hostname: 'worker-a', status: 'ACTIVE' },
+            },
+            containers_list: [],
           },
-          containers_list: [],
-        },
-      ]),
-      refresh: vi.fn(),
-    })
+        ]),
+        refresh,
+      }
+    }
 
     const wrapper = mount(StacksPanel, {
       global: {
@@ -74,6 +88,15 @@ describe('StacksPanel', () => {
     const stackLinks = wrapper.findAll('a[aria-label="Open stack Payments"]')
     expect(stackLinks).toHaveLength(1)
     expect(stackLinks[0]?.attributes('href')).toBe('/stacks/stack-1')
+
+    expect(wrapper.text()).toContain('repo-a')
+    expect(wrapper.text()).toContain('Deploy')
+    expect(wrapper.text()).toContain('Unknown')
+    expect(wrapper.text()).toContain('Worker')
+    expect(wrapper.text()).toContain('Offline')
+    expect(wrapper.text()).not.toContain('Deployed')
+    expect(wrapper.text()).not.toContain('Synced')
+    expect(wrapper.find('[aria-label="Git: Connected"]').classes()).toContain('text-cyan-500')
 
     const syncButtons = wrapper.findAll('button')
     expect(syncButtons.some(button =>

@@ -227,7 +227,7 @@ func createSyncLogs(app core.App) error {
 	})
 	col.Fields.Add(&core.SelectField{
 		Name:   "status",
-		Values: []string{"running", "success", "error", "done", "queued"},
+		Values: []string{"running", "success", "error", "queued"},
 	})
 	col.Fields.Add(&core.TextField{Name: "commit_sha"})
 	col.Fields.Add(&core.TextField{Name: "commit_message"})
@@ -431,7 +431,7 @@ func createScheduledJobs(app core.App) error {
 	col.Fields.Add(&core.BoolField{Name: "enabled"})
 	col.Fields.Add(&core.SelectField{
 		Name:   "status",
-		Values: []string{"active", "paused", "stalled"},
+		Values: []string{"active", "paused", "stalled", "error"},
 	})
 	col.Fields.Add(&core.DateField{Name: "last_run_at"})
 	addAutoDateFields(col)

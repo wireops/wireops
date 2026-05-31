@@ -103,8 +103,9 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	}
 
 	prevStatus := stack.GetString("status")
-	stack.Set("status", "syncing")
-	_ = r.app.Save(stack)
+	if err := r.saveRecordStatus(stack, "stacks", "syncing", fmt.Sprintf("start reconcile trigger=%s", trigger)); err != nil {
+		return err
+	}
 
 	repoID := stack.GetString("repository")
 	repo, err := r.app.FindRecordById("repositories", repoID)
@@ -146,9 +147,10 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	remoteSHA, err := gitpkg.RemoteHeadSHA(gitRepo, branch, gitAuth)
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to get remote SHA for branch %s: %v", branch, err)
-		r.logFailure(stackID, trigger, "", errMsg)
-		stack.Set("status", prevStatus)
-		_ = r.app.Save(stack)
+		_ = r.logFailure(stackID, trigger, "", errMsg)
+		if saveErr := r.saveRecordStatus(stack, "stacks", prevStatus, "restore status after remote SHA failure"); saveErr != nil {
+			return saveErr
+		}
 		return fmt.Errorf("failed to get remote SHA: %w", err)
 	}
 
@@ -157,7 +159,11 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	repo.Set("last_commit_sha", remoteSHA)
 	repo.Set("last_fetched_at", time.Now().UTC().Format(time.RFC3339))
 	repo.Set("status", "connected")
-	_ = r.app.Save(repo)
+	if err := r.saveRecord(repo, "repositories", "persist fetched repository state"); err != nil {
+		_ = r.logFailure(stackID, trigger, remoteSHA, err.Error())
+		_ = r.markError(stack, "stacks")
+		return err
+	}
 
 	workerID, workerFingerprint, err := r.resolveWorker(stack)
 	if err != nil {
@@ -174,14 +180,20 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	if !isOnline {
 		if repoChanged || trigger != "cron" {
 			log.Printf("[reconciler] worker %s is offline, queueing pending reconcile for stack %s", workerID, stackID)
-			r.queuePendingReconcile(stackID, trigger, remoteSHA)
-			stack.Set("status", prevStatus)
-			_ = r.app.Save(stack)
+			if err := r.queuePendingReconcile(stackID, trigger, remoteSHA); err != nil {
+				_ = r.logFailure(stackID, trigger, remoteSHA, err.Error())
+				_ = r.markError(stack, "stacks")
+				return err
+			}
+			if err := r.saveRecordStatus(stack, "stacks", "pending", "mark stack pending after offline queue"); err != nil {
+				return err
+			}
 			return nil
 		}
 		// Worker offline but no changes and it's a cron, just skip quietly.
-		stack.Set("status", prevStatus)
-		_ = r.app.Save(stack)
+		if err := r.saveRecordStatus(stack, "stacks", prevStatus, "restore status after offline cron skip"); err != nil {
+			return err
+		}
 		return nil
 	}
 
@@ -197,8 +209,9 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	}
 
 	if trigger == "cron" && !neverSynced && !repoChanged && containerSHA == remoteSHA {
-		stack.Set("status", prevStatus)
-		_ = r.app.Save(stack)
+		if err := r.saveRecordStatus(stack, "stacks", prevStatus, "restore status after unchanged container skip"); err != nil {
+			return err
+		}
 		return nil
 	}
 
@@ -216,23 +229,9 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		return fmt.Errorf("%s", errMsg)
 	}
 
-	composeFile := stack.GetString("compose_file")
-	if composeFile == "" {
-		composeFile = "docker-compose.yml"
-	}
-	if err := safepath.ValidateComposeFile(composeFile); err != nil {
-		errMsg := fmt.Sprintf("invalid compose_file: %v", err)
-		r.logFailure(stackID, trigger, remoteSHA, errMsg)
-		r.markError(stack, "stacks")
-		return fmt.Errorf("%s", errMsg)
-	}
-
-	composeFullPath := filepath.Join(workDir, composeFile)
-	if _, statErr := os.Stat(composeFullPath); os.IsNotExist(statErr) {
-		errMsg := fmt.Sprintf("compose file not found: %s (workdir: %s)", composeFile, workDir)
-		r.logFailure(stackID, trigger, remoteSHA, errMsg)
-		r.markError(stack, "stacks")
-		return fmt.Errorf("%s", errMsg)
+	composeFile, err := r.resolveComposeFile(stack, workDir, stackID, trigger, remoteSHA)
+	if err != nil {
+		return err
 	}
 
 	envVars, envErr := r.loadEnvVars(ctx, stackID)
@@ -275,8 +274,9 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	if trigger == "cron" && !neverSynced &&
 		renderRes.Checksum == prevChecksum && renderRes.Version == prevVersion {
 		log.Printf("[reconciler] cron skip: compose unchanged for stack %s (checksum=%s)", stackID, renderRes.Checksum)
-		stack.Set("status", prevStatus)
-		_ = r.app.Save(stack)
+		if err := r.saveRecordStatus(stack, "stacks", prevStatus, "restore status after unchanged compose skip"); err != nil {
+			return err
+		}
 		return nil
 	}
 
@@ -302,12 +302,9 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	maxRetries := 3
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		start := time.Now()
-		composeContent, readErr := os.ReadFile(renderedFilePath)
-		if readErr != nil {
-			errMsg := fmt.Sprintf("failed to read rendered compose file: %v", readErr)
-			r.logFailure(stackID, trigger, remoteSHA, errMsg)
-			r.markError(stack, "stacks")
-			return fmt.Errorf("%s", errMsg)
+		composeContent, err := r.readRenderedCompose(stack, stackID, trigger, remoteSHA, renderedFilePath)
+		if err != nil {
+			return err
 		}
 		envFileB64, b64Err := buildEnvFileB64(envVars)
 		if b64Err != nil {
@@ -322,14 +319,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 				ComposeFileB64: base64.StdEncoding.EncodeToString(composeContent),
 				EnvFileB64:     envFileB64,
 			})
-			output = result.Output
-			runErr = nil
-			if result.Error != "" {
-				runErr = fmt.Errorf("%s", result.Error)
-			}
-			if dispatchErr != nil {
-				runErr = dispatchErr
-			}
+			output, runErr = extractDispatchResult(result, dispatchErr)
 		}
 
 		duration += time.Since(start).Milliseconds()
@@ -341,7 +331,10 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		if attempt < maxRetries {
 			log.Printf("[reconciler] deploy attempt %d of %d failed for stack %s: %v, retrying in 3s...", attempt, maxRetries, stackID, runErr)
 			if syncLog != nil {
-				r.updateSyncLog(syncLog.Id, "running", fmt.Sprintf("%s\n\n[Attempt %d failed: %v. Retrying in 3s...]\n", output, attempt, runErr), duration)
+				if err := r.updateSyncLog(syncLog.Id, "running", fmt.Sprintf("%s\n\n[Attempt %d failed: %v. Retrying in 3s...]\n", output, attempt, runErr), duration); err != nil {
+					_ = r.markError(stack, "stacks")
+					return err
+				}
 			}
 			select {
 			case <-ctx.Done():
@@ -353,8 +346,13 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 
 	if runErr != nil {
 		errOutput := buildErrorOutput(output, runErr, envErr)
-		r.updateSyncLog(syncLog.Id, "error", errOutput, duration)
-		r.markError(stack, "stacks")
+		if err := r.updateSyncLog(syncLog.Id, "error", errOutput, duration); err != nil {
+			_ = r.markError(stack, "stacks")
+			return err
+		}
+		if err := r.markError(stack, "stacks"); err != nil {
+			return err
+		}
 		r.notifier.Dispatch(ctx, notify.Payload{
 			Event:      notify.SyncError,
 			StackID:    stackID,
@@ -368,7 +366,16 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		return runErr
 	}
 
-	r.updateSyncLog(syncLog.Id, "done", output, duration)
+	stack.Set("last_synced_at", time.Now().UTC().Format(time.RFC3339))
+	stack.Set("status", "active")
+	if err := r.saveRecord(stack, "stacks", "complete reconcile"); err != nil {
+		_ = r.updateSyncLog(syncLog.Id, "error", "worker deploy succeeded but failed to persist stack success: "+err.Error(), duration)
+		return err
+	}
+	if err := r.updateSyncLog(syncLog.Id, "success", output, duration); err != nil {
+		_ = r.markError(stack, "stacks")
+		return err
+	}
 	r.notifier.Dispatch(ctx, notify.Payload{
 		Event:      notify.SyncDone,
 		StackID:    stackID,
@@ -378,10 +385,6 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		CommitSHA:  remoteSHA,
 		DurationMs: duration,
 	})
-
-	stack.Set("last_synced_at", time.Now().UTC().Format(time.RFC3339))
-	stack.Set("status", "active")
-	_ = r.app.Save(stack)
 
 	return nil
 }
@@ -399,8 +402,9 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 		return fmt.Errorf("stack not found: %w", err)
 	}
 
-	stack.Set("status", "syncing")
-	_ = r.app.Save(stack)
+	if err := r.saveRecordStatus(stack, "stacks", "syncing", "start rollback"); err != nil {
+		return err
+	}
 
 	repoID := stack.GetString("repository")
 	repo, err := r.app.FindRecordById("repositories", repoID)
@@ -444,23 +448,9 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 		r.markError(stack, "stacks")
 		return fmt.Errorf("%s", errMsg)
 	}
-	composeFile := stack.GetString("compose_file")
-	if composeFile == "" {
-		composeFile = "docker-compose.yml"
-	}
-	if err := safepath.ValidateComposeFile(composeFile); err != nil {
-		errMsg := fmt.Sprintf("invalid compose_file: %v", err)
-		r.logFailure(stackID, "manual", commitSHA, errMsg)
-		r.markError(stack, "stacks")
-		return fmt.Errorf("%s", errMsg)
-	}
-
-	composeFullPath := filepath.Join(workDir, composeFile)
-	if _, statErr := os.Stat(composeFullPath); os.IsNotExist(statErr) {
-		errMsg := fmt.Sprintf("compose file not found after rollback: %s (workdir: %s)", composeFile, workDir)
-		r.logFailure(stackID, "manual", commitSHA, errMsg)
-		r.markError(stack, "stacks")
-		return fmt.Errorf("%s", errMsg)
+	composeFile, err := r.resolveComposeFile(stack, workDir, stackID, "manual", commitSHA)
+	if err != nil {
+		return err
 	}
 
 	envVars, envErr := r.loadEnvVars(ctx, stackID)
@@ -493,17 +483,19 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 		return fmt.Errorf("%s", errMsg)
 	}
 
-	syncLog, _ := r.createSyncLog(stackID, "manual", commitSHA, "rollback to "+commitSHA)
-	if syncLog != nil {
-		r.notifier.Dispatch(ctx, notify.Payload{
-			Event:     notify.SyncStarted,
-			StackID:   stackID,
-			StackName: stack.GetString("name"),
-			SyncLogID: syncLog.Id,
-			Trigger:   "manual",
-			CommitSHA: commitSHA,
-		})
+	syncLog, err := r.createSyncLog(stackID, "manual", commitSHA, "rollback to "+commitSHA)
+	if err != nil {
+		_ = r.markError(stack, "stacks")
+		return err
 	}
+	r.notifier.Dispatch(ctx, notify.Payload{
+		Event:     notify.SyncStarted,
+		StackID:   stackID,
+		StackName: stack.GetString("name"),
+		SyncLogID: syncLog.Id,
+		Trigger:   "manual",
+		CommitSHA: commitSHA,
+	})
 
 	start := time.Now()
 
@@ -511,12 +503,9 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 	var output string
 	var runErr error
 
-	composeContent, readErr := os.ReadFile(renderedFilePath)
-	if readErr != nil {
-		errMsg := fmt.Sprintf("failed to read rendered compose file: %v", readErr)
-		r.logFailure(stackID, "manual", commitSHA, errMsg)
-		r.markError(stack, "stacks")
-		return fmt.Errorf("%s", errMsg)
+	composeContent, err := r.readRenderedCompose(stack, stackID, "manual", commitSHA, renderedFilePath)
+	if err != nil {
+		return err
 	}
 	var cmdID string
 	if syncLog != nil {
@@ -534,56 +523,59 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 			ComposeFileB64: base64.StdEncoding.EncodeToString(composeContent),
 			EnvFileB64:     envFileB64,
 		})
-		output = result.Output
-		if result.Error != "" {
-			runErr = fmt.Errorf("%s", result.Error)
-		}
-		if dispatchErr != nil {
-			runErr = dispatchErr
-		}
+		output, runErr = extractDispatchResult(result, dispatchErr)
 	}
 
 	duration := time.Since(start).Milliseconds()
 
 	if runErr != nil {
-		if syncLog != nil {
-			errOutput := buildErrorOutput(output, runErr, envErr)
-			r.updateSyncLog(syncLog.Id, "error", errOutput, duration)
-			r.notifier.Dispatch(ctx, notify.Payload{
-				Event:      notify.SyncError,
-				StackID:    stackID,
-				StackName:  stack.GetString("name"),
-				SyncLogID:  syncLog.Id,
-				Trigger:    "manual",
-				CommitSHA:  commitSHA,
-				DurationMs: duration,
-				Error:      runErr.Error(),
-			})
+		errOutput := buildErrorOutput(output, runErr, envErr)
+		if err := r.updateSyncLog(syncLog.Id, "error", errOutput, duration); err != nil {
+			_ = r.markError(stack, "stacks")
+			return err
 		}
-		r.markError(stack, "stacks")
-		return runErr
-	}
-
-	if syncLog != nil {
-		r.updateSyncLog(syncLog.Id, "done", output, duration)
 		r.notifier.Dispatch(ctx, notify.Payload{
-			Event:      notify.SyncDone,
+			Event:      notify.SyncError,
 			StackID:    stackID,
 			StackName:  stack.GetString("name"),
 			SyncLogID:  syncLog.Id,
 			Trigger:    "manual",
 			CommitSHA:  commitSHA,
 			DurationMs: duration,
+			Error:      runErr.Error(),
 		})
+		if err := r.markError(stack, "stacks"); err != nil {
+			return err
+		}
+		return runErr
 	}
 
 	repo.Set("last_commit_sha", commitSHA)
 	repo.Set("last_fetched_at", time.Now().UTC().Format(time.RFC3339))
-	_ = r.app.Save(repo)
+	if err := r.saveRecord(repo, "repositories", "persist rollback repository state"); err != nil {
+		_ = r.updateSyncLog(syncLog.Id, "error", "rollback succeeded but failed to persist repository state: "+err.Error(), duration)
+		return err
+	}
 
 	stack.Set("last_synced_at", time.Now().UTC().Format(time.RFC3339))
 	stack.Set("status", "paused")
-	_ = r.app.Save(stack)
+	if err := r.saveRecord(stack, "stacks", "complete rollback"); err != nil {
+		_ = r.updateSyncLog(syncLog.Id, "error", "rollback succeeded but failed to persist stack state: "+err.Error(), duration)
+		return err
+	}
+	if err := r.updateSyncLog(syncLog.Id, "success", output, duration); err != nil {
+		_ = r.markError(stack, "stacks")
+		return err
+	}
+	r.notifier.Dispatch(ctx, notify.Payload{
+		Event:      notify.SyncDone,
+		StackID:    stackID,
+		StackName:  stack.GetString("name"),
+		SyncLogID:  syncLog.Id,
+		Trigger:    "manual",
+		CommitSHA:  commitSHA,
+		DurationMs: duration,
+	})
 
 	return nil
 }
@@ -601,8 +593,9 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 		return fmt.Errorf("stack not found: %w", err)
 	}
 
-	stack.Set("status", "syncing")
-	_ = r.app.Save(stack)
+	if err := r.saveRecordStatus(stack, "stacks", "syncing", "start force redeploy"); err != nil {
+		return err
+	}
 
 	repoID := stack.GetString("repository")
 	repo, err := r.app.FindRecordById("repositories", repoID)
@@ -656,17 +649,19 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 		return fmt.Errorf("%s", errMsg)
 	}
 
-	syncLog, _ := r.createSyncLog(stackID, "redeploy", lastSHA, "force redeploy")
-	if syncLog != nil {
-		r.notifier.Dispatch(ctx, notify.Payload{
-			Event:     notify.SyncStarted,
-			StackID:   stackID,
-			StackName: stack.GetString("name"),
-			SyncLogID: syncLog.Id,
-			Trigger:   "redeploy",
-			CommitSHA: lastSHA,
-		})
+	syncLog, err := r.createSyncLog(stackID, "redeploy", lastSHA, "force redeploy")
+	if err != nil {
+		_ = r.markError(stack, "stacks")
+		return err
 	}
+	r.notifier.Dispatch(ctx, notify.Payload{
+		Event:     notify.SyncStarted,
+		StackID:   stackID,
+		StackName: stack.GetString("name"),
+		SyncLogID: syncLog.Id,
+		Trigger:   "redeploy",
+		CommitSHA: lastSHA,
+	})
 
 	start := time.Now()
 
@@ -674,12 +669,9 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 	var output string
 	var runErr error
 
-	composeContent, readErr := os.ReadFile(renderedFilePath)
-	if readErr != nil {
-		errMsg := fmt.Sprintf("failed to read rendered compose file: %v", readErr)
-		r.logFailure(stackID, "redeploy", lastSHA, errMsg)
-		r.markError(stack, "stacks")
-		return fmt.Errorf("%s", errMsg)
+	composeContent, err := r.readRenderedCompose(stack, stackID, "redeploy", lastSHA, renderedFilePath)
+	if err != nil {
+		return err
 	}
 	var cmdID string
 	if syncLog != nil {
@@ -702,52 +694,52 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 			RecreateVolumes:    recreateVolumes,
 			RecreateNetworks:   recreateNetworks,
 		})
-		output = result.Output
-		if result.Error != "" {
-			runErr = fmt.Errorf("%s", result.Error)
-		}
-		if dispatchErr != nil {
-			runErr = dispatchErr
-		}
+		output, runErr = extractDispatchResult(result, dispatchErr)
 	}
 
 	duration := time.Since(start).Milliseconds()
 
 	if runErr != nil {
-		if syncLog != nil {
-			errOutput := buildErrorOutput(output, runErr, envErr)
-			r.updateSyncLog(syncLog.Id, "error", errOutput, duration)
-			r.notifier.Dispatch(ctx, notify.Payload{
-				Event:      notify.SyncError,
-				StackID:    stackID,
-				StackName:  stack.GetString("name"),
-				SyncLogID:  syncLog.Id,
-				Trigger:    "redeploy",
-				CommitSHA:  lastSHA,
-				DurationMs: duration,
-				Error:      runErr.Error(),
-			})
+		errOutput := buildErrorOutput(output, runErr, envErr)
+		if err := r.updateSyncLog(syncLog.Id, "error", errOutput, duration); err != nil {
+			_ = r.markError(stack, "stacks")
+			return err
 		}
-		r.markError(stack, "stacks")
-		return runErr
-	}
-
-	if syncLog != nil {
-		r.updateSyncLog(syncLog.Id, "done", output, duration)
 		r.notifier.Dispatch(ctx, notify.Payload{
-			Event:      notify.SyncDone,
+			Event:      notify.SyncError,
 			StackID:    stackID,
 			StackName:  stack.GetString("name"),
 			SyncLogID:  syncLog.Id,
 			Trigger:    "redeploy",
 			CommitSHA:  lastSHA,
 			DurationMs: duration,
+			Error:      runErr.Error(),
 		})
+		if err := r.markError(stack, "stacks"); err != nil {
+			return err
+		}
+		return runErr
 	}
 
 	stack.Set("last_synced_at", time.Now().UTC().Format(time.RFC3339))
 	stack.Set("status", "paused")
-	_ = r.app.Save(stack)
+	if err := r.saveRecord(stack, "stacks", "complete force redeploy"); err != nil {
+		_ = r.updateSyncLog(syncLog.Id, "error", "redeploy succeeded but failed to persist stack state: "+err.Error(), duration)
+		return err
+	}
+	if err := r.updateSyncLog(syncLog.Id, "success", output, duration); err != nil {
+		_ = r.markError(stack, "stacks")
+		return err
+	}
+	r.notifier.Dispatch(ctx, notify.Payload{
+		Event:      notify.SyncDone,
+		StackID:    stackID,
+		StackName:  stack.GetString("name"),
+		SyncLogID:  syncLog.Id,
+		Trigger:    "redeploy",
+		CommitSHA:  lastSHA,
+		DurationMs: duration,
+	})
 
 	return nil
 }
@@ -793,13 +785,21 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 	isOnline := r.dispatcher != nil && r.dispatcher.IsConnected(workerID)
 	if !isOnline {
 		log.Printf("[reconciler] worker %s is offline, queueing pending reconcile for local stack %s", workerID, stackID)
-		r.queuePendingReconcile(stackID, trigger, "")
+		if err := r.queuePendingReconcile(stackID, trigger, ""); err != nil {
+			_ = r.logFailure(stackID, trigger, "", err.Error())
+			_ = r.markError(stack, "stacks")
+			return err
+		}
+		if err := r.saveRecordStatus(stack, "stacks", "pending", "mark local stack pending after offline queue"); err != nil {
+			return err
+		}
 		return nil
 	}
 
 	prevStatus := stack.GetString("status")
-	stack.Set("status", "syncing")
-	_ = r.app.Save(stack)
+	if err := r.saveRecordStatus(stack, "stacks", "syncing", fmt.Sprintf("start local reconcile trigger=%s", trigger)); err != nil {
+		return err
+	}
 
 	// Read the compose file from the worker host via ReadFileCommand.
 	var composeContent []byte
@@ -850,8 +850,9 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 	fileChanged := newChecksum != currentChecksum
 
 	if trigger == "cron" && !neverSynced && !fileChanged {
-		stack.Set("status", prevStatus)
-		_ = r.app.Save(stack)
+		if err := r.saveRecordStatus(stack, "stacks", prevStatus, "restore status after unchanged local stack skip"); err != nil {
+			return err
+		}
 		return nil
 	}
 
@@ -892,12 +893,9 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 	var runErr error
 	start := time.Now()
 
-	composeBytes, readErr := os.ReadFile(renderedFilePath)
-	if readErr != nil {
-		errMsg := fmt.Sprintf("failed to read rendered compose file: %v", readErr)
-		r.logFailure(stackID, trigger, "", errMsg)
-		r.markError(stack, "stacks")
-		return fmt.Errorf("%s", errMsg)
+	composeBytes, err := r.readRenderedCompose(stack, stackID, trigger, "", renderedFilePath)
+	if err != nil {
+		return err
 	}
 	b64 := base64.StdEncoding.EncodeToString(composeBytes)
 
@@ -917,13 +915,7 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 			RecreateContainers: true,
 			RecreateVolumes:    recreateVolumes,
 		})
-		output = result.Output
-		if result.Error != "" {
-			runErr = fmt.Errorf("%s", result.Error)
-		}
-		if dispatchErr != nil {
-			runErr = dispatchErr
-		}
+		output, runErr = extractDispatchResult(result, dispatchErr)
 	} else {
 		result, dispatchErr := r.dispatcher.Dispatch(ctx, workerID, protocol.DeployCommand{
 			CommandID:      syncLog.Id,
@@ -933,31 +925,35 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 			ComposeFileB64: b64,
 			EnvFileB64:     envFileB64,
 		})
-		output = result.Output
-		if result.Error != "" {
-			runErr = fmt.Errorf("%s", result.Error)
-		}
-		if dispatchErr != nil {
-			runErr = dispatchErr
-		}
+		output, runErr = extractDispatchResult(result, dispatchErr)
 	}
 
 	duration := time.Since(start).Milliseconds()
 
 	if runErr != nil {
 		errOutput := buildErrorOutput(output, runErr, envErr)
-		r.updateSyncLog(syncLog.Id, "error", errOutput, duration)
-		r.markError(stack, "stacks")
+		if err := r.updateSyncLog(syncLog.Id, "error", errOutput, duration); err != nil {
+			_ = r.markError(stack, "stacks")
+			return err
+		}
+		if err := r.markError(stack, "stacks"); err != nil {
+			return err
+		}
 		return runErr
 	}
-
-	r.updateSyncLog(syncLog.Id, "done", output, duration)
 
 	// Update the stack's raw-file checksum after a successful deploy.
 	stack.Set("checksum", newChecksum)
 	stack.Set("last_synced_at", time.Now().UTC().Format(time.RFC3339))
 	stack.Set("status", "active")
-	_ = r.app.Save(stack)
+	if err := r.saveRecord(stack, "stacks", "complete local reconcile"); err != nil {
+		_ = r.updateSyncLog(syncLog.Id, "error", "local deploy succeeded but failed to persist stack success: "+err.Error(), duration)
+		return err
+	}
+	if err := r.updateSyncLog(syncLog.Id, "success", output, duration); err != nil {
+		_ = r.markError(stack, "stacks")
+		return err
+	}
 
 	return nil
 }
@@ -968,18 +964,20 @@ func sha256bytes(data []byte) []byte {
 	return h.Sum(nil)
 }
 
-func (r *Reconciler) queuePendingReconcile(stackID, trigger, commitSHA string) {
+func (r *Reconciler) queuePendingReconcile(stackID, trigger, commitSHA string) error {
 	col, err := r.app.FindCollectionByNameOrId("stack_pending_reconciles")
 	if err != nil {
-		log.Printf("[reconciler] failed to find stack_pending_reconciles collection: %v", err)
-		return
+		return fmt.Errorf("queue pending reconcile stack=%s trigger=%s: %w", stackID, trigger, err)
 	}
 
 	// Delete any existing pending reconcile for this stack to avoid duplicates
 	existing, err := r.app.FindAllRecords("stack_pending_reconciles", dbx.HashExp{"stack": stackID})
-	if err == nil {
-		for _, rec := range existing {
-			_ = r.app.Delete(rec)
+	if err != nil {
+		return fmt.Errorf("queue pending reconcile stack=%s trigger=%s list existing: %w", stackID, trigger, err)
+	}
+	for _, rec := range existing {
+		if err := r.app.Delete(rec); err != nil {
+			return fmt.Errorf("queue pending reconcile stack=%s trigger=%s delete existing=%s: %w", stackID, trigger, rec.Id, err)
 		}
 	}
 
@@ -989,13 +987,17 @@ func (r *Reconciler) queuePendingReconcile(stackID, trigger, commitSHA string) {
 	record.Set("commit_sha", commitSHA)
 
 	if err := r.app.Save(record); err != nil {
-		log.Printf("[reconciler] failed to save pending reconcile: %v", err)
+		return fmt.Errorf("queue pending reconcile stack=%s trigger=%s save: %w", stackID, trigger, err)
 	}
 
 	queueLog, err := r.createSyncLog(stackID, "queue", commitSHA, "Added to offline queue (original trigger: "+trigger+")")
-	if err == nil {
-		r.updateSyncLog(queueLog.Id, "queued", "Worker is offline. Sync will proceed when worker reconnects.", 0)
+	if err != nil {
+		return err
 	}
+	if err := r.updateSyncLog(queueLog.Id, "queued", "Worker is offline. Sync will proceed when worker reconnects.", 0); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (r *Reconciler) inspectStackCommit(ctx context.Context, workerID, stackID string) string {
@@ -1134,7 +1136,7 @@ func buildEnvFileB64(envVars []string) (string, error) {
 func (r *Reconciler) createSyncLog(stackID, trigger, commitSHA, commitMsg string) (*core.Record, error) {
 	collection, err := r.app.FindCollectionByNameOrId("sync_logs")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create sync log stack=%s trigger=%s: %w", stackID, trigger, err)
 	}
 	record := core.NewRecord(collection)
 	record.Set("stack", stackID)
@@ -1143,40 +1145,60 @@ func (r *Reconciler) createSyncLog(stackID, trigger, commitSHA, commitMsg string
 	record.Set("commit_sha", commitSHA)
 	record.Set("commit_message", commitMsg)
 	if err := r.app.Save(record); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create sync log stack=%s trigger=%s status=running: %w", stackID, trigger, err)
 	}
 	return record, nil
 }
 
-func (r *Reconciler) updateSyncLog(id, status, output string, durationMs int64) {
+func (r *Reconciler) updateSyncLog(id, status, output string, durationMs int64) error {
 	record, err := r.app.FindRecordById("sync_logs", id)
 	if err != nil {
-		log.Printf("[reconciler] updateSyncLog: record %s not found: %v", id, err)
-		return
+		return fmt.Errorf("update sync log id=%s status=%s: %w", id, status, err)
 	}
 	record.Set("status", status)
 	record.Set("output", output)
 	record.Set("duration_ms", durationMs)
 	if err := r.app.Save(record); err != nil {
-		log.Printf("[reconciler] updateSyncLog: failed to save record %s: %v", id, err)
+		return fmt.Errorf("update sync log id=%s status=%s: %w", id, status, err)
 	}
+	return nil
 }
 
-func (r *Reconciler) markError(rec *core.Record, _ string) {
+func (r *Reconciler) saveRecord(rec *core.Record, collection, op string) error {
+	if err := r.app.Save(rec); err != nil {
+		return fmt.Errorf("%s persistence failed collection=%s record=%s status=%s: %w", op, collection, rec.Id, rec.GetString("status"), err)
+	}
+	return nil
+}
+
+func (r *Reconciler) saveRecordStatus(rec *core.Record, collection, status, op string) error {
+	rec.Set("status", status)
+	return r.saveRecord(rec, collection, op)
+}
+
+func (r *Reconciler) markError(rec *core.Record, collection string) error {
 	rec.Set("status", "error")
-	_ = r.app.Save(rec)
-	log.Printf("[reconciler] %s error: %s", rec.Id, rec.GetString("status"))
+	if err := r.saveRecord(rec, collection, "mark error"); err != nil {
+		log.Printf("[reconciler] failed to mark error collection=%s record=%s: %v", collection, rec.Id, err)
+		return err
+	}
+	log.Printf("[reconciler] %s/%s status=error", collection, rec.Id)
+	return nil
 }
 
 // logFailure creates a sync log entry for early failures (before the normal sync log is created).
-func (r *Reconciler) logFailure(stackID, trigger, commitSHA, errMsg string) {
+func (r *Reconciler) logFailure(stackID, trigger, commitSHA, errMsg string) error {
 	log.Printf("[reconciler] stack %s failure: %s", stackID, errMsg)
 	syncLog, err := r.createSyncLog(stackID, trigger, commitSHA, "")
 	if err != nil {
 		log.Printf("[reconciler] failed to create failure sync log: %v", err)
-		return
+		return err
 	}
-	r.updateSyncLog(syncLog.Id, "error", errMsg, 0)
+	if err := r.updateSyncLog(syncLog.Id, "error", errMsg, 0); err != nil {
+		log.Printf("[reconciler] failed to persist failure sync log stack=%s trigger=%s: %v", stackID, trigger, err)
+		return err
+	}
+	return nil
 }
 
 func buildErrorOutput(output string, runErr, envErr error) string {
@@ -1194,6 +1216,55 @@ func buildErrorOutput(output string, runErr, envErr error) string {
 		fmt.Fprintf(&b, "\nerror: %v", runErr)
 	}
 	return b.String()
+}
+
+// extractDispatchResult unpacks a dispatcher response into (output, error).
+// dispatchErr takes precedence over a non-empty result.Error field.
+func extractDispatchResult(result protocol.CommandResult, dispatchErr error) (string, error) {
+	var runErr error
+	if result.Error != "" {
+		runErr = fmt.Errorf("%s", result.Error)
+	}
+	if dispatchErr != nil {
+		runErr = dispatchErr
+	}
+	return result.Output, runErr
+}
+
+// readRenderedCompose reads the rendered compose file at path. On failure it logs
+// the error, marks the stack as error, and returns a non-nil error.
+func (r *Reconciler) readRenderedCompose(stack *core.Record, stackID, trigger, sha, path string) ([]byte, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		errMsg := fmt.Sprintf("failed to read rendered compose file: %v", err)
+		r.logFailure(stackID, trigger, sha, errMsg)
+		r.markError(stack, "stacks")
+		return nil, fmt.Errorf("%s", errMsg)
+	}
+	return content, nil
+}
+
+// resolveComposeFile returns the validated compose filename for a stack, applying
+// the default name, checking path safety, and verifying the file exists.
+// On any failure it logs the error, marks the stack as error, and returns a non-nil error.
+func (r *Reconciler) resolveComposeFile(stack *core.Record, workDir, stackID, trigger, sha string) (string, error) {
+	composeFile := stack.GetString("compose_file")
+	if composeFile == "" {
+		composeFile = "docker-compose.yml"
+	}
+	if err := safepath.ValidateComposeFile(composeFile); err != nil {
+		errMsg := fmt.Sprintf("invalid compose_file: %v", err)
+		r.logFailure(stackID, trigger, sha, errMsg)
+		r.markError(stack, "stacks")
+		return "", fmt.Errorf("%s", errMsg)
+	}
+	if _, statErr := os.Stat(filepath.Join(workDir, composeFile)); os.IsNotExist(statErr) {
+		errMsg := fmt.Sprintf("compose file not found: %s (workdir: %s)", composeFile, workDir)
+		r.logFailure(stackID, trigger, sha, errMsg)
+		r.markError(stack, "stacks")
+		return "", fmt.Errorf("%s", errMsg)
+	}
+	return composeFile, nil
 }
 
 func (r *Reconciler) refreshServiceStatus(_ context.Context, stackID, workDir string) {
@@ -1311,16 +1382,18 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 	prevStatus := stack.GetString("status")
 
 	// Mark stack as syncing during the transfer
-	stack.Set("status", "syncing")
-	_ = r.app.Save(stack)
-
-	syncLog, _ := r.createSyncLog(stackID, "transfer", "",
-		fmt.Sprintf("%s → %s", sourceHostname, targetHostname))
-
-	syncLogID := ""
-	if syncLog != nil {
-		syncLogID = syncLog.Id
+	if err := r.saveRecordStatus(stack, "stacks", "syncing", "start transfer"); err != nil {
+		return err
 	}
+
+	syncLog, err := r.createSyncLog(stackID, "transfer", "",
+		fmt.Sprintf("%s → %s", sourceHostname, targetHostname))
+	if err != nil {
+		_ = r.markError(stack, "stacks")
+		return err
+	}
+
+	syncLogID := syncLog.Id
 
 	r.notifier.Dispatch(ctx, notify.Payload{
 		Event:     notify.SyncStarted,
@@ -1341,8 +1414,9 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 		log.Printf("[transfer] validation error: %s", errMsg)
 		outputBuf.WriteString("error: " + errMsg + "\n")
 
-		if syncLog != nil {
-			r.updateSyncLog(syncLog.Id, "error", outputBuf.String(), time.Since(start).Milliseconds())
+		if err := r.updateSyncLog(syncLog.Id, "error", outputBuf.String(), time.Since(start).Milliseconds()); err != nil {
+			_ = r.markError(stack, "stacks")
+			return err
 		}
 		r.notifier.Dispatch(ctx, notify.Payload{
 			Event:      notify.SyncError,
@@ -1353,8 +1427,9 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 			DurationMs: time.Since(start).Milliseconds(),
 			Error:      errMsg,
 		})
-		stack.Set("status", prevStatus)
-		r.app.Save(stack)
+		if err := r.saveRecordStatus(stack, "stacks", prevStatus, "restore status after transfer validation failure"); err != nil {
+			return err
+		}
 		return fmt.Errorf("transfer failed: %s", errMsg)
 	}
 
@@ -1391,8 +1466,9 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 		log.Printf("[transfer] validation error: %s", probeErrMsg)
 		outputBuf.WriteString("error: " + probeErrMsg + "\n")
 
-		if syncLog != nil {
-			r.updateSyncLog(syncLog.Id, "error", outputBuf.String(), time.Since(start).Milliseconds())
+		if err := r.updateSyncLog(syncLog.Id, "error", outputBuf.String(), time.Since(start).Milliseconds()); err != nil {
+			_ = r.markError(stack, "stacks")
+			return err
 		}
 		r.notifier.Dispatch(ctx, notify.Payload{
 			Event:      notify.SyncError,
@@ -1403,17 +1479,16 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 			DurationMs: time.Since(start).Milliseconds(),
 			Error:      probeErrMsg,
 		})
-		stack.Set("status", prevStatus)
-		r.app.Save(stack)
+		if err := r.saveRecordStatus(stack, "stacks", prevStatus, "restore status after transfer probe failure"); err != nil {
+			return err
+		}
 		return fmt.Errorf("transfer failed: %s", probeErrMsg)
 	}
 	fmt.Fprintf(&outputBuf, "=== Step 1/2: Deploy on target agent (%s) ===\n", targetHostname)
 
 	// --- Step 1: Deploy on target agent (agent B) ---
 	cmdID := ""
-	if syncLog != nil {
-		cmdID = syncLog.Id
-	}
+	cmdID = syncLog.Id
 
 	var deployOutput string
 	var deployErr error
@@ -1462,8 +1537,9 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 			outputBuf.WriteString("target agent offline — skipping cleanup.\n")
 		}
 
-		if syncLog != nil {
-			r.updateSyncLog(syncLog.Id, "error", outputBuf.String(), time.Since(start).Milliseconds())
+		if err := r.updateSyncLog(syncLog.Id, "error", outputBuf.String(), time.Since(start).Milliseconds()); err != nil {
+			_ = r.markError(stack, "stacks")
+			return err
 		}
 		r.notifier.Dispatch(ctx, notify.Payload{
 			Event:      notify.SyncError,
@@ -1474,8 +1550,9 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 			DurationMs: time.Since(start).Milliseconds(),
 			Error:      deployErrMsg,
 		})
-		stack.Set("status", "error")
-		_ = r.app.Save(stack)
+		if err := r.markError(stack, "stacks"); err != nil {
+			return err
+		}
 		return fmt.Errorf("transfer failed: %s", deployErrMsg)
 	}
 
@@ -1512,10 +1589,14 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 	stack.Set("worker", targetWorkerID)
 	stack.Set("status", "active")
 	stack.Set("last_synced_at", time.Now().UTC().Format(time.RFC3339))
-	_ = r.app.Save(stack)
+	if err := r.saveRecord(stack, "stacks", "complete transfer"); err != nil {
+		_ = r.updateSyncLog(syncLog.Id, "error", "transfer succeeded but failed to persist stack state: "+err.Error(), duration)
+		return err
+	}
 
-	if syncLog != nil {
-		r.updateSyncLog(syncLog.Id, "done", outputBuf.String(), duration)
+	if err := r.updateSyncLog(syncLog.Id, "success", outputBuf.String(), duration); err != nil {
+		_ = r.markError(stack, "stacks")
+		return err
 	}
 
 	r.notifier.Dispatch(ctx, notify.Payload{

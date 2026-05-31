@@ -195,7 +195,9 @@ func Execute() error {
 		scheduler.TriggerPendingReconciles(workerID)
 		// Mark any running job_runs for this worker as failed — they were lost
 		// during the disconnect and the completion message will never arrive.
-		jobSched.HandleWorkerReconnect(workerID)
+		if err := jobSched.HandleWorkerReconnect(workerID); err != nil {
+			log.Printf("[jobscheduler] worker reconnect persistence error worker=%s: %v", workerID, err)
+		}
 	})
 
 	workerServer.SetOnJobCompleted(func(msg protocol.JobCompletedMessage) {
@@ -259,7 +261,9 @@ func Execute() error {
 
 		// Mark job_runs stuck in "running" for more than 1 hour as "forgotten".
 		app.Cron().Add("job_forgotten_sweep", "*/5 * * * *", func() {
-			jobSched.MarkForgottenRuns()
+			if err := jobSched.MarkForgottenRuns(); err != nil {
+				log.Printf("[jobscheduler] forgotten run sweep error: %v", err)
+			}
 		})
 
 		app.Cron().Add("worker_token_expiry", "*/5 * * * *", func() {
