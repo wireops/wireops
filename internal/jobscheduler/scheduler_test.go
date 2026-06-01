@@ -4,7 +4,10 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"time"
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
@@ -166,6 +169,8 @@ func ensureJobSchedulerCollections(t *testing.T, app core.App) {
 	runs.Fields.Add(&core.DateField{Name: "expires_at"})
 	runs.Fields.Add(&core.TextField{Name: "container_name"})
 	runs.Fields.Add(&core.TextField{Name: "commit_sha"})
+	runs.Fields.Add(&core.AutodateField{Name: "created", OnCreate: true})
+	runs.Fields.Add(&core.AutodateField{Name: "updated", OnCreate: true, OnUpdate: true})
 	mustSaveCollection(t, app, runs)
 
 	env := core.NewBaseCollection("job_env_vars")
@@ -203,5 +208,157 @@ func writeJobFile(t *testing.T, dataDir, repoID, name string) {
 	content := []byte("title: Test Job\ndescription: Test job\nimage: alpine\ncron: \"* * * * *\"\ncommand: echo ok\n")
 	if err := os.WriteFile(filepath.Join(dir, name), content, 0644); err != nil {
 		t.Fatalf("failed to write job file: %v", err)
+	}
+}
+
+func TestReconcileActiveJobs(t *testing.T) {
+	app := newJobSchedulerTestApp(t)
+	repo := createJobRepoRecord(t, app)
+	jobRec := createScheduledJobRecord(t, app, repo.Id, "job.yaml")
+
+	worker := mustCreateRecord(t, app, "workers", map[string]any{
+		"hostname":    "worker-1",
+		"fingerprint": "fp1",
+		"status":      "ACTIVE",
+	})
+
+	// Job run 1: still running (included in heartbeat)
+	run1 := mustCreateRecord(t, app, "job_runs", map[string]any{
+		"job":     jobRec.Id,
+		"worker":  worker.Id,
+		"status":  "running",
+		"trigger": "manual",
+	})
+	// Set updated time to past to pass cutoff using SQL
+	if _, err := app.DB().NewQuery("UPDATE job_runs SET updated = {:past} WHERE id = {:id}").
+		Bind(dbx.Params{
+			"past": time.Now().Add(-5 * time.Minute).UTC().Format("2006-01-02 15:04:05.000Z"),
+			"id":   run1.Id,
+		}).Execute(); err != nil {
+		t.Fatalf("failed to update run1: %v", err)
+	}
+
+	// Job run 2: lost (not included in heartbeat)
+	run2 := mustCreateRecord(t, app, "job_runs", map[string]any{
+		"job":     jobRec.Id,
+		"worker":  worker.Id,
+		"status":  "running",
+		"trigger": "manual",
+	})
+	// Set updated time to past to pass cutoff using SQL
+	if _, err := app.DB().NewQuery("UPDATE job_runs SET updated = {:past} WHERE id = {:id}").
+		Bind(dbx.Params{
+			"past": time.Now().Add(-5 * time.Minute).UTC().Format("2006-01-02 15:04:05.000Z"),
+			"id":   run2.Id,
+		}).Execute(); err != nil {
+		t.Fatalf("failed to update run2: %v", err)
+	}
+
+	// Job run 3: newly started, not in heartbeat yet, but within cutoff
+	run3 := mustCreateRecord(t, app, "job_runs", map[string]any{
+		"job":     jobRec.Id,
+		"worker":  worker.Id,
+		"status":  "running",
+		"trigger": "manual",
+	})
+
+	s := NewScheduler(app, fakeJobDispatcher{workers: []string{worker.Id}}, app.DataDir())
+
+	// Reconcile with activeIDs containing only run1.Id
+	if err := s.ReconcileActiveJobs(worker.Id, []string{run1.Id}); err != nil {
+		t.Fatalf("ReconcileActiveJobs failed: %v", err)
+	}
+
+	// Run 1 should still be running
+	ref1, _ := app.FindRecordById("job_runs", run1.Id)
+	if got := ref1.GetString("status"); got != "running" {
+		t.Errorf("run1 status = %q, want running", got)
+	}
+
+	// Run 2 should be marked error (lost)
+	ref2, _ := app.FindRecordById("job_runs", run2.Id)
+	if got := ref2.GetString("status"); got != "error" {
+		t.Errorf("run2 status = %q, want error", got)
+	}
+	if got := ref2.GetString("output"); !strings.Contains(got, "job lost") {
+		t.Errorf("run2 output = %q, want it to explain it was lost", got)
+	}
+
+	// Run 3 should still be running because it was updated within the last 1 minute
+	ref3, _ := app.FindRecordById("job_runs", run3.Id)
+	if got := ref3.GetString("status"); got != "running" {
+		t.Errorf("run3 status = %q, want running", got)
+	}
+}
+
+func TestMarkForgottenRunsStuckPending(t *testing.T) {
+	app := newJobSchedulerTestApp(t)
+	repo := createJobRepoRecord(t, app)
+	jobRec := createScheduledJobRecord(t, app, repo.Id, "job.yaml")
+
+	worker := mustCreateRecord(t, app, "workers", map[string]any{
+		"hostname":    "worker-1",
+		"fingerprint": "fp1",
+		"status":      "ACTIVE",
+	})
+
+	// Run 1: running, 2 hours old -> should become forgotten
+	run1 := mustCreateRecord(t, app, "job_runs", map[string]any{
+		"job":     jobRec.Id,
+		"worker":  worker.Id,
+		"status":  "running",
+		"trigger": "manual",
+	})
+	if _, err := app.DB().NewQuery("UPDATE job_runs SET updated = {:past} WHERE id = {:id}").
+		Bind(dbx.Params{
+			"past": time.Now().Add(-2 * time.Hour).UTC().Format("2006-01-02 15:04:05.000Z"),
+			"id":   run1.Id,
+		}).Execute(); err != nil {
+		t.Fatalf("failed to update run1: %v", err)
+	}
+
+	// Run 2: pending, 20 minutes old -> should become error
+	run2 := mustCreateRecord(t, app, "job_runs", map[string]any{
+		"job":     jobRec.Id,
+		"status":  "pending",
+		"trigger": "manual",
+	})
+	if _, err := app.DB().NewQuery("UPDATE job_runs SET updated = {:past} WHERE id = {:id}").
+		Bind(dbx.Params{
+			"past": time.Now().Add(-20 * time.Minute).UTC().Format("2006-01-02 15:04:05.000Z"),
+			"id":   run2.Id,
+		}).Execute(); err != nil {
+		t.Fatalf("failed to update run2: %v", err)
+	}
+
+	// Run 3: pending, 5 minutes old -> should remain pending
+	run3 := mustCreateRecord(t, app, "job_runs", map[string]any{
+		"job":     jobRec.Id,
+		"status":  "pending",
+		"trigger": "manual",
+	})
+
+	s := NewScheduler(app, fakeJobDispatcher{workers: []string{worker.Id}}, app.DataDir())
+
+	if err := s.MarkForgottenRuns(); err != nil {
+		t.Fatalf("MarkForgottenRuns failed: %v", err)
+	}
+
+	// Run 1 -> forgotten
+	ref1, _ := app.FindRecordById("job_runs", run1.Id)
+	if got := ref1.GetString("status"); got != "forgotten" {
+		t.Errorf("run1 status = %q, want forgotten", got)
+	}
+
+	// Run 2 -> error
+	ref2, _ := app.FindRecordById("job_runs", run2.Id)
+	if got := ref2.GetString("status"); got != "error" {
+		t.Errorf("run2 status = %q, want error", got)
+	}
+
+	// Run 3 -> pending
+	ref3, _ := app.FindRecordById("job_runs", run3.Id)
+	if got := ref3.GetString("status"); got != "pending" {
+		t.Errorf("run3 status = %q, want pending", got)
 	}
 }

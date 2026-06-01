@@ -193,10 +193,11 @@ func Execute() error {
 
 	workerServer.SetOnConnect(func(workerID string) {
 		scheduler.TriggerPendingReconciles(workerID)
-		// Mark any running job_runs for this worker as failed — they were lost
-		// during the disconnect and the completion message will never arrive.
-		if err := jobSched.HandleWorkerReconnect(workerID); err != nil {
-			log.Printf("[jobscheduler] worker reconnect persistence error worker=%s: %v", workerID, err)
+	})
+
+	workerServer.SetOnHeartbeat(func(workerID string, activeIDs []string) {
+		if err := jobSched.ReconcileActiveJobs(workerID, activeIDs); err != nil {
+			log.Printf("[jobscheduler] worker heartbeat reconcile error worker=%s: %v", workerID, err)
 		}
 	})
 
@@ -253,6 +254,10 @@ func Execute() error {
 		routes.RegisterWorkerRoutes(se.Router, app, workerSvc, workerServer, workerServer)
 		routes.RegisterJobRoutes(se.Router, app, jobSched)
 		routes.RegisterAuthRoutes(se.Router, app)
+
+		if err := sync.RecoverOrphanState(app); err != nil {
+			log.Printf("Warning: orphan state recovery error: %v", err)
+		}
 
 		if err := scheduler.Start(); err != nil {
 			log.Printf("Warning: scheduler start error: %v", err)

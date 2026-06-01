@@ -21,8 +21,14 @@ import (
 	"github.com/wireops/wireops/pkg/logger"
 )
 
-var activeJobs gosync.Map
-var connWriteMu gosync.Mutex
+var (
+	activeJobs      gosync.Map
+	connWriteMu     gosync.Mutex
+	activeConnMu    gosync.RWMutex
+	activeConn      *websocket.Conn
+	completedJobsMu gosync.Mutex
+	completedJobs   []protocol.JobCompletedMessage
+)
 
 const (
 	maxBackoff     = 5 * time.Minute
@@ -121,9 +127,26 @@ func runSession(serverURL, workerToken, hostname string, tags []string, sigChan 
 		log.Printf("[worker] websocket connect error=%v", err)
 		return reasonUnknown
 	}
-	defer conn.Close()
+	defer func() {
+		activeConnMu.Lock()
+		if activeConn == conn {
+			activeConn = nil
+		}
+		activeConnMu.Unlock()
+		conn.Close()
+	}()
+
+	activeConnMu.Lock()
+	activeConn = conn
+	activeConnMu.Unlock()
 
 	log.Println("[worker] connected")
+
+	// Send initial heartbeat to announce active jobs immediately on reconnect
+	sendInitialHeartbeat()
+
+	// Flush any queued completions that finished while disconnected
+	flushCompletedJobs()
 
 	disconnectCh := make(chan disconnectReason, 1)
 
@@ -159,11 +182,16 @@ func runSession(serverURL, workerToken, hostname string, tags []string, sigChan 
 				Type:    protocol.MsgHeartbeat,
 				Payload: protocol.HeartbeatPayload{ActiveJobRunIDs: activeIDs},
 			})
-			connWriteMu.Lock()
-			writeErr := conn.WriteMessage(websocket.TextMessage, heartbeat)
-			connWriteMu.Unlock()
-			if writeErr != nil {
-				log.Printf("[worker] heartbeat error=%v", writeErr)
+			activeConnMu.RLock()
+			c := activeConn
+			activeConnMu.RUnlock()
+			if c != nil {
+				connWriteMu.Lock()
+				writeErr := c.WriteMessage(websocket.TextMessage, heartbeat)
+				connWriteMu.Unlock()
+				if writeErr != nil {
+					log.Printf("[worker] heartbeat error=%v", writeErr)
+				}
 			}
 		}
 	}
@@ -190,31 +218,31 @@ func readLoop(conn *websocket.Conn, disconnectCh chan<- disconnectReason) {
 
 		switch env.Type {
 		case protocol.MsgDeploy:
-			go handleDeploy(conn, env.Payload)
+			go handleDeploy(env.Payload)
 		case protocol.MsgRedeploy:
-			go handleRedeploy(conn, env.Payload)
+			go handleRedeploy(env.Payload)
 		case protocol.MsgTeardown:
-			go handleTeardown(conn, env.Payload)
+			go handleTeardown(env.Payload)
 		case protocol.MsgProbe:
-			go handleProbe(conn, env.Payload)
+			go handleProbe(env.Payload)
 		case protocol.MsgInspect:
-			go handleInspect(conn, env.Payload)
+			go handleInspect(env.Payload)
 		case protocol.MsgGetStatus:
-			go handleGetStatus(conn, env.Payload)
+			go handleGetStatus(env.Payload)
 		case protocol.MsgGetResources:
-			go handleGetResources(conn, env.Payload)
+			go handleGetResources(env.Payload)
 		case protocol.MsgStopContainer:
-			go handleStopContainer(conn, env.Payload)
+			go handleStopContainer(env.Payload)
 		case protocol.MsgRestartContainer:
-			go handleRestartContainer(conn, env.Payload)
+			go handleRestartContainer(env.Payload)
 		case protocol.MsgDiscoverProjects:
-			go handleDiscoverProjects(conn, env.Payload)
+			go handleDiscoverProjects(env.Payload)
 		case protocol.MsgReadFile:
-			go handleReadFile(conn, env.Payload)
+			go handleReadFile(env.Payload)
 		case protocol.MsgRunJob:
-			go handleRunJob(conn, env.Payload)
+			go handleRunJob(env.Payload)
 		case protocol.MsgKillJob:
-			go handleKillJob(conn, env.Payload)
+			go handleKillJob(env.Payload)
 
 		default:
 			log.Printf("[worker] unknown message type=%s", env.Type)
@@ -222,117 +250,117 @@ func readLoop(conn *websocket.Conn, disconnectCh chan<- disconnectReason) {
 	}
 }
 
-func handleDeploy(conn *websocket.Conn, payload interface{}) {
+func handleDeploy(payload interface{}) {
 	cmd, err := unmarshalPayload[protocol.DeployCommand](payload)
 	if err != nil {
 		log.Printf("[worker] invalid deploy payload error=%v", err)
 		return
 	}
 	result := executor.Deploy(context.Background(), cmd)
-	sendResult(conn, result)
+	sendResult(result)
 }
 
-func handleRedeploy(conn *websocket.Conn, payload interface{}) {
+func handleRedeploy(payload interface{}) {
 	cmd, err := unmarshalPayload[protocol.RedeployCommand](payload)
 	if err != nil {
 		log.Printf("[worker] invalid redeploy payload error=%v", err)
 		return
 	}
 	result := executor.Redeploy(context.Background(), cmd)
-	sendResult(conn, result)
+	sendResult(result)
 }
 
-func handleTeardown(conn *websocket.Conn, payload interface{}) {
+func handleTeardown(payload interface{}) {
 	cmd, err := unmarshalPayload[protocol.TeardownCommand](payload)
 	if err != nil {
 		log.Printf("[worker] invalid teardown payload error=%v", err)
 		return
 	}
 	result := executor.Teardown(context.Background(), cmd)
-	sendResult(conn, result)
+	sendResult(result)
 }
 
-func handleProbe(conn *websocket.Conn, payload interface{}) {
+func handleProbe(payload interface{}) {
 	cmd, err := unmarshalPayload[protocol.ProbeCommand](payload)
 	if err != nil {
 		log.Printf("[worker] invalid probe payload error=%v", err)
 		return
 	}
 	result := executor.Probe(context.Background(), cmd)
-	sendResult(conn, result)
+	sendResult(result)
 }
 
-func handleInspect(conn *websocket.Conn, payload interface{}) {
+func handleInspect(payload interface{}) {
 	cmd, err := unmarshalPayload[protocol.InspectCommand](payload)
 	if err != nil {
 		log.Printf("[worker] invalid inspect payload error=%v", err)
 		return
 	}
 	result := executor.Inspect(context.Background(), cmd)
-	sendResult(conn, result)
+	sendResult(result)
 }
 
-func handleGetResources(conn *websocket.Conn, payload interface{}) {
+func handleGetResources(payload interface{}) {
 	cmd, err := unmarshalPayload[protocol.GetResourcesCommand](payload)
 	if err != nil {
 		log.Printf("[worker] invalid get_resources payload error=%v", err)
 		return
 	}
 	result := executor.GetResources(context.Background(), cmd)
-	sendResult(conn, result)
+	sendResult(result)
 }
 
-func handleGetStatus(conn *websocket.Conn, payload interface{}) {
+func handleGetStatus(payload interface{}) {
 	cmd, err := unmarshalPayload[protocol.GetStatusCommand](payload)
 	if err != nil {
 		log.Printf("[worker] invalid get_status payload error=%v", err)
 		return
 	}
 	result := executor.GetStatus(context.Background(), cmd)
-	sendResult(conn, result)
+	sendResult(result)
 }
 
-func handleStopContainer(conn *websocket.Conn, payload interface{}) {
+func handleStopContainer(payload interface{}) {
 	cmd, err := unmarshalPayload[protocol.ContainerActionCommand](payload)
 	if err != nil {
 		log.Printf("[worker] invalid stop_container payload error=%v", err)
 		return
 	}
 	result := executor.StopContainer(context.Background(), cmd)
-	sendResult(conn, result)
+	sendResult(result)
 }
 
-func handleRestartContainer(conn *websocket.Conn, payload interface{}) {
+func handleRestartContainer(payload interface{}) {
 	cmd, err := unmarshalPayload[protocol.ContainerActionCommand](payload)
 	if err != nil {
 		log.Printf("[worker] invalid restart_container payload error=%v", err)
 		return
 	}
 	result := executor.RestartContainer(context.Background(), cmd)
-	sendResult(conn, result)
+	sendResult(result)
 }
 
-func handleDiscoverProjects(conn *websocket.Conn, payload interface{}) {
+func handleDiscoverProjects(payload interface{}) {
 	cmd, err := unmarshalPayload[protocol.DiscoverProjectsCommand](payload)
 	if err != nil {
 		log.Printf("[worker] invalid discover_projects payload error=%v", err)
 		return
 	}
 	result := executor.DiscoverProjects(context.Background(), cmd)
-	sendResult(conn, result)
+	sendResult(result)
 }
 
-func handleReadFile(conn *websocket.Conn, payload interface{}) {
+func handleReadFile(payload interface{}) {
 	cmd, err := unmarshalPayload[protocol.ReadFileCommand](payload)
 	if err != nil {
 		log.Printf("[worker] invalid read_file payload error=%v", err)
 		return
 	}
 	result := executor.ReadFile(context.Background(), cmd)
-	sendResult(conn, result)
+	sendResult(result)
 }
 
-func handleRunJob(conn *websocket.Conn, payload interface{}) {
+func handleRunJob(payload interface{}) {
 	cmd, err := unmarshalPayload[protocol.RunJobCommand](payload)
 	if err != nil {
 		log.Printf("[worker] invalid run_job payload error=%v", err)
@@ -342,44 +370,117 @@ func handleRunJob(conn *websocket.Conn, payload interface{}) {
 	activeJobs.Store(cmd.JobRunID, struct{}{})
 
 	result := executor.RunJob(cmd, func(msgType protocol.MessageType, p interface{}) {
-		activeJobs.Delete(cmd.JobRunID)
-		msg, marshalErr := json.Marshal(protocol.Envelope{Type: msgType, Payload: p})
-		if marshalErr != nil {
-			log.Printf("[worker] job completion marshal error=%v", marshalErr)
-			return
-		}
-		connWriteMu.Lock()
-		writeErr := conn.WriteMessage(websocket.TextMessage, msg)
-		connWriteMu.Unlock()
-		if writeErr != nil {
-			log.Printf("[worker] job completion send error job_run=%s error=%v", cmd.JobRunID, writeErr)
+		if msg, ok := p.(protocol.JobCompletedMessage); ok {
+			reportJobCompleted(msg)
+		} else {
+			log.Printf("[worker] job completion callback parameter is not protocol.JobCompletedMessage: %T", p)
 		}
 	})
 
-	sendResult(conn, result)
+	sendResult(result)
 }
 
-func handleKillJob(conn *websocket.Conn, payload interface{}) {
+func handleKillJob(payload interface{}) {
 	cmd, err := unmarshalPayload[protocol.KillJobCommand](payload)
 	if err != nil {
 		log.Printf("[worker] invalid kill_job payload error=%v", err)
 		return
 	}
 	result := executor.KillJob(cmd)
-	sendResult(conn, result)
+	sendResult(result)
 }
 
-func sendResult(conn *websocket.Conn, result protocol.CommandResult) {
+func sendResult(result protocol.CommandResult) {
 	msg, err := json.Marshal(protocol.Envelope{Type: protocol.MsgResult, Payload: result})
 	if err != nil {
 		log.Printf("[worker] result marshal error=%v", err)
 		return
 	}
+	activeConnMu.RLock()
+	c := activeConn
+	activeConnMu.RUnlock()
+	if c == nil {
+		log.Printf("[worker] result send failed: no active connection (command %s)", result.CommandID)
+		return
+	}
 	connWriteMu.Lock()
-	err = conn.WriteMessage(websocket.TextMessage, msg)
+	err = c.WriteMessage(websocket.TextMessage, msg)
 	connWriteMu.Unlock()
 	if err != nil {
 		log.Printf("[worker] result send error=%v", err)
+	}
+}
+
+func sendInitialHeartbeat() {
+	var activeIDs []string
+	activeJobs.Range(func(k, _ any) bool {
+		activeIDs = append(activeIDs, k.(string))
+		return true
+	})
+	hb, _ := json.Marshal(protocol.Envelope{
+		Type:    protocol.MsgHeartbeat,
+		Payload: protocol.HeartbeatPayload{ActiveJobRunIDs: activeIDs},
+	})
+	activeConnMu.RLock()
+	c := activeConn
+	activeConnMu.RUnlock()
+	if c != nil {
+		connWriteMu.Lock()
+		_ = c.WriteMessage(websocket.TextMessage, hb)
+		connWriteMu.Unlock()
+		log.Printf("[worker] sent initial heartbeat: active_jobs=%d", len(activeIDs))
+	}
+}
+
+func reportJobCompleted(msg protocol.JobCompletedMessage) {
+	activeJobs.Delete(msg.JobRunID)
+
+	envelope := protocol.Envelope{
+		Type:    protocol.MsgJobCompleted,
+		Payload: msg,
+	}
+	envelopeBytes, err := json.Marshal(envelope)
+	if err != nil {
+		log.Printf("[worker] job completion marshal error=%v", err)
+		return
+	}
+
+	activeConnMu.RLock()
+	c := activeConn
+	activeConnMu.RUnlock()
+
+	var writeErr error
+	if c != nil {
+		connWriteMu.Lock()
+		writeErr = c.WriteMessage(websocket.TextMessage, envelopeBytes)
+		connWriteMu.Unlock()
+	} else {
+		writeErr = errors.New("no active connection")
+	}
+
+	if writeErr != nil {
+		log.Printf("[worker] job completion send error job_run=%s error=%v. Queueing for retry.", msg.JobRunID, writeErr)
+		completedJobsMu.Lock()
+		completedJobs = append(completedJobs, msg)
+		completedJobsMu.Unlock()
+	} else {
+		log.Printf("[worker] job completion sent successfully job_run=%s", msg.JobRunID)
+	}
+}
+
+func flushCompletedJobs() {
+	completedJobsMu.Lock()
+	queue := completedJobs
+	completedJobs = nil
+	completedJobsMu.Unlock()
+
+	if len(queue) == 0 {
+		return
+	}
+
+	log.Printf("[worker] flushing %d queued completed jobs...", len(queue))
+	for _, msg := range queue {
+		reportJobCompleted(msg)
 	}
 }
 

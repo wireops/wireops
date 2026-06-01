@@ -385,60 +385,117 @@ func (s *Scheduler) HandleJobCompleted(msg protocol.JobCompletedMessage) {
 // Any run still in "running" after this duration is considered lost.
 const maxJobRunDuration = time.Hour
 
-// MarkForgottenRuns finds every job_run that has been in "running" state for
-// longer than maxJobRunDuration and marks it as "forgotten". This is a safety
-// net for short-execution jobs: a 1-hour wall-clock limit signals something
-// went wrong silently (worker crash with no reconnect, zombie container, etc.).
-func (s *Scheduler) MarkForgottenRuns() error {
-	cutoff := time.Now().Add(-maxJobRunDuration)
+// maxJobRunPendingDuration is the time limit for a job to remain in "pending" status.
+// If it remains "pending" longer than this, it is assumed the dispatch failed.
+const maxJobRunPendingDuration = 15 * time.Minute
 
-	records, err := s.app.FindAllRecords("job_runs",
+// MarkForgottenRuns finds every job_run that has been in "running" state for
+// longer than maxJobRunDuration and marks it as "forgotten". It also finds
+// any job_run stuck in "pending" for more than maxJobRunPendingDuration
+// and marks it as "error".
+func (s *Scheduler) MarkForgottenRuns() error {
+	runningCutoff := time.Now().Add(-maxJobRunDuration)
+	pendingCutoff := time.Now().Add(-maxJobRunPendingDuration)
+
+	var firstErr error
+
+	// 1. Reconcile running runs (status: "running" -> "forgotten")
+	runningRecords, err := s.app.FindAllRecords("job_runs",
 		dbx.HashExp{"status": "running"},
 	)
 	if err != nil {
-		return fmt.Errorf("MarkForgottenRuns query failed: %w", err)
+		return fmt.Errorf("MarkForgottenRuns running query failed: %w", err)
 	}
 
-	var firstErr error
-	for _, rec := range records {
-		if rec.GetDateTime("updated").Time().Before(cutoff) {
+	for _, rec := range runningRecords {
+		if rec.GetDateTime("updated").Time().Before(runningCutoff) {
 			rec.Set("status", "forgotten")
 			rec.Set("output", "job forgotten: still running after 1 hour with no completion signal")
 			if err := s.app.Save(rec); err != nil {
-				log.Printf("[jobscheduler] MarkForgottenRuns: failed to save run %s: %v", rec.Id, err)
+				log.Printf("[jobscheduler] MarkForgottenRuns: failed to save running run %s: %v", rec.Id, err)
 				if firstErr == nil {
-					firstErr = fmt.Errorf("mark forgotten run=%s: %w", rec.Id, err)
+					firstErr = fmt.Errorf("mark forgotten running run=%s: %w", rec.Id, err)
 				}
 			} else {
 				log.Printf("[jobscheduler] run %s marked forgotten (started >1h ago)", rec.Id)
 			}
 		}
 	}
+
+	// 2. Reconcile pending runs (status: "pending" -> "error")
+	pendingRecords, err := s.app.FindAllRecords("job_runs",
+		dbx.HashExp{"status": "pending"},
+	)
+	if err != nil {
+		if firstErr == nil {
+			firstErr = fmt.Errorf("MarkForgottenRuns pending query failed: %w", err)
+		}
+		return firstErr
+	}
+
+	for _, rec := range pendingRecords {
+		if rec.GetDateTime("updated").Time().Before(pendingCutoff) {
+			rec.Set("status", "error")
+			rec.Set("output", "job failed: stuck in pending for more than 15 minutes (failed to dispatch to worker)")
+			if err := s.app.Save(rec); err != nil {
+				log.Printf("[jobscheduler] MarkForgottenRuns: failed to save pending run %s: %v", rec.Id, err)
+				if firstErr == nil {
+					firstErr = fmt.Errorf("mark error pending run=%s: %w", rec.Id, err)
+				}
+			} else {
+				log.Printf("[jobscheduler] run %s marked error (stuck in pending >15m)", rec.Id)
+			}
+		}
+	}
+
 	return firstErr
 }
 
-// HandleWorkerReconnect marks any job_runs that were left in "running" state for the
-// given worker as "error". This handles the case where the worker restarted mid-job.
-func (s *Scheduler) HandleWorkerReconnect(workerID string) error {
+// ReconcileActiveJobs is called when a worker connects or sends a heartbeat.
+// It checks all job_runs that are currently in "running" status for this worker.
+// If a job run is NOT in the worker's active list, it must have finished/terminated
+// while the connection was offline. If the job run was updated more than 1 minute ago,
+// we mark it as "error" (since we missed its completion message).
+func (s *Scheduler) ReconcileActiveJobs(workerID string, activeIDs []string) error {
 	records, err := s.app.FindAllRecords("job_runs", dbx.HashExp{
 		"worker": workerID,
 		"status": "running",
 	})
 	if err != nil {
-		return fmt.Errorf("HandleWorkerReconnect query failed worker=%s: %w", workerID, err)
+		return fmt.Errorf("ReconcileActiveJobs query failed worker=%s: %w", workerID, err)
 	}
+
+	activeSet := make(map[string]bool, len(activeIDs))
+	for _, id := range activeIDs {
+		activeSet[id] = true
+	}
+
+	cutoff := time.Now().Add(-1 * time.Minute)
 	var firstErr error
+
 	for _, rec := range records {
-		rec.Set("status", "error")
-		rec.Set("output", "job lost: worker disconnected or restarted during execution")
-		if err := s.app.Save(rec); err != nil {
-			log.Printf("[jobscheduler] HandleWorkerReconnect: failed to save run %s worker=%s: %v", rec.Id, workerID, err)
-			if firstErr == nil {
-				firstErr = fmt.Errorf("worker reconnect run=%s worker=%s: %w", rec.Id, workerID, err)
-			}
+		runID := rec.Id
+		if activeSet[runID] {
+			// Job is still running on the worker, leave it alone
 			continue
 		}
-		log.Printf("[jobscheduler] run %s marked error: worker %s reconnected", rec.Id, workerID)
+
+		// If the job run was updated/started very recently, don't mark it as error yet
+		// (allows time for the worker to receive the dispatch and register the container)
+		if rec.GetDateTime("updated").Time().After(cutoff) {
+			continue
+		}
+
+		rec.Set("status", "error")
+		rec.Set("output", "job lost: worker disconnected and job is no longer running")
+		if err := s.app.Save(rec); err != nil {
+			log.Printf("[jobscheduler] ReconcileActiveJobs: failed to save run %s worker=%s: %v", rec.Id, workerID, err)
+			if firstErr == nil {
+				firstErr = fmt.Errorf("reconcile run=%s worker=%s: %w", rec.Id, workerID, err)
+			}
+		} else {
+			log.Printf("[jobscheduler] run %s marked error (not found in worker %s active list)", rec.Id, workerID)
+		}
 	}
 	return firstErr
 }

@@ -7,7 +7,7 @@ const route = useRoute()
 const { $pb } = useNuxtApp()
 const { subscribe } = useRealtime()
 const { copy } = useCopy()
-const { triggerRollback, forceRedeploy, deleteStack, getServices, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, transferStack, getWorkers, stopContainer, restartContainer } = useApi()
+const { triggerSync, triggerRollback, forceRedeploy, deleteStack, getServices, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, transferStack, getWorkers, stopContainer, restartContainer } = useApi()
 const { getStackIntegrationActions } = useIntegrations()
 const { validateComposePath, validateComposeFile } = useValidation()
 const toast = useToast()
@@ -319,6 +319,25 @@ function openSyncModal() {
 
 function onSyncTriggered() {
   setTimeout(() => { refreshLogs(); refreshStack() }, 3000)
+}
+
+async function handleSync() {
+  if (!stack.value) return
+  if (!canSyncDeploy.value) {
+    toast.add({
+      title: 'Sync unavailable',
+      description: `${syncDisabledReason.value}. Reconnect the worker before syncing this stack.`,
+      color: 'warning',
+    })
+    return
+  }
+  try {
+    await triggerSync(stackId)
+    toast.add({ title: 'Sync triggered', color: 'success' })
+    setTimeout(() => { refreshLogs(); refreshStack() }, 3000)
+  } catch (e: any) {
+    toast.add({ title: e?.message || 'Sync failed', color: 'error' })
+  }
 }
 
 const rollbackSha = ref('')
