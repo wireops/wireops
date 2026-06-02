@@ -41,6 +41,7 @@ type WorkerServer struct {
 
 	onConnect      func(workerID string)
 	onJobCompleted func(protocol.JobCompletedMessage)
+	onHeartbeat    func(workerID string, activeIDs []string)
 }
 
 // MTLSServer is kept as an internal alias while the codebase finishes moving
@@ -56,6 +57,11 @@ func (s *WorkerServer) SetOnConnect(f func(workerID string)) {
 // that a job container has exited. The callback is called in a new goroutine.
 func (s *WorkerServer) SetOnJobCompleted(f func(protocol.JobCompletedMessage)) {
 	s.onJobCompleted = f
+}
+
+// SetOnHeartbeat registers a callback invoked whenever a heartbeat is received from a worker.
+func (s *WorkerServer) SetOnHeartbeat(f func(workerID string, activeIDs []string)) {
+	s.onHeartbeat = f
 }
 
 // SetWorkerTags stores the tags reported by the worker at registration time.
@@ -281,6 +287,11 @@ func (s *WorkerServer) Dispatch(ctx context.Context, workerID string, cmd interf
 		return protocol.CommandResult{}, fmt.Errorf("unknown command type %T", cmd)
 	}
 
+	// Log command start in the database
+	if _, logErr := s.workerSvc.LogCommandStart(workerID, commandID, string(msgType), cmd); logErr != nil {
+		logger.SafeLogf("[WORKER] Failed to log command start: %v", logErr)
+	}
+
 	pr := &pendingResult{ch: make(chan protocol.CommandResult, 1)}
 	s.connMu.Lock()
 	s.pending[commandID] = pr
@@ -293,24 +304,54 @@ func (s *WorkerServer) Dispatch(ctx context.Context, workerID string, cmd interf
 
 	msg, err := json.Marshal(protocol.Envelope{Type: msgType, Payload: cmd})
 	if err != nil {
+		_ = s.workerSvc.LogCommandFinish(commandID, "error", map[string]string{"error": err.Error()}, 0)
 		return protocol.CommandResult{}, fmt.Errorf("failed to marshal command: %w", err)
 	}
 
+	start := time.Now()
 	writeMu.Lock()
 	err = conn.WriteMessage(websocket.TextMessage, msg)
 	writeMu.Unlock()
 	if err != nil {
+		elapsedMs := time.Since(start).Milliseconds()
+		// If conn.WriteMessage fails during Dispatch, we calculate the duration elapsed since start
+		// and pass it to s.workerSvc.LogCommandFinish to log the error for commandID and workerID.
+		_ = s.workerSvc.LogCommandFinish(commandID, "error", map[string]string{"error": err.Error()}, elapsedMs)
 		return protocol.CommandResult{}, fmt.Errorf("failed to send command to worker %s: %w", workerID, err)
 	}
 
+	var result protocol.CommandResult
+	var dispatchErr error
+
 	select {
-	case result := <-pr.ch:
-		return result, nil
+	case result = <-pr.ch:
+		// Result received
 	case <-ctx.Done():
-		return protocol.CommandResult{}, ctx.Err()
+		dispatchErr = ctx.Err()
 	case <-time.After(5 * time.Minute):
-		return protocol.CommandResult{}, fmt.Errorf("timed out waiting for worker %s response (command %s)", workerID, commandID)
+		dispatchErr = fmt.Errorf("timed out waiting for worker %s response (command %s)", workerID, commandID)
 	}
+
+	durationMs := time.Since(start).Milliseconds()
+
+	if dispatchErr != nil {
+		status := "error"
+		if errors.Is(dispatchErr, context.Canceled) {
+			status = "cancelled"
+		} else if errors.Is(dispatchErr, context.DeadlineExceeded) || strings.Contains(dispatchErr.Error(), "timed out") {
+			status = "timed_out"
+		}
+		_ = s.workerSvc.LogCommandFinish(commandID, status, map[string]string{"error": dispatchErr.Error()}, durationMs)
+		return protocol.CommandResult{}, dispatchErr
+	}
+
+	status := "success"
+	if result.Error != "" {
+		status = "error"
+	}
+	_ = s.workerSvc.LogCommandFinish(commandID, status, result, durationMs)
+
+	return result, nil
 }
 
 func workerTokenFromRequest(r *http.Request) string {
@@ -491,8 +532,13 @@ func (s *WorkerServer) handleWebSocket(c *gin.Context) {
 			}
 			payloadBytes, _ := json.Marshal(env.Payload)
 			var hb protocol.HeartbeatPayload
-			if jsonErr := json.Unmarshal(payloadBytes, &hb); jsonErr == nil && len(hb.ActiveJobRunIDs) > 0 {
-				logger.SafeLogf("[worker] heartbeat worker=%s active_jobs=%d runs=%v", workerID, len(hb.ActiveJobRunIDs), hb.ActiveJobRunIDs)
+			if jsonErr := json.Unmarshal(payloadBytes, &hb); jsonErr == nil {
+				if len(hb.ActiveJobRunIDs) > 0 {
+					logger.SafeLogf("[worker] heartbeat worker=%s active_jobs=%d runs=%v", workerID, len(hb.ActiveJobRunIDs), hb.ActiveJobRunIDs)
+				}
+				if s.onHeartbeat != nil {
+					go s.onHeartbeat(workerID, hb.ActiveJobRunIDs)
+				}
 			}
 
 		case protocol.MsgJobCompleted:
