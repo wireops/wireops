@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -14,26 +16,37 @@ import (
 )
 
 type Scheduler struct {
-	mu         sync.Mutex
-	jobs       map[string]context.CancelFunc // keyed by stack ID
-	reconciler *Reconciler
-	app        core.App
+	mu            sync.Mutex
+	jobs          map[string]context.CancelFunc // keyed by stack ID
+	reconciler    *Reconciler
+	app           core.App
 
 	// rootCtx / rootCancel are used for a global graceful shutdown.
 	// Shutdown() cancels rootCtx, causing all goroutines to stop.
-	rootCtx    context.Context
-	rootCancel context.CancelFunc
+	rootCtx       context.Context
+	rootCancel    context.CancelFunc
+
+	syncSemaphore chan struct{} // global limit for concurrent reconciles/syncs
 }
 
 func NewScheduler(app core.App, dockerClient *docker.Client, dispatcher WorkerDispatcher) *Scheduler {
 	notifier := notify.New(app)
 	rootCtx, rootCancel := context.WithCancel(context.Background())
+
+	limit := 5
+	if limitStr := os.Getenv("MAX_CONCURRENT_SYNCS"); limitStr != "" {
+		if val, err := strconv.Atoi(limitStr); err == nil && val > 0 {
+			limit = val
+		}
+	}
+
 	return &Scheduler{
-		jobs:       make(map[string]context.CancelFunc),
-		reconciler: NewReconciler(app, dockerClient, notifier, dispatcher),
-		app:        app,
-		rootCtx:    rootCtx,
-		rootCancel: rootCancel,
+		jobs:          make(map[string]context.CancelFunc),
+		reconciler:    NewReconciler(app, dockerClient, notifier, dispatcher),
+		app:           app,
+		rootCtx:       rootCtx,
+		rootCancel:    rootCancel,
+		syncSemaphore: make(chan struct{}, limit),
 	}
 }
 
@@ -99,30 +112,54 @@ func (s *Scheduler) UnregisterStack(stackID string) {
 	}
 }
 
-func (s *Scheduler) TriggerSync(stackID, trigger string, queueTotal int) {
-	ctx := s.rootCtx
+func (s *Scheduler) TriggerSync(stackID, trigger string, queueTotal int, userID string) {
+	ctx := context.WithValue(s.rootCtx, "userID", userID)
 	go s.safeRun(ctx, fmt.Sprintf("sync[%s] trigger=%s", stackID, trigger), func() error {
+		select {
+		case s.syncSemaphore <- struct{}{}:
+			defer func() { <-s.syncSemaphore }()
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 		return s.reconciler.ReconcileStack(ctx, stackID, trigger, queueTotal)
 	})
 }
 
-func (s *Scheduler) TriggerRollback(stackID, commitSHA string) {
-	ctx := s.rootCtx
+func (s *Scheduler) TriggerRollback(stackID, commitSHA string, userID string) {
+	ctx := context.WithValue(s.rootCtx, "userID", userID)
 	go s.safeRun(ctx, fmt.Sprintf("rollback[%s]", stackID), func() error {
+		select {
+		case s.syncSemaphore <- struct{}{}:
+			defer func() { <-s.syncSemaphore }()
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 		return s.reconciler.RollbackStack(ctx, stackID, commitSHA)
 	})
 }
 
-func (s *Scheduler) TriggerForceRedeploy(stackID string, recreateContainers, recreateVolumes, recreateNetworks bool) {
-	ctx := s.rootCtx
+func (s *Scheduler) TriggerForceRedeploy(stackID string, recreateContainers, recreateVolumes, recreateNetworks bool, userID string) {
+	ctx := context.WithValue(s.rootCtx, "userID", userID)
 	go s.safeRun(ctx, fmt.Sprintf("force-redeploy[%s]", stackID), func() error {
+		select {
+		case s.syncSemaphore <- struct{}{}:
+			defer func() { <-s.syncSemaphore }()
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 		return s.reconciler.ForceRedeployStack(ctx, stackID, recreateContainers, recreateVolumes, recreateNetworks)
 	})
 }
 
-func (s *Scheduler) TriggerTransfer(stackID, targetWorkerID string) {
-	ctx := s.rootCtx
+func (s *Scheduler) TriggerTransfer(stackID, targetWorkerID string, userID string) {
+	ctx := context.WithValue(s.rootCtx, "userID", userID)
 	go s.safeRun(ctx, fmt.Sprintf("transfer[%s]", stackID), func() error {
+		select {
+		case s.syncSemaphore <- struct{}{}:
+			defer func() { <-s.syncSemaphore }()
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 		return s.reconciler.TransferStack(ctx, stackID, targetWorkerID)
 	})
 }
@@ -180,7 +217,7 @@ func (s *Scheduler) TriggerPendingReconciles(workerID string) {
 			if err := s.app.Delete(event.Record); err != nil {
 				return fmt.Errorf("failed to delete pending reconcile %s for stack %s before dispatch: %w", event.Record.Id, stackID, err)
 			}
-			s.TriggerSync(stackID, event.Trigger, queueTotal)
+			s.TriggerSync(stackID, event.Trigger, queueTotal, "system")
 		}
 		return nil
 	})
@@ -222,6 +259,12 @@ func (s *Scheduler) startJobLocked(stack *core.Record) {
 				reconcileCtx, cancel := context.WithTimeout(s.rootCtx, 10*time.Minute)
 				s.safeRun(reconcileCtx, fmt.Sprintf("cron[%s]", stackID), func() error {
 					defer cancel()
+					select {
+					case s.syncSemaphore <- struct{}{}:
+						defer func() { <-s.syncSemaphore }()
+					case <-reconcileCtx.Done():
+						return reconcileCtx.Err()
+					}
 					return s.reconciler.ReconcileStack(reconcileCtx, stackID, "cron", 0)
 				})
 			}

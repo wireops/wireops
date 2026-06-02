@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"errors"
 	"net/http"
 	"path/filepath"
 
@@ -26,6 +27,7 @@ type jobListItem struct {
 	Repository      jobRepoInfo     `json:"repository"`
 	Definition      *job.Definition `json:"definition"`
 	DefinitionError string          `json:"definition_error,omitempty"`
+	Errors          []string        `json:"errors,omitempty"`
 	StalledReason   string          `json:"stalled_reason,omitempty"`
 }
 
@@ -80,6 +82,12 @@ func RegisterJobRoutes(r *router.Router[*core.RequestEvent], app core.App, sched
 			def, derr := job.ParseJobFile(repoWorkspace, repoID, item.JobFile)
 			if derr != nil {
 				item.DefinitionError = derr.Error()
+				var valErr *job.ValidationError
+				if errors.As(derr, &valErr) {
+					item.Errors = valErr.Errors
+				} else {
+					item.Errors = []string{derr.Error()}
+				}
 			} else {
 				item.Definition = def
 			}
@@ -108,10 +116,21 @@ func RegisterJobRoutes(r *router.Router[*core.RequestEvent], app core.App, sched
 		if id == "" {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "missing id"})
 		}
-		if _, err := app.FindRecordById("scheduled_jobs", id); err != nil {
+		rec, err := app.FindRecordById("scheduled_jobs", id)
+		if err != nil {
 			return e.JSON(http.StatusNotFound, map[string]string{"error": "job not found"})
 		}
-		sched.TriggerManual(id)
+		repoWorkspace := filepath.Join(app.DataDir(), "repositories")
+		repoID := rec.GetString("repository")
+		jobFile := rec.GetString("job_file")
+		if _, err := job.ParseJobFile(repoWorkspace, repoID, jobFile); err != nil {
+			return e.JSON(http.StatusUnprocessableEntity, map[string]string{"error": "Validation failed: " + err.Error()})
+		}
+		var userID string
+		if e.Auth != nil {
+			userID = e.Auth.Id
+		}
+		sched.TriggerManual(id, userID)
 		return e.JSON(http.StatusOK, map[string]string{"status": "triggered"})
 	})
 
@@ -133,7 +152,17 @@ func RegisterJobRoutes(r *router.Router[*core.RequestEvent], app core.App, sched
 
 		def, err := job.ParseJobFile(repoWorkspace, repoID, jobFile)
 		if err != nil {
-			return e.JSON(http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
+			var valErr *job.ValidationError
+			var errorsList []string
+			if errors.As(err, &valErr) {
+				errorsList = valErr.Errors
+			} else {
+				errorsList = []string{err.Error()}
+			}
+			return e.JSON(http.StatusUnprocessableEntity, map[string]any{
+				"error":  err.Error(),
+				"errors": errorsList,
+			})
 		}
 
 		return e.JSON(http.StatusOK, def)

@@ -206,7 +206,7 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 	// Stacks trigger scheduler registration
 	app.OnRecordAfterCreateSuccess("stacks").BindFunc(func(e *core.RecordEvent) error {
 		scheduler.RegisterStack(e.Record)
-		scheduler.TriggerSync(e.Record.Id, "webhook", 0)
+		scheduler.TriggerSync(e.Record.Id, "webhook", 0, "system")
 		return e.Next()
 	})
 

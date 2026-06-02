@@ -88,7 +88,11 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		if !workerOnline(e, id) {
 			return nil
 		}
-		scheduler.TriggerSync(id, "manual", 0)
+		var userID string
+		if e.Auth != nil {
+			userID = e.Auth.Id
+		}
+		scheduler.TriggerSync(id, "manual", 0, userID)
 		return e.JSON(http.StatusOK, map[string]string{"status": "triggered"})
 	})
 
@@ -104,7 +108,11 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		if !workerOnline(e, id) {
 			return nil
 		}
-		scheduler.TriggerRollback(id, body.CommitSHA)
+		var userID string
+		if e.Auth != nil {
+			userID = e.Auth.Id
+		}
+		scheduler.TriggerRollback(id, body.CommitSHA, userID)
 		return e.JSON(http.StatusOK, map[string]string{"status": "triggered"})
 	})
 
@@ -124,7 +132,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		if id == "" {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "missing id"})
 		}
-		scheduler.TriggerSync(id, "webhook", 0)
+		scheduler.TriggerSync(id, "webhook", 0, "webhook")
 		return e.JSON(http.StatusOK, map[string]string{"status": "triggered"})
 	})
 
@@ -177,7 +185,11 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		if err := json.NewDecoder(e.Request.Body).Decode(&body); err != nil {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid body"})
 		}
-		scheduler.TriggerForceRedeploy(stackID, body.RecreateContainers, body.RecreateVolumes, body.RecreateNetworks)
+		var userID string
+		if e.Auth != nil {
+			userID = e.Auth.Id
+		}
+		scheduler.TriggerForceRedeploy(stackID, body.RecreateContainers, body.RecreateVolumes, body.RecreateNetworks, userID)
 		return e.JSON(http.StatusOK, map[string]string{"status": "triggered"})
 	})
 
@@ -1095,7 +1107,11 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			})
 		}
 
-		scheduler.TriggerTransfer(stackID, body.TargetWorkerID)
+		var userID string
+		if e.Auth != nil {
+			userID = e.Auth.Id
+		}
+		scheduler.TriggerTransfer(stackID, body.TargetWorkerID, userID)
 		return e.JSON(http.StatusAccepted, map[string]string{"status": "transfer_started"})
 	})
 
@@ -1437,7 +1453,11 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
 
-		scheduler.TriggerSync(stack.Id, "manual", 0)
+		var userID string
+		if e.Auth != nil {
+			userID = e.Auth.Id
+		}
+		scheduler.TriggerSync(stack.Id, "manual", 0, userID)
 		log.Printf("[routes] import stack=%s worker=%s path=%s", stack.Id, body.WorkerID, body.ImportPath)
 		return e.JSON(http.StatusOK, map[string]string{"id": stack.Id, "status": "import_triggered"})
 	})

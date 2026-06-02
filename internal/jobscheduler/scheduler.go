@@ -127,7 +127,7 @@ func (s *Scheduler) RegisterJob(jobID string) {
 	}
 
 	entryID, err := s.cron.AddFunc(def.Cron, func() {
-		s.executeJob(jobID, "cron")
+		s.executeJob(jobID, "cron", "system")
 	})
 	if err != nil {
 		log.Printf("[jobscheduler] RegisterJob: invalid cron %q for job %s: %v", def.Cron, jobID, err)
@@ -169,8 +169,8 @@ func (s *Scheduler) SyncJobsForRepo(repoID string) {
 }
 
 // TriggerManual fires an immediate execution of the job outside its cron schedule.
-func (s *Scheduler) TriggerManual(jobID string) {
-	go s.executeJob(jobID, "manual")
+func (s *Scheduler) TriggerManual(jobID string, userID string) {
+	go s.executeJob(jobID, "manual", userID)
 }
 
 // CancelRun stops a running job container on the assigned remote worker.
@@ -204,10 +204,8 @@ func (s *Scheduler) CancelRun(runID string) error {
 	return nil
 }
 
-// executeJob is the core execution path. It reads the job.yaml, resolves agents,
-// creates job_run records, dispatches to agents, and updates the run status.
-func (s *Scheduler) executeJob(jobID, trigger string) {
-	ctx := s.rootCtx
+func (s *Scheduler) executeJob(jobID, trigger string, userID string) {
+	ctx := context.WithValue(s.rootCtx, "userID", userID)
 	if ctx.Err() != nil {
 		return
 	}
@@ -314,6 +312,14 @@ func (s *Scheduler) dispatchToWorker(ctx context.Context, jobID, trigger, worker
 		return
 	}
 
+	var timeoutSecs int
+	if p.def.Resources.Timeout != "" {
+		d, err := time.ParseDuration(p.def.Resources.Timeout)
+		if err == nil {
+			timeoutSecs = int(d.Seconds())
+		}
+	}
+
 	cmd := protocol.RunJobCommand{
 		CommandID:        fmt.Sprintf("job-%s", runID),
 		JobRunID:         runID,
@@ -327,6 +333,9 @@ func (s *Scheduler) dispatchToWorker(ctx context.Context, jobID, trigger, worker
 		CommitSHA:        p.commitSHA,
 		Volumes:          p.def.Volumes,
 		Network:          p.def.Network,
+		CPUs:             p.def.Resources.CPU,
+		MemoryLimit:      p.def.Resources.Memory,
+		TimeoutSeconds:   timeoutSecs,
 	}
 
 	// Remote worker: wait only for the start ack (worker immediately returns "started").

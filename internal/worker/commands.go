@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -9,7 +10,7 @@ import (
 )
 
 // LogCommandStart creates or updates a worker_commands record with status 'dispatched'.
-func (s *Service) LogCommandStart(workerID, commandID, commandType string, payload interface{}) (*core.Record, error) {
+func (s *Service) LogCommandStart(ctx context.Context, workerID, commandID, commandType string, payload interface{}) (*core.Record, error) {
 	collection, err := s.app.FindCollectionByNameOrId("worker_commands")
 	if err != nil {
 		return nil, fmt.Errorf("LogCommandStart: find collection failed: %w", err)
@@ -30,6 +31,12 @@ func (s *Service) LogCommandStart(workerID, commandID, commandType string, paylo
 	record.Set("expires_at", time.Now().AddDate(0, 0, 7)) // TTL: 7 days
 	record.Set("result", nil)
 	record.Set("duration_ms", 0)
+
+	if ctx != nil {
+		if userID, ok := ctx.Value("userID").(string); ok && userID != "" {
+			record.Set("created_by", userID)
+		}
+	}
 
 	if payload != nil {
 		record.Set("payload", payload)

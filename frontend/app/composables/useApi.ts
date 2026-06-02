@@ -6,7 +6,9 @@ export function useApi() {
   async function handleResponse<T>(res: Response): Promise<T> {
     const data = await res.json()
     if (!res.ok || data?.error) {
-      throw new Error(data?.error || `API Error: ${res.statusText}`)
+      const err = new Error(data?.error || `API Error: ${res.statusText}`) as any
+      err.data = data
+      throw err
     }
     return data
   }
@@ -170,6 +172,7 @@ export function useApi() {
     repository: { id: string; name: string; git_url: string }
     definition: JobDefinition | null
     definition_error?: string
+    errors?: string[]
   }
   const listJobs = () => customGet<JobListItem[]>('/api/custom/jobs')
   const triggerJobRun = (jobId: string) => customPost(`/api/custom/jobs/${jobId}/run`)

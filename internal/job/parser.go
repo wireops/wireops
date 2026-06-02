@@ -1,5 +1,3 @@
-// Package job provides parsing for job.yaml files committed to repositories.
-// The job.yaml is the single source of truth for all job configuration.
 package job
 
 import (
@@ -7,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -21,17 +20,24 @@ const (
 	ModeOnceAll Mode = "once_all"
 )
 
+type Resources struct {
+	CPU     string `yaml:"cpu"     json:"cpu"`
+	Memory  string `yaml:"memory"  json:"memory"`
+	Timeout string `yaml:"timeout" json:"timeout"`
+}
+
 // Definition holds all fields parsed from a job.yaml file.
 type Definition struct {
-	Title       string   `yaml:"title"       json:"title"`
-	Description string   `yaml:"description" json:"description"`
-	Cron        string   `yaml:"cron"        json:"cron"`
-	Tags        []string `yaml:"tags"        json:"tags"`
-	Mode        Mode     `yaml:"mode"        json:"mode"`
-	Image       string   `yaml:"image"       json:"image"`
-	Command     Command  `yaml:"command"     json:"command"`
-	Volumes     []string `yaml:"volumes"     json:"volumes"`
-	Network     string   `yaml:"network"     json:"network"`
+	Title       string    `yaml:"title"       json:"title"`
+	Description string    `yaml:"description" json:"description"`
+	Cron        string    `yaml:"cron"        json:"cron"`
+	Tags        []string  `yaml:"tags"        json:"tags"`
+	Mode        Mode      `yaml:"mode"        json:"mode"`
+	Image       string    `yaml:"image"       json:"image"`
+	Command     Command   `yaml:"command"     json:"command"`
+	Volumes     []string  `yaml:"volumes"     json:"volumes"`
+	Network     string    `yaml:"network"     json:"network"`
+	Resources   Resources `yaml:"resources"   json:"resources"`
 }
 
 // Command accepts both a single string and a string array in YAML.
@@ -97,20 +103,51 @@ func IsJobFile(data []byte) bool {
 }
 
 func (d *Definition) validate() error {
+	var errs []string
+
 	if d.Title == "" {
-		return fmt.Errorf("job.yaml: title is required")
+		errs = append(errs, "title is required")
 	}
 	if d.Description == "" {
-		return fmt.Errorf("job.yaml: description is required")
+		errs = append(errs, "description is required")
 	}
 	if d.Image == "" {
-		return fmt.Errorf("job.yaml: image is required")
+		errs = append(errs, "image is required")
 	}
 	if d.Cron == "" {
-		return fmt.Errorf("job.yaml: cron is required")
+		errs = append(errs, "cron is required")
 	}
 	if d.Mode != "" && d.Mode != ModeOnce && d.Mode != ModeOnceAll {
-		return fmt.Errorf("job.yaml: mode must be 'once' or 'once_all', got %q", d.Mode)
+		errs = append(errs, fmt.Sprintf("mode must be 'once' or 'once_all', got %q", d.Mode))
 	}
+
+	// Validate mandatory resources block
+	if d.Resources.CPU == "" {
+		errs = append(errs, "resources.cpu is required")
+	}
+	if d.Resources.Memory == "" {
+		errs = append(errs, "resources.memory is required")
+	}
+	if d.Resources.Timeout == "" {
+		errs = append(errs, "resources.timeout is required")
+	} else {
+		// Validate timeout duration format
+		if _, err := time.ParseDuration(d.Resources.Timeout); err != nil {
+			errs = append(errs, fmt.Sprintf("resources.timeout is invalid: %v", err))
+		}
+	}
+
+	if len(errs) > 0 {
+		return &ValidationError{Errors: errs}
+	}
+
 	return nil
+}
+
+type ValidationError struct {
+	Errors []string
+}
+
+func (v *ValidationError) Error() string {
+	return fmt.Sprintf("job.yaml: %s", strings.Join(v.Errors, ", "))
 }

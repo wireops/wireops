@@ -27,13 +27,20 @@ const { data: envVars, refresh: refreshEnvVars } = useAsyncData(`job_env_${jobId
 
 const definition = ref<any>(null)
 const definitionError = ref('')
+const definitionErrors = ref<string[]>([])
 
 async function loadDefinition() {
   definitionError.value = ''
+  definitionErrors.value = []
   try {
     definition.value = await getJobDefinition(jobId.value)
   } catch (e: any) {
     definitionError.value = e?.message || 'Failed to load definition'
+    if (e?.data?.errors) {
+      definitionErrors.value = e.data.errors
+    } else {
+      definitionErrors.value = [definitionError.value]
+    }
   }
 }
 
@@ -148,11 +155,10 @@ async function toggleEnabled() {
       </div>
       <div class="flex items-center gap-2 shrink-0">
         <USwitch :model-value="job?.enabled" size="sm" @update:model-value="toggleEnabled" />
-        <UButton
-          icon="i-lucide-play"
-          label="Run now"
+        <JobsJobRunButton
+          :enabled="job?.enabled"
+          :has-error="definitionErrors.length > 0"
           :loading="triggering"
-          :disabled="!job?.enabled"
           @click="runNow"
         />
       </div>
@@ -238,9 +244,15 @@ async function toggleEnabled() {
 
     <!-- Definition tab -->
     <div v-if="activeTab === 'definition'" class="space-y-4">
-      <div v-if="definitionError" class="flex items-start gap-3 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3">
-        <UIcon name="i-lucide-circle-x" class="w-5 h-5 text-red-500 mt-0.5 shrink-0" />
-        <p class="text-sm text-red-500">{{ definitionError }}</p>
+      <div v-if="definitionErrors.length > 0" class="space-y-2">
+        <div
+          v-for="(err, idx) in definitionErrors"
+          :key="idx"
+          class="flex items-start gap-3 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3"
+        >
+          <UIcon name="i-lucide-circle-x" class="w-5 h-5 text-red-500 mt-0.5 shrink-0" />
+          <p class="text-sm text-red-500">{{ err }}</p>
+        </div>
       </div>
 
       <UCard v-else-if="definition">

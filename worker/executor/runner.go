@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -445,8 +446,26 @@ type JobSendFunc func(msgType protocol.MessageType, payload interface{})
 func RunJob(cmd protocol.RunJobCommand, send JobSendFunc) protocol.CommandResult {
 	log.Printf("[executor] run_job dispatched job_run=%s image=%s command=%s", cmd.JobRunID, cmd.Image, cmd.CommandID)
 
+	// Validate job security policies
+	if err := validateJobSecurity(cmd); err != nil {
+		errMsg := fmt.Sprintf("failed to start job, %v", err)
+		log.Printf("[executor] run_job security error: %s", errMsg)
+		// Send async failure report
+		go send(protocol.MsgJobCompleted, protocol.JobCompletedMessage{
+			JobRunID:   cmd.JobRunID,
+			Success:    false,
+			Output:     errMsg,
+			DurationMs: 0,
+		})
+		return protocol.CommandResult{CommandID: cmd.CommandID, Output: "started"}
+	}
+
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		timeout := 10 * time.Minute
+		if cmd.TimeoutSeconds > 0 {
+			timeout = time.Duration(cmd.TimeoutSeconds) * time.Second
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 
 		start := time.Now()
@@ -458,11 +477,20 @@ func RunJob(cmd protocol.RunJobCommand, send JobSendFunc) protocol.CommandResult
 		success := runErr == nil
 
 		if !success {
-			if output != "" {
-				output += "\n"
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				// Execution timed out. Explicitly kill the container to ensure it's not orphan.
+				log.Printf("[executor] run_job timeout exceeded for job_run=%s (took longer than %v) — stopping container", cmd.JobRunID, timeout)
+				stopCtx, stopCancel := context.WithTimeout(context.Background(), 15*time.Second)
+				_ = exec.CommandContext(stopCtx, "docker", "stop", "wireops-job-"+cmd.JobRunID).Run()
+				stopCancel()
+				output = fmt.Sprintf("failed to start job, timeout exceeded: execution took longer than %v", timeout)
+			} else {
+				if output != "" {
+					output += "\n"
+				}
+				output += runErr.Error()
+				log.Printf("[executor] run_job error job_run=%s elapsed=%dms: %v", cmd.JobRunID, elapsed, runErr)
 			}
-			output += runErr.Error()
-			log.Printf("[executor] run_job error job_run=%s elapsed=%dms: %v", cmd.JobRunID, elapsed, runErr)
 		} else {
 			log.Printf("[executor] run_job done job_run=%s elapsed=%dms", cmd.JobRunID, elapsed)
 		}
@@ -551,3 +579,177 @@ func applyEnvFile(workDir, envFileB64 string) error {
 	}
 	return nil
 }
+
+func validateJobSecurity(cmd protocol.RunJobCommand) error {
+	// 1. Validate Image
+	allowedImages := os.Getenv("WORKER_ALLOWED_IMAGES")
+	if err := validateImage(cmd.Image, allowedImages); err != nil {
+		return err
+	}
+
+	// 2. Validate Network
+	allowedNetworks := os.Getenv("WORKER_ALLOWED_NETWORKS")
+	if err := validateNetwork(cmd.Network, allowedNetworks); err != nil {
+		return err
+	}
+
+	// 3. Validate Volumes
+	allowedVolumes := os.Getenv("WORKER_ALLOWED_VOLUMES")
+	if err := validateVolumes(cmd.Volumes, allowedVolumes); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func validateImage(image string, allowedStr string) error {
+	if image == "" {
+		return fmt.Errorf("security restriction: image cannot be empty")
+	}
+	allowedStr = strings.TrimSpace(allowedStr)
+	if allowedStr == "" {
+		return nil // No restriction
+	}
+	patterns := parseCommaList(allowedStr)
+	for _, pattern := range patterns {
+		if matchPattern(image, pattern) {
+			return nil
+		}
+	}
+	return fmt.Errorf("security restriction: image %q is not allowed", image)
+}
+
+func validateNetwork(network string, allowedStr string) error {
+	allowedStr = strings.TrimSpace(allowedStr)
+	if allowedStr == "" {
+		return nil // No restriction
+	}
+	netToValidate := network
+	if netToValidate == "" {
+		netToValidate = "default"
+	}
+	patterns := parseCommaList(allowedStr)
+	for _, pattern := range patterns {
+		if matchPattern(netToValidate, pattern) {
+			return nil
+		}
+	}
+	return fmt.Errorf("security restriction: network %q is not allowed", network)
+}
+
+func validateVolumes(volumes []string, allowedStr string) error {
+	allowedStr = strings.TrimSpace(allowedStr)
+	var allowedPatterns []string
+	if allowedStr != "" {
+		allowedPatterns = parseCommaList(allowedStr)
+	}
+
+	for _, vol := range volumes {
+		vol = strings.TrimSpace(vol)
+		if vol == "" {
+			continue
+		}
+		parts := strings.Split(vol, ":")
+		hostPath := parts[0]
+
+		isHostPath := strings.HasPrefix(hostPath, "/") || strings.HasPrefix(hostPath, ".") || strings.Contains(hostPath, "/")
+
+		if isHostPath {
+			cleaned := filepath.Clean(hostPath)
+
+			forbiddenPaths := []string{
+				"/",
+				"/etc",
+				"/var/run/docker.sock",
+				"/boot",
+				"/sys",
+				"/proc",
+				"/dev",
+				"/lib",
+				"/lib64",
+				"/bin",
+				"/sbin",
+				"/usr",
+			}
+			for _, forbidden := range forbiddenPaths {
+				if cleaned == forbidden || strings.HasPrefix(cleaned, forbidden+"/") {
+					return fmt.Errorf("security restriction: volume mount path %q is not allowed", hostPath)
+				}
+			}
+
+			if len(allowedPatterns) > 0 {
+				matched := false
+				for _, pattern := range allowedPatterns {
+					cleanPattern := pattern
+					hasWildcard := strings.HasSuffix(pattern, "*")
+					if hasWildcard {
+						cleanPattern = filepath.Clean(pattern[:len(pattern)-1]) + "*"
+					} else {
+						cleanPattern = filepath.Clean(pattern)
+					}
+					if matchPattern(cleaned, cleanPattern) {
+						matched = true
+						break
+					}
+				}
+				if !matched {
+					return fmt.Errorf("security restriction: volume mount path %q is not allowed", hostPath)
+				}
+			}
+		} else {
+			if len(allowedPatterns) > 0 {
+				matched := false
+				for _, pattern := range allowedPatterns {
+					if matchPattern(hostPath, pattern) {
+						matched = true
+						break
+					}
+				}
+				if !matched {
+					return fmt.Errorf("security restriction: volume %q is not allowed", hostPath)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func parseCommaList(raw string) []string {
+	var list []string
+	for _, item := range strings.Split(raw, ",") {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			list = append(list, item)
+		}
+	}
+	return list
+}
+
+func matchPattern(val, pattern string) bool {
+	if pattern == "*" {
+		return true
+	}
+	parts := strings.Split(pattern, "*")
+	if len(parts) == 1 {
+		return val == pattern
+	}
+	if !strings.HasPrefix(val, parts[0]) {
+		return false
+	}
+	if !strings.HasSuffix(val, parts[len(parts)-1]) {
+		return false
+	}
+	curr := val
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		idx := strings.Index(curr, part)
+		if idx == -1 {
+			return false
+		}
+		curr = curr[idx+len(part):]
+	}
+	return true
+}
+
