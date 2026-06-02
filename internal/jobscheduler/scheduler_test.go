@@ -211,6 +211,18 @@ func writeJobFile(t *testing.T, dataDir, repoID, name string) {
 	}
 }
 
+func updateJobRunTime(t *testing.T, app core.App, id string, offset time.Duration) {
+	t.Helper()
+	pastStr := time.Now().Add(offset).UTC().Format("2006-01-02 15:04:05.000Z")
+	if _, err := app.DB().NewQuery("UPDATE job_runs SET updated = {:past} WHERE id = {:id}").
+		Bind(dbx.Params{
+			"past": pastStr,
+			"id":   id,
+		}).Execute(); err != nil {
+		t.Fatalf("failed to update job run %s time: %v", id, err)
+	}
+}
+
 func TestReconcileActiveJobs(t *testing.T) {
 	app := newJobSchedulerTestApp(t)
 	repo := createJobRepoRecord(t, app)
@@ -229,14 +241,7 @@ func TestReconcileActiveJobs(t *testing.T) {
 		"status":  "running",
 		"trigger": "manual",
 	})
-	// Set updated time to past to pass cutoff using SQL
-	if _, err := app.DB().NewQuery("UPDATE job_runs SET updated = {:past} WHERE id = {:id}").
-		Bind(dbx.Params{
-			"past": time.Now().Add(-5 * time.Minute).UTC().Format("2006-01-02 15:04:05.000Z"),
-			"id":   run1.Id,
-		}).Execute(); err != nil {
-		t.Fatalf("failed to update run1: %v", err)
-	}
+	updateJobRunTime(t, app, run1.Id, -5*time.Minute)
 
 	// Job run 2: lost (not included in heartbeat)
 	run2 := mustCreateRecord(t, app, "job_runs", map[string]any{
@@ -245,14 +250,7 @@ func TestReconcileActiveJobs(t *testing.T) {
 		"status":  "running",
 		"trigger": "manual",
 	})
-	// Set updated time to past to pass cutoff using SQL
-	if _, err := app.DB().NewQuery("UPDATE job_runs SET updated = {:past} WHERE id = {:id}").
-		Bind(dbx.Params{
-			"past": time.Now().Add(-5 * time.Minute).UTC().Format("2006-01-02 15:04:05.000Z"),
-			"id":   run2.Id,
-		}).Execute(); err != nil {
-		t.Fatalf("failed to update run2: %v", err)
-	}
+	updateJobRunTime(t, app, run2.Id, -5*time.Minute)
 
 	// Job run 3: newly started, not in heartbeat yet, but within cutoff
 	run3 := mustCreateRecord(t, app, "job_runs", map[string]any{
@@ -309,13 +307,7 @@ func TestMarkForgottenRunsStuckPending(t *testing.T) {
 		"status":  "running",
 		"trigger": "manual",
 	})
-	if _, err := app.DB().NewQuery("UPDATE job_runs SET updated = {:past} WHERE id = {:id}").
-		Bind(dbx.Params{
-			"past": time.Now().Add(-2 * time.Hour).UTC().Format("2006-01-02 15:04:05.000Z"),
-			"id":   run1.Id,
-		}).Execute(); err != nil {
-		t.Fatalf("failed to update run1: %v", err)
-	}
+	updateJobRunTime(t, app, run1.Id, -2*time.Hour)
 
 	// Run 2: pending, 20 minutes old -> should become error
 	run2 := mustCreateRecord(t, app, "job_runs", map[string]any{
@@ -323,13 +315,7 @@ func TestMarkForgottenRunsStuckPending(t *testing.T) {
 		"status":  "pending",
 		"trigger": "manual",
 	})
-	if _, err := app.DB().NewQuery("UPDATE job_runs SET updated = {:past} WHERE id = {:id}").
-		Bind(dbx.Params{
-			"past": time.Now().Add(-20 * time.Minute).UTC().Format("2006-01-02 15:04:05.000Z"),
-			"id":   run2.Id,
-		}).Execute(); err != nil {
-		t.Fatalf("failed to update run2: %v", err)
-	}
+	updateJobRunTime(t, app, run2.Id, -20*time.Minute)
 
 	// Run 3: pending, 5 minutes old -> should remain pending
 	run3 := mustCreateRecord(t, app, "job_runs", map[string]any{

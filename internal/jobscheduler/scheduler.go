@@ -394,12 +394,19 @@ const maxJobRunPendingDuration = 15 * time.Minute
 // any job_run stuck in "pending" for more than maxJobRunPendingDuration
 // and marks it as "error".
 func (s *Scheduler) MarkForgottenRuns() error {
-	runningCutoff := time.Now().Add(-maxJobRunDuration)
-	pendingCutoff := time.Now().Add(-maxJobRunPendingDuration)
-
 	var firstErr error
 
-	// 1. Reconcile running runs (status: "running" -> "forgotten")
+	if err := s.reconcileRunningRuns(&firstErr); err != nil {
+		return err
+	}
+
+	s.reconcilePendingRuns(&firstErr)
+
+	return firstErr
+}
+
+func (s *Scheduler) reconcileRunningRuns(firstErr *error) error {
+	runningCutoff := time.Now().Add(-maxJobRunDuration)
 	runningRecords, err := s.app.FindAllRecords("job_runs",
 		dbx.HashExp{"status": "running"},
 	)
@@ -408,47 +415,58 @@ func (s *Scheduler) MarkForgottenRuns() error {
 	}
 
 	for _, rec := range runningRecords {
-		if rec.GetDateTime("updated").Time().Before(runningCutoff) {
-			rec.Set("status", "forgotten")
-			rec.Set("output", "job forgotten: still running after 1 hour with no completion signal")
-			if err := s.app.Save(rec); err != nil {
-				log.Printf("[jobscheduler] MarkForgottenRuns: failed to save running run %s: %v", rec.Id, err)
-				if firstErr == nil {
-					firstErr = fmt.Errorf("mark forgotten running run=%s: %w", rec.Id, err)
-				}
-			} else {
-				log.Printf("[jobscheduler] run %s marked forgotten (started >1h ago)", rec.Id)
-			}
-		}
+		s.reconcileSingleRunningRun(rec, runningCutoff, firstErr)
 	}
+	return nil
+}
 
-	// 2. Reconcile pending runs (status: "pending" -> "error")
+func (s *Scheduler) reconcileSingleRunningRun(rec *core.Record, cutoff time.Time, firstErr *error) {
+	if !rec.GetDateTime("updated").Time().Before(cutoff) {
+		return
+	}
+	rec.Set("status", "forgotten")
+	rec.Set("output", "job forgotten: still running after 1 hour with no completion signal")
+	if err := s.app.Save(rec); err != nil {
+		log.Printf("[jobscheduler] MarkForgottenRuns: failed to save running run %s: %v", rec.Id, err)
+		if *firstErr == nil {
+			*firstErr = fmt.Errorf("mark forgotten running run=%s: %w", rec.Id, err)
+		}
+	} else {
+		log.Printf("[jobscheduler] run %s marked forgotten (started >1h ago)", rec.Id)
+	}
+}
+
+func (s *Scheduler) reconcilePendingRuns(firstErr *error) {
+	pendingCutoff := time.Now().Add(-maxJobRunPendingDuration)
 	pendingRecords, err := s.app.FindAllRecords("job_runs",
 		dbx.HashExp{"status": "pending"},
 	)
 	if err != nil {
-		if firstErr == nil {
-			firstErr = fmt.Errorf("MarkForgottenRuns pending query failed: %w", err)
+		if *firstErr == nil {
+			*firstErr = fmt.Errorf("MarkForgottenRuns pending query failed: %w", err)
 		}
-		return firstErr
+		return
 	}
 
 	for _, rec := range pendingRecords {
-		if rec.GetDateTime("updated").Time().Before(pendingCutoff) {
-			rec.Set("status", "error")
-			rec.Set("output", "job failed: stuck in pending for more than 15 minutes (failed to dispatch to worker)")
-			if err := s.app.Save(rec); err != nil {
-				log.Printf("[jobscheduler] MarkForgottenRuns: failed to save pending run %s: %v", rec.Id, err)
-				if firstErr == nil {
-					firstErr = fmt.Errorf("mark error pending run=%s: %w", rec.Id, err)
-				}
-			} else {
-				log.Printf("[jobscheduler] run %s marked error (stuck in pending >15m)", rec.Id)
-			}
-		}
+		s.reconcileSinglePendingRun(rec, pendingCutoff, firstErr)
 	}
+}
 
-	return firstErr
+func (s *Scheduler) reconcileSinglePendingRun(rec *core.Record, cutoff time.Time, firstErr *error) {
+	if !rec.GetDateTime("updated").Time().Before(cutoff) {
+		return
+	}
+	rec.Set("status", "error")
+	rec.Set("output", "job failed: stuck in pending for more than 15 minutes (failed to dispatch to worker)")
+	if err := s.app.Save(rec); err != nil {
+		log.Printf("[jobscheduler] MarkForgottenRuns: failed to save pending run %s: %v", rec.Id, err)
+		if *firstErr == nil {
+			*firstErr = fmt.Errorf("mark error pending run=%s: %w", rec.Id, err)
+		}
+	} else {
+		log.Printf("[jobscheduler] run %s marked error (stuck in pending >15m)", rec.Id)
+	}
 }
 
 // ReconcileActiveJobs is called when a worker connects or sends a heartbeat.

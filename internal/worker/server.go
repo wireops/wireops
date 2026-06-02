@@ -313,7 +313,10 @@ func (s *WorkerServer) Dispatch(ctx context.Context, workerID string, cmd interf
 	err = conn.WriteMessage(websocket.TextMessage, msg)
 	writeMu.Unlock()
 	if err != nil {
-		_ = s.workerSvc.LogCommandFinish(commandID, "error", map[string]string{"error": err.Error()}, 0)
+		elapsedMs := time.Since(start).Milliseconds()
+		// If conn.WriteMessage fails during Dispatch, we calculate the duration elapsed since start
+		// and pass it to s.workerSvc.LogCommandFinish to log the error for commandID and workerID.
+		_ = s.workerSvc.LogCommandFinish(commandID, "error", map[string]string{"error": err.Error()}, elapsedMs)
 		return protocol.CommandResult{}, fmt.Errorf("failed to send command to worker %s: %w", workerID, err)
 	}
 

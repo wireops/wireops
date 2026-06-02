@@ -22,12 +22,14 @@ import (
 )
 
 var (
-	activeJobs      gosync.Map
-	connWriteMu     gosync.Mutex
-	activeConnMu    gosync.RWMutex
-	activeConn      *websocket.Conn
-	completedJobsMu gosync.Mutex
-	completedJobs   []protocol.JobCompletedMessage
+	activeJobs        gosync.Map
+	connWriteMu       gosync.Mutex
+	activeConnMu      gosync.RWMutex
+	activeConn        *websocket.Conn
+	completedJobsMu   gosync.Mutex
+	completedJobs     []protocol.JobCompletedMessage
+	queuedEnvelopesMu gosync.Mutex
+	queuedEnvelopes   [][]byte
 )
 
 const (
@@ -147,6 +149,9 @@ func runSession(serverURL, workerToken, hostname string, tags []string, sigChan 
 
 	// Flush any queued completions that finished while disconnected
 	flushCompletedJobs()
+
+	// Flush any queued result/envelope messages
+	flushQueuedEnvelopes()
 
 	disconnectCh := make(chan disconnectReason, 1)
 
@@ -400,14 +405,60 @@ func sendResult(result protocol.CommandResult) {
 	c := activeConn
 	activeConnMu.RUnlock()
 	if c == nil {
-		log.Printf("[worker] result send failed: no active connection (command %s)", result.CommandID)
+		log.Printf("[worker] result send failed: no active connection (command %s). Enqueueing for retry.", result.CommandID)
+		queuedEnvelopesMu.Lock()
+		queuedEnvelopes = append(queuedEnvelopes, msg)
+		queuedEnvelopesMu.Unlock()
 		return
 	}
 	connWriteMu.Lock()
 	err = c.WriteMessage(websocket.TextMessage, msg)
 	connWriteMu.Unlock()
 	if err != nil {
-		log.Printf("[worker] result send error=%v", err)
+		log.Printf("[worker] result send error=%v. Enqueueing for retry.", err)
+		queuedEnvelopesMu.Lock()
+		queuedEnvelopes = append(queuedEnvelopes, msg)
+		queuedEnvelopesMu.Unlock()
+	}
+}
+
+func flushQueuedEnvelopes() {
+	queuedEnvelopesMu.Lock()
+	queue := queuedEnvelopes
+	queuedEnvelopes = nil
+	queuedEnvelopesMu.Unlock()
+
+	if len(queue) == 0 {
+		return
+	}
+
+	log.Printf("[worker] flushing %d queued result/envelope messages...", len(queue))
+	var remaining [][]byte
+	for _, msg := range queue {
+		activeConnMu.RLock()
+		c := activeConn
+		activeConnMu.RUnlock()
+
+		if c == nil {
+			log.Printf("[worker] flush failed: no active connection. Re-queueing remaining messages.")
+			remaining = append(remaining, msg)
+			continue
+		}
+
+		connWriteMu.Lock()
+		err := c.WriteMessage(websocket.TextMessage, msg)
+		connWriteMu.Unlock()
+
+		if err != nil {
+			log.Printf("[worker] flush send error=%v. Re-queueing message.", err)
+			remaining = append(remaining, msg)
+		}
+	}
+
+	if len(remaining) > 0 {
+		queuedEnvelopesMu.Lock()
+		queuedEnvelopes = append(remaining, queuedEnvelopes...)
+		queuedEnvelopesMu.Unlock()
 	}
 }
 
@@ -463,6 +514,17 @@ func reportJobCompleted(msg protocol.JobCompletedMessage) {
 		completedJobsMu.Lock()
 		completedJobs = append(completedJobs, msg)
 		completedJobsMu.Unlock()
+
+		// In reportJobCompleted, when a writeErr occurs and we append to completedJobs,
+		// we immediately trigger a retry via flushCompletedJobs asynchronously.
+		// To avoid deadlocks, completedJobsMu is unlocked before calling flushCompletedJobs.
+		// This retry is only triggered if the current activeConn is non-nil/healthy.
+		activeConnMu.RLock()
+		conn := activeConn
+		activeConnMu.RUnlock()
+		if conn != nil {
+			go flushCompletedJobs()
+		}
 	} else {
 		log.Printf("[worker] job completion sent successfully job_run=%s", msg.JobRunID)
 	}

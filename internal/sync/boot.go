@@ -19,7 +19,7 @@ func RecoverOrphanState(app core.App) error {
 	} else {
 		for _, rec := range syncLogs {
 			rec.Set("status", "error")
-			rec.Set("output", "Sincronização interrompida: servidor reiniciado durante a execução.")
+			rec.Set("output", "Synchronization interrupted: server restarted during execution.")
 			rec.Set("duration_ms", 0)
 			if err := app.Save(rec); err != nil {
 				log.Printf("[boot] failed to update sync log %s: %v", rec.Id, err)
@@ -52,7 +52,7 @@ func RecoverOrphanState(app core.App) error {
 	} else {
 		for _, rec := range jobRuns {
 			rec.Set("status", "error")
-			rec.Set("output", "Execução cancelada: servidor reiniciado antes do despacho.")
+			rec.Set("output", "Execution canceled: server restarted before dispatch.")
 			rec.Set("duration_ms", 0)
 			if err := app.Save(rec); err != nil {
 				log.Printf("[boot] failed to update pending job run %s: %v", rec.Id, err)
@@ -69,7 +69,7 @@ func RecoverOrphanState(app core.App) error {
 	} else {
 		for _, rec := range workerCommands {
 			rec.Set("status", "error")
-			rec.Set("result", map[string]string{"error": "Comando interrompido: servidor reiniciado durante o despacho."})
+			rec.Set("result", map[string]string{"error": "Command interrupted: server restarted during dispatch."})
 			if err := app.Save(rec); err != nil {
 				log.Printf("[boot] failed to update worker command %s: %v", rec.Id, err)
 			} else {
