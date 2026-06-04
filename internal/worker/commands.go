@@ -7,6 +7,8 @@ import (
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
+
+	"github.com/wireops/wireops/internal/contextutil"
 )
 
 // LogCommandStart creates or updates a worker_commands record with status 'dispatched'.
@@ -33,7 +35,7 @@ func (s *Service) LogCommandStart(ctx context.Context, workerID, commandID, comm
 	record.Set("duration_ms", 0)
 
 	if ctx != nil {
-		if userID, ok := ctx.Value("userID").(string); ok && userID != "" {
+		if userID := contextutil.GetUserID(ctx); userID != "" {
 			record.Set("created_by", userID)
 		}
 	}

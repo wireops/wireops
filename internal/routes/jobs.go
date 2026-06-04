@@ -124,6 +124,13 @@ func RegisterJobRoutes(r *router.Router[*core.RequestEvent], app core.App, sched
 		repoID := rec.GetString("repository")
 		jobFile := rec.GetString("job_file")
 		if _, err := job.ParseJobFile(repoWorkspace, repoID, jobFile); err != nil {
+			var valErr *job.ValidationError
+			if errors.As(err, &valErr) {
+				return e.JSON(http.StatusUnprocessableEntity, map[string]any{
+					"error":  err.Error(),
+					"errors": valErr.Errors,
+				})
+			}
 			return e.JSON(http.StatusUnprocessableEntity, map[string]string{"error": "Validation failed: " + err.Error()})
 		}
 		var userID string

@@ -32,6 +32,7 @@ const definitionErrors = ref<string[]>([])
 async function loadDefinition() {
   definitionError.value = ''
   definitionErrors.value = []
+  definition.value = null
   try {
     definition.value = await getJobDefinition(jobId.value)
   } catch (e: any) {

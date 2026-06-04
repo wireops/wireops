@@ -19,6 +19,7 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/robfig/cron/v3"
 
+	"github.com/wireops/wireops/internal/contextutil"
 	"github.com/wireops/wireops/internal/crypto"
 	"github.com/wireops/wireops/internal/git"
 	"github.com/wireops/wireops/internal/job"
@@ -205,7 +206,7 @@ func (s *Scheduler) CancelRun(runID string) error {
 }
 
 func (s *Scheduler) executeJob(jobID, trigger string, userID string) {
-	ctx := context.WithValue(s.rootCtx, "userID", userID)
+	ctx := contextutil.WithUserID(s.rootCtx, userID)
 	if ctx.Err() != nil {
 		return
 	}

@@ -2,6 +2,8 @@ package executor
 
 import (
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/wireops/wireops/internal/protocol"
@@ -159,3 +161,53 @@ func TestValidateJobSecurity(t *testing.T) {
 		t.Error("expected invalid volume to fail security, got nil")
 	}
 }
+
+func TestSafeEnv(t *testing.T) {
+	// Set a custom environment variable to verify preservation
+	os.Setenv("TEST_WIREOPS_VAR", "preserve-me")
+	defer os.Unsetenv("TEST_WIREOPS_VAR")
+
+	env := safeEnv()
+
+	// Verify that TEST_WIREOPS_VAR is preserved
+	foundPreserved := false
+	pathCount := 0
+	var pathVal string
+
+	for _, kv := range env {
+		if kv == "TEST_WIREOPS_VAR=preserve-me" {
+			foundPreserved = true
+		}
+		if strings.HasPrefix(strings.ToUpper(kv), "PATH=") {
+			pathCount++
+			pathVal = kv
+		}
+	}
+
+	if !foundPreserved {
+		t.Error("expected custom env var to be preserved, but it was not found")
+	}
+
+	if pathCount != 1 {
+		t.Errorf("expected PATH variable to appear exactly once, got count: %d", pathCount)
+	}
+
+	expectedPrefix := "PATH="
+	if !strings.HasPrefix(strings.ToUpper(pathVal), expectedPrefix) {
+		t.Errorf("expected PATH variable prefix, got: %q", pathVal)
+	}
+
+	pathDirs := strings.Split(pathVal[len(expectedPrefix):], string(filepath.ListSeparator))
+	expectedDirs := []string{"/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/local/bin"}
+
+	if len(pathDirs) != len(expectedDirs) {
+		t.Errorf("expected %d directories in PATH, got %d: %q", len(expectedDirs), len(pathDirs), pathDirs)
+	}
+
+	for i, d := range expectedDirs {
+		if i < len(pathDirs) && pathDirs[i] != d {
+			t.Errorf("expected path directory at index %d to be %q, got %q", i, d, pathDirs[i])
+		}
+	}
+}
+

@@ -470,7 +470,9 @@ func RunJob(cmd protocol.RunJobCommand, send JobSendFunc) protocol.CommandResult
 
 		start := time.Now()
 		args := cmd.BuildDockerRunArgs()
-		out, runErr := exec.CommandContext(ctx, "docker", args...).CombinedOutput()
+		runCmd := exec.CommandContext(ctx, "docker", args...)
+		runCmd.Env = safeEnv()
+		out, runErr := runCmd.CombinedOutput()
 		output := string(out)
 
 		elapsed := time.Since(start).Milliseconds()
@@ -481,7 +483,9 @@ func RunJob(cmd protocol.RunJobCommand, send JobSendFunc) protocol.CommandResult
 				// Execution timed out. Explicitly kill the container to ensure it's not orphan.
 				log.Printf("[executor] run_job timeout exceeded for job_run=%s (took longer than %v) — stopping container", cmd.JobRunID, timeout)
 				stopCtx, stopCancel := context.WithTimeout(context.Background(), 15*time.Second)
-				_ = exec.CommandContext(stopCtx, "docker", "stop", "wireops-job-"+cmd.JobRunID).Run()
+				stopCmd := exec.CommandContext(stopCtx, "docker", "stop", "wireops-job-"+cmd.JobRunID)
+				stopCmd.Env = safeEnv()
+				_ = stopCmd.Run()
 				stopCancel()
 				output = fmt.Sprintf("failed to start job, timeout exceeded: execution took longer than %v", timeout)
 			} else {
@@ -516,7 +520,9 @@ func KillJob(cmd protocol.KillJobCommand) protocol.CommandResult {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	out, err := exec.CommandContext(ctx, "docker", "stop", containerName).CombinedOutput()
+	killCmd := exec.CommandContext(ctx, "docker", "stop", containerName)
+	killCmd.Env = safeEnv()
+	out, err := killCmd.CombinedOutput()
 	if err != nil {
 		output := string(out)
 		if ctx.Err() == context.DeadlineExceeded {
@@ -752,4 +758,22 @@ func matchPattern(val, pattern string) bool {
 	}
 	return true
 }
+
+func safeEnv() []string {
+	env := os.Environ()
+	safeDirs := []string{"/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/local/bin"}
+	safePath := "PATH=" + strings.Join(safeDirs, string(filepath.ListSeparator))
+	found := false
+	for i, kv := range env {
+		if strings.HasPrefix(strings.ToUpper(kv), "PATH=") {
+			env[i] = safePath
+			found = true
+		}
+	}
+	if !found {
+		env = append(env, safePath)
+	}
+	return env
+}
+
 

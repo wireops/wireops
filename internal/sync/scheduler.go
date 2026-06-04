@@ -11,6 +11,7 @@ import (
 
 	"github.com/pocketbase/pocketbase/core"
 
+	"github.com/wireops/wireops/internal/contextutil"
 	"github.com/wireops/wireops/internal/docker"
 	"github.com/wireops/wireops/internal/notify"
 )
@@ -113,7 +114,7 @@ func (s *Scheduler) UnregisterStack(stackID string) {
 }
 
 func (s *Scheduler) TriggerSync(stackID, trigger string, queueTotal int, userID string) {
-	ctx := context.WithValue(s.rootCtx, "userID", userID)
+	ctx := contextutil.WithUserID(s.rootCtx, userID)
 	go s.safeRun(ctx, fmt.Sprintf("sync[%s] trigger=%s", stackID, trigger), func() error {
 		select {
 		case s.syncSemaphore <- struct{}{}:
@@ -126,7 +127,7 @@ func (s *Scheduler) TriggerSync(stackID, trigger string, queueTotal int, userID 
 }
 
 func (s *Scheduler) TriggerRollback(stackID, commitSHA string, userID string) {
-	ctx := context.WithValue(s.rootCtx, "userID", userID)
+	ctx := contextutil.WithUserID(s.rootCtx, userID)
 	go s.safeRun(ctx, fmt.Sprintf("rollback[%s]", stackID), func() error {
 		select {
 		case s.syncSemaphore <- struct{}{}:
@@ -139,7 +140,7 @@ func (s *Scheduler) TriggerRollback(stackID, commitSHA string, userID string) {
 }
 
 func (s *Scheduler) TriggerForceRedeploy(stackID string, recreateContainers, recreateVolumes, recreateNetworks bool, userID string) {
-	ctx := context.WithValue(s.rootCtx, "userID", userID)
+	ctx := contextutil.WithUserID(s.rootCtx, userID)
 	go s.safeRun(ctx, fmt.Sprintf("force-redeploy[%s]", stackID), func() error {
 		select {
 		case s.syncSemaphore <- struct{}{}:
@@ -152,7 +153,7 @@ func (s *Scheduler) TriggerForceRedeploy(stackID string, recreateContainers, rec
 }
 
 func (s *Scheduler) TriggerTransfer(stackID, targetWorkerID string, userID string) {
-	ctx := context.WithValue(s.rootCtx, "userID", userID)
+	ctx := contextutil.WithUserID(s.rootCtx, userID)
 	go s.safeRun(ctx, fmt.Sprintf("transfer[%s]", stackID), func() error {
 		select {
 		case s.syncSemaphore <- struct{}{}:

@@ -1,6 +1,10 @@
 package job
 
-import "testing"
+import (
+	"errors"
+	"strings"
+	"testing"
+)
 
 func TestIsJobFile(t *testing.T) {
 	cases := []struct {
@@ -239,9 +243,15 @@ func TestDefinitionValidate(t *testing.T) {
 				}
 			} else {
 				if err == nil {
-					t.Errorf("expected error containing %q, got nil", tc.wantErr)
-				} else if !containsString(err.Error(), tc.wantErr) {
-					t.Errorf("expected error containing %q, got: %v", tc.wantErr, err)
+					t.Fatalf("expected error containing %q, got nil", tc.wantErr)
+				}
+				var ve *ValidationError
+				if !errors.As(err, &ve) {
+					t.Fatalf("expected error to be *ValidationError, got %T: %v", err, err)
+				}
+				combined := strings.Join(ve.Errors, ", ")
+				if !containsString(combined, tc.wantErr) {
+					t.Errorf("expected validation errors to contain %q, got: %v", tc.wantErr, combined)
 				}
 			}
 		})
