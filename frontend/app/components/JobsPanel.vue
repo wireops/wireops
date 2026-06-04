@@ -10,9 +10,22 @@ const { data: repos, refresh: refreshRepos } = useAsyncData('repos_for_jobs', ()
 
 const { data: jobs, refresh, pending } = useAsyncData('jobs_list', () => listJobs())
 
+const jobsWithReversedRuns = computed(() => {
+  if (!jobs.value) return []
+  return jobs.value.map((job: any) => ({
+    ...job,
+    reversedRecentRuns: job.recent_runs ? [...job.recent_runs].reverse() : []
+  }))
+})
+
 onMounted(() => {
   subscribe('scheduled_jobs', () => refresh())
-  subscribe('job_runs', () => refresh())
+  subscribe('job_runs', (data: any) => {
+    const jobId = data.record?.job
+    if (jobId && jobs.value?.some((j: any) => j.id === jobId)) {
+      refresh()
+    }
+  })
 })
 
 const showCreate = ref(false)
@@ -102,7 +115,7 @@ function formatRelative(dateStr: string) {
 
         <div v-else class="space-y-3">
           <div
-            v-for="job in jobs"
+            v-for="job in jobsWithReversedRuns"
             :key="job.id"
             class="flex items-center justify-between p-4 bg-gray-50 dark:bg-carbon-800/40 rounded-xl border border-gray-200 dark:border-carbon-700 hover:shadow-[0_0_0_2px_rgba(255,198,0,0.35),0_0_20px_rgba(255,198,0,0.12)] transition-all"
           >
@@ -128,7 +141,7 @@ function formatRelative(dateStr: string) {
                 <div v-if="job.recent_runs && job.recent_runs.length > 0" class="flex items-center gap-1 ml-2">
                   <span class="text-xs text-gray-400 dark:text-wire-200/40 mr-1 select-none">History:</span>
                   <UTooltip
-                    v-for="run in [...job.recent_runs].reverse()"
+                    v-for="run in job.reversedRecentRuns"
                     :key="run.id"
                     :text="`Run: ${run.status} (${formatRelative(run.created)})`"
                   >
