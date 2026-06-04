@@ -37,13 +37,33 @@ func (f fakeJobDispatcher) Dispatch(context.Context, string, interface{}) (proto
 	return protocol.CommandResult{Output: "started"}, nil
 }
 
+type capturingJobDispatcher struct {
+	workers    []string
+	onDispatch func(cmd interface{})
+}
+
+func (f capturingJobDispatcher) GetWorkersByTags(_ []string) []string {
+	return f.workers
+}
+
+func (f capturingJobDispatcher) IsConnected(workerID string) bool {
+	return true
+}
+
+func (f capturingJobDispatcher) Dispatch(ctx context.Context, workerID string, cmd interface{}) (protocol.CommandResult, error) {
+	if f.onDispatch != nil {
+		f.onDispatch(cmd)
+	}
+	return protocol.CommandResult{Output: "started"}, nil
+}
+
 func TestExecuteJobPersistsDefinitionError(t *testing.T) {
 	app := newJobSchedulerTestApp(t)
 	repo := createJobRepoRecord(t, app)
 	jobRec := createScheduledJobRecord(t, app, repo.Id, "missing.yml")
 	s := NewScheduler(app, fakeJobDispatcher{workers: []string{"worker-1"}}, app.DataDir())
 
-	s.executeJob(jobRec.Id, "manual")
+	s.executeJob(jobRec.Id, "manual", "test-user")
 
 	refreshed, err := app.FindRecordById("scheduled_jobs", jobRec.Id)
 	if err != nil {
@@ -75,7 +95,7 @@ func TestExecuteJobWithoutWorkersPersistsStalledRun(t *testing.T) {
 	jobRec := createScheduledJobRecord(t, app, repo.Id, "job.yaml")
 	s := NewScheduler(app, fakeJobDispatcher{}, app.DataDir())
 
-	s.executeJob(jobRec.Id, "cron")
+	s.executeJob(jobRec.Id, "cron", "system")
 
 	refreshed, err := app.FindRecordById("scheduled_jobs", jobRec.Id)
 	if err != nil {
@@ -205,7 +225,7 @@ func writeJobFile(t *testing.T, dataDir, repoID, name string) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		t.Fatalf("failed to create repo dir: %v", err)
 	}
-	content := []byte("title: Test Job\ndescription: Test job\nimage: alpine\ncron: \"* * * * *\"\ncommand: echo ok\n")
+	content := []byte("title: Test Job\ndescription: Test job\nimage: alpine\ncron: \"* * * * *\"\ncommand: echo ok\nresources:\n  cpu: \"0.5\"\n  memory: \"512m\"\n  timeout: \"10m\"\n")
 	if err := os.WriteFile(filepath.Join(dir, name), content, 0644); err != nil {
 		t.Fatalf("failed to write job file: %v", err)
 	}
@@ -348,3 +368,62 @@ func TestMarkForgottenRunsStuckPending(t *testing.T) {
 		t.Errorf("run3 status = %q, want pending", got)
 	}
 }
+
+func TestExecuteJobConvertsResources(t *testing.T) {
+	app := newJobSchedulerTestApp(t)
+	repo := createJobRepoRecord(t, app)
+	writeJobFile(t, app.DataDir(), repo.Id, "job.yaml")
+	jobRec := createScheduledJobRecord(t, app, repo.Id, "job.yaml")
+
+	worker := mustCreateRecord(t, app, "workers", map[string]any{
+		"hostname":    "worker-1",
+		"fingerprint": "fp1",
+		"status":      "ACTIVE",
+	})
+
+	capturedCmdChan := make(chan protocol.RunJobCommand, 1)
+	dispatcher := capturingJobDispatcher{
+		workers: []string{worker.Id},
+		onDispatch: func(cmd interface{}) {
+			if runJobCmd, ok := cmd.(protocol.RunJobCommand); ok {
+				capturedCmdChan <- runJobCmd
+			}
+		},
+	}
+
+	s := NewScheduler(app, dispatcher, app.DataDir())
+	s.executeJob(jobRec.Id, "manual", "test-user")
+
+	var capturedCmd protocol.RunJobCommand
+	select {
+	case capturedCmd = <-capturedCmdChan:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for job to be dispatched")
+	}
+
+	if capturedCmd.CPUs != "0.5" {
+		t.Errorf("expected CPUs '0.5', got %q", capturedCmd.CPUs)
+	}
+
+	if capturedCmd.MemoryLimit != "512m" {
+		t.Errorf("expected MemoryLimit '512m', got %q", capturedCmd.MemoryLimit)
+	}
+
+	if capturedCmd.TimeoutSeconds != 600 {
+		t.Errorf("expected TimeoutSeconds 600 (10m), got %d", capturedCmd.TimeoutSeconds)
+	}
+
+	// Wait until the background goroutine writes the "running" status to DB to avoid panic on cleanup
+	pollStart := time.Now()
+	for {
+		run, err := app.FindRecordById("job_runs", capturedCmd.JobRunID)
+		if err == nil && run.GetString("status") == "running" {
+			break
+		}
+		if time.Since(pollStart) > 2*time.Second {
+			t.Fatal("timed out waiting for job_run status to become running")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+

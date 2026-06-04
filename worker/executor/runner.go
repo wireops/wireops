@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"github.com/wireops/wireops/internal/compose"
 	"github.com/wireops/wireops/internal/docker"
 	"github.com/wireops/wireops/internal/protocol"
+	"github.com/wireops/wireops/internal/safepath"
 )
 
 // stackDir is the root directory under which per-stack compose work dirs are created.
@@ -434,49 +436,67 @@ func ReadFile(_ context.Context, cmd protocol.ReadFileCommand) protocol.CommandR
 	return protocol.CommandResult{CommandID: cmd.CommandID, Output: base64.StdEncoding.EncodeToString(data)}
 }
 
-// JobSendFunc is the callback the executor uses to push messages back to the server.
-type JobSendFunc func(msgType protocol.MessageType, payload interface{})
-
-// RunJob starts a one-shot `docker run` container asynchronously. It returns an
-// immediate ack CommandResult so the server's Dispatch call unblocks quickly.
-// When the container exits, it invokes send with a JobCompletedMessage so the
-// server can update the job_run record — without ever holding the WebSocket open
-// for the entire duration of the container.
-func RunJob(cmd protocol.RunJobCommand, send JobSendFunc) protocol.CommandResult {
+// RunJob starts a one-shot `docker run` container and blocks until it completes.
+// It returns a JobCompletedMessage with the final result.
+func RunJob(cmd protocol.RunJobCommand) protocol.JobCompletedMessage {
 	log.Printf("[executor] run_job dispatched job_run=%s image=%s command=%s", cmd.JobRunID, cmd.Image, cmd.CommandID)
 
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-		defer cancel()
+	// Validate job security policies
+	if err := validateJobSecurity(cmd); err != nil {
+		errMsg := fmt.Sprintf("failed to start job, %v", err)
+		log.Printf("[executor] run_job security error: %s", errMsg)
+		return protocol.JobCompletedMessage{
+			JobRunID:   cmd.JobRunID,
+			Success:    false,
+			Output:     errMsg,
+			DurationMs: 0,
+		}
+	}
 
-		start := time.Now()
-		args := cmd.BuildDockerRunArgs()
-		out, runErr := exec.CommandContext(ctx, "docker", args...).CombinedOutput()
-		output := string(out)
+	timeout := 10 * time.Minute
+	if cmd.TimeoutSeconds > 0 {
+		timeout = time.Duration(cmd.TimeoutSeconds) * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 
-		elapsed := time.Since(start).Milliseconds()
-		success := runErr == nil
+	start := time.Now()
+	args := cmd.BuildDockerRunArgs()
+	runCmd := exec.CommandContext(ctx, "docker", args...)
+	runCmd.Env = safeEnv()
+	out, runErr := runCmd.CombinedOutput()
+	output := string(out)
 
-		if !success {
+	elapsed := time.Since(start).Milliseconds()
+	success := runErr == nil
+
+	if !success {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			// Execution timed out. Explicitly kill the container to ensure it's not orphan.
+			log.Printf("[executor] run_job timeout exceeded for job_run=%s (took longer than %v) — stopping container", cmd.JobRunID, timeout)
+			stopCtx, stopCancel := context.WithTimeout(context.Background(), 15*time.Second)
+			stopCmd := exec.CommandContext(stopCtx, "docker", "stop", "wireops-job-"+cmd.JobRunID)
+			stopCmd.Env = safeEnv()
+			_ = stopCmd.Run()
+			stopCancel()
+			output = fmt.Sprintf("failed to start job, timeout exceeded: execution took longer than %v", timeout)
+		} else {
 			if output != "" {
 				output += "\n"
 			}
 			output += runErr.Error()
 			log.Printf("[executor] run_job error job_run=%s elapsed=%dms: %v", cmd.JobRunID, elapsed, runErr)
-		} else {
-			log.Printf("[executor] run_job done job_run=%s elapsed=%dms", cmd.JobRunID, elapsed)
 		}
+	} else {
+		log.Printf("[executor] run_job done job_run=%s elapsed=%dms", cmd.JobRunID, elapsed)
+	}
 
-		send(protocol.MsgJobCompleted, protocol.JobCompletedMessage{
-			JobRunID:   cmd.JobRunID,
-			Success:    success,
-			Output:     output,
-			DurationMs: elapsed,
-		})
-	}()
-
-	// Ack: container is starting; the caller should not block waiting for completion.
-	return protocol.CommandResult{CommandID: cmd.CommandID, Output: "started"}
+	return protocol.JobCompletedMessage{
+		JobRunID:   cmd.JobRunID,
+		Success:    success,
+		Output:     output,
+		DurationMs: elapsed,
+	}
 }
 
 // KillJob stops a running job container via docker stop.
@@ -488,7 +508,9 @@ func KillJob(cmd protocol.KillJobCommand) protocol.CommandResult {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	out, err := exec.CommandContext(ctx, "docker", "stop", containerName).CombinedOutput()
+	killCmd := exec.CommandContext(ctx, "docker", "stop", containerName)
+	killCmd.Env = safeEnv()
+	out, err := killCmd.CombinedOutput()
 	if err != nil {
 		output := string(out)
 		if ctx.Err() == context.DeadlineExceeded {
@@ -551,3 +573,199 @@ func applyEnvFile(workDir, envFileB64 string) error {
 	}
 	return nil
 }
+
+func validateJobSecurity(cmd protocol.RunJobCommand) error {
+	// 1. Validate Image
+	allowedImages := os.Getenv("WORKER_ALLOWED_IMAGES")
+	if err := validateImage(cmd.Image, allowedImages); err != nil {
+		return err
+	}
+
+	// 2. Validate Network
+	allowedNetworks := os.Getenv("WORKER_ALLOWED_NETWORKS")
+	if err := validateNetwork(cmd.Network, allowedNetworks); err != nil {
+		return err
+	}
+
+	// 3. Validate Volumes
+	allowedVolumes := os.Getenv("WORKER_ALLOWED_VOLUMES")
+	if err := validateVolumes(cmd.Volumes, allowedVolumes); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func validateImage(image string, allowedStr string) error {
+	if image == "" {
+		return fmt.Errorf("security restriction: image cannot be empty")
+	}
+	allowedStr = strings.TrimSpace(allowedStr)
+	if allowedStr == "" {
+		return nil // No restriction
+	}
+	patterns := parseCommaList(allowedStr)
+	for _, pattern := range patterns {
+		if matchPattern(image, pattern) {
+			return nil
+		}
+	}
+	return fmt.Errorf("security restriction: image %q is not allowed", image)
+}
+
+func validateNetwork(network string, allowedStr string) error {
+	allowedStr = strings.TrimSpace(allowedStr)
+	if allowedStr == "" {
+		return nil // No restriction
+	}
+	netToValidate := network
+	if netToValidate == "" {
+		netToValidate = "default"
+	}
+	patterns := parseCommaList(allowedStr)
+	for _, pattern := range patterns {
+		if matchPattern(netToValidate, pattern) {
+			return nil
+		}
+	}
+	return fmt.Errorf("security restriction: network %q is not allowed", network)
+}
+
+func validateVolumes(volumes []string, allowedStr string) error {
+	allowedStr = strings.TrimSpace(allowedStr)
+	var allowedPatterns []string
+	if allowedStr != "" {
+		allowedPatterns = parseCommaList(allowedStr)
+	}
+
+	for _, vol := range volumes {
+		vol = strings.TrimSpace(vol)
+		if vol == "" {
+			continue
+		}
+		parts := strings.Split(vol, ":")
+		hostPath := parts[0]
+
+		isHostPath := strings.HasPrefix(hostPath, "/") || strings.HasPrefix(hostPath, ".") || strings.Contains(hostPath, "/")
+
+		if isHostPath {
+			if err := safepath.ValidateHostPath(hostPath); err != nil {
+				return fmt.Errorf("security restriction: %w", err)
+			}
+
+			cleaned := filepath.Clean(hostPath)
+
+			forbiddenPaths := []string{
+				"/",
+				"/etc",
+				"/var/run/docker.sock",
+				"/boot",
+				"/sys",
+				"/proc",
+				"/dev",
+				"/lib",
+				"/lib64",
+				"/bin",
+				"/sbin",
+				"/usr",
+			}
+			for _, forbidden := range forbiddenPaths {
+				if cleaned == forbidden || strings.HasPrefix(cleaned, forbidden+"/") {
+					return fmt.Errorf("security restriction: volume mount path %q is not allowed", hostPath)
+				}
+			}
+
+			if len(allowedPatterns) > 0 {
+				matched := false
+				for _, pattern := range allowedPatterns {
+					cleanPattern := pattern
+					hasWildcard := strings.HasSuffix(pattern, "*")
+					if hasWildcard {
+						cleanPattern = filepath.Clean(pattern[:len(pattern)-1]) + "*"
+					} else {
+						cleanPattern = filepath.Clean(pattern)
+					}
+					if matchPattern(cleaned, cleanPattern) {
+						matched = true
+						break
+					}
+				}
+				if !matched {
+					return fmt.Errorf("security restriction: volume mount path %q is not allowed", hostPath)
+				}
+			}
+		} else {
+			if len(allowedPatterns) > 0 {
+				matched := false
+				for _, pattern := range allowedPatterns {
+					if matchPattern(hostPath, pattern) {
+						matched = true
+						break
+					}
+				}
+				if !matched {
+					return fmt.Errorf("security restriction: volume %q is not allowed", hostPath)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func parseCommaList(raw string) []string {
+	var list []string
+	for _, item := range strings.Split(raw, ",") {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			list = append(list, item)
+		}
+	}
+	return list
+}
+
+func matchPattern(val, pattern string) bool {
+	if pattern == "*" {
+		return true
+	}
+	parts := strings.Split(pattern, "*")
+	if len(parts) == 1 {
+		return val == pattern
+	}
+	if !strings.HasPrefix(val, parts[0]) {
+		return false
+	}
+	if !strings.HasSuffix(val, parts[len(parts)-1]) {
+		return false
+	}
+	curr := val
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		idx := strings.Index(curr, part)
+		if idx == -1 {
+			return false
+		}
+		curr = curr[idx+len(part):]
+	}
+	return true
+}
+
+func safeEnv() []string {
+	env := os.Environ()
+	safeDirs := []string{"/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/local/bin"}
+	safePath := "PATH=" + strings.Join(safeDirs, string(filepath.ListSeparator))
+	found := false
+	for i, kv := range env {
+		if strings.HasPrefix(strings.ToUpper(kv), "PATH=") {
+			env[i] = safePath
+			found = true
+		}
+	}
+	if !found {
+		env = append(env, safePath)
+	}
+	return env
+}
+
+

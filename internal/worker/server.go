@@ -288,7 +288,7 @@ func (s *WorkerServer) Dispatch(ctx context.Context, workerID string, cmd interf
 	}
 
 	// Log command start in the database
-	if _, logErr := s.workerSvc.LogCommandStart(workerID, commandID, string(msgType), cmd); logErr != nil {
+	if _, logErr := s.workerSvc.LogCommandStart(ctx, workerID, commandID, string(msgType), cmd); logErr != nil {
 		logger.SafeLogf("[WORKER] Failed to log command start: %v", logErr)
 	}
 

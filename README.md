@@ -92,6 +92,31 @@ services:
     #     - "customization.image.slug=nuxtjs"
 ```
 
+### Scheduled Jobs
+
+wireops supports cron-based execution of one-shot Docker containers. A job is configured via a `job.yaml` file committed to a Git repository.
+
+The `job.yaml` configuration is the single source of truth for the job and requires a `resources` block with `cpu`, `memory`, and `timeout` settings.
+
+**Example `job.yaml`:**
+
+```yaml
+title: "Database Backup"
+description: "Nightly backup of the postgres database"
+cron: "0 2 * * *"
+image: "postgres:15-alpine"
+command: ["pg_dump", "-h", "db", "-U", "postgres", "mydb"]
+tags: ["backup", "prod"]
+mode: "once" # once or once_all
+volumes:
+  - "/opt/backups:/backups"
+network: "prod_network"
+resources:
+  cpu: "0.5"        # Mandatory: CPU limit (e.g., "0.5" or "2")
+  memory: "512m"    # Mandatory: Memory limit (e.g., "256m" or "1g")
+  timeout: "15m"    # Mandatory: Job timeout duration (e.g., "10m", "1h")
+```
+
 ## Environment Variables
 
 ### Server

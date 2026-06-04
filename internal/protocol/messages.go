@@ -254,6 +254,15 @@ type RunJobCommand struct {
 
 	// Network is the name of an existing Docker network; passed as --network <name>.
 	Network string `json:"network,omitempty"`
+
+	// CPUs is the limit for CPU resources (e.g. "0.5" or "2"). Passed to docker run as --cpus.
+	CPUs string `json:"cpus,omitempty"`
+
+	// MemoryLimit is the limit for Memory resources (e.g. "512m" or "1g"). Passed to docker run as --memory.
+	MemoryLimit string `json:"memory_limit,omitempty"`
+
+	// TimeoutSeconds is the time limit for the container run (in seconds).
+	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
 }
 
 // BuildDockerRunArgs assembles the docker run argument list for this job command.
@@ -262,6 +271,14 @@ func (cmd *RunJobCommand) BuildDockerRunArgs() []string {
 	// Force ephemeral containers: always remove after execution.
 	args = append(args, "--rm")
 	args = append(args, "--name", "wireops-job-"+cmd.JobRunID)
+
+	// Inject CPU and Memory limits
+	if cmd.CPUs != "" {
+		args = append(args, "--cpus", cmd.CPUs)
+	}
+	if cmd.MemoryLimit != "" {
+		args = append(args, "-m", cmd.MemoryLimit)
+	}
 
 	// Inject standard labels
 	args = append(args, "-l", "dev.wireops.managed=true")

@@ -30,6 +30,7 @@ var (
 	completedJobs     []protocol.JobCompletedMessage
 	queuedEnvelopesMu gosync.Mutex
 	queuedEnvelopes   [][]byte
+	taskSemaphore     chan struct{}
 )
 
 const (
@@ -65,6 +66,14 @@ func main() {
 			hostname = "unknown-worker"
 		}
 	}
+
+	concurrencyLimit := 3
+	if limitStr := os.Getenv("WORKER_MAX_CONCURRENT_TASKS"); limitStr != "" {
+		if val, err := strconv.Atoi(limitStr); err == nil && val > 0 {
+			concurrencyLimit = val
+		}
+	}
+	taskSemaphore = make(chan struct{}, concurrencyLimit)
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
@@ -202,6 +211,18 @@ func runSession(serverURL, workerToken, hostname string, tags []string, sigChan 
 	}
 }
 
+func runThrottled(msgType protocol.MessageType, fn func()) {
+	select {
+	case taskSemaphore <- struct{}{}:
+		// Acquired immediately
+	default:
+		log.Printf("[worker] task %s queued due to concurrency limits", msgType)
+		taskSemaphore <- struct{}{}
+	}
+	defer func() { <-taskSemaphore }()
+	fn()
+}
+
 func readLoop(conn *websocket.Conn, disconnectCh chan<- disconnectReason) {
 	for {
 		_, msg, err := conn.ReadMessage()
@@ -223,11 +244,11 @@ func readLoop(conn *websocket.Conn, disconnectCh chan<- disconnectReason) {
 
 		switch env.Type {
 		case protocol.MsgDeploy:
-			go handleDeploy(env.Payload)
+			go runThrottled(env.Type, func() { handleDeploy(env.Payload) })
 		case protocol.MsgRedeploy:
-			go handleRedeploy(env.Payload)
+			go runThrottled(env.Type, func() { handleRedeploy(env.Payload) })
 		case protocol.MsgTeardown:
-			go handleTeardown(env.Payload)
+			go runThrottled(env.Type, func() { handleTeardown(env.Payload) })
 		case protocol.MsgProbe:
 			go handleProbe(env.Payload)
 		case protocol.MsgInspect:
@@ -245,7 +266,7 @@ func readLoop(conn *websocket.Conn, disconnectCh chan<- disconnectReason) {
 		case protocol.MsgReadFile:
 			go handleReadFile(env.Payload)
 		case protocol.MsgRunJob:
-			go handleRunJob(env.Payload)
+			go runThrottled(env.Type, func() { handleRunJob(env.Payload) })
 		case protocol.MsgKillJob:
 			go handleKillJob(env.Payload)
 
@@ -374,15 +395,14 @@ func handleRunJob(payload interface{}) {
 
 	activeJobs.Store(cmd.JobRunID, struct{}{})
 
-	result := executor.RunJob(cmd, func(msgType protocol.MessageType, p interface{}) {
-		if msg, ok := p.(protocol.JobCompletedMessage); ok {
-			reportJobCompleted(msg)
-		} else {
-			log.Printf("[worker] job completion callback parameter is not protocol.JobCompletedMessage: %T", p)
-		}
-	})
+	// Immediate start acknowledgment to the server:
+	sendResult(protocol.CommandResult{CommandID: cmd.CommandID, Output: "started"})
 
-	sendResult(result)
+	// Call executor.RunJob synchronously. It blocks until the container completes.
+	msg := executor.RunJob(cmd)
+
+	// Send completion report
+	reportJobCompleted(msg)
 }
 
 func handleKillJob(payload interface{}) {
