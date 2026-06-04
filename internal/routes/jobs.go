@@ -37,6 +37,14 @@ type jobRepoInfo struct {
 	GitURL string `json:"git_url"`
 }
 
+func validationErrors(err error) []string {
+	var valErr *job.ValidationError
+	if errors.As(err, &valErr) {
+		return valErr.Errors
+	}
+	return []string{err.Error()}
+}
+
 // RegisterJobRoutes mounts custom REST endpoints for scheduled jobs.
 func RegisterJobRoutes(r *router.Router[*core.RequestEvent], app core.App, sched *jobscheduler.Scheduler) {
 	// List all scheduled jobs with their definitions resolved server-side.
@@ -82,12 +90,7 @@ func RegisterJobRoutes(r *router.Router[*core.RequestEvent], app core.App, sched
 			def, derr := job.ParseJobFile(repoWorkspace, repoID, item.JobFile)
 			if derr != nil {
 				item.DefinitionError = derr.Error()
-				var valErr *job.ValidationError
-				if errors.As(derr, &valErr) {
-					item.Errors = valErr.Errors
-				} else {
-					item.Errors = []string{derr.Error()}
-				}
+				item.Errors = validationErrors(derr)
 			} else {
 				item.Definition = def
 			}
@@ -128,7 +131,7 @@ func RegisterJobRoutes(r *router.Router[*core.RequestEvent], app core.App, sched
 			if errors.As(err, &valErr) {
 				return e.JSON(http.StatusUnprocessableEntity, map[string]any{
 					"error":  err.Error(),
-					"errors": valErr.Errors,
+					"errors": validationErrors(err),
 				})
 			}
 			return e.JSON(http.StatusUnprocessableEntity, map[string]string{"error": "Validation failed: " + err.Error()})
@@ -159,16 +162,9 @@ func RegisterJobRoutes(r *router.Router[*core.RequestEvent], app core.App, sched
 
 		def, err := job.ParseJobFile(repoWorkspace, repoID, jobFile)
 		if err != nil {
-			var valErr *job.ValidationError
-			var errorsList []string
-			if errors.As(err, &valErr) {
-				errorsList = valErr.Errors
-			} else {
-				errorsList = []string{err.Error()}
-			}
 			return e.JSON(http.StatusUnprocessableEntity, map[string]any{
 				"error":  err.Error(),
-				"errors": errorsList,
+				"errors": validationErrors(err),
 			})
 		}
 

@@ -19,6 +19,7 @@ import (
 	"github.com/wireops/wireops/internal/compose"
 	"github.com/wireops/wireops/internal/docker"
 	"github.com/wireops/wireops/internal/protocol"
+	"github.com/wireops/wireops/internal/safepath"
 )
 
 // stackDir is the root directory under which per-stack compose work dirs are created.
@@ -435,80 +436,67 @@ func ReadFile(_ context.Context, cmd protocol.ReadFileCommand) protocol.CommandR
 	return protocol.CommandResult{CommandID: cmd.CommandID, Output: base64.StdEncoding.EncodeToString(data)}
 }
 
-// JobSendFunc is the callback the executor uses to push messages back to the server.
-type JobSendFunc func(msgType protocol.MessageType, payload interface{})
-
-// RunJob starts a one-shot `docker run` container asynchronously. It returns an
-// immediate ack CommandResult so the server's Dispatch call unblocks quickly.
-// When the container exits, it invokes send with a JobCompletedMessage so the
-// server can update the job_run record — without ever holding the WebSocket open
-// for the entire duration of the container.
-func RunJob(cmd protocol.RunJobCommand, send JobSendFunc) protocol.CommandResult {
+// RunJob starts a one-shot `docker run` container and blocks until it completes.
+// It returns a JobCompletedMessage with the final result.
+func RunJob(cmd protocol.RunJobCommand) protocol.JobCompletedMessage {
 	log.Printf("[executor] run_job dispatched job_run=%s image=%s command=%s", cmd.JobRunID, cmd.Image, cmd.CommandID)
 
 	// Validate job security policies
 	if err := validateJobSecurity(cmd); err != nil {
 		errMsg := fmt.Sprintf("failed to start job, %v", err)
 		log.Printf("[executor] run_job security error: %s", errMsg)
-		// Send async failure report
-		go send(protocol.MsgJobCompleted, protocol.JobCompletedMessage{
+		return protocol.JobCompletedMessage{
 			JobRunID:   cmd.JobRunID,
 			Success:    false,
 			Output:     errMsg,
 			DurationMs: 0,
-		})
-		return protocol.CommandResult{CommandID: cmd.CommandID, Output: "started"}
+		}
 	}
 
-	go func() {
-		timeout := 10 * time.Minute
-		if cmd.TimeoutSeconds > 0 {
-			timeout = time.Duration(cmd.TimeoutSeconds) * time.Second
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
-		defer cancel()
+	timeout := 10 * time.Minute
+	if cmd.TimeoutSeconds > 0 {
+		timeout = time.Duration(cmd.TimeoutSeconds) * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 
-		start := time.Now()
-		args := cmd.BuildDockerRunArgs()
-		runCmd := exec.CommandContext(ctx, "docker", args...)
-		runCmd.Env = safeEnv()
-		out, runErr := runCmd.CombinedOutput()
-		output := string(out)
+	start := time.Now()
+	args := cmd.BuildDockerRunArgs()
+	runCmd := exec.CommandContext(ctx, "docker", args...)
+	runCmd.Env = safeEnv()
+	out, runErr := runCmd.CombinedOutput()
+	output := string(out)
 
-		elapsed := time.Since(start).Milliseconds()
-		success := runErr == nil
+	elapsed := time.Since(start).Milliseconds()
+	success := runErr == nil
 
-		if !success {
-			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				// Execution timed out. Explicitly kill the container to ensure it's not orphan.
-				log.Printf("[executor] run_job timeout exceeded for job_run=%s (took longer than %v) — stopping container", cmd.JobRunID, timeout)
-				stopCtx, stopCancel := context.WithTimeout(context.Background(), 15*time.Second)
-				stopCmd := exec.CommandContext(stopCtx, "docker", "stop", "wireops-job-"+cmd.JobRunID)
-				stopCmd.Env = safeEnv()
-				_ = stopCmd.Run()
-				stopCancel()
-				output = fmt.Sprintf("failed to start job, timeout exceeded: execution took longer than %v", timeout)
-			} else {
-				if output != "" {
-					output += "\n"
-				}
-				output += runErr.Error()
-				log.Printf("[executor] run_job error job_run=%s elapsed=%dms: %v", cmd.JobRunID, elapsed, runErr)
-			}
+	if !success {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			// Execution timed out. Explicitly kill the container to ensure it's not orphan.
+			log.Printf("[executor] run_job timeout exceeded for job_run=%s (took longer than %v) — stopping container", cmd.JobRunID, timeout)
+			stopCtx, stopCancel := context.WithTimeout(context.Background(), 15*time.Second)
+			stopCmd := exec.CommandContext(stopCtx, "docker", "stop", "wireops-job-"+cmd.JobRunID)
+			stopCmd.Env = safeEnv()
+			_ = stopCmd.Run()
+			stopCancel()
+			output = fmt.Sprintf("failed to start job, timeout exceeded: execution took longer than %v", timeout)
 		} else {
-			log.Printf("[executor] run_job done job_run=%s elapsed=%dms", cmd.JobRunID, elapsed)
+			if output != "" {
+				output += "\n"
+			}
+			output += runErr.Error()
+			log.Printf("[executor] run_job error job_run=%s elapsed=%dms: %v", cmd.JobRunID, elapsed, runErr)
 		}
+	} else {
+		log.Printf("[executor] run_job done job_run=%s elapsed=%dms", cmd.JobRunID, elapsed)
+	}
 
-		send(protocol.MsgJobCompleted, protocol.JobCompletedMessage{
-			JobRunID:   cmd.JobRunID,
-			Success:    success,
-			Output:     output,
-			DurationMs: elapsed,
-		})
-	}()
-
-	// Ack: container is starting; the caller should not block waiting for completion.
-	return protocol.CommandResult{CommandID: cmd.CommandID, Output: "started"}
+	return protocol.JobCompletedMessage{
+		JobRunID:   cmd.JobRunID,
+		Success:    success,
+		Output:     output,
+		DurationMs: elapsed,
+	}
 }
 
 // KillJob stops a running job container via docker stop.
@@ -661,6 +649,10 @@ func validateVolumes(volumes []string, allowedStr string) error {
 		isHostPath := strings.HasPrefix(hostPath, "/") || strings.HasPrefix(hostPath, ".") || strings.Contains(hostPath, "/")
 
 		if isHostPath {
+			if err := safepath.ValidateHostPath(hostPath); err != nil {
+				return fmt.Errorf("security restriction: %w", err)
+			}
+
 			cleaned := filepath.Clean(hostPath)
 
 			forbiddenPaths := []string{

@@ -42,3 +42,18 @@ func ValidateComposeFile(f string) error {
 	}
 	return nil
 }
+
+// ValidateHostPath checks that a host path is absolute and does not contain traversal.
+func ValidateHostPath(p string) error {
+	if p == "" {
+		return fmt.Errorf("host path cannot be empty")
+	}
+	cleaned := filepath.Clean(p)
+	if strings.Contains(cleaned, "..") {
+		return fmt.Errorf("host path contains invalid traversal: %q", p)
+	}
+	if !filepath.IsAbs(cleaned) {
+		return fmt.Errorf("host path must be absolute: %q", p)
+	}
+	return nil
+}

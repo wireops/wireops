@@ -118,6 +118,15 @@ func TestValidateVolumes(t *testing.T) {
 	if err := validateVolumes([]string{"other_named_volume:/data"}, "my_named_volume"); err == nil {
 		t.Error("expected error for non-matching named volume when restriction is configured, got nil")
 	}
+
+	// 8. Reject relative mounts
+	if err := validateVolumes([]string{"../secrets:/data"}, ""); err == nil {
+		t.Error("expected error for mounting relative path '../secrets', got nil")
+	}
+
+	if err := validateVolumes([]string{"my/relative/path:/data"}, ""); err == nil {
+		t.Error("expected error for mounting relative path 'my/relative/path', got nil")
+	}
 }
 
 func TestValidateJobSecurity(t *testing.T) {

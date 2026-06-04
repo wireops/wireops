@@ -395,15 +395,14 @@ func handleRunJob(payload interface{}) {
 
 	activeJobs.Store(cmd.JobRunID, struct{}{})
 
-	result := executor.RunJob(cmd, func(msgType protocol.MessageType, p interface{}) {
-		if msg, ok := p.(protocol.JobCompletedMessage); ok {
-			reportJobCompleted(msg)
-		} else {
-			log.Printf("[worker] job completion callback parameter is not protocol.JobCompletedMessage: %T", p)
-		}
-	})
+	// Immediate start acknowledgment to the server:
+	sendResult(protocol.CommandResult{CommandID: cmd.CommandID, Output: "started"})
 
-	sendResult(result)
+	// Call executor.RunJob synchronously. It blocks until the container completes.
+	msg := executor.RunJob(cmd)
+
+	// Send completion report
+	reportJobCompleted(msg)
 }
 
 func handleKillJob(payload interface{}) {

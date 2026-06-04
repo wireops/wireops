@@ -9,6 +9,7 @@ func TestContextUtil(t *testing.T) {
 	ctx := context.Background()
 
 	// 1. GetUserID on nil context should return empty string
+	//nolint:staticcheck // SA1012
 	if got := GetUserID(nil); got != "" {
 		t.Errorf("GetUserID(nil) = %q; want empty string", got)
 	}
@@ -26,6 +27,7 @@ func TestContextUtil(t *testing.T) {
 	}
 
 	// 4. Verify context key collision is avoided by verifying standard string key doesn't retrieve it
+	//nolint:staticcheck // SA1029
 	strKeyCtx := context.WithValue(ctx, "userID", testID)
 	if got := GetUserID(strKeyCtx); got != "" {
 		t.Errorf("GetUserID(strKeyCtx) with string literal key = %q; want empty string (collision check)", got)
