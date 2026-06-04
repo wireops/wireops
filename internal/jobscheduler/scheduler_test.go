@@ -189,6 +189,9 @@ func ensureJobSchedulerCollections(t *testing.T, app core.App) {
 	runs.Fields.Add(&core.DateField{Name: "expires_at"})
 	runs.Fields.Add(&core.TextField{Name: "container_name"})
 	runs.Fields.Add(&core.TextField{Name: "commit_sha"})
+	runs.Fields.Add(&core.DateField{Name: "started_at"})
+	runs.Fields.Add(&core.NumberField{Name: "queue_time_ms"})
+	runs.Fields.Add(&core.NumberField{Name: "execution_time_ms"})
 	runs.Fields.Add(&core.AutodateField{Name: "created", OnCreate: true})
 	runs.Fields.Add(&core.AutodateField{Name: "updated", OnCreate: true, OnUpdate: true})
 	mustSaveCollection(t, app, runs)
@@ -225,7 +228,7 @@ func writeJobFile(t *testing.T, dataDir, repoID, name string) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		t.Fatalf("failed to create repo dir: %v", err)
 	}
-	content := []byte("title: Test Job\ndescription: Test job\nimage: alpine\ncron: \"* * * * *\"\ncommand: echo ok\nresources:\n  cpu: \"0.5\"\n  memory: \"512m\"\n  timeout: \"10m\"\n")
+	content := []byte("name: Test Job\ndescription: Test job\nimage: alpine\ncron: \"* * * * *\"\ncommand: echo ok\nresources:\n  cpu: \"0.5\"\n  memory: \"512m\"\n  timeout: \"10m\"\n")
 	if err := os.WriteFile(filepath.Join(dir, name), content, 0644); err != nil {
 		t.Fatalf("failed to write job file: %v", err)
 	}

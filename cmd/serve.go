@@ -195,6 +195,12 @@ func Execute() error {
 		scheduler.TriggerPendingReconciles(workerID)
 	})
 
+	workerServer.SetOnDisconnect(func(workerID string) {
+		if err := jobSched.HandleWorkerDisconnect(workerID); err != nil {
+			log.Printf("[jobscheduler] worker disconnect handle error worker=%s: %v", workerID, err)
+		}
+	})
+
 	workerServer.SetOnHeartbeat(func(workerID string, activeIDs []string) {
 		if err := jobSched.ReconcileActiveJobs(workerID, activeIDs); err != nil {
 			log.Printf("[jobscheduler] worker heartbeat reconcile error worker=%s: %v", workerID, err)

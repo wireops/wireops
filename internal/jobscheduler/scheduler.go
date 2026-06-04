@@ -52,7 +52,8 @@ type Scheduler struct {
 	secretKey  []byte
 
 	cron    *cron.Cron
-	mu      gosync.Mutex
+	mu      gosync.Mutex            // protects entries map
+	runMu   gosync.Mutex            // protects against read-modify-write status race conditions on job_runs
 	entries map[string]cron.EntryID // jobID → cron entry ID
 
 	rootCtx    context.Context
@@ -139,7 +140,7 @@ func (s *Scheduler) RegisterJob(jobID string) {
 	s.entries[jobID] = entryID
 	s.mu.Unlock()
 
-	log.Printf("[jobscheduler] registered job %s (cron=%q title=%q)", jobID, def.Cron, def.Title)
+	log.Printf("[jobscheduler] registered job %s (cron=%q name=%q)", jobID, def.Cron, def.Name)
 }
 
 // UnregisterJob removes the cron entry for the given job.
@@ -307,7 +308,7 @@ func (s *Scheduler) dispatchToWorker(ctx context.Context, jobID, trigger, worker
 	containerName := "wireops-job-" + runID
 	if err := s.patchJobRunMeta(runID, containerName, p.commitSHA); err != nil {
 		log.Printf("[jobscheduler] dispatchToWorker: failed to persist metadata job=%s run=%s: %v", jobID, runID, err)
-		if updateErr := s.updateJobRun(runID, "error", err.Error(), 0); updateErr != nil {
+		if updateErr := s.updateJobRun(runID, "error", err.Error(), 0, 0, 0); updateErr != nil {
 			log.Printf("[jobscheduler] dispatchToWorker: failed to mark metadata error run=%s: %v", runID, updateErr)
 		}
 		return
@@ -321,10 +322,12 @@ func (s *Scheduler) dispatchToWorker(ctx context.Context, jobID, trigger, worker
 		}
 	}
 
+	dispatchStart := time.Now()
+
 	cmd := protocol.RunJobCommand{
 		CommandID:        fmt.Sprintf("job-%s", runID),
 		JobRunID:         runID,
-		JobName:          p.def.Title,
+		JobName:          p.def.Name,
 		Image:            p.def.Image,
 		Command:          []string(p.def.Command),
 		Env:              p.envMap,
@@ -337,6 +340,7 @@ func (s *Scheduler) dispatchToWorker(ctx context.Context, jobID, trigger, worker
 		CPUs:             p.def.Resources.CPU,
 		MemoryLimit:      p.def.Resources.Memory,
 		TimeoutSeconds:   timeoutSecs,
+		DispatchedAt:     dispatchStart.UnixMilli(),
 	}
 
 	// Remote worker: wait only for the start ack (worker immediately returns "started").
@@ -347,21 +351,21 @@ func (s *Scheduler) dispatchToWorker(ctx context.Context, jobID, trigger, worker
 	result, dispatchErr := s.dispatcher.Dispatch(ackCtx, workerID, cmd)
 	if dispatchErr != nil {
 		log.Printf("[jobscheduler] dispatchToWorker: ack error job=%s run=%s: %v", jobID, runID, dispatchErr)
-		if err := s.updateJobRun(runID, "error", dispatchErr.Error(), 0); err != nil {
+		if err := s.updateJobRun(runID, "error", dispatchErr.Error(), 0, 0, 0); err != nil {
 			log.Printf("[jobscheduler] dispatchToWorker: failed to persist ack error run=%s: %v", runID, err)
 		}
 		return
 	}
 	if result.Error != "" {
 		log.Printf("[jobscheduler] dispatchToWorker: worker error job=%s run=%s: %s", jobID, runID, result.Error)
-		if err := s.updateJobRun(runID, "error", result.Error, 0); err != nil {
+		if err := s.updateJobRun(runID, "error", result.Error, 0, 0, 0); err != nil {
 			log.Printf("[jobscheduler] dispatchToWorker: failed to persist worker error run=%s: %v", runID, err)
 		}
 		return
 	}
 
 	// Ack received — container is starting.
-	if err := s.setJobRunStatus(runID, "running"); err != nil {
+	if err := s.setJobRunStarted(runID); err != nil {
 		log.Printf("[jobscheduler] dispatchToWorker: failed to persist running status run=%s worker=%s: %v", runID, workerID, err)
 		killCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
@@ -384,11 +388,15 @@ func (s *Scheduler) HandleJobCompleted(msg protocol.JobCompletedMessage) {
 	if !msg.Success {
 		status = "error"
 	}
-	if err := s.updateJobRun(msg.JobRunID, status, msg.Output, msg.DurationMs); err != nil {
+	if err := s.updateJobRun(msg.JobRunID, status, msg.Output, msg.DurationMs, msg.QueueTimeMs, msg.ExecutionTimeMs); err != nil {
 		log.Printf("[jobscheduler] HandleJobCompleted: failed to persist completion run=%s status=%s: %v", msg.JobRunID, status, err)
 		return
 	}
-	log.Printf("[jobscheduler] job_completed run=%s status=%s elapsed=%dms", msg.JobRunID, status, msg.DurationMs)
+	if !msg.Success {
+		log.Printf("[jobscheduler] job_completed run=%s status=error: %s", msg.JobRunID, msg.Output)
+	} else {
+		log.Printf("[jobscheduler] job_completed run=%s status=success elapsed=%dms", msg.JobRunID, msg.DurationMs)
+	}
 }
 
 // maxJobRunDuration is the wall-clock ceiling for a single job run.
@@ -436,6 +444,10 @@ func (s *Scheduler) reconcileSingleRunningRun(rec *core.Record, cutoff time.Time
 	}
 	rec.Set("status", "forgotten")
 	rec.Set("output", "job forgotten: still running after 1 hour with no completion signal")
+
+	timeoutMs := s.getJobTimeoutMs(rec)
+	rec.Set("execution_time_ms", timeoutMs)
+
 	if err := s.app.Save(rec); err != nil {
 		log.Printf("[jobscheduler] MarkForgottenRuns: failed to save running run %s: %v", rec.Id, err)
 		if *firstErr == nil {
@@ -516,6 +528,8 @@ func (s *Scheduler) ReconcileActiveJobs(workerID string, activeIDs []string) err
 
 		rec.Set("status", "error")
 		rec.Set("output", "job lost: worker disconnected and job is no longer running")
+		timeoutMs := s.getJobTimeoutMs(rec)
+		rec.Set("execution_time_ms", timeoutMs)
 		if err := s.app.Save(rec); err != nil {
 			log.Printf("[jobscheduler] ReconcileActiveJobs: failed to save run %s worker=%s: %v", rec.Id, workerID, err)
 			if firstErr == nil {
@@ -592,11 +606,52 @@ func (s *Scheduler) setScheduledJobStatus(jobID, status string) error {
 	return nil
 }
 
+// setJobRunStarted transitions status to "running", sets started_at, and calculates queue time.
+func (s *Scheduler) setJobRunStarted(runID string) error {
+	s.runMu.Lock()
+	defer s.runMu.Unlock()
+
+	rec, err := s.app.FindRecordById("job_runs", runID)
+	if err != nil {
+		return fmt.Errorf("set job_run started run=%s: %w", runID, err)
+	}
+	currentStatus := rec.GetString("status")
+	if currentStatus == "success" || currentStatus == "error" || currentStatus == "stalled" || currentStatus == "forgotten" {
+		return nil
+	}
+	now := time.Now()
+	rec.Set("status", "running")
+	rec.Set("started_at", now)
+
+	createdTime := rec.GetDateTime("created").Time()
+	queueMs := now.Sub(createdTime).Milliseconds()
+	if queueMs < 0 {
+		queueMs = 0
+	}
+	rec.Set("queue_time_ms", queueMs)
+
+	if err := s.app.Save(rec); err != nil {
+		return fmt.Errorf("set job_run started run=%s: %w", runID, err)
+	}
+	return nil
+}
+
 // setJobRunStatus updates only the status field of a job_run record.
+// It is protected by s.runMu to prevent a race condition with updateJobRun when a job run
+// starts and completes/fails almost instantly.
 func (s *Scheduler) setJobRunStatus(runID, status string) error {
+	s.runMu.Lock()
+	defer s.runMu.Unlock()
+
 	rec, err := s.app.FindRecordById("job_runs", runID)
 	if err != nil {
 		return fmt.Errorf("set job_run status run=%s status=%s: %w", runID, status, err)
+	}
+	currentStatus := rec.GetString("status")
+	// If the status is "running" but the run has already completed or failed (terminal state),
+	// do not overwrite the completed status back to "running".
+	if status == "running" && (currentStatus == "success" || currentStatus == "error" || currentStatus == "stalled" || currentStatus == "forgotten") {
+		return nil
 	}
 	rec.Set("status", status)
 	if err := s.app.Save(rec); err != nil {
@@ -606,7 +661,11 @@ func (s *Scheduler) setJobRunStatus(runID, status string) error {
 }
 
 // updateJobRun sets the final status, output, and duration on a job_run record.
-func (s *Scheduler) updateJobRun(runID, status, output string, durationMs int64) error {
+// It is protected by s.runMu to prevent a race condition with setJobRunStatus.
+func (s *Scheduler) updateJobRun(runID, status, output string, durationMs int64, queueTimeMs, execTimeMs int64) error {
+	s.runMu.Lock()
+	defer s.runMu.Unlock()
+
 	rec, err := s.app.FindRecordById("job_runs", runID)
 	if err != nil {
 		return fmt.Errorf("update job_run run=%s status=%s: %w", runID, status, err)
@@ -614,6 +673,19 @@ func (s *Scheduler) updateJobRun(runID, status, output string, durationMs int64)
 	rec.Set("status", status)
 	rec.Set("output", output)
 	rec.Set("duration_ms", durationMs)
+
+	if queueTimeMs > 0 {
+		rec.Set("queue_time_ms", queueTimeMs)
+	}
+	if execTimeMs > 0 {
+		rec.Set("execution_time_ms", execTimeMs)
+	} else if status == "success" || status == "error" {
+		startedAt := rec.GetDateTime("started_at").Time()
+		if !startedAt.IsZero() {
+			rec.Set("execution_time_ms", time.Since(startedAt).Milliseconds())
+		}
+	}
+
 	if err := s.app.Save(rec); err != nil {
 		return fmt.Errorf("update job_run run=%s status=%s: %w", runID, status, err)
 	}
@@ -686,4 +758,65 @@ func (s *Scheduler) pickWorker(jobID string, workers []string) string {
 	h.Write([]byte(jobID))
 	idx := int(h.Sum32()) % len(workers)
 	return workers[idx]
+}
+
+// HandleWorkerDisconnect is called when a worker disconnects.
+// It immediately marks all "running" job runs for this worker as "error" (lost).
+func (s *Scheduler) HandleWorkerDisconnect(workerID string) error {
+	s.runMu.Lock()
+	defer s.runMu.Unlock()
+
+	records, err := s.app.FindAllRecords("job_runs", dbx.HashExp{
+		"worker": workerID,
+		"status": "running",
+	})
+	if err != nil {
+		return fmt.Errorf("HandleWorkerDisconnect query failed worker=%s: %w", workerID, err)
+	}
+
+	var firstErr error
+	for _, rec := range records {
+		rec.Set("status", "error")
+		rec.Set("output", "job lost: worker disconnected and job is no longer running")
+
+		timeoutMs := s.getJobTimeoutMs(rec)
+		rec.Set("execution_time_ms", timeoutMs)
+
+		if err := s.app.Save(rec); err != nil {
+			log.Printf("[jobscheduler] HandleWorkerDisconnect: failed to save run %s worker=%s: %v", rec.Id, workerID, err)
+			if firstErr == nil {
+				firstErr = fmt.Errorf("disconnect run=%s worker=%s: %w", rec.Id, workerID, err)
+			}
+		} else {
+			log.Printf("[jobscheduler] run %s marked error due to worker %s disconnect", rec.Id, workerID)
+		}
+	}
+	return firstErr
+}
+
+// getJobTimeoutMs parses job.yaml and extracts the timeout in milliseconds, defaulting to 10 minutes.
+func (s *Scheduler) getJobTimeoutMs(rec *core.Record) int64 {
+	jobID := rec.GetString("job")
+	if jobID == "" {
+		return 600000 // default 10m in ms
+	}
+	jobRec, err := s.app.FindRecordById("scheduled_jobs", jobID)
+	if err != nil {
+		return 600000
+	}
+	repoID := jobRec.GetString("repository")
+	jobFile := jobRec.GetString("job_file")
+	repoWorkspace := filepath.Join(s.dataDir, "repositories")
+	
+	def, err := job.ParseJobFile(repoWorkspace, repoID, jobFile)
+	if err != nil {
+		return 600000
+	}
+	if def.Resources.Timeout != "" {
+		d, err := time.ParseDuration(def.Resources.Timeout)
+		if err == nil {
+			return d.Milliseconds()
+		}
+	}
+	return 600000 // default 10m in ms
 }

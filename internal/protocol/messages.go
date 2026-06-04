@@ -222,6 +222,9 @@ type RunJobCommand struct {
 	// CommandID correlates the immediate ack response.
 	CommandID string `json:"command_id"`
 
+	// DispatchedAt is the Unix millisecond timestamp when the server sent this command.
+	DispatchedAt int64 `json:"dispatched_at,omitempty"`
+
 	// JobRunID is the PocketBase record ID for the job_run being executed.
 	JobRunID string `json:"job_run_id"`
 
@@ -334,6 +337,12 @@ type JobCompletedMessage struct {
 
 	// DurationMs is the wall-clock time from container start to exit.
 	DurationMs int64 `json:"duration_ms"`
+
+	// QueueTimeMs is the worker-calculated queue time in milliseconds.
+	QueueTimeMs int64 `json:"queue_time_ms,omitempty"`
+
+	// ExecutionTimeMs is the worker-calculated execution time in milliseconds.
+	ExecutionTimeMs int64 `json:"execution_time_ms,omitempty"`
 }
 
 // HeartbeatPayload is the optional body sent inside a MsgHeartbeat envelope.

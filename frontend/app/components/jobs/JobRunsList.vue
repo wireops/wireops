@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import JobsDeleteJobRunModal from './DeleteJobRunModal.vue'
 
 const props = defineProps<{
@@ -8,7 +8,16 @@ const props = defineProps<{
 
 const { $pb } = useNuxtApp()
 const { cancelJobRun } = useApi()
+const { subscribe } = useRealtime()
 const toast = useToast()
+
+onMounted(() => {
+  subscribe('job_runs', (data: any) => {
+    if (data.record?.job === props.jobId) {
+      refreshRuns()
+    }
+  })
+})
 
 const page = ref(1)
 const perPage = ref(10)
@@ -82,6 +91,12 @@ function formatRelative(d: string) {
   return `${Math.floor(diff / 86_400_000)}d ago`
 }
 
+function formatDuration(val: number | null | undefined) {
+  if (val === undefined || val === null || isNaN(val)) return 'NA'
+  if (val < 1000) return `${val}ms`
+  return `${(val / 1000).toFixed(1)}s`
+}
+
 defineExpose({
   refreshRuns
 })
@@ -147,7 +162,7 @@ defineExpose({
               />
             </UTooltip>
             <span v-if="run.duration_ms" class="text-xs text-gray-400 dark:text-wire-200/40 font-mono">
-              {{ run.duration_ms }}ms
+              {{ formatDuration(run.duration_ms) }}
             </span>
             <UIcon
               :name="expandedRun === run.id ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
@@ -156,15 +171,35 @@ defineExpose({
           </div>
         </div>
         <div v-if="expandedRun === run.id" class="border-t border-gray-200 dark:border-carbon-700">
-          <div class="flex flex-wrap gap-x-6 gap-y-1 px-4 py-2 bg-gray-50/60 dark:bg-carbon-800/60 text-xs font-mono">
-            <span v-if="run.container_name" class="flex items-center gap-1.5 text-gray-500 dark:text-wire-200/50">
-              <UIcon name="i-lucide-box" class="w-3.5 h-3.5 shrink-0" />
-              <span class="text-gray-700 dark:text-wire-200 select-all">{{ run.container_name }}</span>
-            </span>
-            <span v-if="run.commit_sha" class="flex items-center gap-1.5 text-gray-500 dark:text-wire-200/50">
-              <UIcon name="i-lucide-git-commit-horizontal" class="w-3.5 h-3.5 shrink-0" />
-              <span class="text-gray-700 dark:text-wire-200 select-all">{{ run.commit_sha.slice(0, 12) }}</span>
-            </span>
+          <div class="flex flex-col md:flex-row md:items-center justify-between gap-y-2 px-4 py-2 bg-gray-50/60 dark:bg-carbon-800/60 text-xs font-mono">
+            <div class="flex flex-wrap gap-x-6 gap-y-1">
+              <span v-if="run.container_name" class="flex items-center gap-1.5 text-gray-500 dark:text-wire-200/50">
+                <UIcon name="i-lucide-box" class="w-3.5 h-3.5 shrink-0" />
+                <span class="text-gray-700 dark:text-wire-200 select-all">{{ run.container_name }}</span>
+              </span>
+              <span v-if="run.commit_sha" class="flex items-center gap-1.5 text-gray-500 dark:text-wire-200/50">
+                <UIcon name="i-lucide-git-commit-horizontal" class="w-3.5 h-3.5 shrink-0" />
+                <span class="text-gray-700 dark:text-wire-200 select-all">{{ run.commit_sha.slice(0, 12) }}</span>
+              </span>
+            </div>
+            <div class="flex flex-wrap gap-x-6 gap-y-1 md:border-l md:border-gray-200 md:dark:border-carbon-700 md:pl-6">
+              <span class="flex items-center gap-1.5 text-gray-500 dark:text-wire-200/50">
+                <UTooltip text="Queue Time">
+                  <span class="flex items-center gap-1">
+                    <UIcon name="i-lucide-hourglass" class="w-3.5 h-3.5 shrink-0" />
+                    <span class="text-gray-700 dark:text-wire-200">{{ formatDuration(run.queue_time_ms) }}</span>
+                  </span>
+                </UTooltip>
+              </span>
+              <span class="flex items-center gap-1.5 text-gray-500 dark:text-wire-200/50">
+                <UTooltip text="Execution Time">
+                  <span class="flex items-center gap-1">
+                    <UIcon name="i-lucide-timer" class="w-3.5 h-3.5 shrink-0" />
+                    <span class="text-gray-700 dark:text-wire-200">{{ formatDuration(run.execution_time_ms) }}</span>
+                  </span>
+                </UTooltip>
+              </span>
+            </div>
           </div>
           <div v-if="run.output" class="p-3">
             <pre class="text-xs font-mono text-gray-800 dark:text-wire-200 bg-gray-100 dark:bg-carbon-950 rounded-lg px-4 py-3 whitespace-pre-wrap break-words max-h-64 overflow-y-auto">{{ run.output }}</pre>

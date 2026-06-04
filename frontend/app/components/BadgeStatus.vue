@@ -16,6 +16,7 @@ const statusColor = computed(() => {
     case 'paused':
     case 'pending':
     case 'queued':
+    case 'stalled':
       return 'warning'
     case 'syncing':
       return 'primary'

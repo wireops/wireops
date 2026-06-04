@@ -7,8 +7,10 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"time"
 
+	validation "github.com/go-ozzo/ozzo-validation/v4"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	gogithttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	gogitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
@@ -311,6 +313,36 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 	app.OnRecordEnrich("stack_env_vars").BindFunc(func(e *core.RecordEnrichEvent) error {
 		if e.Record.GetBool("secret") {
 			e.Record.Set("value", "")
+		}
+		return e.Next()
+	})
+
+	validateJobRecord := func(rec *core.Record) error {
+		name := rec.GetString("name")
+		if name == "" {
+			return validation.Errors{
+				"name": validation.NewError("validation_required", "Name is required."),
+			}
+		}
+		nameRegex := regexp.MustCompile(`^[a-zA-Z0-9\p{L}_ -]+$`)
+		if !nameRegex.MatchString(name) {
+			return validation.Errors{
+				"name": validation.NewError("validation_invalid_format", "Name can only contain alphanumeric characters, spaces, underscores, and hyphens."),
+			}
+		}
+		return nil
+	}
+
+	app.OnRecordCreate("scheduled_jobs").BindFunc(func(e *core.RecordEvent) error {
+		if err := validateJobRecord(e.Record); err != nil {
+			return err
+		}
+		return e.Next()
+	})
+
+	app.OnRecordUpdate("scheduled_jobs").BindFunc(func(e *core.RecordEvent) error {
+		if err := validateJobRecord(e.Record); err != nil {
+			return err
 		}
 		return e.Next()
 	})

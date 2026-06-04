@@ -150,7 +150,7 @@ export function useApi() {
 
   // Scheduled Jobs
   type JobDefinition = {
-    title: string
+    name: string
     description: string
     cron: string
     tags: string[]
@@ -163,6 +163,8 @@ export function useApi() {
   }
   type JobListItem = {
     id: string
+    name: string
+    description: string
     job_file: string
     enabled: boolean
     status: string
@@ -173,6 +175,7 @@ export function useApi() {
     definition: JobDefinition | null
     definition_error?: string
     errors?: string[]
+    recent_runs?: { id: string; status: string; created: string }[]
   }
   const listJobs = () => customGet<JobListItem[]>('/api/custom/jobs')
   const triggerJobRun = (jobId: string) => customPost(`/api/custom/jobs/${jobId}/run`)
@@ -180,6 +183,8 @@ export function useApi() {
   const deleteJobRun = (runId: string) => customDelete(`/api/custom/job-runs/${runId}`)
   const getJobDefinition = (jobId: string) =>
     customGet<JobDefinition>(`/api/custom/jobs/${jobId}/definition`)
+  const getJobRaw = (jobId: string) =>
+    customGet<{ content: string; filename: string }>(`/api/custom/jobs/${jobId}/raw`)
 
   const getWorkers = () => customGet<{ id: string; hostname: string; status: string; last_seen: string; health_history: { status: string, timestamp: string }[]; tags: string[]; token_status: string; token_expires: string; token_last_used: string }[]>('/api/custom/workers')
   const createWorkerToken = () => customPost<{ token: string; token_id: string; status: string; expires_at: string }>('/api/custom/worker/tokens')
@@ -187,5 +192,5 @@ export function useApi() {
   const transferStack = (stackId: string, targetWorkerId: string) =>
     customPost(`/api/custom/stacks/${stackId}/transfer`, { target_worker_id: targetWorkerId })
 
-  return { triggerSync, triggerRollback, forceRedeploy, getServices, getStackResources, stopContainer, restartContainer, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, getRepoFiles, getStackFiles, getJobFiles, testCredentials, keyscan, listOrphans, purgeOrphan, getSystemInfo, customPost, customGet, customPut, customPatch, customDelete, getSyncEventsWebhook, setSyncEventsWebhook, setNotificationsEnabled, deleteSyncEventsWebhook, testSyncEventsWebhook, getWorkers, createWorkerToken, revokeWorker, transferStack, discoverProjects, importStack, listJobs, triggerJobRun, cancelJobRun, deleteJobRun, getJobDefinition }
+  return { triggerSync, triggerRollback, forceRedeploy, getServices, getStackResources, stopContainer, restartContainer, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, getRepoFiles, getStackFiles, getJobFiles, testCredentials, keyscan, listOrphans, purgeOrphan, getSystemInfo, customPost, customGet, customPut, customPatch, customDelete, getSyncEventsWebhook, setSyncEventsWebhook, setNotificationsEnabled, deleteSyncEventsWebhook, testSyncEventsWebhook, getWorkers, createWorkerToken, revokeWorker, transferStack, discoverProjects, importStack, listJobs, triggerJobRun, cancelJobRun, deleteJobRun, getJobDefinition, getJobRaw }
 }
