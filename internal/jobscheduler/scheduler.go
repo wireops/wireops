@@ -442,6 +442,19 @@ func (s *Scheduler) reconcileSingleRunningRun(rec *core.Record, cutoff time.Time
 	if !rec.GetDateTime("updated").Time().Before(cutoff) {
 		return
 	}
+	s.runMu.Lock()
+	defer s.runMu.Unlock()
+
+	// Re-fetch to prevent overwriting concurrent completion
+	freshRec, err := s.app.FindRecordById("job_runs", rec.Id)
+	if err != nil {
+		return
+	}
+	if freshRec.GetString("status") != "running" {
+		return
+	}
+	rec = freshRec
+
 	rec.Set("status", "forgotten")
 	rec.Set("output", "job forgotten: still running after 1 hour with no completion signal")
 
@@ -479,6 +492,19 @@ func (s *Scheduler) reconcileSinglePendingRun(rec *core.Record, cutoff time.Time
 	if !rec.GetDateTime("updated").Time().Before(cutoff) {
 		return
 	}
+	s.runMu.Lock()
+	defer s.runMu.Unlock()
+
+	// Re-fetch to prevent overwriting concurrent start/completion
+	freshRec, err := s.app.FindRecordById("job_runs", rec.Id)
+	if err != nil {
+		return
+	}
+	if freshRec.GetString("status") != "pending" {
+		return
+	}
+	rec = freshRec
+
 	rec.Set("status", "error")
 	rec.Set("output", "job failed: stuck in pending for more than 15 minutes (failed to dispatch to worker)")
 	if err := s.app.Save(rec); err != nil {
@@ -526,6 +552,19 @@ func (s *Scheduler) ReconcileActiveJobs(workerID string, activeIDs []string) err
 			continue
 		}
 
+		s.runMu.Lock()
+		// Re-fetch to prevent overwriting concurrent completion
+		freshRec, err := s.app.FindRecordById("job_runs", runID)
+		if err != nil {
+			s.runMu.Unlock()
+			continue
+		}
+		if freshRec.GetString("status") != "running" {
+			s.runMu.Unlock()
+			continue
+		}
+		rec = freshRec
+
 		rec.Set("status", "error")
 		rec.Set("output", "job lost: worker disconnected and job is no longer running")
 		timeoutMs := s.getJobTimeoutMs(rec)
@@ -538,6 +577,7 @@ func (s *Scheduler) ReconcileActiveJobs(workerID string, activeIDs []string) err
 		} else {
 			log.Printf("[jobscheduler] run %s marked error (not found in worker %s active list)", rec.Id, workerID)
 		}
+		s.runMu.Unlock()
 	}
 	return firstErr
 }

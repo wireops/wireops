@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/wireops/wireops/internal/safepath"
 )
 
 // Mode controls how many agents receive a job dispatch per cron tick.
@@ -61,10 +63,9 @@ func (c *Command) UnmarshalYAML(value *yaml.Node) error {
 // ParseJobFile reads and validates a job.yaml from the cloned repository workspace.
 // repoWorkspace is the base directory where repos are cloned (e.g. pb_data/repositories).
 func ParseJobFile(repoWorkspace, repoID, filePath string) (*Definition, error) {
-	// Prevent path traversal
-	clean := filepath.Clean(filePath)
-	if strings.HasPrefix(clean, "..") || filepath.IsAbs(clean) {
-		return nil, fmt.Errorf("invalid job_file path: %q", filePath)
+	clean, err := safepath.CleanRelativePath(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("invalid job_file path: %w", err)
 	}
 
 	full := filepath.Join(repoWorkspace, repoID, clean)

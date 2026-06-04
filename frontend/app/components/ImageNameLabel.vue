@@ -26,7 +26,7 @@ async function copyToClipboard() {
     <UTooltip :text="copied ? 'Copied!' : 'Copy image name'">
       <button 
         type="button" 
-        class="text-gray-400 hover:text-gray-600 dark:hover:text-wire-200 focus:outline-none transition-colors cursor-pointer"
+        class="text-gray-400 hover:text-gray-600 dark:hover:text-wire-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:focus-visible:ring-primary-400 rounded transition-colors cursor-pointer"
         @click="copyToClipboard"
       >
         <UIcon :name="copied ? 'i-lucide-check' : 'i-lucide-clipboard'" class="w-3.5 h-3.5" />

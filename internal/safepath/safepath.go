@@ -57,3 +57,16 @@ func ValidateHostPath(p string) error {
 	}
 	return nil
 }
+
+// CleanRelativePath validates that a path is relative and does not contain traversal,
+// returning the cleaned path or an error.
+func CleanRelativePath(p string) (string, error) {
+	if p == "" {
+		return "", fmt.Errorf("path cannot be empty")
+	}
+	cleaned := filepath.Clean(p)
+	if strings.HasPrefix(cleaned, "..") || filepath.IsAbs(cleaned) {
+		return "", fmt.Errorf("path is absolute or escapes base directory: %q", p)
+	}
+	return cleaned, nil
+}

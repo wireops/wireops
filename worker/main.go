@@ -407,11 +407,11 @@ func handleRunJob(payload interface{}) {
 		msg := executor.RunJob(cmd)
 		finishedAt := time.Now()
 
-		if cmd.DispatchedAt > 0 {
-			msg.QueueTimeMs = startedAt.UnixMilli() - cmd.DispatchedAt
-		} else {
-			msg.QueueTimeMs = startedAt.UnixMilli() - receivedAt.UnixMilli()
+		queueTime := startedAt.UnixMilli() - receivedAt.UnixMilli()
+		if queueTime < 0 {
+			queueTime = 0
 		}
+		msg.QueueTimeMs = queueTime
 		msg.ExecutionTimeMs = finishedAt.UnixMilli() - startedAt.UnixMilli()
 
 		// Send completion report

@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
@@ -13,6 +12,7 @@ import (
 
 	"github.com/wireops/wireops/internal/job"
 	"github.com/wireops/wireops/internal/jobscheduler"
+	"github.com/wireops/wireops/internal/safepath"
 )
 
 // jobListItem is the enriched job record returned by the list endpoint.
@@ -54,6 +54,25 @@ func validationErrors(err error) []string {
 		return valErr.Errors
 	}
 	return []string{err.Error()}
+}
+
+// resolveJobParams extracts the job ID from the request, finds the scheduled job,
+// and resolves repository workspace, repository ID, and job file path.
+func resolveJobParams(app core.App, e *core.RequestEvent) (*core.Record, string, string, string, error) {
+	id := e.Request.PathValue("id")
+	if id == "" {
+		return nil, "", "", "", e.JSON(http.StatusBadRequest, map[string]string{"error": "missing id"})
+	}
+
+	rec, err := app.FindRecordById("scheduled_jobs", id)
+	if err != nil {
+		return nil, "", "", "", e.JSON(http.StatusNotFound, map[string]string{"error": "job not found"})
+	}
+
+	repoWorkspace := filepath.Join(app.DataDir(), "repositories")
+	repoID := rec.GetString("repository")
+	jobFile := rec.GetString("job_file")
+	return rec, repoWorkspace, repoID, jobFile, nil
 }
 
 // RegisterJobRoutes mounts custom REST endpoints for scheduled jobs.
@@ -141,17 +160,10 @@ func RegisterJobRoutes(r *router.Router[*core.RequestEvent], app core.App, sched
 
 	// Trigger a manual run immediately.
 	r.POST("/api/custom/jobs/{id}/run", func(e *core.RequestEvent) error {
-		id := e.Request.PathValue("id")
-		if id == "" {
-			return e.JSON(http.StatusBadRequest, map[string]string{"error": "missing id"})
-		}
-		rec, err := app.FindRecordById("scheduled_jobs", id)
+		rec, repoWorkspace, repoID, jobFile, err := resolveJobParams(app, e)
 		if err != nil {
-			return e.JSON(http.StatusNotFound, map[string]string{"error": "job not found"})
+			return err
 		}
-		repoWorkspace := filepath.Join(app.DataDir(), "repositories")
-		repoID := rec.GetString("repository")
-		jobFile := rec.GetString("job_file")
 		if _, err := job.ParseJobFile(repoWorkspace, repoID, jobFile); err != nil {
 			var valErr *job.ValidationError
 			if errors.As(err, &valErr) {
@@ -166,25 +178,16 @@ func RegisterJobRoutes(r *router.Router[*core.RequestEvent], app core.App, sched
 		if e.Auth != nil {
 			userID = e.Auth.Id
 		}
-		sched.TriggerManual(id, userID)
+		sched.TriggerManual(rec.Id, userID)
 		return e.JSON(http.StatusOK, map[string]string{"status": "triggered"})
 	})
 
 	// Return the parsed job.yaml definition for a single scheduled job.
 	r.GET("/api/custom/jobs/{id}/definition", func(e *core.RequestEvent) error {
-		id := e.Request.PathValue("id")
-		if id == "" {
-			return e.JSON(http.StatusBadRequest, map[string]string{"error": "missing id"})
-		}
-
-		rec, err := app.FindRecordById("scheduled_jobs", id)
+		_, repoWorkspace, repoID, jobFile, err := resolveJobParams(app, e)
 		if err != nil {
-			return e.JSON(http.StatusNotFound, map[string]string{"error": "job not found"})
+			return err
 		}
-
-		repoWorkspace := filepath.Join(app.DataDir(), "repositories")
-		repoID := rec.GetString("repository")
-		jobFile := rec.GetString("job_file")
 
 		def, err := job.ParseJobFile(repoWorkspace, repoID, jobFile)
 		if err != nil {
@@ -199,23 +202,13 @@ func RegisterJobRoutes(r *router.Router[*core.RequestEvent], app core.App, sched
 
 	// Return the raw, unparsed job.yaml definition file content for a single scheduled job.
 	r.GET("/api/custom/jobs/{id}/raw", func(e *core.RequestEvent) error {
-		id := e.Request.PathValue("id")
-		if id == "" {
-			return e.JSON(http.StatusBadRequest, map[string]string{"error": "missing id"})
-		}
-
-		rec, err := app.FindRecordById("scheduled_jobs", id)
+		_, repoWorkspace, repoID, jobFile, err := resolveJobParams(app, e)
 		if err != nil {
-			return e.JSON(http.StatusNotFound, map[string]string{"error": "job not found"})
+			return err
 		}
 
-		repoWorkspace := filepath.Join(app.DataDir(), "repositories")
-		repoID := rec.GetString("repository")
-		jobFile := rec.GetString("job_file")
-
-		// Prevent path traversal
-		clean := filepath.Clean(jobFile)
-		if strings.HasPrefix(clean, "..") || filepath.IsAbs(clean) {
+		clean, err := safepath.CleanRelativePath(jobFile)
+		if err != nil {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid job_file path"})
 		}
 
