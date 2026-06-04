@@ -1,13 +1,17 @@
 package job
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/wireops/wireops/internal/safepath"
 )
 
 // Mode controls how many agents receive a job dispatch per cron tick.
@@ -28,7 +32,7 @@ type Resources struct {
 
 // Definition holds all fields parsed from a job.yaml file.
 type Definition struct {
-	Title       string    `yaml:"title"       json:"title"`
+	Name        string    `yaml:"name"        json:"name"`
 	Description string    `yaml:"description" json:"description"`
 	Cron        string    `yaml:"cron"        json:"cron"`
 	Tags        []string  `yaml:"tags"        json:"tags"`
@@ -59,10 +63,9 @@ func (c *Command) UnmarshalYAML(value *yaml.Node) error {
 // ParseJobFile reads and validates a job.yaml from the cloned repository workspace.
 // repoWorkspace is the base directory where repos are cloned (e.g. pb_data/repositories).
 func ParseJobFile(repoWorkspace, repoID, filePath string) (*Definition, error) {
-	// Prevent path traversal
-	clean := filepath.Clean(filePath)
-	if strings.HasPrefix(clean, "..") || filepath.IsAbs(clean) {
-		return nil, fmt.Errorf("invalid job_file path: %q", filePath)
+	clean, err := safepath.CleanRelativePath(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("invalid job_file path: %w", err)
 	}
 
 	full := filepath.Join(repoWorkspace, repoID, clean)
@@ -71,9 +74,18 @@ func ParseJobFile(repoWorkspace, repoID, filePath string) (*Definition, error) {
 		return nil, fmt.Errorf("cannot read job file %q: %w", filePath, err)
 	}
 
+	dec := yaml.NewDecoder(bytes.NewReader(data))
 	var def Definition
-	if err := yaml.Unmarshal(data, &def); err != nil {
+	if err := dec.Decode(&def); err != nil {
 		return nil, fmt.Errorf("invalid job.yaml: %w", err)
+	}
+
+	// Reject multiple documents (separated by ---)
+	var next yaml.Node
+	if err := dec.Decode(&next); err == nil {
+		return nil, fmt.Errorf("invalid job.yaml: multiple YAML documents (separated by '---') are not allowed")
+	} else if err != io.EOF {
+		return nil, fmt.Errorf("invalid job.yaml: multiple YAML documents or invalid trailing content found: %w", err)
 	}
 
 	if err := def.validate(); err != nil {
@@ -91,22 +103,35 @@ func ParseJobFile(repoWorkspace, repoID, filePath string) (*Definition, error) {
 // IsJobFile reports whether data looks like a job.yaml by requiring
 // non-empty "title", "image", and "cron" fields at the top level.
 func IsJobFile(data []byte) bool {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
 	var doc struct {
-		Title string `yaml:"title"`
+		Name  string `yaml:"name"`
 		Image string `yaml:"image"`
 		Cron  string `yaml:"cron"`
 	}
-	if err := yaml.Unmarshal(data, &doc); err != nil {
+	if err := dec.Decode(&doc); err != nil {
 		return false
 	}
-	return doc.Title != "" && doc.Image != "" && doc.Cron != ""
+	if doc.Name == "" || doc.Image == "" || doc.Cron == "" {
+		return false
+	}
+
+	// Reject multiple documents
+	var next yaml.Node
+	if err := dec.Decode(&next); err == nil {
+		return false
+	} else if err != io.EOF {
+		return false
+	}
+
+	return true
 }
 
 func (d *Definition) validate() error {
 	var errs []string
 
-	if d.Title == "" {
-		errs = append(errs, "title is required")
+	if d.Name == "" {
+		errs = append(errs, "name is required")
 	}
 	if d.Description == "" {
 		errs = append(errs, "description is required")

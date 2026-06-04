@@ -2,7 +2,8 @@
 const route = useRoute()
 const router = useRouter()
 const { $pb } = useNuxtApp()
-const { triggerJobRun, cancelJobRun, getJobDefinition } = useApi()
+const { triggerJobRun, cancelJobRun, getJobDefinition, getJobRaw } = useApi()
+const { copy } = useCopy()
 const { subscribe } = useRealtime()
 const toast = useToast()
 
@@ -45,13 +46,35 @@ async function loadDefinition() {
   }
 }
 
+// YAML file viewer
+const showYamlModal = ref(false)
+const yamlContent = ref('')
+const yamlFilename = ref('')
+
+async function openYamlViewer() {
+  try {
+    const res = await getJobRaw(jobId.value)
+    yamlContent.value = res.content
+    yamlFilename.value = res.filename
+    showYamlModal.value = true
+  } catch (e: any) {
+    toast.add({ title: e?.message || 'Failed to load YAML file', color: 'error' })
+  }
+}
+
+function downloadYamlFile() {
+  const blob = new Blob([yamlContent.value], { type: 'text/yaml' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = yamlFilename.value || 'job.yaml'
+  a.click()
+  URL.revokeObjectURL(url)
+  toast.add({ title: 'YAML file downloaded', color: 'success' })
+}
+
 onMounted(() => {
   loadDefinition()
-  subscribe('job_runs', (data: any) => {
-    if (data.record?.job === jobId.value && jobRunsListRef.value?.refreshRuns) {
-      jobRunsListRef.value.refreshRuns()
-    }
-  })
   subscribe('scheduled_jobs', (data: any) => {
     if (data.record?.id === jobId.value) { refreshJob(); loadDefinition() }
   })
@@ -140,10 +163,10 @@ async function toggleEnabled() {
         <div>
           <h1 class="text-2xl font-bold text-gray-900 dark:text-wire-200 flex items-center gap-2">
             <UIcon name="i-lucide-calendar-clock" class="w-6 h-6 text-yellow-400" />
-            {{ definition?.title || job?.job_file || '…' }}
+            {{ job?.name || definition?.name || 'Invalid Job' }}
           </h1>
-          <p v-if="definition?.description" class="text-sm text-gray-500 dark:text-wire-200/60 mt-0.5">
-            {{ definition.description }}
+          <p v-if="job?.description || definition?.description" class="text-sm text-gray-500 dark:text-wire-200/60 mt-0.5">
+            {{ job?.description || definition.description }}
           </p>
           <div class="flex items-center gap-2 mt-1 flex-wrap">
             <span class="text-xs font-mono text-gray-400 dark:text-wire-200/40">
@@ -258,57 +281,129 @@ async function toggleEnabled() {
 
       <UCard v-else-if="definition">
         <template #header>
-          <div class="flex items-center gap-2">
-            <UIcon name="i-lucide-file-code" class="w-4 h-4 text-yellow-400" />
-            <span class="text-sm font-semibold">{{ job?.job_file }}</span>
-            <UBadge label="read-only" variant="subtle" color="neutral" size="xs" />
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <UIcon name="i-lucide-file-code" class="w-4 h-4 text-yellow-400" />
+              <span class="text-sm font-semibold">{{ job?.job_file }}</span>
+              <UBadge label="read-only" variant="subtle" color="neutral" size="xs" />
+            </div>
+            <UButton
+              label="View YAML"
+              color="primary"
+              variant="outline"
+              size="sm"
+              icon="i-lucide-file-code"
+              @click="openYamlViewer"
+            />
           </div>
         </template>
 
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
-          <div class="space-y-1">
-            <p class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-wire-200/40">Image</p>
-            <code class="font-mono text-gray-800 dark:text-wire-200">{{ definition.image }}</code>
-          </div>
-          <div class="space-y-1">
-            <p class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-wire-200/40">Cron</p>
-            <code class="font-mono text-gray-800 dark:text-wire-200">{{ definition.cron }}</code>
-          </div>
-          <div class="space-y-1">
-            <p class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-wire-200/40">Mode</p>
-            <UBadge :label="definition.mode || 'once'" variant="subtle" color="neutral" size="sm" />
-          </div>
-          <div class="space-y-1 sm:col-span-2">
-            <p class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-wire-200/40">Command</p>
-            <code class="font-mono text-gray-800 dark:text-wire-200 break-all">{{ Array.isArray(definition.command) ? definition.command.join(' ') : definition.command }}</code>
-          </div>
-          <div v-if="definition.tags?.length" class="space-y-1 sm:col-span-2">
-            <p class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-wire-200/40">Worker tags</p>
-            <div class="flex flex-wrap gap-1">
-              <UBadge
-                v-for="tag in definition.tags"
-                :key="tag"
-                :label="tag"
-                variant="subtle"
-                color="primary"
-                size="sm"
-                class="font-mono"
-              />
+        <div class="space-y-6">
+          <!-- Section 1: Scheduling & Dispatch -->
+          <div>
+            <h3 class="text-sm font-semibold text-gray-900 dark:text-wire-200 flex items-center gap-1.5 mb-3">
+              <UIcon name="i-lucide-calendar" class="w-4 h-4 text-yellow-400" />
+              Scheduling & Dispatch
+            </h3>
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm bg-gray-50 dark:bg-carbon-900/20 p-4 rounded-xl border border-gray-200 dark:border-carbon-800">
+              <div class="space-y-1">
+                <p class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-wire-200/40 flex items-center gap-1.5">
+                  <UIcon name="i-lucide-calendar-days" class="w-3.5 h-3.5 text-gray-400 dark:text-wire-200/40 shrink-0" />
+                  Cron Schedule
+                </p>
+                <code class="font-mono text-gray-800 dark:text-wire-200">{{ definition.cron }}</code>
+              </div>
+              <div class="space-y-1">
+                <p class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-wire-200/40 flex items-center gap-1.5">
+                  <UIcon name="i-lucide-git-fork" class="w-3.5 h-3.5 text-gray-400 dark:text-wire-200/40 shrink-0" />
+                  Dispatch Mode
+                </p>
+                <UBadge :label="definition.mode || 'once'" variant="subtle" color="neutral" size="sm" />
+              </div>
+              <div class="space-y-1">
+                <p class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-wire-200/40 flex items-center gap-1.5">
+                  <UIcon name="i-lucide-tags" class="w-3.5 h-3.5 text-gray-400 dark:text-wire-200/40 shrink-0" />
+                  Worker Tags
+                </p>
+                <div v-if="definition.tags?.length" class="flex flex-wrap gap-1">
+                  <UBadge v-for="tag in definition.tags" :key="tag" :label="tag" variant="subtle" color="primary" size="sm" class="font-mono" />
+                </div>
+                <span v-else class="text-xs text-gray-400 italic">No tags specified</span>
+              </div>
             </div>
           </div>
-          <div v-if="definition.volumes?.length" class="space-y-1 sm:col-span-2">
-            <p class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-wire-200/40">Volumes</p>
-            <div class="flex flex-wrap gap-1">
-              <code
-                v-for="v in definition.volumes"
-                :key="v"
-                class="block font-mono text-gray-800 dark:text-wire-200 text-xs bg-gray-100 dark:bg-carbon-800 px-2 py-1 rounded"
-              >{{ v }}</code>
+
+          <!-- Section 2: Container Details -->
+          <div>
+            <h3 class="text-sm font-semibold text-gray-900 dark:text-wire-200 flex items-center gap-1.5 mb-3">
+              <UIcon name="i-lucide-box" class="w-4 h-4 text-yellow-400" />
+              Container Configuration
+            </h3>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm bg-gray-50 dark:bg-carbon-900/20 p-4 rounded-xl border border-gray-200 dark:border-carbon-800">
+              <div class="space-y-1 sm:col-span-2">
+                <p class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-wire-200/40 flex items-center gap-1.5">
+                  <UIcon name="i-lucide-box" class="w-3.5 h-3.5 text-gray-400 dark:text-wire-200/40 shrink-0" />
+                  Image
+                </p>
+                <ImageNameLabel :name="definition.image" />
+              </div>
+              <div class="space-y-1 sm:col-span-2">
+                <p class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-wire-200/40 flex items-center gap-1.5">
+                  <UIcon name="i-lucide-terminal" class="w-3.5 h-3.5 text-gray-400 dark:text-wire-200/40 shrink-0" />
+                  Command
+                </p>
+                <CommandLineLabel :command="Array.isArray(definition.command) ? definition.command.join(' ') : (definition.command || '')" />
+              </div>
+              <div class="space-y-1">
+                <p class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-wire-200/40 flex items-center gap-1.5">
+                  <UIcon name="i-lucide-network" class="w-3.5 h-3.5 text-gray-400 dark:text-wire-200/40 shrink-0" />
+                  Network
+                </p>
+                <UBadge v-if="definition.network" :label="definition.network" variant="subtle" color="info" size="sm" class="font-mono" />
+                <span v-else class="text-xs text-gray-400 italic">Default bridge</span>
+              </div>
+              <div class="space-y-1">
+                <p class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-wire-200/40 flex items-center gap-1.5">
+                  <UIcon name="i-lucide-hard-drive" class="w-3.5 h-3.5 text-gray-400 dark:text-wire-200/40 shrink-0" />
+                  Volumes
+                </p>
+                <div v-if="definition.volumes?.length" class="flex flex-col gap-1.5">
+                  <code v-for="v in definition.volumes" :key="v" class="block font-mono text-gray-800 dark:text-wire-200 text-xs bg-gray-100 dark:bg-carbon-800 px-2 py-1 rounded w-fit select-all">{{ v }}</code>
+                </div>
+                <span v-else class="text-xs text-gray-400 italic">No volumes mounted</span>
+              </div>
             </div>
           </div>
-          <div v-if="definition.network" class="space-y-1">
-            <p class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-wire-200/40">Network</p>
-            <UBadge :label="definition.network" variant="subtle" color="info" size="sm" class="font-mono" />
+
+          <!-- Section 3: Resource Limits -->
+          <div v-if="definition.resources">
+            <h3 class="text-sm font-semibold text-gray-900 dark:text-wire-200 flex items-center gap-1.5 mb-3">
+              <UIcon name="i-lucide-cpu" class="w-4 h-4 text-yellow-400" />
+              Resource Limits & Timeout
+            </h3>
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm bg-gray-50 dark:bg-carbon-900/20 p-4 rounded-xl border border-gray-200 dark:border-carbon-800">
+              <div class="space-y-1">
+                <p class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-wire-200/40 flex items-center gap-1.5">
+                  <UIcon name="i-lucide-cpu" class="w-3.5 h-3.5 text-gray-400 dark:text-wire-200/40 shrink-0" />
+                  CPU Limit
+                </p>
+                <code class="font-mono text-gray-800 dark:text-wire-200">{{ definition.resources.cpu || '—' }}</code>
+              </div>
+              <div class="space-y-1">
+                <p class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-wire-200/40 flex items-center gap-1.5">
+                  <UIcon name="i-lucide-database" class="w-3.5 h-3.5 text-gray-400 dark:text-wire-200/40 shrink-0" />
+                  Memory Limit
+                </p>
+                <code class="font-mono text-gray-800 dark:text-wire-200">{{ definition.resources.memory || '—' }}</code>
+              </div>
+              <div class="space-y-1">
+                <p class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-wire-200/40 flex items-center gap-1.5">
+                  <UIcon name="i-lucide-hourglass" class="w-3.5 h-3.5 text-gray-400 dark:text-wire-200/40 shrink-0" />
+                  Timeout Duration
+                </p>
+                <code class="font-mono text-gray-800 dark:text-wire-200">{{ definition.resources.timeout || '—' }}</code>
+              </div>
+            </div>
           </div>
         </div>
       </UCard>
@@ -317,5 +412,26 @@ async function toggleEnabled() {
         <USkeleton class="h-40 w-full rounded-xl" />
       </div>
     </div>
+
+    <!-- YAML File Modal -->
+    <UModal v-model:open="showYamlModal">
+      <template #content>
+        <UCard class="w-full max-w-4xl max-h-[85vh] flex flex-col">
+          <template #header>
+            <div class="flex items-center justify-between">
+              <h3 class="font-semibold text-sm">{{ yamlFilename }}</h3>
+              <div class="flex items-center gap-1">
+                <UButton icon="i-lucide-copy" variant="ghost" size="xs" title="Copy" @click="copy(yamlContent, 'YAML file')" />
+                <UButton icon="i-lucide-download" variant="ghost" size="xs" title="Download" @click="downloadYamlFile" />
+                <UButton icon="i-lucide-x" variant="ghost" size="xs" @click="showYamlModal = false" />
+              </div>
+            </div>
+          </template>
+          <div class="overflow-y-auto max-h-[60vh] -mx-6 -my-4 p-6 bg-gray-950 text-gray-100 font-mono text-xs select-text">
+            <YamlHighlighter :code="yamlContent" />
+          </div>
+        </UCard>
+      </template>
+    </UModal>
   </div>
 </template>

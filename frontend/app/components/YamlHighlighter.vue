@@ -30,8 +30,8 @@ function escapeHtml(text: string): string {
     .replace(/'/g, '&#39;')
 }
 
-function highlightYaml(code: string): string {
-  if (!code) return ''
+function highlightYaml(code: string): string[] {
+  if (!code) return []
   
   const lines = code.split('\n')
   const highlighted: string[] = []
@@ -105,10 +105,10 @@ function highlightYaml(code: string): string {
     highlighted.push(highlightedLine)
   }
   
-  return highlighted.join('\n')
+  return highlighted
 }
 
-const highlightedCode = computed(() => highlightYaml(props.code))
+const highlightedLines = computed(() => highlightYaml(props.code))
 </script>
 
 <template>
@@ -134,14 +134,14 @@ const highlightedCode = computed(() => highlightYaml(props.code))
       </UTooltip>
     </div>
     <!-- eslint-disable-next-line vue/no-v-html -->
-    <pre :class="['yaml-highlighter', colorMode.value === 'dark' ? 'dark-mode' : 'light-mode', props.class]"><code :class="{'wrap-text': wordWrap}" v-html="highlightedCode"/></pre>
+    <pre :class="['yaml-highlighter', colorMode.value === 'dark' ? 'dark-mode' : 'light-mode', props.class]"><code :class="{'wrap-text': wordWrap}"><div v-for="(line, idx) in highlightedLines" :key="idx" class="code-line"><span class="line-number" aria-hidden="true">{{ idx + 1 }}</span><span class="line-content" v-html="line || '&nbsp;'" /></div></code></pre>
   </div>
 </template>
 
 <style scoped>
 .yaml-highlighter {
   margin: 0;
-  padding: 1rem;
+  padding: 1rem 0;
   background-color: rgb(243 244 246); /* gray-100 */
   border-radius: 0.5rem;
   overflow-x: auto;
@@ -153,11 +153,41 @@ const highlightedCode = computed(() => highlightYaml(props.code))
 
 .yaml-highlighter code {
   display: block;
-  white-space: pre;
   color: inherit;
 }
 
-.yaml-highlighter code.wrap-text {
+.code-line {
+  display: flex;
+  width: 100%;
+}
+
+.line-number {
+  font-family: monospace;
+  font-size: 0.8125rem;
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  text-align: right;
+  padding-right: 1rem;
+  padding-left: 1rem;
+  min-width: 3.5rem;
+  color: rgb(156 163 175); /* gray-400 */
+  border-right: 1px solid rgb(229 231 235); /* gray-200 */
+  margin-right: 1rem;
+}
+
+.dark-mode .line-number {
+  color: rgb(75 85 99); /* gray-600 */
+  border-right-color: rgb(31 41 55); /* gray-800 */
+}
+
+.line-content {
+  flex: 1;
+  white-space: pre;
+}
+
+code.wrap-text .line-content {
   white-space: pre-wrap !important;
   word-break: break-word;
 }

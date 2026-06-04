@@ -46,6 +46,9 @@ func TestRecoverOrphanState(t *testing.T) {
 	jobRuns.Fields.Add(&core.SelectField{Name: "status", Values: []string{"pending", "running", "success", "error", "stalled", "forgotten"}})
 	jobRuns.Fields.Add(&core.TextField{Name: "output"})
 	jobRuns.Fields.Add(&core.NumberField{Name: "duration_ms"})
+	jobRuns.Fields.Add(&core.DateField{Name: "started_at"})
+	jobRuns.Fields.Add(&core.NumberField{Name: "queue_time_ms"})
+	jobRuns.Fields.Add(&core.NumberField{Name: "execution_time_ms"})
 	if err := app.Save(jobRuns); err != nil {
 		t.Fatalf("failed to create job_runs collection: %v", err)
 	}

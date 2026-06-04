@@ -3,6 +3,7 @@ package routes
 import (
 	"errors"
 	"net/http"
+	"os"
 	"path/filepath"
 
 	"github.com/pocketbase/dbx"
@@ -11,24 +12,34 @@ import (
 
 	"github.com/wireops/wireops/internal/job"
 	"github.com/wireops/wireops/internal/jobscheduler"
+	"github.com/wireops/wireops/internal/safepath"
 )
 
 // jobListItem is the enriched job record returned by the list endpoint.
 // Each item embeds the parsed job.yaml definition so the UI never has to
 // issue per-job requests.
+type jobRunSummary struct {
+	ID      string `json:"id"`
+	Status  string `json:"status"`
+	Created string `json:"created"`
+}
+
 type jobListItem struct {
-	ID              string          `json:"id"`
-	JobFile         string          `json:"job_file"`
-	Enabled         bool            `json:"enabled"`
-	Status          string          `json:"status"`
-	LastRunAt       string          `json:"last_run_at"`
-	Created         string          `json:"created"`
-	Updated         string          `json:"updated"`
-	Repository      jobRepoInfo     `json:"repository"`
-	Definition      *job.Definition `json:"definition"`
-	DefinitionError string          `json:"definition_error,omitempty"`
-	Errors          []string        `json:"errors,omitempty"`
-	StalledReason   string          `json:"stalled_reason,omitempty"`
+	ID              string           `json:"id"`
+	Name            string           `json:"name"`
+	Description     string           `json:"description"`
+	JobFile         string           `json:"job_file"`
+	Enabled         bool             `json:"enabled"`
+	Status          string           `json:"status"`
+	LastRunAt       string           `json:"last_run_at"`
+	Created         string           `json:"created"`
+	Updated         string           `json:"updated"`
+	Repository      jobRepoInfo      `json:"repository"`
+	Definition      *job.Definition  `json:"definition"`
+	DefinitionError string           `json:"definition_error,omitempty"`
+	Errors          []string         `json:"errors,omitempty"`
+	StalledReason   string           `json:"stalled_reason,omitempty"`
+	RecentRuns      []jobRunSummary  `json:"recent_runs"`
 }
 
 type jobRepoInfo struct {
@@ -43,6 +54,25 @@ func validationErrors(err error) []string {
 		return valErr.Errors
 	}
 	return []string{err.Error()}
+}
+
+// resolveJobParams extracts the job ID from the request, finds the scheduled job,
+// and resolves repository workspace, repository ID, and job file path.
+func resolveJobParams(app core.App, e *core.RequestEvent) (*core.Record, string, string, string, error) {
+	id := e.Request.PathValue("id")
+	if id == "" {
+		return nil, "", "", "", e.JSON(http.StatusBadRequest, map[string]string{"error": "missing id"})
+	}
+
+	rec, err := app.FindRecordById("scheduled_jobs", id)
+	if err != nil {
+		return nil, "", "", "", e.JSON(http.StatusNotFound, map[string]string{"error": "job not found"})
+	}
+
+	repoWorkspace := filepath.Join(app.DataDir(), "repositories")
+	repoID := rec.GetString("repository")
+	jobFile := rec.GetString("job_file")
+	return rec, repoWorkspace, repoID, jobFile, nil
 }
 
 // RegisterJobRoutes mounts custom REST endpoints for scheduled jobs.
@@ -70,20 +100,35 @@ func RegisterJobRoutes(r *router.Router[*core.RequestEvent], app core.App, sched
 			}
 
 			item := jobListItem{
-				ID:         rec.Id,
-				JobFile:    rec.GetString("job_file"),
-				Enabled:    rec.GetBool("enabled"),
-				Status:     rec.GetString("status"),
-				LastRunAt:  rec.GetDateTime("last_run_at").String(),
-				Created:    rec.GetDateTime("created").String(),
-				Updated:    rec.GetDateTime("updated").String(),
-				Repository: repoInfo,
+				ID:          rec.Id,
+				Name:        rec.GetString("name"),
+				Description: rec.GetString("description"),
+				JobFile:     rec.GetString("job_file"),
+				Enabled:     rec.GetBool("enabled"),
+				Status:      rec.GetString("status"),
+				LastRunAt:   rec.GetDateTime("last_run_at").String(),
+				Created:     rec.GetDateTime("created").String(),
+				Updated:     rec.GetDateTime("updated").String(),
+				Repository:  repoInfo,
 			}
 
 			if item.Status == "stalled" {
 				runs, err := app.FindRecordsByFilter("job_runs", "job = {:jobId} && status = 'stalled'", "-created", 1, 0, dbx.Params{"jobId": rec.Id})
 				if err == nil && len(runs) > 0 {
 					item.StalledReason = runs[0].GetString("output")
+				}
+			}
+
+			// Fetch recent runs
+			item.RecentRuns = []jobRunSummary{}
+			recentRuns, rerr := app.FindRecordsByFilter("job_runs", "job = {:jobId}", "-created", 5, 0, dbx.Params{"jobId": rec.Id})
+			if rerr == nil {
+				for _, run := range recentRuns {
+					item.RecentRuns = append(item.RecentRuns, jobRunSummary{
+						ID:      run.Id,
+						Status:  run.GetString("status"),
+						Created: run.GetDateTime("created").String(),
+					})
 				}
 			}
 
@@ -115,17 +160,10 @@ func RegisterJobRoutes(r *router.Router[*core.RequestEvent], app core.App, sched
 
 	// Trigger a manual run immediately.
 	r.POST("/api/custom/jobs/{id}/run", func(e *core.RequestEvent) error {
-		id := e.Request.PathValue("id")
-		if id == "" {
-			return e.JSON(http.StatusBadRequest, map[string]string{"error": "missing id"})
-		}
-		rec, err := app.FindRecordById("scheduled_jobs", id)
+		rec, repoWorkspace, repoID, jobFile, err := resolveJobParams(app, e)
 		if err != nil {
-			return e.JSON(http.StatusNotFound, map[string]string{"error": "job not found"})
+			return err
 		}
-		repoWorkspace := filepath.Join(app.DataDir(), "repositories")
-		repoID := rec.GetString("repository")
-		jobFile := rec.GetString("job_file")
 		if _, err := job.ParseJobFile(repoWorkspace, repoID, jobFile); err != nil {
 			var valErr *job.ValidationError
 			if errors.As(err, &valErr) {
@@ -140,25 +178,16 @@ func RegisterJobRoutes(r *router.Router[*core.RequestEvent], app core.App, sched
 		if e.Auth != nil {
 			userID = e.Auth.Id
 		}
-		sched.TriggerManual(id, userID)
+		sched.TriggerManual(rec.Id, userID)
 		return e.JSON(http.StatusOK, map[string]string{"status": "triggered"})
 	})
 
 	// Return the parsed job.yaml definition for a single scheduled job.
 	r.GET("/api/custom/jobs/{id}/definition", func(e *core.RequestEvent) error {
-		id := e.Request.PathValue("id")
-		if id == "" {
-			return e.JSON(http.StatusBadRequest, map[string]string{"error": "missing id"})
-		}
-
-		rec, err := app.FindRecordById("scheduled_jobs", id)
+		_, repoWorkspace, repoID, jobFile, err := resolveJobParams(app, e)
 		if err != nil {
-			return e.JSON(http.StatusNotFound, map[string]string{"error": "job not found"})
+			return err
 		}
-
-		repoWorkspace := filepath.Join(app.DataDir(), "repositories")
-		repoID := rec.GetString("repository")
-		jobFile := rec.GetString("job_file")
 
 		def, err := job.ParseJobFile(repoWorkspace, repoID, jobFile)
 		if err != nil {
@@ -169,6 +198,30 @@ func RegisterJobRoutes(r *router.Router[*core.RequestEvent], app core.App, sched
 		}
 
 		return e.JSON(http.StatusOK, def)
+	})
+
+	// Return the raw, unparsed job.yaml definition file content for a single scheduled job.
+	r.GET("/api/custom/jobs/{id}/raw", func(e *core.RequestEvent) error {
+		_, repoWorkspace, repoID, jobFile, err := resolveJobParams(app, e)
+		if err != nil {
+			return err
+		}
+
+		clean, err := safepath.CleanRelativePath(jobFile)
+		if err != nil {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid job_file path"})
+		}
+
+		full := filepath.Join(repoWorkspace, repoID, clean)
+		data, err := os.ReadFile(full)
+		if err != nil {
+			return e.JSON(http.StatusNotFound, map[string]string{"error": "job file not found"})
+		}
+
+		return e.JSON(http.StatusOK, map[string]string{
+			"content":  string(data),
+			"filename": filepath.Base(jobFile),
+		})
 	})
 
 	// Delete a job run (only if stalled).

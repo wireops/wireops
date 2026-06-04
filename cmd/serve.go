@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -25,7 +26,7 @@ import (
 	"github.com/wireops/wireops/internal/oidc"
 	"github.com/wireops/wireops/internal/protocol"
 	"github.com/wireops/wireops/internal/routes"
-	"github.com/wireops/wireops/internal/sync"
+	wiresync "github.com/wireops/wireops/internal/sync"
 	"github.com/wireops/wireops/internal/worker"
 	"github.com/wireops/wireops/pkg/logger"
 	wiretls "github.com/wireops/wireops/pkg/tls"
@@ -188,11 +189,53 @@ func Execute() error {
 
 	workerSvc := worker.NewService(app)
 	workerServer := worker.NewWorkerServer(app, workerSvc)
-	scheduler := sync.NewScheduler(app, dockerClient, workerServer)
+	scheduler := wiresync.NewScheduler(app, dockerClient, workerServer)
 	jobSched := jobscheduler.NewScheduler(app, workerServer, dataDir)
 
+	var disconnectTimers sync.Map
+
 	workerServer.SetOnConnect(func(workerID string) {
+		if timer, loaded := disconnectTimers.LoadAndDelete(workerID); loaded {
+			if t, ok := timer.(*time.Timer); ok {
+				t.Stop()
+				log.Printf("[jobscheduler] worker=%s reconnected, cancelled pending disconnect handler", workerID)
+			}
+		}
 		scheduler.TriggerPendingReconciles(workerID)
+	})
+
+	workerServer.SetOnDisconnect(func(workerID string) {
+		gracePeriod := 10 * time.Second
+		if val := os.Getenv("WORKER_DISCONNECT_GRACE_PERIOD"); val != "" {
+			if d, err := time.ParseDuration(val); err == nil {
+				gracePeriod = d
+			} else if secs, err := strconv.Atoi(val); err == nil {
+				gracePeriod = time.Duration(secs) * time.Second
+			}
+		}
+
+		log.Printf("[jobscheduler] worker=%s disconnected, scheduling disconnect processing in %v", workerID, gracePeriod)
+
+		if oldTimer, loaded := disconnectTimers.LoadAndDelete(workerID); loaded {
+			if t, ok := oldTimer.(*time.Timer); ok {
+				t.Stop()
+			}
+		}
+
+		timer := time.AfterFunc(gracePeriod, func() {
+			disconnectTimers.Delete(workerID)
+
+			if workerServer.IsConnected(workerID) {
+				log.Printf("[jobscheduler] worker=%s is connected at timer firing time, skipping disconnect processing", workerID)
+				return
+			}
+
+			log.Printf("[jobscheduler] grace period expired for worker=%s, processing disconnect", workerID)
+			if err := jobSched.HandleWorkerDisconnect(workerID); err != nil {
+				log.Printf("[jobscheduler] worker disconnect handle error worker=%s: %v", workerID, err)
+			}
+		})
+		disconnectTimers.Store(workerID, timer)
 	})
 
 	workerServer.SetOnHeartbeat(func(workerID string, activeIDs []string) {
@@ -255,7 +298,7 @@ func Execute() error {
 		routes.RegisterJobRoutes(se.Router, app, jobSched)
 		routes.RegisterAuthRoutes(se.Router, app)
 
-		if err := sync.RecoverOrphanState(app); err != nil {
+		if err := wiresync.RecoverOrphanState(app); err != nil {
 			log.Printf("Warning: orphan state recovery error: %v", err)
 		}
 

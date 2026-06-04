@@ -40,6 +40,7 @@ type WorkerServer struct {
 	workerTags  map[string][]string        // workerID → tags declared via WORKER_TAGS
 
 	onConnect      func(workerID string)
+	onDisconnect   func(workerID string)
 	onJobCompleted func(protocol.JobCompletedMessage)
 	onHeartbeat    func(workerID string, activeIDs []string)
 }
@@ -51,6 +52,11 @@ type MTLSServer = WorkerServer
 // SetOnConnect allows registering a callback to be notified when a worker successfully connects.
 func (s *WorkerServer) SetOnConnect(f func(workerID string)) {
 	s.onConnect = f
+}
+
+// SetOnDisconnect allows registering a callback to be notified when a worker disconnects.
+func (s *WorkerServer) SetOnDisconnect(f func(workerID string)) {
+	s.onDisconnect = f
 }
 
 // SetOnJobCompleted registers a callback invoked whenever a remote worker reports
@@ -177,6 +183,7 @@ func (s *WorkerServer) DisconnectWorker(workerID string) {
 		if writeMu != nil {
 			writeMu.Lock()
 		}
+		_ = conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
 		_ = conn.WriteMessage(
 			websocket.CloseMessage,
 			websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "worker revoked"),
@@ -192,6 +199,9 @@ func (s *WorkerServer) DisconnectWorker(workerID string) {
 	s.connMu.Unlock()
 	if ok {
 		logger.SafeLogf("[WORKER] Forcefully disconnected revoked worker: %s", workerID)
+		if s.onDisconnect != nil {
+			go s.onDisconnect(workerID)
+		}
 	}
 }
 
@@ -220,6 +230,7 @@ func (s *WorkerServer) SendMessage(workerID string, msgType protocol.MessageType
 	}
 
 	writeMu.Lock()
+	_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	err = conn.WriteMessage(websocket.TextMessage, msg)
 	writeMu.Unlock()
 	return err
@@ -310,6 +321,7 @@ func (s *WorkerServer) Dispatch(ctx context.Context, workerID string, cmd interf
 
 	start := time.Now()
 	writeMu.Lock()
+	_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	err = conn.WriteMessage(websocket.TextMessage, msg)
 	writeMu.Unlock()
 	if err != nil {
@@ -464,6 +476,9 @@ func (s *WorkerServer) handleWebSocket(c *gin.Context) {
 			delete(s.workerTags, workerID)
 			s.connMu.Unlock()
 			logger.SafeLogf("[WORKER] Worker %s disconnected", workerID)
+			if s.onDisconnect != nil {
+				go s.onDisconnect(workerID)
+			}
 		} else {
 			s.connMu.Unlock()
 			conn.Close()

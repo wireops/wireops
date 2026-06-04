@@ -10,20 +10,28 @@ const { data: repos, refresh: refreshRepos } = useAsyncData('repos_for_jobs', ()
 
 const { data: jobs, refresh, pending } = useAsyncData('jobs_list', () => listJobs())
 
+const jobsWithReversedRuns = computed(() => {
+  if (!jobs.value) return []
+  return jobs.value.map((job: any) => ({
+    ...job,
+    reversedRecentRuns: job.recent_runs ? [...job.recent_runs].reverse() : []
+  }))
+})
+
 onMounted(() => {
   subscribe('scheduled_jobs', () => refresh())
+  subscribe('job_runs', (data: any) => {
+    const jobId = data.record?.job
+    if (jobId && jobs.value?.some((j: any) => j.id === jobId)) {
+      refresh()
+    }
+  })
 })
 
 const showCreate = ref(false)
-const selectedDelete = ref<any>(null)
 
 function onCreated() {
   showCreate.value = false
-  refresh()
-}
-
-function onDeleted() {
-  selectedDelete.value = null
   refresh()
 }
 
@@ -105,35 +113,59 @@ function formatRelative(dateStr: string) {
         <p class="text-gray-500 dark:text-wire-200/50 text-sm">Create a new job to get started.</p>
       </div>
 
-      <div v-else class="divide-y divide-gray-100 dark:divide-carbon-800">
-        <div
-          v-for="job in jobs"
-          :key="job.id"
-          class="flex items-center justify-between py-4 gap-4"
-        >
-          <div class="flex items-center gap-4 min-w-0 flex-1">
-            <div class="w-9 h-9 rounded-lg bg-gray-100 dark:bg-carbon-700/60 flex items-center justify-center shrink-0">
-              <UIcon name="i-lucide-terminal" class="w-4 h-4 text-wire-400" />
+        <div v-else class="space-y-3">
+          <div
+            v-for="job in jobsWithReversedRuns"
+            :key="job.id"
+            class="flex items-center justify-between p-4 bg-gray-50 dark:bg-carbon-800/40 rounded-xl border border-gray-200 dark:border-carbon-700 hover:shadow-[0_0_0_2px_rgba(255,198,0,0.35),0_0_20px_rgba(255,198,0,0.12)] transition-all"
+          >
+            <!-- Icon — left, separated -->
+            <div class="mr-2 border-r border-gray-200 dark:border-carbon-700 pr-4 flex items-center shrink-0">
+              <UIcon name="i-lucide-terminal" class="w-5 h-5 text-wire-400" />
             </div>
-            <div class="min-w-0 flex-1">
-              <div class="flex items-center gap-2">
+
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2 mb-1 flex-wrap">
                 <NuxtLink
                   :to="`/jobs/${job.id}`"
                   class="font-semibold text-gray-900 dark:text-wire-200 hover:text-yellow-400 transition-colors truncate"
                 >
-                  {{ job.definition?.title || job.job_file }}
+                  {{ job.name || job.definition?.name || 'Invalid Job' }}
                 </NuxtLink>
                 <UTooltip v-if="job.definition_error" :text="job.definition_error">
                   <UIcon name="i-lucide-triangle-alert" class="w-4 h-4 text-amber-500 shrink-0" />
                 </UTooltip>
+                <BadgeStatus :status="job.status" />
+
+                <!-- Last 5 executions dots -->
+                <div v-if="job.recent_runs && job.recent_runs.length > 0" class="flex items-center gap-1 ml-2">
+                  <span class="text-xs text-gray-400 dark:text-wire-200/40 mr-1 select-none">History:</span>
+                  <UTooltip
+                    v-for="run in job.reversedRecentRuns"
+                    :key="run.id"
+                    :text="`Run: ${run.status} (${formatRelative(run.created)})`"
+                  >
+                    <span
+                      class="inline-block w-2.5 h-2.5 rounded-full border border-gray-200 dark:border-carbon-700 shrink-0"
+                      :class="{
+                        'bg-green-500': run.status === 'success',
+                        'bg-red-500': run.status === 'error',
+                        'bg-yellow-400 animate-pulse': run.status === 'running',
+                        'bg-amber-400': run.status === 'stalled',
+                        'bg-gray-400': run.status === 'pending',
+                      }"
+                    />
+                  </UTooltip>
+                </div>
               </div>
 
-              <p v-if="job.definition?.description" class="text-sm text-gray-500 dark:text-wire-200/50 truncate mt-0.5">
-                {{ job.definition.description }}
+              <p v-if="job.description || job.definition?.description" class="text-sm text-gray-500 dark:text-wire-200/50 truncate mt-0.5 mb-1.5">
+                {{ job.description || job.definition.description }}
               </p>
 
-              <div class="flex items-center gap-2 mt-1 flex-wrap">
-                <span class="text-xs text-gray-400 dark:text-wire-200/40 font-mono">
+              <div class="hidden sm:flex items-center gap-2 flex-wrap">
+                <span class="text-xs text-gray-400 dark:text-wire-200/40 font-mono flex items-center gap-1 mr-2">
+                  <UIcon name="i-lucide-git-branch" class="w-3.5 h-3.5" />
                   {{ job.repository.name }} / {{ job.job_file }}
                 </span>
                 <UBadge
@@ -173,68 +205,42 @@ function formatRelative(dateStr: string) {
                 />
               </div>
             </div>
-          </div>
 
-          <div class="flex items-center gap-3 shrink-0">
-            <div class="hidden sm:flex flex-col items-end gap-0.5">
-              <span class="text-xs text-gray-400 dark:text-wire-200/40 uppercase tracking-wider font-semibold">Last run</span>
-              <span class="text-sm text-gray-700 dark:text-wire-200">{{ formatRelative(job.last_run_at) }}</span>
+            <!-- Actions and details on the right -->
+            <div class="ml-2 border-l border-gray-200 dark:border-carbon-700 pl-4 flex items-center gap-3 shrink-0">
+              <div class="hidden md:flex flex-col items-end gap-0.5 mr-2">
+                <span class="text-xs text-gray-400 dark:text-wire-200/40 uppercase tracking-wider font-semibold">Last run</span>
+                <span class="text-sm text-gray-700 dark:text-wire-200">{{ formatRelative(job.last_run_at) }}</span>
+              </div>
+              <UTooltip :text="job.enabled ? 'Click to disable' : 'Click to enable'">
+                <UBadge
+                  :label="job.enabled ? 'ENABLED' : 'DISABLED'"
+                  :color="job.enabled ? 'success' : 'neutral'"
+                  variant="subtle"
+                  class="cursor-pointer select-none hover:opacity-80 transition-opacity uppercase font-semibold text-xs px-2.5 py-0.5"
+                  @click="toggleEnabled(job)"
+                />
+              </UTooltip>
+              <UTooltip text="Run now">
+                <UButton
+                  icon="i-lucide-play"
+                  variant="ghost"
+                  size="xs"
+                  color="neutral"
+                  :disabled="!job.enabled"
+                  @click="triggerRun(job)"
+                />
+              </UTooltip>
             </div>
-            <UBadge :label="job.status" :color="statusColor(job.status)" variant="subtle" size="sm" />
-            <USwitch
-              :model-value="job.enabled"
-              size="xs"
-              @update:model-value="toggleEnabled(job)"
-            />
-            <UTooltip text="Run now">
-              <UButton
-                icon="i-lucide-play"
-                variant="ghost"
-                size="xs"
-                color="neutral"
-                :disabled="!job.enabled"
-                @click="triggerRun(job)"
-              />
-            </UTooltip>
-            <UTooltip text="View details">
-              <UButton
-                icon="i-lucide-arrow-right"
-                variant="ghost"
-                size="xs"
-                color="neutral"
-                :to="`/jobs/${job.id}`"
-              />
-            </UTooltip>
-            <UTooltip text="Delete job">
-              <UButton
-                icon="i-lucide-trash-2"
-                variant="ghost"
-                size="xs"
-                color="error"
-                @click="selectedDelete = job"
-              />
-            </UTooltip>
           </div>
         </div>
-      </div>
-    </UCard>
-  </div>
+      </UCard>
+    </div>
 
-  <JobCreateModal 
-    v-if="showCreate"
-    :repos="repos || []" 
-    @created="onCreated" 
-    @cancel="showCreate = false" 
-  />
-
-  <UModal :open="!!selectedDelete" @update:open="(v) => { if (!v) selectedDelete = null }">
-    <template #content>
-      <JobDeleteModal
-        v-if="selectedDelete"
-        :job="selectedDelete"
-        @deleted="onDeleted"
-        @cancel="selectedDelete = null"
-      />
-    </template>
-  </UModal>
-</template>
+    <JobCreateModal 
+      v-if="showCreate"
+      :repos="repos || []" 
+      @created="onCreated" 
+      @cancel="showCreate = false" 
+    />
+  </template>

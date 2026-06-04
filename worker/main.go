@@ -201,6 +201,7 @@ func runSession(serverURL, workerToken, hostname string, tags []string, sigChan 
 			activeConnMu.RUnlock()
 			if c != nil {
 				connWriteMu.Lock()
+				_ = c.SetWriteDeadline(time.Now().Add(10 * time.Second))
 				writeErr := c.WriteMessage(websocket.TextMessage, heartbeat)
 				connWriteMu.Unlock()
 				if writeErr != nil {
@@ -266,7 +267,7 @@ func readLoop(conn *websocket.Conn, disconnectCh chan<- disconnectReason) {
 		case protocol.MsgReadFile:
 			go handleReadFile(env.Payload)
 		case protocol.MsgRunJob:
-			go runThrottled(env.Type, func() { handleRunJob(env.Payload) })
+			go handleRunJob(env.Payload)
 		case protocol.MsgKillJob:
 			go handleKillJob(env.Payload)
 
@@ -394,15 +395,28 @@ func handleRunJob(payload interface{}) {
 	}
 
 	activeJobs.Store(cmd.JobRunID, struct{}{})
+	receivedAt := time.Now()
 
 	// Immediate start acknowledgment to the server:
 	sendResult(protocol.CommandResult{CommandID: cmd.CommandID, Output: "started"})
 
-	// Call executor.RunJob synchronously. It blocks until the container completes.
-	msg := executor.RunJob(cmd)
+	// Run the actual job execution throttled in a background goroutine!
+	go runThrottled(protocol.MsgRunJob, func() {
+		startedAt := time.Now()
+		// Call executor.RunJob synchronously. It blocks until the container completes.
+		msg := executor.RunJob(cmd)
+		finishedAt := time.Now()
 
-	// Send completion report
-	reportJobCompleted(msg)
+		queueTime := startedAt.UnixMilli() - receivedAt.UnixMilli()
+		if queueTime < 0 {
+			queueTime = 0
+		}
+		msg.QueueTimeMs = queueTime
+		msg.ExecutionTimeMs = finishedAt.UnixMilli() - startedAt.UnixMilli()
+
+		// Send completion report
+		reportJobCompleted(msg)
+	})
 }
 
 func handleKillJob(payload interface{}) {
@@ -432,6 +446,7 @@ func sendResult(result protocol.CommandResult) {
 		return
 	}
 	connWriteMu.Lock()
+	_ = c.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	err = c.WriteMessage(websocket.TextMessage, msg)
 	connWriteMu.Unlock()
 	if err != nil {
@@ -466,6 +481,7 @@ func flushQueuedEnvelopes() {
 		}
 
 		connWriteMu.Lock()
+		_ = c.SetWriteDeadline(time.Now().Add(10 * time.Second))
 		err := c.WriteMessage(websocket.TextMessage, msg)
 		connWriteMu.Unlock()
 
@@ -497,6 +513,7 @@ func sendInitialHeartbeat() {
 	activeConnMu.RUnlock()
 	if c != nil {
 		connWriteMu.Lock()
+		_ = c.SetWriteDeadline(time.Now().Add(10 * time.Second))
 		_ = c.WriteMessage(websocket.TextMessage, hb)
 		connWriteMu.Unlock()
 		log.Printf("[worker] sent initial heartbeat: active_jobs=%d", len(activeIDs))
@@ -523,6 +540,7 @@ func reportJobCompleted(msg protocol.JobCompletedMessage) {
 	var writeErr error
 	if c != nil {
 		connWriteMu.Lock()
+		_ = c.SetWriteDeadline(time.Now().Add(10 * time.Second))
 		writeErr = c.WriteMessage(websocket.TextMessage, envelopeBytes)
 		connWriteMu.Unlock()
 	} else {

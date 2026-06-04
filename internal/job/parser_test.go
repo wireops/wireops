@@ -2,6 +2,8 @@ package job
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -15,7 +17,7 @@ func TestIsJobFile(t *testing.T) {
 		{
 			name: "ValidJobFile",
 			input: `
-title: Cleanup Task
+name: Cleanup Task
 description: Removes old files
 image: alpine
 cron: "0 2 * * *"
@@ -26,7 +28,7 @@ command: rm -rf /tmp/old
 		{
 			name: "MissingCron",
 			input: `
-title: No Cron Job
+name: No Cron Job
 description: Missing cron
 image: alpine
 command: echo hello
@@ -36,7 +38,7 @@ command: echo hello
 		{
 			name: "MissingImage",
 			input: `
-title: No Image Job
+name: No Image Job
 description: Missing image
 cron: "0 * * * *"
 command: echo hello
@@ -44,9 +46,9 @@ command: echo hello
 			want: false,
 		},
 		{
-			name: "MissingTitle",
+			name: "MissingName",
 			input: `
-description: Missing title
+description: Missing name
 image: alpine
 cron: "0 * * * *"
 command: echo hello
@@ -74,6 +76,23 @@ services:
 			input: ``,
 			want:  false,
 		},
+		{
+			name: "MultipleYAMLDocuments",
+			input: `
+name: First Job
+description: Removes old files
+image: alpine
+cron: "0 2 * * *"
+command: rm -rf /tmp/old
+---
+name: Second Job
+description: Removes old files
+image: alpine
+cron: "0 2 * * *"
+command: rm -rf /tmp/old
+`,
+			want: false,
+		},
 	}
 
 	for _, tc := range cases {
@@ -95,7 +114,7 @@ func TestDefinitionValidate(t *testing.T) {
 		{
 			name: "Valid definition",
 			def: Definition{
-				Title:       "Test Job",
+				Name:        "Test Job",
 				Description: "A test job",
 				Image:       "alpine:latest",
 				Cron:        "*/5 * * * *",
@@ -108,7 +127,7 @@ func TestDefinitionValidate(t *testing.T) {
 			wantErr: "",
 		},
 		{
-			name: "Missing title",
+			name: "Missing name",
 			def: Definition{
 				Description: "A test job",
 				Image:       "alpine:latest",
@@ -119,12 +138,12 @@ func TestDefinitionValidate(t *testing.T) {
 					Timeout: "10m",
 				},
 			},
-			wantErr: "title is required",
+			wantErr: "name is required",
 		},
 		{
 			name: "Missing description",
 			def: Definition{
-				Title: "Test Job",
+				Name: "Test Job",
 				Image: "alpine:latest",
 				Cron:  "*/5 * * * *",
 				Resources: Resources{
@@ -138,7 +157,7 @@ func TestDefinitionValidate(t *testing.T) {
 		{
 			name: "Missing image",
 			def: Definition{
-				Title:       "Test Job",
+				Name:        "Test Job",
 				Description: "A test job",
 				Cron:        "*/5 * * * *",
 				Resources: Resources{
@@ -152,7 +171,7 @@ func TestDefinitionValidate(t *testing.T) {
 		{
 			name: "Missing cron",
 			def: Definition{
-				Title:       "Test Job",
+				Name:        "Test Job",
 				Description: "A test job",
 				Image:       "alpine:latest",
 				Resources: Resources{
@@ -166,7 +185,7 @@ func TestDefinitionValidate(t *testing.T) {
 		{
 			name: "Missing CPU",
 			def: Definition{
-				Title:       "Test Job",
+				Name:        "Test Job",
 				Description: "A test job",
 				Image:       "alpine:latest",
 				Cron:        "*/5 * * * *",
@@ -180,7 +199,7 @@ func TestDefinitionValidate(t *testing.T) {
 		{
 			name: "Missing Memory",
 			def: Definition{
-				Title:       "Test Job",
+				Name:        "Test Job",
 				Description: "A test job",
 				Image:       "alpine:latest",
 				Cron:        "*/5 * * * *",
@@ -194,7 +213,7 @@ func TestDefinitionValidate(t *testing.T) {
 		{
 			name: "Missing Timeout",
 			def: Definition{
-				Title:       "Test Job",
+				Name:        "Test Job",
 				Description: "A test job",
 				Image:       "alpine:latest",
 				Cron:        "*/5 * * * *",
@@ -208,7 +227,7 @@ func TestDefinitionValidate(t *testing.T) {
 		{
 			name: "Invalid Timeout Format",
 			def: Definition{
-				Title:       "Test Job",
+				Name:        "Test Job",
 				Description: "A test job",
 				Image:       "alpine:latest",
 				Cron:        "*/5 * * * *",
@@ -223,14 +242,14 @@ func TestDefinitionValidate(t *testing.T) {
 		{
 			name: "Multiple missing fields",
 			def: Definition{
-				Title: "",
+				Name: "",
 				Cron:  "",
 				Resources: Resources{
 					CPU:    "",
 					Memory: "",
 				},
 			},
-			wantErr: "title is required, description is required, image is required, cron is required, resources.cpu is required, resources.memory is required, resources.timeout is required",
+			wantErr: "name is required, description is required, image is required, cron is required, resources.cpu is required, resources.memory is required, resources.timeout is required",
 		},
 	}
 
@@ -258,6 +277,69 @@ func TestDefinitionValidate(t *testing.T) {
 	}
 }
 
+func TestParseJobFile(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a valid job file
+	validContent := `
+name: Cleanup Task
+description: Removes old files
+image: alpine
+cron: "0 2 * * *"
+resources:
+  cpu: "0.5"
+  memory: 512m
+  timeout: 10m
+command: rm -rf /tmp/old
+`
+	err := os.WriteFile(filepath.Join(tmpDir, "valid.yaml"), []byte(validContent), 0644)
+	if err != nil {
+		t.Fatalf("failed to create valid test file: %v", err)
+	}
+
+	// Create a job file with multiple documents
+	multipleContent := `
+name: First Task
+description: Removes old files
+image: alpine
+cron: "0 2 * * *"
+resources:
+  cpu: "0.5"
+  memory: 512m
+  timeout: 10m
+---
+name: Second Task
+description: Removes old files
+image: alpine
+cron: "0 2 * * *"
+resources:
+  cpu: "0.5"
+  memory: 512m
+  timeout: 10m
+`
+	err = os.WriteFile(filepath.Join(tmpDir, "multiple.yaml"), []byte(multipleContent), 0644)
+	if err != nil {
+		t.Fatalf("failed to create multiple test file: %v", err)
+	}
+
+	// Test valid
+	def, err := ParseJobFile(tmpDir, "", "valid.yaml")
+	if err != nil {
+		t.Errorf("expected no error for valid job file, got: %v", err)
+	}
+	if def == nil || def.Name != "Cleanup Task" {
+		t.Errorf("expected parsed definition name to be 'Cleanup Task', got: %v", def)
+	}
+
+	// Test multiple documents error
+	_, err = ParseJobFile(tmpDir, "", "multiple.yaml")
+	if err == nil {
+		t.Errorf("expected error for multiple YAML documents, got nil")
+	} else if !strings.Contains(err.Error(), "multiple YAML documents (separated by '---') are not allowed") {
+		t.Errorf("expected error message to contain multiple documents warning, got: %v", err)
+	}
+}
+
 func containsString(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || s[0:len(substr)] == substr || s[len(s)-len(substr):] == substr || stringsContains(s, substr))
 }
@@ -270,4 +352,3 @@ func stringsContains(s, substr string) bool {
 	}
 	return false
 }
-

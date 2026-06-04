@@ -21,6 +21,17 @@ const form = ref({
   repository: '',
   job_file: '',
   enabled: true,
+  name: '',
+  description: '',
+})
+
+const nameError = computed(() => {
+  if (!form.value.name.trim()) return 'Name is required.'
+  const nameRegex = /^[a-zA-Z0-9\p{L}_ -]+$/u
+  if (!nameRegex.test(form.value.name)) {
+    return 'Name can only contain alphanumeric characters, spaces, underscores, and hyphens.'
+  }
+  return ''
 })
 
 const repoFiles = ref<string[]>([])
@@ -97,18 +108,30 @@ async function submit() {
     return
   }
 
+  if (nameError.value) {
+    errorMsg.value = nameError.value
+    return
+  }
+
   submitting.value = true
   try {
     await $pb.collection('scheduled_jobs').create({
       repository: form.value.repository,
       job_file: form.value.job_file,
       enabled: form.value.enabled,
+      name: form.value.name.trim(),
+      description: form.value.description.trim(),
       status: 'active',
     })
     toast.add({ title: 'Job created', color: 'success' })
     emit('created')
   } catch (e: any) {
-    errorMsg.value = e?.message || 'Unexpected error'
+    const serverMsg = e?.response?.data?.name?.message || e?.data?.data?.name?.message || e?.data?.data?.name
+    if (serverMsg) {
+      errorMsg.value = typeof serverMsg === 'string' ? serverMsg : 'Name can only contain alphanumeric characters, spaces, underscores, and hyphens.'
+    } else {
+      errorMsg.value = e?.message || 'Unexpected error'
+    }
   } finally {
     submitting.value = false
   }
@@ -158,6 +181,14 @@ async function submit() {
             </div>
           </UFormField>
 
+          <UFormField label="Job Name" required :error="form.name && nameError ? nameError : undefined">
+            <UInput v-model="form.name" placeholder="e.g. My Custom Job" class="w-full" />
+          </UFormField>
+
+          <UFormField label="Description">
+            <UInput v-model="form.description" placeholder="Optional description of what this job does" class="w-full" />
+          </UFormField>
+
           <UFormField label="Enable immediately">
             <USwitch v-model="form.enabled" />
           </UFormField>
@@ -181,7 +212,7 @@ async function submit() {
               label="Create Job"
               icon="i-lucide-check"
               :loading="submitting"
-              :disabled="!form.repository || !form.job_file"
+              :disabled="!form.repository || !form.job_file || !form.name || !!nameError"
             />
           </div>
         </div>
