@@ -114,12 +114,20 @@ const policyLoading = ref(false)
 const policySaving = ref(false)
 const policyLoaded = ref(false)
 const isGlobalPolicyEnabled = ref(true)
-const policyForm = ref({
-  allowed_images: [] as string[],
-  allowed_volumes: [] as string[],
-  allowed_networks: [] as string[],
-  prevent_latest_images: false,
-  block_host_volumes: false,
+const policyForm = ref<{
+  inherit: boolean
+  allowed_images: string[]
+  allowed_volumes: string[]
+  allowed_networks: string[]
+  prevent_latest_images: boolean | null
+  block_host_volumes: boolean | null
+}>({
+  inherit: false,
+  allowed_images: [],
+  allowed_volumes: [],
+  allowed_networks: [],
+  prevent_latest_images: null,
+  block_host_volumes: null,
 })
 
 async function loadPolicy() {
@@ -127,11 +135,12 @@ async function loadPolicy() {
   try {
     const data = await getWorkerPolicy(workerId)
     policyForm.value = {
-      allowed_images: data.allowed_images ?? [],
-      allowed_volumes: data.allowed_volumes ?? [],
-      allowed_networks: data.allowed_networks ?? [],
-      prevent_latest_images: data.prevent_latest_images ?? false,
-      block_host_volumes: data.block_host_volumes ?? false,
+      inherit: data.inherit ?? false,
+      allowed_images: data.effective?.allowed_images ?? [],
+      allowed_volumes: data.effective?.allowed_volumes ?? [],
+      allowed_networks: data.effective?.allowed_networks ?? [],
+      prevent_latest_images: data.prevent_latest_images !== undefined ? data.prevent_latest_images : null,
+      block_host_volumes: data.block_host_volumes !== undefined ? data.block_host_volumes : null,
     }
     isGlobalPolicyEnabled.value = data.effective?.enabled ?? true
     policyLoaded.value = true
@@ -150,8 +159,7 @@ async function handleSavePolicy() {
     policyForm.value.allowed_networks = policyForm.value.allowed_networks.filter(n => n.trim() !== '')
 
     await saveWorkerPolicy(workerId, {
-      ...policyForm.value,
-      inherit: false,
+      ...policyForm.value
     })
     toast.add({ title: 'Policy saved', color: 'success' })
   } catch (e: any) {

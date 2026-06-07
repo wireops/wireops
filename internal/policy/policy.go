@@ -17,7 +17,9 @@
 package policy
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -65,8 +67,11 @@ func Load(app core.App, workerID string) (*WorkerPolicy, error) {
 
 	worker, err := app.FindRecordById("workers", workerID)
 	if err != nil {
-		// Worker not found — return global policy so callers still get a valid object.
-		return global, nil
+		if errors.Is(err, sql.ErrNoRows) {
+			// Worker not found — return global policy so callers still get a valid object.
+			return global, nil
+		}
+		return nil, fmt.Errorf("policy: find worker: %w", err)
 	}
 
 	inherit := true
@@ -82,25 +87,33 @@ func Load(app core.App, workerID string) (*WorkerPolicy, error) {
 	}
 
 	// --- Allowlists ---
-	var localVolumes, localNetworks, localImages []string
+	var localVolumes, localNetworks, localImages *[]string
 	_ = worker.UnmarshalJSONField("policy_volumes", &localVolumes)
 	_ = worker.UnmarshalJSONField("policy_networks", &localNetworks)
 	_ = worker.UnmarshalJSONField("policy_images", &localImages)
 
-	if len(localVolumes) > 0 || !inherit {
-		local.AllowedVolumes = localVolumes
-	} else {
+	if localVolumes != nil {
+		local.AllowedVolumes = *localVolumes
+	} else if inherit {
 		local.AllowedVolumes = global.AllowedVolumes
-	}
-	if len(localNetworks) > 0 || !inherit {
-		local.AllowedNetworks = localNetworks
 	} else {
+		local.AllowedVolumes = []string{}
+	}
+
+	if localNetworks != nil {
+		local.AllowedNetworks = *localNetworks
+	} else if inherit {
 		local.AllowedNetworks = global.AllowedNetworks
-	}
-	if len(localImages) > 0 || !inherit {
-		local.AllowedImages = localImages
 	} else {
+		local.AllowedNetworks = []string{}
+	}
+
+	if localImages != nil {
+		local.AllowedImages = *localImages
+	} else if inherit {
 		local.AllowedImages = global.AllowedImages
+	} else {
+		local.AllowedImages = []string{}
 	}
 
 	// --- Boolean flags ---
@@ -136,7 +149,10 @@ func LoadGlobal(app core.App) (*WorkerPolicy, error) {
 
 func loadGlobal(app core.App) (*WorkerPolicy, error) {
 	records, err := app.FindAllRecords("worker_policies")
-	if err != nil || len(records) == 0 {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("policy: find global policies: %w", err)
+	}
+	if len(records) == 0 {
 		// No global policy configured — open policy for everything.
 		return &WorkerPolicy{Disabled: false}, nil
 	}
@@ -317,23 +333,11 @@ type PolicyJSON struct {
 
 // ToJSON converts a WorkerPolicy to the API wire format.
 func (p *WorkerPolicy) ToJSON() PolicyJSON {
-	vols := p.AllowedVolumes
-	if vols == nil {
-		vols = []string{}
-	}
-	nets := p.AllowedNetworks
-	if nets == nil {
-		nets = []string{}
-	}
-	imgs := p.AllowedImages
-	if imgs == nil {
-		imgs = []string{}
-	}
 	return PolicyJSON{
 		Enabled:             !p.Disabled,
-		AllowedVolumes:      vols,
-		AllowedNetworks:     nets,
-		AllowedImages:       imgs,
+		AllowedVolumes:      p.AllowedVolumes,
+		AllowedNetworks:     p.AllowedNetworks,
+		AllowedImages:       p.AllowedImages,
 		PreventLatestImages: p.PreventLatestImages,
 		BlockHostVolumes:    p.BlockHostVolumes,
 	}
@@ -342,10 +346,10 @@ func (p *WorkerPolicy) ToJSON() PolicyJSON {
 // WorkerPolicyOverrideJSON is the full wire format for per-worker policy,
 // including the inherit flag and nullable boolean flag overrides.
 type WorkerPolicyOverrideJSON struct {
-	Inherit             bool     `json:"inherit"`
-	AllowedVolumes      []string `json:"allowed_volumes"`
-	AllowedNetworks     []string `json:"allowed_networks"`
-	AllowedImages       []string `json:"allowed_images"`
+	Inherit             bool       `json:"inherit"`
+	AllowedVolumes      *[]string  `json:"allowed_volumes"`
+	AllowedNetworks     *[]string  `json:"allowed_networks"`
+	AllowedImages       *[]string  `json:"allowed_images"`
 	// Nullable booleans: use a pointer so null (unset/inherit) is distinguishable from false.
 	PreventLatestImages *bool    `json:"prevent_latest_images"`
 	BlockHostVolumes    *bool    `json:"block_host_volumes"`

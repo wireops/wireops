@@ -66,6 +66,34 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
 
+		workerJobRunMap := make(map[string]map[string]bool)
+		if len(jobCatalog) > 0 {
+			jobIDs := make([]any, len(jobCatalog))
+			for i, item := range jobCatalog {
+				jobIDs[i] = item.ID
+			}
+
+			type runPair struct {
+				Worker string `db:"worker"`
+				Job    string `db:"job"`
+			}
+			var pairs []runPair
+
+			query := app.DB().Select("worker", "job").
+				From("job_runs").
+				Where(dbx.In("job", jobIDs...)).
+				Distinct(true)
+
+			if err := query.All(&pairs); err == nil {
+				for _, p := range pairs {
+					if workerJobRunMap[p.Worker] == nil {
+						workerJobRunMap[p.Worker] = make(map[string]bool)
+					}
+					workerJobRunMap[p.Worker][p.Job] = true
+				}
+			}
+		}
+
 		result := make([]map[string]interface{}, 0, len(records))
 		for _, rec := range records {
 			var history []worker.HealthEvent
@@ -90,7 +118,7 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 			}
 
 			tags := workerServer.GetWorkerTags(rec.Id)
-			jobs := workerJobsFor(app, jobCatalog, rec.Id, tags)
+			jobs := workerJobsFor(jobCatalog, tags, workerJobRunMap[rec.Id])
 
 			result = append(result, map[string]interface{}{
 				"id":              rec.Id,
@@ -160,19 +188,10 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 			inherit = rec.GetBool("policy_inherit")
 		}
 
-		var localVolumes, localNetworks, localImages []string
+		var localVolumes, localNetworks, localImages *[]string
 		_ = rec.UnmarshalJSONField("policy_volumes", &localVolumes)
 		_ = rec.UnmarshalJSONField("policy_networks", &localNetworks)
 		_ = rec.UnmarshalJSONField("policy_images", &localImages)
-		if localVolumes == nil {
-			localVolumes = []string{}
-		}
-		if localNetworks == nil {
-			localNetworks = []string{}
-		}
-		if localImages == nil {
-			localImages = []string{}
-		}
 
 		// Read nullable boolean overrides from policy_flags.
 		type flagsType struct {
@@ -184,7 +203,10 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 			_ = json.Unmarshal([]byte(raw), &flagsOut)
 		}
 
-		effective, _ := policy.Load(app, workerID)
+		effective, err := policy.Load(app, workerID)
+		if err != nil || effective == nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to load effective policy"})
+		}
 
 		return e.JSON(http.StatusOK, map[string]interface{}{
 			"inherit":               inherit,
@@ -215,15 +237,6 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 		}
 
 		rec.Set("policy_inherit", body.Inherit)
-		if body.AllowedVolumes == nil {
-			body.AllowedVolumes = []string{}
-		}
-		if body.AllowedNetworks == nil {
-			body.AllowedNetworks = []string{}
-		}
-		if body.AllowedImages == nil {
-			body.AllowedImages = []string{}
-		}
 		rec.Set("policy_volumes", body.AllowedVolumes)
 		rec.Set("policy_networks", body.AllowedNetworks)
 		rec.Set("policy_images", body.AllowedImages)
@@ -263,6 +276,7 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 		rec.Set("policy_volumes", []string{})
 		rec.Set("policy_networks", []string{})
 		rec.Set("policy_images", []string{})
+		rec.Set("policy_flags", "")
 
 		if err := app.Save(rec); err != nil {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to reset worker policy: " + err.Error()})
@@ -371,10 +385,10 @@ func buildWorkerJobCatalog(app core.App) ([]workerJobSummary, error) {
 	return items, nil
 }
 
-func workerJobsFor(app core.App, catalog []workerJobSummary, workerID string, workerTags []string) []workerJobSummary {
+func workerJobsFor(catalog []workerJobSummary, workerTags []string, workerRunHistory map[string]bool) []workerJobSummary {
 	jobs := make([]workerJobSummary, 0)
 	for _, item := range catalog {
-		hasRunHistory := hasWorkerJobRun(app, item.ID, workerID)
+		hasRunHistory := workerRunHistory != nil && workerRunHistory[item.ID]
 		matchedByTags := item.definitionError == "" && workerMatchesJobTags(workerTags, item.tags)
 		if !matchedByTags && !hasRunHistory {
 			continue
@@ -384,21 +398,6 @@ func workerJobsFor(app core.App, catalog []workerJobSummary, workerID string, wo
 		jobs = append(jobs, item)
 	}
 	return jobs
-}
-
-func hasWorkerJobRun(app core.App, jobID, workerID string) bool {
-	runs, err := app.FindRecordsByFilter(
-		"job_runs",
-		"job = {:jobId} && worker = {:workerId}",
-		"-created",
-		1,
-		0,
-		dbx.Params{"jobId": jobID, "workerId": workerID},
-	)
-	if err != nil || len(runs) == 0 {
-		return false
-	}
-	return true
 }
 
 func workerMatchesJobTags(workerTags, requiredTags []string) bool {

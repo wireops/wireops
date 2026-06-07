@@ -21,12 +21,13 @@ func init() {
 
 		// Update existing records to default enabled = true
 		records, err := app.FindAllRecords("worker_policies")
-		if err == nil {
-			for _, rec := range records {
-				rec.Set("enabled", true)
-				if err := app.Save(rec); err != nil {
-					log.Printf("[MIGRATE] Failed to update worker_policies record %s: %v", rec.Id, err)
-				}
+		if err != nil {
+			return err
+		}
+		for _, rec := range records {
+			rec.Set("enabled", true)
+			if err := app.Save(rec); err != nil {
+				log.Printf("[MIGRATE] Failed to update worker_policies record %s: %v", rec.Id, err)
 			}
 		}
 

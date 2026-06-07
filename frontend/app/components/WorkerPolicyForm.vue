@@ -2,11 +2,12 @@
 import { ref, nextTick } from 'vue'
 
 const policy = defineModel<{
+  inherit: boolean
   allowed_images: string[]
   allowed_volumes: string[]
   allowed_networks: string[]
-  prevent_latest_images: boolean
-  block_host_volumes: boolean
+  prevent_latest_images: boolean | null
+  block_host_volumes: boolean | null
 }>({ required: true })
 
 const emit = defineEmits<{
@@ -216,8 +217,28 @@ function executeDeleteRule(type: 'image' | 'volume' | 'network', index: number) 
 
 <template>
   <div class="space-y-4">
-    <!-- Images Policy Card -->
-    <UCard>
+    <!-- Inherit Global Policy Card -->
+    <UCard class="border-primary-500/20 bg-primary-500/5 dark:bg-primary-950/10">
+      <div class="flex items-center justify-between">
+        <div>
+          <p class="text-sm font-medium text-gray-900 dark:text-wire-200 flex items-center gap-2">
+            <UIcon name="i-lucide-globe" class="w-4 h-4 text-primary-500 shrink-0" />
+            Inherit Global Policy
+          </p>
+          <p class="text-xs text-gray-400 mt-0.5 ml-6">
+            When enabled, this worker uses the global policy. Local overrides are ignored.
+          </p>
+        </div>
+        <USwitch v-model="policy.inherit" @update:model-value="emit('save')" />
+      </div>
+    </UCard>
+
+    <!-- Policy Overrides -->
+    <div :class="{ 'opacity-50 pointer-events-none select-none transition-all': policy.inherit }" class="space-y-4 relative">
+      <div v-if="policy.inherit" class="absolute inset-0 z-10" title="Inheriting global policy. Disable inherit to edit."></div>
+      
+      <!-- Images Policy Card -->
+      <UCard>
       <template #header>
         <div class="flex items-center gap-3">
           <div class="flex items-center justify-center w-8 h-8 rounded-lg bg-yellow-400/10 shrink-0">
@@ -242,7 +263,10 @@ function executeDeleteRule(type: 'image' | 'volume' | 'network', index: number) 
               Enforced before the image allowlist.
             </p>
           </div>
-          <USwitch v-model="policy.prevent_latest_images" @update:model-value="emit('save')" />
+          <TriStateToggle
+            v-model="policy.prevent_latest_images"
+            @change="emit('save')"
+          />
         </div>
 
         <USeparator />
@@ -266,7 +290,7 @@ function executeDeleteRule(type: 'image' | 'volume' | 'network', index: number) 
                 placeholder="e.g. nginx:* or ghcr.io/org/*"
                 class="flex-1 font-mono text-sm"
                 :readonly="activeEditImageIndex !== i"
-                :ui="{ base: 'pl-11 pr-11', leading: 'pointer-events-auto h-full pl-0', trailing: 'pointer-events-auto h-full pr-0' }"
+                :ui="{ base: 'pl-12 pr-11', leading: 'pointer-events-auto h-full pl-0', trailing: 'pointer-events-auto h-full pr-0' }"
                 @click="unlockImage(i)"
                 @focus="onFocusInput(policy.allowed_images[i], 'image', i)"
                 @blur="onBlurInput(policy.allowed_images[i], 'image', i)"
@@ -336,7 +360,10 @@ function executeDeleteRule(type: 'image' | 'volume' | 'network', index: number) 
               Enforced before the volume allowlist.
             </p>
           </div>
-          <USwitch v-model="policy.block_host_volumes" @update:model-value="emit('save')" />
+          <TriStateToggle
+            v-model="policy.block_host_volumes"
+            @change="emit('save')"
+          />
         </div>
 
         <USeparator />
@@ -360,7 +387,7 @@ function executeDeleteRule(type: 'image' | 'volume' | 'network', index: number) 
                 placeholder="e.g. /data or myvolume"
                 class="flex-1 font-mono text-sm"
                 :readonly="activeEditVolumeIndex !== i"
-                :ui="{ base: 'pl-11 pr-11', leading: 'pointer-events-auto h-full pl-0', trailing: 'pointer-events-auto h-full pr-0' }"
+                :ui="{ base: 'pl-12 pr-11', leading: 'pointer-events-auto h-full pl-0', trailing: 'pointer-events-auto h-full pr-0' }"
                 @click="unlockVolume(i)"
                 @focus="onFocusInput(policy.allowed_volumes[i], 'volume', i)"
                 @blur="onBlurInput(policy.allowed_volumes[i], 'volume', i)"
@@ -441,7 +468,7 @@ function executeDeleteRule(type: 'image' | 'volume' | 'network', index: number) 
                 placeholder="e.g. traefik"
                 class="flex-1 font-mono text-sm"
                 :readonly="activeEditNetworkIndex !== i"
-                :ui="{ base: 'pl-11 pr-11', leading: 'pointer-events-auto h-full pl-0', trailing: 'pointer-events-auto h-full pr-0' }"
+                :ui="{ base: 'pl-12 pr-11', leading: 'pointer-events-auto h-full pl-0', trailing: 'pointer-events-auto h-full pr-0' }"
                 @click="unlockNetwork(i)"
                 @focus="onFocusInput(policy.allowed_networks[i], 'network', i)"
                 @blur="onBlurInput(policy.allowed_networks[i], 'network', i)"
@@ -480,6 +507,7 @@ function executeDeleteRule(type: 'image' | 'volume' | 'network', index: number) 
         </div>
       </div>
     </UCard>
+    </div>
 
     <!-- Delete Rule Confirmation Modal -->
     <UModal v-if="showDeleteRuleModal" v-model:open="showDeleteRuleModal">

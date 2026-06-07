@@ -36,7 +36,7 @@ function workerStatus(worker: any) {
 }
 
 function isWorkerClickable(worker: any) {
-  return workerStatus(worker) === WORKER_STATUS.ACTIVE
+  return workerStatus(worker) !== WORKER_STATUS.REVOKED
 }
 
 function openWorker(worker: any) {

@@ -64,6 +64,17 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 		return e.Next()
 	})
 
+	app.OnRecordCreate("worker_policies").BindFunc(func(e *core.RecordEvent) error {
+		records, err := app.FindAllRecords("worker_policies")
+		if err != nil {
+			return fmt.Errorf("failed to check existing worker policies: %w", err)
+		}
+		if len(records) > 0 {
+			return fmt.Errorf("worker_policies is a singleton collection; a record already exists")
+		}
+		return e.Next()
+	})
+
 	validateAssignedWorker := func(rec *core.Record) error {
 		workerID := rec.GetString("worker")
 		if workerID == "" {

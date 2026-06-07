@@ -8,28 +8,28 @@ import (
 
 // --- ValidateImages ---
 
-func TestValidateImages_EmptyAllowlist_AllowsAnything(t *testing.T) {
+func TestValidateImagesEmptyAllowlistAllowsAnything(t *testing.T) {
 	p := &policy.WorkerPolicy{AllowedImages: []string{}}
 	if err := p.ValidateImages([]string{"nginx:latest", "alpine:3.18", "ghcr.io/myorg/app:v1"}); err != nil {
 		t.Errorf("expected no error with empty allowlist, got: %v", err)
 	}
 }
 
-func TestValidateImages_ExactMatch(t *testing.T) {
+func TestValidateImagesExactMatch(t *testing.T) {
 	p := &policy.WorkerPolicy{AllowedImages: []string{"nginx:latest"}}
 	if err := p.ValidateImages([]string{"nginx:latest"}); err != nil {
 		t.Errorf("expected exact match to pass, got: %v", err)
 	}
 }
 
-func TestValidateImages_ExactMatch_NotInList(t *testing.T) {
+func TestValidateImagesExactMatchNotInList(t *testing.T) {
 	p := &policy.WorkerPolicy{AllowedImages: []string{"nginx:latest"}}
 	if err := p.ValidateImages([]string{"alpine:latest"}); err == nil {
 		t.Error("expected error for image not in list, got nil")
 	}
 }
 
-func TestValidateImages_WildcardTag(t *testing.T) {
+func TestValidateImagesWildcardTag(t *testing.T) {
 	p := &policy.WorkerPolicy{AllowedImages: []string{"nginx:*"}}
 	for _, img := range []string{"nginx:latest", "nginx:1.25", "nginx:alpine"} {
 		if err := p.ValidateImages([]string{img}); err != nil {
@@ -38,14 +38,14 @@ func TestValidateImages_WildcardTag(t *testing.T) {
 	}
 }
 
-func TestValidateImages_WildcardTag_DifferentRepo(t *testing.T) {
+func TestValidateImagesWildcardTagDifferentRepo(t *testing.T) {
 	p := &policy.WorkerPolicy{AllowedImages: []string{"nginx:*"}}
 	if err := p.ValidateImages([]string{"apache:latest"}); err == nil {
 		t.Error("expected error for different repo with wildcard tag pattern")
 	}
 }
 
-func TestValidateImages_RegistryWildcard(t *testing.T) {
+func TestValidateImagesRegistryWildcard(t *testing.T) {
 	p := &policy.WorkerPolicy{AllowedImages: []string{"ghcr.io/myorg/*"}}
 	for _, img := range []string{"ghcr.io/myorg/app:v1", "ghcr.io/myorg/worker:latest"} {
 		if err := p.ValidateImages([]string{img}); err != nil {
@@ -54,14 +54,14 @@ func TestValidateImages_RegistryWildcard(t *testing.T) {
 	}
 }
 
-func TestValidateImages_RegistryWildcard_DifferentOrg(t *testing.T) {
+func TestValidateImagesRegistryWildcardDifferentOrg(t *testing.T) {
 	p := &policy.WorkerPolicy{AllowedImages: []string{"ghcr.io/myorg/*"}}
 	if err := p.ValidateImages([]string{"ghcr.io/otherog/app:v1"}); err == nil {
 		t.Error("expected error for different org with registry wildcard")
 	}
 }
 
-func TestValidateImages_MultipleImages_OneViolation(t *testing.T) {
+func TestValidateImagesMultipleImagesOneViolation(t *testing.T) {
 	p := &policy.WorkerPolicy{AllowedImages: []string{"nginx:*"}}
 	if err := p.ValidateImages([]string{"nginx:latest", "alpine:latest"}); err == nil {
 		t.Error("expected error when one of multiple images is not allowed")
@@ -70,28 +70,28 @@ func TestValidateImages_MultipleImages_OneViolation(t *testing.T) {
 
 // --- ValidateNetwork ---
 
-func TestValidateNetwork_EmptyAllowlist_AllowsAll(t *testing.T) {
+func TestValidateNetworkEmptyAllowlistAllowsAll(t *testing.T) {
 	p := &policy.WorkerPolicy{AllowedNetworks: []string{}}
 	if err := p.ValidateNetwork("traefik"); err != nil {
 		t.Errorf("expected no error with empty allowlist, got: %v", err)
 	}
 }
 
-func TestValidateNetwork_EmptyNetworkString_AlwaysAllowed(t *testing.T) {
+func TestValidateNetworkEmptyNetworkStringAlwaysAllowed(t *testing.T) {
 	p := &policy.WorkerPolicy{AllowedNetworks: []string{"traefik"}}
 	if err := p.ValidateNetwork(""); err != nil {
 		t.Errorf("expected empty network to always be allowed, got: %v", err)
 	}
 }
 
-func TestValidateNetwork_ExactMatch(t *testing.T) {
+func TestValidateNetworkExactMatch(t *testing.T) {
 	p := &policy.WorkerPolicy{AllowedNetworks: []string{"traefik", "internal"}}
 	if err := p.ValidateNetwork("traefik"); err != nil {
 		t.Errorf("expected exact match to pass, got: %v", err)
 	}
 }
 
-func TestValidateNetwork_NotInList(t *testing.T) {
+func TestValidateNetworkNotInList(t *testing.T) {
 	p := &policy.WorkerPolicy{AllowedNetworks: []string{"traefik"}}
 	if err := p.ValidateNetwork("external"); err == nil {
 		t.Error("expected error for network not in list, got nil")
@@ -100,14 +100,14 @@ func TestValidateNetwork_NotInList(t *testing.T) {
 
 // --- ValidateVolumes ---
 
-func TestValidateVolumes_EmptyAllowlist_AllowsAll(t *testing.T) {
+func TestValidateVolumesEmptyAllowlistAllowsAll(t *testing.T) {
 	p := &policy.WorkerPolicy{AllowedVolumes: []string{}}
 	if err := p.ValidateVolumes([]string{"/data:/data", "/tmp:/tmp", "myvolume:/app"}); err != nil {
 		t.Errorf("expected no error with empty allowlist, got: %v", err)
 	}
 }
 
-func TestValidateVolumes_BindMount_PrefixMatch(t *testing.T) {
+func TestValidateVolumesBindMountPrefixMatch(t *testing.T) {
 	p := &policy.WorkerPolicy{AllowedVolumes: []string{"/data"}}
 	for _, vol := range []string{"/data:/data", "/data/myapp:/app", "/data/logs:/logs:ro"} {
 		if err := p.ValidateVolumes([]string{vol}); err != nil {
@@ -121,7 +121,7 @@ func TestValidateVolumes_BindMount_PrefixMatch(t *testing.T) {
 	}
 }
 
-func TestValidateVolumes_BindMount_NotUnderPrefix(t *testing.T) {
+func TestValidateVolumesBindMountNotUnderPrefix(t *testing.T) {
 	p := &policy.WorkerPolicy{AllowedVolumes: []string{"/data"}}
 	for _, vol := range []string{"/etc:/etc", "/backups:/backups", "/dataextra:/dataextra"} {
 		if err := p.ValidateVolumes([]string{vol}); err == nil {
@@ -130,14 +130,14 @@ func TestValidateVolumes_BindMount_NotUnderPrefix(t *testing.T) {
 	}
 }
 
-func TestValidateVolumes_NamedVolume_ExactMatch(t *testing.T) {
+func TestValidateVolumesNamedVolumeExactMatch(t *testing.T) {
 	p := &policy.WorkerPolicy{AllowedVolumes: []string{"mydb_data"}}
 	if err := p.ValidateVolumes([]string{"mydb_data:/var/lib/postgresql/data"}); err != nil {
 		t.Errorf("named volume exact match: expected to pass, got: %v", err)
 	}
 }
 
-func TestValidateVolumes_NamedVolume_NotInList(t *testing.T) {
+func TestValidateVolumesNamedVolumeNotInList(t *testing.T) {
 	p := &policy.WorkerPolicy{AllowedVolumes: []string{"mydb_data"}}
 	if err := p.ValidateVolumes([]string{"other_volume:/data"}); err == nil {
 		t.Error("expected error for named volume not in list, got nil")
@@ -146,7 +146,7 @@ func TestValidateVolumes_NamedVolume_NotInList(t *testing.T) {
 
 // --- PreventLatestImages flag ---
 
-func TestPreventLatestImages_UntaggedImage_Blocked(t *testing.T) {
+func TestPreventLatestImagesUntaggedImageBlocked(t *testing.T) {
 	p := &policy.WorkerPolicy{PreventLatestImages: true}
 	for _, img := range []string{"nginx", "ghcr.io/org/app", "myregistry.io:5000/app"} {
 		if err := p.ValidateImages([]string{img}); err == nil {
@@ -155,7 +155,7 @@ func TestPreventLatestImages_UntaggedImage_Blocked(t *testing.T) {
 	}
 }
 
-func TestPreventLatestImages_LatestTag_Blocked(t *testing.T) {
+func TestPreventLatestImagesLatestTagBlocked(t *testing.T) {
 	p := &policy.WorkerPolicy{PreventLatestImages: true}
 	for _, img := range []string{"nginx:latest", "alpine:latest", "ghcr.io/org/app:latest"} {
 		if err := p.ValidateImages([]string{img}); err == nil {
@@ -164,7 +164,7 @@ func TestPreventLatestImages_LatestTag_Blocked(t *testing.T) {
 	}
 }
 
-func TestPreventLatestImages_LatestWithDigest_Blocked(t *testing.T) {
+func TestPreventLatestImagesLatestWithDigestBlocked(t *testing.T) {
 	p := &policy.WorkerPolicy{PreventLatestImages: true}
 	img := "nginx:latest@sha256:abc123"
 	if err := p.ValidateImages([]string{img}); err == nil {
@@ -172,7 +172,7 @@ func TestPreventLatestImages_LatestWithDigest_Blocked(t *testing.T) {
 	}
 }
 
-func TestPreventLatestImages_ExplicitTag_Allowed(t *testing.T) {
+func TestPreventLatestImagesExplicitTagAllowed(t *testing.T) {
 	p := &policy.WorkerPolicy{PreventLatestImages: true}
 	for _, img := range []string{"nginx:1.25", "alpine:3.18", "ghcr.io/org/app:v2.0.1"} {
 		if err := p.ValidateImages([]string{img}); err != nil {
@@ -181,7 +181,7 @@ func TestPreventLatestImages_ExplicitTag_Allowed(t *testing.T) {
 	}
 }
 
-func TestPreventLatestImages_DigestOnly_Allowed(t *testing.T) {
+func TestPreventLatestImagesDigestOnlyBlocked(t *testing.T) {
 	p := &policy.WorkerPolicy{PreventLatestImages: true}
 	img := "nginx@sha256:abc123"
 	// Digest-only (no tag) — treated as untagged, should be blocked.
@@ -190,14 +190,14 @@ func TestPreventLatestImages_DigestOnly_Allowed(t *testing.T) {
 	}
 }
 
-func TestPreventLatestImages_FlagFalse_AllowsLatest(t *testing.T) {
+func TestPreventLatestImagesFlagFalseAllowsLatest(t *testing.T) {
 	p := &policy.WorkerPolicy{PreventLatestImages: false}
 	if err := p.ValidateImages([]string{"nginx:latest", "alpine"}); err != nil {
 		t.Errorf("expected latest/untagged to be allowed when flag is false, got: %v", err)
 	}
 }
 
-func TestPreventLatestImages_CombinedWithAllowlist(t *testing.T) {
+func TestPreventLatestImagesCombinedWithAllowlist(t *testing.T) {
 	// prevent_latest AND allowlist: both checks must pass.
 	p := &policy.WorkerPolicy{
 		PreventLatestImages: true,
@@ -219,7 +219,7 @@ func TestPreventLatestImages_CombinedWithAllowlist(t *testing.T) {
 
 // --- BlockHostVolumes flag ---
 
-func TestBlockHostVolumes_BindMount_Blocked(t *testing.T) {
+func TestBlockHostVolumesBindMountBlocked(t *testing.T) {
 	p := &policy.WorkerPolicy{BlockHostVolumes: true}
 	for _, vol := range []string{"/data:/data", "/etc/nginx:/etc/nginx:ro", "./local:/app"} {
 		if err := p.ValidateVolumes([]string{vol}); err == nil {
@@ -228,7 +228,7 @@ func TestBlockHostVolumes_BindMount_Blocked(t *testing.T) {
 	}
 }
 
-func TestBlockHostVolumes_NamedVolume_Allowed(t *testing.T) {
+func TestBlockHostVolumesNamedVolumeAllowed(t *testing.T) {
 	p := &policy.WorkerPolicy{BlockHostVolumes: true}
 	for _, vol := range []string{"mydb_data:/var/lib/postgresql/data", "app_cache:/cache"} {
 		if err := p.ValidateVolumes([]string{vol}); err != nil {
@@ -237,7 +237,7 @@ func TestBlockHostVolumes_NamedVolume_Allowed(t *testing.T) {
 	}
 }
 
-func TestBlockHostVolumes_EmptyAllowlist_StillBlocksBindMount(t *testing.T) {
+func TestBlockHostVolumesEmptyAllowlistStillBlocksBindMount(t *testing.T) {
 	// block_host_volumes=true with empty allowlist: named volumes OK, bind-mounts blocked.
 	p := &policy.WorkerPolicy{BlockHostVolumes: true, AllowedVolumes: []string{}}
 	if err := p.ValidateVolumes([]string{"/data:/data"}); err == nil {
@@ -248,7 +248,7 @@ func TestBlockHostVolumes_EmptyAllowlist_StillBlocksBindMount(t *testing.T) {
 	}
 }
 
-func TestBlockHostVolumes_FlagFalse_AllowsBindMount(t *testing.T) {
+func TestBlockHostVolumesFlagFalseAllowsBindMount(t *testing.T) {
 	p := &policy.WorkerPolicy{BlockHostVolumes: false}
 	if err := p.ValidateVolumes([]string{"/data:/data"}); err != nil {
 		t.Errorf("expected bind-mount to be allowed when flag is false, got: %v", err)
@@ -257,7 +257,7 @@ func TestBlockHostVolumes_FlagFalse_AllowsBindMount(t *testing.T) {
 
 // --- Load (policy resolution) ---
 
-func TestWorkerPolicy_ToJSON_NilSlicesBecomEmptyArrays(t *testing.T) {
+func TestWorkerPolicyToJSONNilSlicesBecomEmptyArrays(t *testing.T) {
 	p := &policy.WorkerPolicy{}
 	j := p.ToJSON()
 	if j.AllowedVolumes == nil {
@@ -271,7 +271,7 @@ func TestWorkerPolicy_ToJSON_NilSlicesBecomEmptyArrays(t *testing.T) {
 	}
 }
 
-func TestValidate_DisabledPolicy_AllowsEverything(t *testing.T) {
+func TestValidateDisabledPolicyAllowsEverything(t *testing.T) {
 	p := &policy.WorkerPolicy{
 		Disabled:            true,
 		AllowedImages:       []string{"only-this-image:*"},
