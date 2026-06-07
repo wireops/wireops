@@ -4,7 +4,7 @@ const toast = useToast()
 
 const keyscanHost = ref('')
 const keyscanPort = ref(22)
-const { keyscan, getSyncEventsWebhook, setSyncEventsWebhook, setNotificationsEnabled, deleteSyncEventsWebhook, testSyncEventsWebhook } = useApi()
+const { keyscan, getSyncEventsWebhook, setSyncEventsWebhook, setNotificationsEnabled, deleteSyncEventsWebhook, testSyncEventsWebhook, getGlobalWorkerPolicy, saveGlobalWorkerPolicy } = useApi()
 
 async function copyToClipboard(text: string) {
   if (!navigator?.clipboard?.writeText) {
@@ -352,14 +352,97 @@ async function deleteUser(user: any) {
   }
 }
 
-const activeTab = ref('general')
+const route = useRoute()
+const activeTab = ref((route.query.tab as string) || 'general')
 const tabs = [
-  { label: 'General',       value: 'general',       icon: 'i-lucide-settings-2' },
-  { label: 'Notifications', value: 'notifications', icon: 'i-lucide-bell' },
-  { label: 'Security',      value: 'security',      icon: 'i-lucide-shield' },
-  { label: 'Integrations',  value: 'integrations',  icon: 'i-lucide-puzzle' },
-  { label: 'Users',         value: 'users',         icon: 'i-lucide-users' },
+  { label: 'General',        value: 'general',        icon: 'i-lucide-settings-2' },
+  { label: 'Notifications',  value: 'notifications',  icon: 'i-lucide-bell' },
+  { label: 'Security',       value: 'security',       icon: 'i-lucide-shield' },
+  { label: 'Worker Policies',value: 'worker-policies',icon: 'i-lucide-shield-check' },
+  { label: 'Integrations',   value: 'integrations',   icon: 'i-lucide-puzzle' },
+  { label: 'Users',          value: 'users',          icon: 'i-lucide-users' },
 ]
+
+// --- Worker Policies (global) ---
+const workerPolicy = ref({
+  enabled: true,
+  allowed_volumes: [] as string[],
+  allowed_networks: [] as string[],
+  allowed_images: [] as string[],
+  prevent_latest_images: false,
+  block_host_volumes: false,
+})
+const workerPolicyLoading = ref(false)
+const workerPolicySaving = ref(false)
+
+async function loadWorkerPolicy() {
+  workerPolicyLoading.value = true
+  try {
+    const data = await getGlobalWorkerPolicy() as any
+    workerPolicy.value = {
+      enabled:               data?.enabled ?? true,
+      allowed_volumes:       data?.allowed_volumes  ?? [],
+      allowed_networks:      data?.allowed_networks ?? [],
+      allowed_images:        data?.allowed_images   ?? [],
+      prevent_latest_images: data?.prevent_latest_images ?? false,
+      block_host_volumes:    data?.block_host_volumes    ?? false,
+    }
+  } catch {
+    // no policy yet — defaults are fine
+  } finally {
+    workerPolicyLoading.value = false
+  }
+}
+
+async function saveWorkerPolicyGlobal() {
+  workerPolicySaving.value = true
+  try {
+    workerPolicy.value.allowed_volumes = workerPolicy.value.allowed_volumes.filter(v => v.trim() !== '')
+    workerPolicy.value.allowed_networks = workerPolicy.value.allowed_networks.filter(n => n.trim() !== '')
+    workerPolicy.value.allowed_images = workerPolicy.value.allowed_images.filter(i => i.trim() !== '')
+
+    await saveGlobalWorkerPolicy(workerPolicy.value)
+    toast.add({ title: 'Worker policy saved', color: 'success' })
+  } catch (e: any) {
+    toast.add({ title: 'Failed to save policy', description: e?.message, color: 'error' })
+  } finally {
+    workerPolicySaving.value = false
+  }
+}
+
+const showConfirmToggleModal = ref(false)
+const pendingToggleValue = ref(false)
+
+function onTogglePolicyClick(val: boolean) {
+  pendingToggleValue.value = val
+  showConfirmToggleModal.value = true
+}
+
+async function confirmTogglePolicy() {
+  workerPolicySaving.value = true
+  try {
+    workerPolicy.value.enabled = pendingToggleValue.value
+    workerPolicy.value.allowed_volumes = workerPolicy.value.allowed_volumes.filter(v => v.trim() !== '')
+    workerPolicy.value.allowed_networks = workerPolicy.value.allowed_networks.filter(n => n.trim() !== '')
+    workerPolicy.value.allowed_images = workerPolicy.value.allowed_images.filter(i => i.trim() !== '')
+
+    await saveGlobalWorkerPolicy(workerPolicy.value)
+    toast.add({
+      title: pendingToggleValue.value ? 'Worker policies enabled' : 'Worker policies disabled',
+      color: pendingToggleValue.value ? 'success' : 'neutral'
+    })
+    showConfirmToggleModal.value = false
+  } catch (e: any) {
+    toast.add({ title: 'Failed to save policy', description: e?.message, color: 'error' })
+  } finally {
+    workerPolicySaving.value = false
+  }
+}
+
+function cancelTogglePolicy() {
+  showConfirmToggleModal.value = false
+}
+
 
 const { getIntegrations, saveIntegration } = useIntegrations()
 const integrationsList = ref<any[]>([])
@@ -406,6 +489,7 @@ async function handleSaveIntegration(integration: any) {
 watch(activeTab, (val) => {
   if (val === 'users') loadUsers()
   if (val === 'integrations') loadIntegrations()
+  if (val === 'worker-policies') loadWorkerPolicy()
 })
 </script>
 
@@ -669,6 +753,29 @@ Commit: {{.CommitSHA}}
       </div>
     </div>
 
+    <!-- Worker Policies -->
+    <div v-if="activeTab === 'worker-policies'" class="space-y-6">
+      <div v-if="workerPolicyLoading" class="text-sm text-gray-500">Loading policy...</div>
+      <template v-else>
+        <!-- Global Enable/Disable Toggle -->
+        <UCard class="bg-gradient-to-r from-yellow-500/10 via-amber-500/5 to-transparent border border-yellow-500/20">
+          <div class="flex items-center justify-between">
+            <div class="space-y-1">
+              <h3 class="font-semibold text-lg flex items-center gap-2 text-gray-900 dark:text-wire-200">
+                <UIcon name="i-lucide-shield-alert" class="w-5 h-5 text-yellow-500" />
+                Worker Policy Security System
+              </h3>
+              <p class="text-sm text-gray-500 dark:text-gray-400">
+                Enable or disable global security policy enforcement (volumes, networks, and images) across all workers.
+              </p>
+            </div>
+            <USwitch :model-value="workerPolicy.enabled" size="lg" @update:model-value="onTogglePolicyClick" />
+          </div>
+        </UCard>
+        <WorkerPolicyForm v-model="workerPolicy" @save="saveWorkerPolicyGlobal" />
+      </template>
+    </div>
+
     <!-- Integrations -->
     <div v-if="activeTab === 'integrations'" class="space-y-6">
       <div v-if="integrationsLoading" class="text-sm text-gray-500">Loading integrations...</div>
@@ -719,5 +826,17 @@ Commit: {{.CommitSHA}}
         </div>
       </template>
     </div>
+
+    <!-- Confirm Toggle Policy Modal -->
+    <UModal v-model:open="showConfirmToggleModal">
+      <template #content>
+        <ConfirmTogglePolicyModal
+          :enabled="pendingToggleValue"
+          :loading="workerPolicySaving"
+          @confirm="confirmTogglePolicy"
+          @cancel="cancelTogglePolicy"
+        />
+      </template>
+    </UModal>
   </div>
 </template>

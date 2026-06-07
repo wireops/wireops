@@ -23,6 +23,7 @@ import (
 	"github.com/wireops/wireops/internal/docker"
 	gitpkg "github.com/wireops/wireops/internal/git"
 	"github.com/wireops/wireops/internal/notify"
+	"github.com/wireops/wireops/internal/policy"
 	"github.com/wireops/wireops/internal/protocol"
 	"github.com/wireops/wireops/internal/safepath"
 	"github.com/wireops/wireops/internal/secrets"
@@ -65,6 +66,20 @@ func NewReconciler(app core.App, dockerClient *docker.Client, notifier *notify.N
 		dispatcher:      dispatcher,
 		secretsRegistry: reg,
 	}
+}
+
+// validateStackImages is a stub that will validate compose service images against
+// the worker's effective policy. Currently a no-op — stack image policy enforcement
+// is planned for a future iteration.
+//
+// TODO: extract image names from composeContent YAML and call
+// policy.Load(r.app, workerID).ValidateImages(images) when ready to enforce.
+func (r *Reconciler) validateStackImages(_ core.App, _ string, _ []byte) error {
+	// Intentionally returns nil — validation not yet active for stacks.
+	// The policy package is imported to keep the dependency declared and avoid
+	// removing it from go.mod; a direct call is made below to satisfy the compiler.
+	_ = policy.WorkerPolicy{}
+	return nil
 }
 
 // resolveWorker returns the assigned worker id and fingerprint for a stack.

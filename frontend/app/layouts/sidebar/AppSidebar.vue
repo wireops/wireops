@@ -303,7 +303,7 @@ watch(
             :class="['w-full mb-4 text-gray-500 dark:text-gray-400 transition-all duration-300', collapsed ? 'justify-center px-0' : 'justify-start']"
             @click="isShowingCommandPalette = true; emit('close')"
           >
-            <template #trailing v-if="!collapsed">
+            <template v-if="!collapsed" #trailing>
               <div class="flex items-center gap-1 ml-auto">
                 <kbd class="px-1.5 py-0.5 text-[10px] font-semibold text-gray-500 bg-gray-100 dark:bg-carbon-800 border border-gray-200 dark:border-carbon-700 rounded-md shadow-sm">⌘K</kbd>
               </div>
