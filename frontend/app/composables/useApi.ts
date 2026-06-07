@@ -186,11 +186,56 @@ export function useApi() {
   const getJobRaw = (jobId: string) =>
     customGet<{ content: string; filename: string }>(`/api/custom/jobs/${jobId}/raw`)
 
-  const getWorkers = () => customGet<{ id: string; hostname: string; status: string; last_seen: string; health_history: { status: string, timestamp: string }[]; tags: string[]; token_status: string; token_expires: string; token_last_used: string }[]>('/api/custom/workers')
+  type WorkerJobSummary = {
+    id: string
+    name: string
+    common_tags: string[]
+  }
+  type WorkerInfo = {
+    id: string
+    hostname: string
+    status: string
+    last_seen: string
+    health_history: { status: string, timestamp: string }[]
+    tags: string[]
+    token_status: string
+    token_expires: string
+    token_last_used: string
+    job_count: number
+    jobs: WorkerJobSummary[]
+  }
+  const getWorkers = () => customGet<WorkerInfo[]>('/api/custom/workers')
   const createWorkerToken = () => customPost<{ token: string; token_id: string; status: string; expires_at: string }>('/api/custom/worker/tokens')
   const revokeWorker = (id: string) => customPost(`/api/custom/workers/${id}/revoke`)
   const transferStack = (stackId: string, targetWorkerId: string) =>
     customPost(`/api/custom/stacks/${stackId}/transfer`, { target_worker_id: targetWorkerId })
 
-  return { triggerSync, triggerRollback, forceRedeploy, getServices, getStackResources, stopContainer, restartContainer, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, getRepoFiles, getStackFiles, getJobFiles, testCredentials, keyscan, listOrphans, purgeOrphan, getSystemInfo, customPost, customGet, customPut, customPatch, customDelete, getSyncEventsWebhook, setSyncEventsWebhook, setNotificationsEnabled, deleteSyncEventsWebhook, testSyncEventsWebhook, getWorkers, createWorkerToken, revokeWorker, transferStack, discoverProjects, importStack, listJobs, triggerJobRun, cancelJobRun, deleteJobRun, getJobDefinition, getJobRaw }
+  // --- Worker Policies ---
+  type PolicyData = {
+    enabled?: boolean
+    allowed_volumes: string[]
+    allowed_networks: string[]
+    allowed_images: string[]
+    prevent_latest_images: boolean
+    block_host_volumes: boolean
+  }
+  type WorkerPolicyOverride = Omit<PolicyData, 'prevent_latest_images' | 'block_host_volumes'> & {
+    inherit: boolean
+    prevent_latest_images: boolean | null
+    block_host_volumes: boolean | null
+  }
+  type WorkerPolicyResponse = WorkerPolicyOverride & { effective: PolicyData }
+
+  const getWorkerPolicy = (workerId: string) =>
+    customGet<WorkerPolicyResponse>(`/api/custom/workers/${workerId}/policy`)
+  const saveWorkerPolicy = (workerId: string, body: WorkerPolicyOverride) =>
+    customPut(`/api/custom/workers/${workerId}/policy`, body)
+  const resetWorkerPolicy = (workerId: string) =>
+    customDelete(`/api/custom/workers/${workerId}/policy`)
+  const getGlobalWorkerPolicy = () =>
+    customGet<PolicyData>('/api/custom/settings/worker-policy')
+  const saveGlobalWorkerPolicy = (body: PolicyData) =>
+    customPut('/api/custom/settings/worker-policy', body)
+
+  return { triggerSync, triggerRollback, forceRedeploy, getServices, getStackResources, stopContainer, restartContainer, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, getRepoFiles, getStackFiles, getJobFiles, testCredentials, keyscan, listOrphans, purgeOrphan, getSystemInfo, customPost, customGet, customPut, customPatch, customDelete, getSyncEventsWebhook, setSyncEventsWebhook, setNotificationsEnabled, deleteSyncEventsWebhook, testSyncEventsWebhook, getWorkers, createWorkerToken, revokeWorker, transferStack, discoverProjects, importStack, listJobs, triggerJobRun, cancelJobRun, deleteJobRun, getJobDefinition, getJobRaw, getWorkerPolicy, saveWorkerPolicy, resetWorkerPolicy, getGlobalWorkerPolicy, saveGlobalWorkerPolicy }
 }

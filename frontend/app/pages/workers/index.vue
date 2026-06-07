@@ -1,5 +1,5 @@
 <script setup lang="ts">
-const { getWorkers, createWorkerToken, revokeWorker } = useApi()
+const { getWorkers, createWorkerToken } = useApi()
 const toast = useToast()
 
 const { data: workers, pending, refresh } = useAsyncData('workers', getWorkers)
@@ -18,18 +18,31 @@ const actualWorkers = computed(() => {
 
 const sortedWorkers = computed(() => {
   return [...actualWorkers.value].sort((a, b) => {
-    if (a.status === WORKER_STATUS.REVOKED && b.status !== WORKER_STATUS.REVOKED) return 1
-    if (a.status !== WORKER_STATUS.REVOKED && b.status === WORKER_STATUS.REVOKED) return -1
+    if (workerStatus(a) === WORKER_STATUS.REVOKED && workerStatus(b) !== WORKER_STATUS.REVOKED) return 1
+    if (workerStatus(a) !== WORKER_STATUS.REVOKED && workerStatus(b) === WORKER_STATUS.REVOKED) return -1
     return 0
   })
 })
 
-const revokedCount = computed(() => actualWorkers.value.filter(a => a.status === WORKER_STATUS.REVOKED).length)
-const activeCount = computed(() => actualWorkers.value.filter(a => a.status === WORKER_STATUS.ACTIVE || a.status === WORKER_STATUS.OFFLINE).length)
+const revokedCount = computed(() => actualWorkers.value.filter(a => workerStatus(a) === WORKER_STATUS.REVOKED).length)
+const activeCount = computed(() => actualWorkers.value.filter(a => workerStatus(a) === WORKER_STATUS.ACTIVE || workerStatus(a) === WORKER_STATUS.OFFLINE).length)
 
 const visibleWorkers = computed(() =>
-  showRevoked.value ? sortedWorkers.value : sortedWorkers.value.filter(a => a.status !== WORKER_STATUS.REVOKED)
+  showRevoked.value ? sortedWorkers.value : sortedWorkers.value.filter(a => workerStatus(a) !== WORKER_STATUS.REVOKED)
 )
+
+function workerStatus(worker: any) {
+  return String(worker?.status || '').toUpperCase()
+}
+
+function isWorkerClickable(worker: any) {
+  return workerStatus(worker) === WORKER_STATUS.ACTIVE
+}
+
+function openWorker(worker: any) {
+  if (!isWorkerClickable(worker)) return
+  navigateTo(`/workers/${worker.id}`)
+}
 
 async function generateToken() {
   isGenerating.value = true
@@ -45,17 +58,6 @@ async function generateToken() {
     toast.add({ title: 'Failed to generate token', description: e?.message, color: 'error' })
   } finally {
     isGenerating.value = false
-  }
-}
-
-async function handleRevoke(worker: any) {
-  if (!window.confirm(`Revoke ${worker.hostname}?`)) return
-  try {
-    await revokeWorker(worker.id)
-    toast.add({ title: 'Worker revoked', color: 'success' })
-    refresh()
-  } catch (e: any) {
-    toast.add({ title: 'Failed to revoke worker', description: e?.message, color: 'error' })
   }
 }
 
@@ -90,6 +92,8 @@ const workerBootstrapCommand = computed(() =>
   -e WIREOPS_WORKER_TOKEN=${issuedToken.value} \\
   ghcr.io/wireops/wireops-worker:latest`
 )
+
+
 
 let refreshInterval: any
 
@@ -154,52 +158,60 @@ onUnmounted(() => {
         <div
           v-for="worker in visibleWorkers"
           :key="worker.id"
-          class="flex items-center justify-between p-4 bg-gray-50 dark:bg-carbon-800/40 rounded-xl border border-gray-200 dark:border-carbon-700 hover:shadow-[0_0_0_2px_rgba(255,198,0,0.35),0_0_20px_rgba(255,198,0,0.12)] transition-all"
-          :class="worker.status === 'REVOKED' ? 'opacity-50' : ''"
+          class="flex items-center gap-4 p-4 bg-gray-50 dark:bg-carbon-800/40 rounded-xl border border-gray-200 dark:border-carbon-700 transition-all"
+          :class="[
+            workerStatus(worker) === WORKER_STATUS.REVOKED ? 'opacity-50' : '',
+            isWorkerClickable(worker) ? 'cursor-pointer hover:shadow-[0_0_0_2px_rgba(255,198,0,0.35),0_0_20px_rgba(255,198,0,0.12)]' : 'cursor-default'
+          ]"
+          :role="isWorkerClickable(worker) ? 'link' : undefined"
+          :tabindex="isWorkerClickable(worker) ? 0 : undefined"
+          :aria-disabled="isWorkerClickable(worker) ? undefined : 'true'"
+          @click="openWorker(worker)"
+          @keydown.enter="openWorker(worker)"
+          @keydown.space.prevent="openWorker(worker)"
         >
-          <div class="flex items-center gap-4">
-            <div class="relative">
-              <div class="w-10 h-10 rounded-lg bg-gray-100 dark:bg-carbon-700/60 flex items-center justify-center">
-                <UIcon name="i-lucide-server" class="w-5 h-5 text-wire-400" />
-              </div>
-              <div
-                class="absolute -bottom-1 -right-1 w-3 h-3 rounded-full"
-                :class="[
-                  worker.status === 'ACTIVE'
-                    ? 'bg-yellow-400 shadow-[0_0_8px_rgba(255,198,0,0.7)]'
-                    : worker.status === 'REVOKED'
-                      ? 'bg-gray-400'
-                      : 'bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.6)]'
-                ]"
-              />
+          <div class="relative shrink-0">
+            <div class="w-10 h-10 rounded-lg bg-gray-100 dark:bg-carbon-700/60 flex items-center justify-center">
+              <UIcon name="i-lucide-server" class="w-5 h-5 text-wire-400" />
             </div>
-            <div>
-              <div class="flex items-center gap-2">
-                <h3 class="font-medium text-gray-900 dark:text-wire-200">{{ worker.hostname }}</h3>
-                <BadgeStatus :status="worker.status" />
-              </div>
-              <div class="hidden sm:flex items-center gap-2 mt-1">
-                <p class="text-xs text-gray-400 dark:text-wire-200/40 font-mono w-36 truncate" :title="worker.id">
-                  ID: {{ worker.id }}
-                </p>
+            <div
+              class="absolute -bottom-1 -right-1 w-3 h-3 rounded-full"
+              :class="[
+                workerStatus(worker) === WORKER_STATUS.ACTIVE
+                  ? 'bg-yellow-400 shadow-[0_0_8px_rgba(255,198,0,0.7)]'
+                  : workerStatus(worker) === WORKER_STATUS.REVOKED
+                    ? 'bg-gray-400'
+                    : 'bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.6)]'
+              ]"
+            />
+          </div>
+          <div class="min-w-0">
+            <div class="flex items-center gap-2">
+              <h3 class="font-medium text-gray-900 dark:text-wire-200">{{ worker.hostname }}</h3>
+              <BadgeStatus :status="worker.status" />
+            </div>
+            <div class="hidden sm:flex items-center gap-2 mt-1">
+              <p class="text-xs text-gray-400 dark:text-wire-200/40 font-mono w-36 truncate" :title="worker.id">
+                ID: {{ worker.id }}
+              </p>
+              <span class="text-gray-300 dark:text-carbon-700 text-xs">•</span>
+              <p class="text-xs text-gray-400 dark:text-wire-200/40">
+                Last seen: {{ formatRelative(worker.last_seen) }}
+              </p>
+              <span class="text-gray-300 dark:text-carbon-700 text-xs">•</span>
+              <p class="text-xs text-gray-400 dark:text-wire-200/40">
+                Jobs: {{ worker.job_count ?? worker.jobs?.length ?? 0 }}
+              </p>
+              <template v-if="hasVisibleTokenExpiry(worker)">
                 <span class="text-gray-300 dark:text-carbon-700 text-xs">•</span>
                 <p class="text-xs text-gray-400 dark:text-wire-200/40">
-                  Last seen: {{ formatRelative(worker.last_seen) }}
+                  Token expires: {{ formatDate(worker.token_expires) }}
                 </p>
-                <template v-if="hasVisibleTokenExpiry(worker)">
-                  <span class="text-gray-300 dark:text-carbon-700 text-xs">•</span>
-                  <p class="text-xs text-gray-400 dark:text-wire-200/40">
-                    Token expires: {{ formatDate(worker.token_expires) }}
-                  </p>
-                </template>
-              </div>
-              <div v-if="worker.tags?.length" class="flex flex-wrap items-center gap-1 mt-1.5">
-                <UBadge v-for="tag in worker.tags" :key="tag" :label="tag" variant="subtle" color="neutral" size="xs" class="font-mono" />
-              </div>
+              </template>
             </div>
-          </div>
-          <div v-if="worker.status !== 'REVOKED'">
-            <UButton icon="i-lucide-ban" color="error" variant="ghost" size="sm" @click="handleRevoke(worker)" />
+            <div v-if="worker.tags?.length" class="flex flex-wrap items-center gap-1 mt-1.5">
+              <UBadge v-for="tag in worker.tags" :key="tag" :label="tag" variant="subtle" color="neutral" size="xs" class="font-mono" />
+            </div>
           </div>
         </div>
       </div>
@@ -231,5 +243,7 @@ onUnmounted(() => {
         </UCard>
       </template>
     </UModal>
+
+
   </div>
 </template>

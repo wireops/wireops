@@ -441,15 +441,17 @@ func ReadFile(_ context.Context, cmd protocol.ReadFileCommand) protocol.CommandR
 func RunJob(cmd protocol.RunJobCommand) protocol.JobCompletedMessage {
 	log.Printf("[executor] run_job dispatched job_run=%s image=%s command=%s", cmd.JobRunID, cmd.Image, cmd.CommandID)
 
-	// Validate job security policies
-	if err := validateJobSecurity(cmd); err != nil {
+	// Validate volume host paths for traversal / relative paths only.
+	// Policy enforcement (allowlists, image restrictions, etc.) is the server's
+	// responsibility (jobscheduler/dispatchToWorker) — the worker must not
+	// duplicate it with hardcoded deny-lists.
+	if err := validateVolumePaths(cmd.Volumes); err != nil {
 		errMsg := fmt.Sprintf("failed to start job, %v", err)
-		log.Printf("[executor] run_job security error: %s", errMsg)
+		log.Printf("[executor] run_job path error: %s", errMsg)
 		return protocol.JobCompletedMessage{
-			JobRunID:   cmd.JobRunID,
-			Success:    false,
-			Output:     errMsg,
-			DurationMs: 0,
+			JobRunID: cmd.JobRunID,
+			Success:  false,
+			Output:   errMsg,
 		}
 	}
 
@@ -574,153 +576,27 @@ func applyEnvFile(workDir, envFileB64 string) error {
 	return nil
 }
 
-func validateJobSecurity(cmd protocol.RunJobCommand) error {
-	// 1. Validate Image
-	allowedImages := os.Getenv("WORKER_ALLOWED_IMAGES")
-	if err := validateImage(cmd.Image, allowedImages); err != nil {
-		return err
-	}
-
-	// 2. Validate Network
-	allowedNetworks := os.Getenv("WORKER_ALLOWED_NETWORKS")
-	if err := validateNetwork(cmd.Network, allowedNetworks); err != nil {
-		return err
-	}
-
-	// 3. Validate Volumes
-	allowedVolumes := os.Getenv("WORKER_ALLOWED_VOLUMES")
-	if err := validateVolumes(cmd.Volumes, allowedVolumes); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func validateImage(image string, allowedStr string) error {
-	if image == "" {
-		return fmt.Errorf("security restriction: image cannot be empty")
-	}
-	allowedStr = strings.TrimSpace(allowedStr)
-	if allowedStr == "" {
-		return nil // No restriction
-	}
-	patterns := parseCommaList(allowedStr)
-	for _, pattern := range patterns {
-		if matchPattern(image, pattern) {
-			return nil
-		}
-	}
-	return fmt.Errorf("security restriction: image %q is not allowed", image)
-}
-
-func validateNetwork(network string, allowedStr string) error {
-	allowedStr = strings.TrimSpace(allowedStr)
-	if allowedStr == "" {
-		return nil // No restriction
-	}
-	netToValidate := network
-	if netToValidate == "" {
-		netToValidate = "default"
-	}
-	patterns := parseCommaList(allowedStr)
-	for _, pattern := range patterns {
-		if matchPattern(netToValidate, pattern) {
-			return nil
-		}
-	}
-	return fmt.Errorf("security restriction: network %q is not allowed", network)
-}
-
-func validateVolumes(volumes []string, allowedStr string) error {
-	allowedStr = strings.TrimSpace(allowedStr)
-	var allowedPatterns []string
-	if allowedStr != "" {
-		allowedPatterns = parseCommaList(allowedStr)
-	}
-
+// validateVolumePaths checks that every host path in the volume specs is
+// absolute and free of path traversal. Named volumes (no "/" in the host part)
+// are filesystem-agnostic and are skipped.
+//
+// Policy enforcement (allowlists, forbidden paths, etc.) is the server's
+// responsibility — the worker must not duplicate it with hardcoded deny-lists.
+func validateVolumePaths(volumes []string) error {
 	for _, vol := range volumes {
 		vol = strings.TrimSpace(vol)
 		if vol == "" {
 			continue
 		}
-		parts := strings.Split(vol, ":")
-		hostPath := parts[0]
-
-		isHostPath := strings.HasPrefix(hostPath, "/") || strings.HasPrefix(hostPath, ".") || strings.Contains(hostPath, "/")
-
-		if isHostPath {
+		hostPath := strings.SplitN(vol, ":", 3)[0]
+		// Only validate paths that look like filesystem references.
+		if strings.Contains(hostPath, "/") || strings.HasPrefix(hostPath, ".") {
 			if err := safepath.ValidateHostPath(hostPath); err != nil {
-				return fmt.Errorf("security restriction: %w", err)
-			}
-
-			cleaned := filepath.Clean(hostPath)
-
-			forbiddenPaths := []string{
-				"/",
-				"/etc",
-				"/var/run/docker.sock",
-				"/boot",
-				"/sys",
-				"/proc",
-				"/dev",
-				"/lib",
-				"/lib64",
-				"/bin",
-				"/sbin",
-				"/usr",
-			}
-			for _, forbidden := range forbiddenPaths {
-				if cleaned == forbidden || strings.HasPrefix(cleaned, forbidden+"/") {
-					return fmt.Errorf("security restriction: volume mount path %q is not allowed", hostPath)
-				}
-			}
-
-			if len(allowedPatterns) > 0 {
-				matched := false
-				for _, pattern := range allowedPatterns {
-					cleanPattern := pattern
-					hasWildcard := strings.HasSuffix(pattern, "*")
-					if hasWildcard {
-						cleanPattern = filepath.Clean(pattern[:len(pattern)-1]) + "*"
-					} else {
-						cleanPattern = filepath.Clean(pattern)
-					}
-					if matchPattern(cleaned, cleanPattern) {
-						matched = true
-						break
-					}
-				}
-				if !matched {
-					return fmt.Errorf("security restriction: volume mount path %q is not allowed", hostPath)
-				}
-			}
-		} else {
-			if len(allowedPatterns) > 0 {
-				matched := false
-				for _, pattern := range allowedPatterns {
-					if matchPattern(hostPath, pattern) {
-						matched = true
-						break
-					}
-				}
-				if !matched {
-					return fmt.Errorf("security restriction: volume %q is not allowed", hostPath)
-				}
+				return fmt.Errorf("invalid volume path: %w", err)
 			}
 		}
 	}
 	return nil
-}
-
-func parseCommaList(raw string) []string {
-	var list []string
-	for _, item := range strings.Split(raw, ",") {
-		item = strings.TrimSpace(item)
-		if item != "" {
-			list = append(list, item)
-		}
-	}
-	return list
 }
 
 func matchPattern(val, pattern string) bool {

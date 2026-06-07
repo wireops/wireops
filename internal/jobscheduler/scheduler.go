@@ -23,6 +23,7 @@ import (
 	"github.com/wireops/wireops/internal/crypto"
 	"github.com/wireops/wireops/internal/git"
 	"github.com/wireops/wireops/internal/job"
+	"github.com/wireops/wireops/internal/policy"
 	"github.com/wireops/wireops/internal/protocol"
 )
 
@@ -310,6 +311,42 @@ func (s *Scheduler) dispatchToWorker(ctx context.Context, jobID, trigger, worker
 		log.Printf("[jobscheduler] dispatchToWorker: failed to persist metadata job=%s run=%s: %v", jobID, runID, err)
 		if updateErr := s.updateJobRun(runID, "error", err.Error(), 0, 0, 0); updateErr != nil {
 			log.Printf("[jobscheduler] dispatchToWorker: failed to mark metadata error run=%s: %v", runID, updateErr)
+		}
+		return
+	}
+
+	// --- Policy enforcement ---
+	// Load the effective policy for this worker and validate the job parameters
+	// before dispatching. Violations are hard errors (fail-closed).
+	wp, policyErr := policy.Load(s.app, workerID)
+	if policyErr != nil {
+		log.Printf("[jobscheduler] dispatchToWorker: failed to load policy job=%s run=%s worker=%s: %v", jobID, runID, workerID, policyErr)
+		if updateErr := s.updateJobRun(runID, "error", fmt.Sprintf("policy load error: %v", policyErr), 0, 0, 0); updateErr != nil {
+			log.Printf("[jobscheduler] dispatchToWorker: failed to persist policy load error run=%s: %v", runID, updateErr)
+		}
+		return
+	}
+	if err := wp.ValidateImages([]string{p.def.Image}); err != nil {
+		msg := fmt.Sprintf("policy violation: %v", err)
+		log.Printf("[jobscheduler] dispatchToWorker: %s job=%s run=%s worker=%s", msg, jobID, runID, workerID)
+		if updateErr := s.updateJobRun(runID, "error", msg, 0, 0, 0); updateErr != nil {
+			log.Printf("[jobscheduler] dispatchToWorker: failed to persist image policy error run=%s: %v", runID, updateErr)
+		}
+		return
+	}
+	if err := wp.ValidateVolumes(p.def.Volumes); err != nil {
+		msg := fmt.Sprintf("policy violation: %v", err)
+		log.Printf("[jobscheduler] dispatchToWorker: %s job=%s run=%s worker=%s", msg, jobID, runID, workerID)
+		if updateErr := s.updateJobRun(runID, "error", msg, 0, 0, 0); updateErr != nil {
+			log.Printf("[jobscheduler] dispatchToWorker: failed to persist volume policy error run=%s: %v", runID, updateErr)
+		}
+		return
+	}
+	if err := wp.ValidateNetwork(p.def.Network); err != nil {
+		msg := fmt.Sprintf("policy violation: %v", err)
+		log.Printf("[jobscheduler] dispatchToWorker: %s job=%s run=%s worker=%s", msg, jobID, runID, workerID)
+		if updateErr := s.updateJobRun(runID, "error", msg, 0, 0, 0); updateErr != nil {
+			log.Printf("[jobscheduler] dispatchToWorker: failed to persist network policy error run=%s: %v", runID, updateErr)
 		}
 		return
 	}

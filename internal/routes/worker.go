@@ -1,16 +1,29 @@
 package routes
 
 import (
+	"encoding/json"
 	"log"
 	"net/http"
+	"path/filepath"
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/router"
 
+	"github.com/wireops/wireops/internal/job"
+	"github.com/wireops/wireops/internal/policy"
 	"github.com/wireops/wireops/internal/sync"
 	"github.com/wireops/wireops/internal/worker"
 )
+
+type workerJobSummary struct {
+	ID         string   `json:"id"`
+	Name       string   `json:"name"`
+	CommonTags []string `json:"common_tags"`
+
+	tags            []string
+	definitionError string
+}
 
 func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, workerSvc *worker.Service, dispatcher sync.WorkerDispatcher, workerServer *worker.WorkerServer) {
 
@@ -48,6 +61,11 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
 
+		jobCatalog, err := buildWorkerJobCatalog(app)
+		if err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+
 		result := make([]map[string]interface{}, 0, len(records))
 		for _, rec := range records {
 			var history []worker.HealthEvent
@@ -71,16 +89,21 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 				lastUsedAt = tokenRecord.GetDateTime("last_used_at").String()
 			}
 
+			tags := workerServer.GetWorkerTags(rec.Id)
+			jobs := workerJobsFor(app, jobCatalog, rec.Id, tags)
+
 			result = append(result, map[string]interface{}{
 				"id":              rec.Id,
 				"hostname":        rec.GetString("hostname"),
 				"status":          status,
 				"last_seen":       rec.GetDateTime("last_seen").String(),
 				"health_history":  history,
-				"tags":            workerServer.GetWorkerTags(rec.Id),
+				"tags":            tags,
 				"token_status":    tokenStatus,
 				"token_expires":   expiresAt,
 				"token_last_used": lastUsedAt,
+				"job_count":       len(jobs),
+				"jobs":            jobs,
 			})
 		}
 
@@ -116,4 +139,307 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 
 		return e.JSON(http.StatusOK, map[string]string{"status": "revoked"})
 	})
+
+	// --- Per-worker policy ---
+
+	// GET /api/custom/workers/{id}/policy
+	// Returns the effective resolved policy for this worker plus its local override fields.
+	r.GET("/api/custom/workers/{id}/policy", func(e *core.RequestEvent) error {
+		if !e.HasSuperuserAuth() {
+			return e.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized. Admin only."})
+		}
+		workerID := e.Request.PathValue("id")
+		rec, err := app.FindRecordById("workers", workerID)
+		if err != nil {
+			return e.JSON(http.StatusNotFound, map[string]string{"error": "Worker not found"})
+		}
+
+		inherit := true
+		inheritRaw := rec.Get("policy_inherit")
+		if inheritRaw != nil {
+			inherit = rec.GetBool("policy_inherit")
+		}
+
+		var localVolumes, localNetworks, localImages []string
+		_ = rec.UnmarshalJSONField("policy_volumes", &localVolumes)
+		_ = rec.UnmarshalJSONField("policy_networks", &localNetworks)
+		_ = rec.UnmarshalJSONField("policy_images", &localImages)
+		if localVolumes == nil {
+			localVolumes = []string{}
+		}
+		if localNetworks == nil {
+			localNetworks = []string{}
+		}
+		if localImages == nil {
+			localImages = []string{}
+		}
+
+		// Read nullable boolean overrides from policy_flags.
+		type flagsType struct {
+			PreventLatestImages *bool `json:"prevent_latest_images"`
+			BlockHostVolumes    *bool `json:"block_host_volumes"`
+		}
+		var flagsOut flagsType
+		if raw := rec.GetString("policy_flags"); raw != "" {
+			_ = json.Unmarshal([]byte(raw), &flagsOut)
+		}
+
+		effective, _ := policy.Load(app, workerID)
+
+		return e.JSON(http.StatusOK, map[string]interface{}{
+			"inherit":               inherit,
+			"allowed_volumes":       localVolumes,
+			"allowed_networks":      localNetworks,
+			"allowed_images":        localImages,
+			"prevent_latest_images": flagsOut.PreventLatestImages,
+			"block_host_volumes":    flagsOut.BlockHostVolumes,
+			"effective":             effective.ToJSON(),
+		})
+	})
+
+	// PUT /api/custom/workers/{id}/policy
+	// Saves or updates the per-worker policy override.
+	r.PUT("/api/custom/workers/{id}/policy", func(e *core.RequestEvent) error {
+		if !e.HasSuperuserAuth() {
+			return e.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized. Admin only."})
+		}
+		workerID := e.Request.PathValue("id")
+		rec, err := app.FindRecordById("workers", workerID)
+		if err != nil {
+			return e.JSON(http.StatusNotFound, map[string]string{"error": "Worker not found"})
+		}
+
+		var body policy.WorkerPolicyOverrideJSON
+		if err := json.NewDecoder(e.Request.Body).Decode(&body); err != nil {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid JSON body"})
+		}
+
+		rec.Set("policy_inherit", body.Inherit)
+		if body.AllowedVolumes == nil {
+			body.AllowedVolumes = []string{}
+		}
+		if body.AllowedNetworks == nil {
+			body.AllowedNetworks = []string{}
+		}
+		if body.AllowedImages == nil {
+			body.AllowedImages = []string{}
+		}
+		rec.Set("policy_volumes", body.AllowedVolumes)
+		rec.Set("policy_networks", body.AllowedNetworks)
+		rec.Set("policy_images", body.AllowedImages)
+
+		// Persist nullable boolean flags as a JSON object.
+		type flagsPayload struct {
+			PreventLatestImages *bool `json:"prevent_latest_images"`
+			BlockHostVolumes    *bool `json:"block_host_volumes"`
+		}
+		flags := flagsPayload{
+			PreventLatestImages: body.PreventLatestImages,
+			BlockHostVolumes:    body.BlockHostVolumes,
+		}
+		if flagsJSON, err := json.Marshal(flags); err == nil {
+			rec.Set("policy_flags", string(flagsJSON))
+		}
+
+		if err := app.Save(rec); err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to save worker policy: " + err.Error()})
+		}
+		return e.JSON(http.StatusOK, map[string]string{"status": "saved"})
+	})
+
+	// DELETE /api/custom/workers/{id}/policy
+	// Resets the per-worker policy to inherit-from-global (clears local overrides).
+	r.DELETE("/api/custom/workers/{id}/policy", func(e *core.RequestEvent) error {
+		if !e.HasSuperuserAuth() {
+			return e.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized. Admin only."})
+		}
+		workerID := e.Request.PathValue("id")
+		rec, err := app.FindRecordById("workers", workerID)
+		if err != nil {
+			return e.JSON(http.StatusNotFound, map[string]string{"error": "Worker not found"})
+		}
+
+		rec.Set("policy_inherit", true)
+		rec.Set("policy_volumes", []string{})
+		rec.Set("policy_networks", []string{})
+		rec.Set("policy_images", []string{})
+
+		if err := app.Save(rec); err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to reset worker policy: " + err.Error()})
+		}
+		return e.JSON(http.StatusOK, map[string]string{"status": "reset"})
+	})
+
+	// --- Global worker policy (Settings) ---
+
+	// GET /api/custom/settings/worker-policy
+	r.GET("/api/custom/settings/worker-policy", func(e *core.RequestEvent) error {
+		if !e.HasSuperuserAuth() {
+			return e.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized. Admin only."})
+		}
+		p, err := policy.LoadGlobal(app)
+		if err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+		return e.JSON(http.StatusOK, p.ToJSON())
+	})
+
+	// PUT /api/custom/settings/worker-policy
+	r.PUT("/api/custom/settings/worker-policy", func(e *core.RequestEvent) error {
+		if !e.HasSuperuserAuth() {
+			return e.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized. Admin only."})
+		}
+
+		var body policy.PolicyJSON
+		if err := json.NewDecoder(e.Request.Body).Decode(&body); err != nil {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid JSON body"})
+		}
+		if body.AllowedVolumes == nil {
+			body.AllowedVolumes = []string{}
+		}
+		if body.AllowedNetworks == nil {
+			body.AllowedNetworks = []string{}
+		}
+		if body.AllowedImages == nil {
+			body.AllowedImages = []string{}
+		}
+
+		records, err := app.FindAllRecords("worker_policies")
+		if err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+
+		var rec *core.Record
+		if len(records) > 0 {
+			rec = records[0]
+		} else {
+			col, err := app.FindCollectionByNameOrId("worker_policies")
+			if err != nil {
+				return e.JSON(http.StatusInternalServerError, map[string]string{"error": "worker_policies collection not found"})
+			}
+			rec = core.NewRecord(col)
+		}
+
+		rec.Set("enabled", body.Enabled)
+		rec.Set("allowed_volumes", body.AllowedVolumes)
+		rec.Set("allowed_networks", body.AllowedNetworks)
+		rec.Set("allowed_images", body.AllowedImages)
+		rec.Set("prevent_latest_images", body.PreventLatestImages)
+		rec.Set("block_host_volumes", body.BlockHostVolumes)
+
+		if err := app.Save(rec); err != nil {
+			log.Printf("[POLICY] Failed to save global worker policy: %v", err)
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to save global policy: " + err.Error()})
+		}
+		return e.JSON(http.StatusOK, map[string]string{"status": "saved"})
+	})
+}
+
+func buildWorkerJobCatalog(app core.App) ([]workerJobSummary, error) {
+	records, err := app.FindAllRecords("scheduled_jobs")
+	if err != nil {
+		return nil, err
+	}
+
+	repoWorkspace := filepath.Join(app.DataDir(), "repositories")
+	items := make([]workerJobSummary, 0, len(records))
+
+	for _, rec := range records {
+		repoID := rec.GetString("repository")
+
+		item := workerJobSummary{
+			ID:   rec.Id,
+			Name: rec.GetString("name"),
+		}
+
+		jobFile := rec.GetString("job_file")
+		def, err := job.ParseJobFile(repoWorkspace, repoID, jobFile)
+		if err != nil {
+			item.definitionError = err.Error()
+		} else {
+			item.Name = def.Name
+			item.tags = def.Tags
+		}
+
+		if item.Name == "" {
+			item.Name = jobFile
+		}
+
+		items = append(items, item)
+	}
+
+	return items, nil
+}
+
+func workerJobsFor(app core.App, catalog []workerJobSummary, workerID string, workerTags []string) []workerJobSummary {
+	jobs := make([]workerJobSummary, 0)
+	for _, item := range catalog {
+		hasRunHistory := hasWorkerJobRun(app, item.ID, workerID)
+		matchedByTags := item.definitionError == "" && workerMatchesJobTags(workerTags, item.tags)
+		if !matchedByTags && !hasRunHistory {
+			continue
+		}
+
+		item.CommonTags = workerCommonJobTags(workerTags, item.tags)
+		jobs = append(jobs, item)
+	}
+	return jobs
+}
+
+func hasWorkerJobRun(app core.App, jobID, workerID string) bool {
+	runs, err := app.FindRecordsByFilter(
+		"job_runs",
+		"job = {:jobId} && worker = {:workerId}",
+		"-created",
+		1,
+		0,
+		dbx.Params{"jobId": jobID, "workerId": workerID},
+	)
+	if err != nil || len(runs) == 0 {
+		return false
+	}
+	return true
+}
+
+func workerMatchesJobTags(workerTags, requiredTags []string) bool {
+	if len(requiredTags) == 0 {
+		return true
+	}
+
+	tagSet := make(map[string]struct{}, len(workerTags))
+	for _, tag := range workerTags {
+		tagSet[tag] = struct{}{}
+	}
+
+	for _, required := range requiredTags {
+		if _, ok := tagSet[required]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func workerCommonJobTags(workerTags, jobTags []string) []string {
+	if len(workerTags) == 0 || len(jobTags) == 0 {
+		return []string{}
+	}
+
+	workerTagSet := make(map[string]struct{}, len(workerTags))
+	for _, tag := range workerTags {
+		workerTagSet[tag] = struct{}{}
+	}
+
+	common := make([]string, 0)
+	seen := map[string]struct{}{}
+	for _, tag := range jobTags {
+		if _, ok := workerTagSet[tag]; !ok {
+			continue
+		}
+		if _, duplicate := seen[tag]; duplicate {
+			continue
+		}
+		common = append(common, tag)
+		seen[tag] = struct{}{}
+	}
+	return common
 }
