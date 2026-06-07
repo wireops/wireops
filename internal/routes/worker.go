@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"path/filepath"
+	"time"
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
@@ -346,6 +347,66 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to save global policy: " + err.Error()})
 		}
 		return e.JSON(http.StatusOK, map[string]string{"status": "saved"})
+	})
+
+	// --- App Settings ---
+
+	// GET /api/custom/settings/app-settings
+	r.GET("/api/custom/settings/app-settings", func(e *core.RequestEvent) error {
+		if !e.HasSuperuserAuth() {
+			return e.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized. Admin only."})
+		}
+		records, err := app.FindAllRecords("app_settings")
+		if err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+		if len(records) > 0 {
+			return e.JSON(http.StatusOK, records[0])
+		}
+		return e.JSON(http.StatusOK, map[string]interface{}{"id": "", "timezone": ""})
+	})
+
+	// PUT /api/custom/settings/app-settings
+	r.PUT("/api/custom/settings/app-settings", func(e *core.RequestEvent) error {
+		if !e.HasSuperuserAuth() {
+			return e.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized. Admin only."})
+		}
+
+		var body struct {
+			Timezone string `json:"timezone"`
+		}
+		if err := json.NewDecoder(e.Request.Body).Decode(&body); err != nil {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid JSON body"})
+		}
+
+		if body.Timezone != "" {
+			if _, err := time.LoadLocation(body.Timezone); err != nil {
+				return e.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid timezone"})
+			}
+		}
+
+		records, err := app.FindAllRecords("app_settings")
+		if err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+
+		var rec *core.Record
+		if len(records) > 0 {
+			rec = records[0]
+		} else {
+			col, err := app.FindCollectionByNameOrId("app_settings")
+			if err != nil {
+				return e.JSON(http.StatusInternalServerError, map[string]string{"error": "collection not found"})
+			}
+			rec = core.NewRecord(col)
+		}
+
+		rec.Set("timezone", body.Timezone)
+
+		if err := app.Save(rec); err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to save app settings: " + err.Error()})
+		}
+		return e.JSON(http.StatusOK, rec)
 	})
 }
 

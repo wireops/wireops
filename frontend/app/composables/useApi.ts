@@ -237,5 +237,21 @@ export function useApi() {
   const saveGlobalWorkerPolicy = (body: PolicyData) =>
     customPut('/api/custom/settings/worker-policy', body)
 
-  return { triggerSync, triggerRollback, forceRedeploy, getServices, getStackResources, stopContainer, restartContainer, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, getRepoFiles, getStackFiles, getJobFiles, testCredentials, keyscan, listOrphans, purgeOrphan, getSystemInfo, customPost, customGet, customPut, customPatch, customDelete, getSyncEventsWebhook, setSyncEventsWebhook, setNotificationsEnabled, deleteSyncEventsWebhook, testSyncEventsWebhook, getWorkers, createWorkerToken, revokeWorker, transferStack, discoverProjects, importStack, listJobs, triggerJobRun, cancelJobRun, deleteJobRun, getJobDefinition, getJobRaw, getWorkerPolicy, saveWorkerPolicy, resetWorkerPolicy, getGlobalWorkerPolicy, saveGlobalWorkerPolicy }
+  // --- App Settings ---
+  type AppSettings = {
+    id: string
+    timezone: string
+  }
+  const getAppSettings = async () => {
+    try {
+      return await customGet<AppSettings>('/api/custom/settings/app-settings')
+    } catch {
+      return null
+    }
+  }
+  const saveAppSettings = async (data: Partial<AppSettings>) => {
+    return await customPut<AppSettings>('/api/custom/settings/app-settings', data)
+  }
+
+  return { triggerSync, triggerRollback, forceRedeploy, getServices, getStackResources, stopContainer, restartContainer, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, getRepoFiles, getStackFiles, getJobFiles, testCredentials, keyscan, listOrphans, purgeOrphan, getSystemInfo, customPost, customGet, customPut, customPatch, customDelete, getSyncEventsWebhook, setSyncEventsWebhook, setNotificationsEnabled, deleteSyncEventsWebhook, testSyncEventsWebhook, getWorkers, createWorkerToken, revokeWorker, transferStack, discoverProjects, importStack, listJobs, triggerJobRun, cancelJobRun, deleteJobRun, getJobDefinition, getJobRaw, getWorkerPolicy, saveWorkerPolicy, resetWorkerPolicy, getGlobalWorkerPolicy, saveGlobalWorkerPolicy, getAppSettings, saveAppSettings }
 }

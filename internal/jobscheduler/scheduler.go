@@ -9,8 +9,10 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	gosync "sync"
 	"time"
+	"unicode"
 
 	"hash/fnv"
 
@@ -70,7 +72,6 @@ func NewScheduler(app core.App, dispatcher WorkerDispatcher, dataDir string) *Sc
 		dispatcher: dispatcher,
 		dataDir:    dataDir,
 		secretKey:  []byte(os.Getenv("SECRET_KEY")),
-		cron:       cron.New(),
 		entries:    make(map[string]cron.EntryID),
 		rootCtx:    rootCtx,
 		rootCancel: rootCancel,
@@ -79,6 +80,24 @@ func NewScheduler(app core.App, dispatcher WorkerDispatcher, dataDir string) *Sc
 
 // Start loads all enabled jobs from the database and registers their cron entries.
 func (s *Scheduler) Start() {
+	var loc *time.Location
+	settings, err := s.app.FindAllRecords("app_settings")
+	if err == nil && len(settings) > 0 {
+		if tz := settings[0].GetString("timezone"); tz != "" {
+			if parsedLoc, err := time.LoadLocation(tz); err == nil {
+				loc = parsedLoc
+			} else {
+				log.Printf("[jobscheduler] invalid timezone %q in settings, falling back to local time: %v", tz, err)
+			}
+		}
+	}
+
+	if loc != nil {
+		s.cron = cron.New(cron.WithLocation(loc))
+	} else {
+		s.cron = cron.New()
+	}
+
 	jobs, err := s.app.FindAllRecords("scheduled_jobs", dbx.HashExp{"enabled": true})
 	if err != nil {
 		log.Printf("[jobscheduler] failed to load jobs on start: %v", err)
@@ -236,9 +255,11 @@ func (s *Scheduler) executeJob(jobID, trigger string, userID string) {
 		return
 	}
 
+	s.ensureScheduledJobDisplayFields(rec, def)
+
 	workers := s.dispatcher.GetWorkersByTags(def.Tags)
 	if len(workers) == 0 {
-		if err := s.createStalledRun(jobID, trigger, def.Tags); err != nil {
+		if err := s.createStalledRun(jobID, trigger, def.Tags, def); err != nil {
 			log.Printf("[jobscheduler] executeJob: failed to persist stalled job=%s: %v", jobID, err)
 		}
 		return
@@ -621,7 +642,7 @@ func (s *Scheduler) ReconcileActiveJobs(workerID string, activeIDs []string) err
 
 // createStalledRun writes a job_run with status=stalled when no workers are available.
 // It also updates the scheduled_jobs record's status to "stalled".
-func (s *Scheduler) createStalledRun(jobID, trigger string, tags []string) error {
+func (s *Scheduler) createStalledRun(jobID, trigger string, tags []string, def *job.Definition) error {
 	reason := "no matching workers available for the specified tags"
 	if len(tags) > 0 {
 		reason = fmt.Sprintf("no matching workers available for the required tags: %v", tags)
@@ -637,6 +658,7 @@ func (s *Scheduler) createStalledRun(jobID, trigger string, tags []string) error
 		return fmt.Errorf("create stalled run load job=%s: %w", jobID, err)
 	}
 	if rec.GetString("status") != "paused" {
+		s.ensureScheduledJobDisplayFields(rec, def)
 		rec.Set("status", "stalled")
 		if err := s.app.Save(rec); err != nil {
 			return fmt.Errorf("create stalled run update job=%s status=stalled: %w", jobID, err)
@@ -676,11 +698,63 @@ func (s *Scheduler) setScheduledJobStatus(jobID, status string) error {
 	if rec.GetString("status") == "paused" {
 		return nil
 	}
+	s.ensureScheduledJobDisplayFields(rec, nil)
 	rec.Set("status", status)
 	if err := s.app.Save(rec); err != nil {
 		return fmt.Errorf("set scheduled job status job=%s status=%s: %w", jobID, status, err)
 	}
 	return nil
+}
+
+// ensureScheduledJobDisplayFields populates the display fields (name, description) for a scheduled job.
+// Git is the source of truth, so if a job.Definition is provided, its fields will always overwrite
+// the current database values.
+func (s *Scheduler) ensureScheduledJobDisplayFields(rec *core.Record, def *job.Definition) {
+	if def != nil {
+		// Git is the source of truth: sync from job.yaml
+		name := def.Name
+		if name == "" {
+			name = fallbackScheduledJobName(rec.GetString("job_file"), rec.Id)
+		}
+		rec.Set("name", sanitizeScheduledJobName(name, rec.Id))
+		rec.Set("description", def.Description)
+	} else if rec.GetString("name") == "" {
+		// Fallback for status updates where def is not parsed
+		name := fallbackScheduledJobName(rec.GetString("job_file"), rec.Id)
+		rec.Set("name", sanitizeScheduledJobName(name, rec.Id))
+	}
+}
+
+func fallbackScheduledJobName(jobFile, id string) string {
+	name := strings.TrimSuffix(filepath.Base(jobFile), filepath.Ext(jobFile))
+	if name == "" || name == "." {
+		name = "job_" + id
+	}
+	return name
+}
+
+func sanitizeScheduledJobName(name, id string) string {
+	name = strings.TrimSpace(name)
+	var b strings.Builder
+	previousSeparator := false
+	for _, r := range name {
+		allowed := unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '-' || r == ' '
+		if allowed {
+			b.WriteRune(r)
+			previousSeparator = r == '-' || r == ' '
+			continue
+		}
+		if !previousSeparator {
+			b.WriteRune('-')
+			previousSeparator = true
+		}
+	}
+
+	sanitized := strings.Trim(b.String(), " -_")
+	if sanitized == "" {
+		sanitized = "job_" + id
+	}
+	return sanitized
 }
 
 // setJobRunStarted transitions status to "running", sets started_at, and calculates queue time.
@@ -884,7 +958,7 @@ func (s *Scheduler) getJobTimeoutMs(rec *core.Record) int64 {
 	repoID := jobRec.GetString("repository")
 	jobFile := jobRec.GetString("job_file")
 	repoWorkspace := filepath.Join(s.dataDir, "repositories")
-	
+
 	def, err := job.ParseJobFile(repoWorkspace, repoID, jobFile)
 	if err != nil {
 		return 600000
