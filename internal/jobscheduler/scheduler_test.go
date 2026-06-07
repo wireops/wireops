@@ -117,6 +117,43 @@ func TestExecuteJobWithoutWorkersPersistsStalledRun(t *testing.T) {
 	}
 }
 
+func TestExecuteJobWithoutWorkersBackfillsLegacyName(t *testing.T) {
+	app := newJobSchedulerTestApp(t)
+	repo := createJobRepoRecord(t, app)
+	writeJobFile(t, app.DataDir(), repo.Id, "job.yaml")
+	jobRec := createScheduledJobRecord(t, app, repo.Id, "job.yaml")
+	if _, err := app.DB().NewQuery("UPDATE scheduled_jobs SET name = '' WHERE id = {:id}").
+		Bind(dbx.Params{"id": jobRec.Id}).
+		Execute(); err != nil {
+		t.Fatalf("failed to create legacy scheduled job fixture: %v", err)
+	}
+	s := NewScheduler(app, fakeJobDispatcher{}, app.DataDir())
+
+	s.executeJob(jobRec.Id, "cron", "system")
+
+	refreshed, err := app.FindRecordById("scheduled_jobs", jobRec.Id)
+	if err != nil {
+		t.Fatalf("failed to reload job: %v", err)
+	}
+	if got := refreshed.GetString("status"); got != "stalled" {
+		t.Fatalf("scheduled job status = %q, want stalled", got)
+	}
+	if got := refreshed.GetString("name"); got != "Test Job" {
+		t.Fatalf("scheduled job name = %q, want Test Job", got)
+	}
+
+	runs, err := app.FindAllRecords("job_runs", dbx.HashExp{"job": jobRec.Id})
+	if err != nil {
+		t.Fatalf("failed to query job runs: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("job runs = %d, want 1", len(runs))
+	}
+	if got := runs[0].GetString("status"); got != "stalled" {
+		t.Fatalf("job run status = %q, want stalled", got)
+	}
+}
+
 func newJobSchedulerTestApp(t *testing.T) *tests.TestApp {
 	t.Helper()
 	app, err := tests.NewTestApp()
@@ -171,8 +208,19 @@ func ensureJobSchedulerCollections(t *testing.T, app core.App) {
 	workers.Fields.Add(&core.TextField{Name: "status"})
 	mustSaveCollection(t, app, workers)
 
+	workerPolicies := core.NewBaseCollection("worker_policies")
+	workerPolicies.Fields.Add(&core.BoolField{Name: "enabled"})
+	workerPolicies.Fields.Add(&core.JSONField{Name: "allowed_volumes"})
+	workerPolicies.Fields.Add(&core.JSONField{Name: "allowed_networks"})
+	workerPolicies.Fields.Add(&core.JSONField{Name: "allowed_images"})
+	workerPolicies.Fields.Add(&core.BoolField{Name: "prevent_latest_images"})
+	workerPolicies.Fields.Add(&core.BoolField{Name: "block_host_volumes"})
+	mustSaveCollection(t, app, workerPolicies)
+
 	jobs := core.NewBaseCollection("scheduled_jobs")
 	jobs.Fields.Add(&core.RelationField{Name: "repository", CollectionId: repos.Id, Required: true, MaxSelect: 1})
+	jobs.Fields.Add(&core.TextField{Name: "name", Required: true, Pattern: `^[a-zA-Z0-9\p{L}_ -]+$`})
+	jobs.Fields.Add(&core.TextField{Name: "description"})
 	jobs.Fields.Add(&core.TextField{Name: "job_file", Required: true})
 	jobs.Fields.Add(&core.BoolField{Name: "enabled"})
 	jobs.Fields.Add(&core.SelectField{Name: "status", Values: []string{"active", "paused", "stalled", "error"}})
@@ -216,6 +264,7 @@ func createScheduledJobRecord(t *testing.T, app core.App, repoID, jobFile string
 	t.Helper()
 	return mustCreateRecord(t, app, "scheduled_jobs", map[string]any{
 		"repository": repoID,
+		"name":       "Test Job",
 		"job_file":   jobFile,
 		"enabled":    true,
 		"status":     "active",
@@ -429,4 +478,3 @@ func TestExecuteJobConvertsResources(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
-

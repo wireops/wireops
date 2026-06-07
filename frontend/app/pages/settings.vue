@@ -5,6 +5,55 @@ const toast = useToast()
 const keyscanHost = ref('')
 const keyscanPort = ref(22)
 const { keyscan, getSyncEventsWebhook, setSyncEventsWebhook, setNotificationsEnabled, deleteSyncEventsWebhook, testSyncEventsWebhook, getGlobalWorkerPolicy, saveGlobalWorkerPolicy } = useApi()
+const backupLoading = ref(false)
+
+function timestampForBackupName() {
+  const now = new Date()
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return [
+    now.getFullYear(),
+    pad(now.getMonth() + 1),
+    pad(now.getDate()),
+    '_',
+    pad(now.getHours()),
+    pad(now.getMinutes()),
+    pad(now.getSeconds()),
+  ].join('')
+}
+
+async function exportDatabaseBackup() {
+  if (backupLoading.value) return
+
+  backupLoading.value = true
+  const filename = `wireops_backup_${timestampForBackupName()}.zip`
+
+  try {
+    await $pb.backups.create(filename)
+    const token = await $pb.files.getToken()
+    const url = $pb.backups.getDownloadURL(token, filename)
+    const res = await fetch(url)
+
+    if (!res.ok) {
+      throw new Error(`Download failed: ${res.statusText || res.status}`)
+    }
+
+    const blob = await res.blob()
+    const objectUrl = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = objectUrl
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(objectUrl)
+
+    toast.add({ title: 'Database backup downloaded', color: 'success' })
+  } catch (e: any) {
+    toast.add({ title: 'Failed to export backup', description: e?.message, color: 'error' })
+  } finally {
+    backupLoading.value = false
+  }
+}
 
 async function copyToClipboard(text: string) {
   if (!navigator?.clipboard?.writeText) {
@@ -506,6 +555,22 @@ watch(activeTab, (val) => {
 
     <!-- General -->
     <div v-if="activeTab === 'general'" class="space-y-6">
+      <UCard>
+        <template #header><h3 class="font-semibold">Database Backup</h3></template>
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <p class="text-sm text-gray-500">
+            Export a restorable PocketBase backup of the local database and data directory.
+          </p>
+          <UButton
+            icon="i-lucide-download"
+            label="Export Backup"
+            :loading="backupLoading"
+            :disabled="backupLoading"
+            @click="exportDatabaseBackup"
+          />
+        </div>
+      </UCard>
+
       <UCard>
         <template #header><h3 class="font-semibold">SSH Host Key Scanner</h3></template>
         <p class="text-sm text-gray-500 mb-3">
