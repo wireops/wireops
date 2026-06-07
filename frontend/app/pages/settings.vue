@@ -52,7 +52,7 @@ async function handleSaveAppSettings() {
   appSettingsSaving.value = true
   try {
     const tzToSave = appSettings.value.timezone === 'system' ? '' : appSettings.value.timezone
-    const data = await saveAppSettings(appSettings.value.id, { timezone: tzToSave })
+    const data = await saveAppSettings({ timezone: tzToSave })
     if (data) {
       appSettings.value.id = data.id
     }
@@ -635,8 +635,8 @@ watch(activeTab, (val) => {
             icon="i-lucide-save"
             label="Save"
             :loading="appSettingsSaving"
-            @click="handleSaveAppSettings"
             class="shrink-0"
+            @click="handleSaveAppSettings"
           />
         </div>
       </UCard>

@@ -249,7 +249,7 @@ export function useApi() {
       return null
     }
   }
-  const saveAppSettings = async (id: string | undefined, data: Partial<AppSettings>) => {
+  const saveAppSettings = async (data: Partial<AppSettings>) => {
     return await customPut<AppSettings>('/api/custom/settings/app-settings', data)
   }
 

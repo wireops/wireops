@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"path/filepath"
+	"time"
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
@@ -376,6 +377,12 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 		}
 		if err := json.NewDecoder(e.Request.Body).Decode(&body); err != nil {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid JSON body"})
+		}
+
+		if body.Timezone != "" {
+			if _, err := time.LoadLocation(body.Timezone); err != nil {
+				return e.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid timezone"})
+			}
 		}
 
 		records, err := app.FindAllRecords("app_settings")
