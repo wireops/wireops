@@ -32,6 +32,9 @@ func init() {
 		log.Printf("[MIGRATE] Backfilled names for %d scheduled_jobs record(s)", updated)
 		return nil
 	}, func(app core.App) error {
+		// Down migration is intentionally a no-op. Reversing the up migration (the backfill of
+		// scheduled job names) would set required "name" fields back to empty/NULL, which
+		// would violate the DB schema. We leave it as a no-op to preserve data integrity.
 		return nil
 	})
 }

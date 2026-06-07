@@ -2,6 +2,7 @@ package dbcheck
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -222,7 +223,11 @@ func (r *Result) checkSafePaths(snapshots map[string]collectionSnapshot) {
 	if jobs, ok := snapshots["scheduled_jobs"]; ok {
 		invalid := 0
 		for _, rec := range jobs.records {
-			if _, err := safepath.CleanRelativePath(rec.GetString("job_file")); err != nil {
+			jobFile := strings.TrimSpace(rec.GetString("job_file"))
+			if jobFile == "" {
+				continue
+			}
+			if _, err := safepath.CleanRelativePath(jobFile); err != nil {
 				invalid++
 			}
 		}

@@ -4,21 +4,82 @@ const toast = useToast()
 
 const keyscanHost = ref('')
 const keyscanPort = ref(22)
-const { keyscan, getSyncEventsWebhook, setSyncEventsWebhook, setNotificationsEnabled, deleteSyncEventsWebhook, testSyncEventsWebhook, getGlobalWorkerPolicy, saveGlobalWorkerPolicy } = useApi()
+const { keyscan, getSyncEventsWebhook, setSyncEventsWebhook, setNotificationsEnabled, deleteSyncEventsWebhook, testSyncEventsWebhook, getGlobalWorkerPolicy, saveGlobalWorkerPolicy, getAppSettings, saveAppSettings } = useApi()
 const backupLoading = ref(false)
+
+// --- App Settings (Timezone) ---
+const appSettings = ref({
+  id: '',
+  timezone: '',
+})
+const appSettingsLoading = ref(false)
+const appSettingsSaving = ref(false)
+
+const systemTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone
+const availableTimezones = ref<{ label: string; value: string }[]>([
+  { label: `System Default (${systemTimezone})`, value: 'system' }
+])
+
+onMounted(() => {
+  try {
+    const list = Intl.supportedValuesOf('timeZone')
+    availableTimezones.value = [
+      { label: `System Default (${systemTimezone})`, value: 'system' },
+      ...list.map(tz => ({ label: tz, value: tz }))
+    ]
+  } catch (e) {
+    // fallback if not supported
+  }
+  loadAppSettings()
+})
+
+async function loadAppSettings() {
+  appSettingsLoading.value = true
+  try {
+    const data = await getAppSettings()
+    if (data) {
+      appSettings.value.id = data.id
+      appSettings.value.timezone = data.timezone || 'system'
+    }
+  } catch (e) {
+    // ignore
+  } finally {
+    appSettingsLoading.value = false
+  }
+}
+
+async function handleSaveAppSettings() {
+  appSettingsSaving.value = true
+  try {
+    const tzToSave = appSettings.value.timezone === 'system' ? '' : appSettings.value.timezone
+    const data = await saveAppSettings(appSettings.value.id, { timezone: tzToSave })
+    if (data) {
+      appSettings.value.id = data.id
+    }
+    toast.add({
+      title: 'Settings saved',
+      description: 'You may need to restart the application (wireops container) for the new timezone to take effect on scheduled jobs.',
+      color: 'success',
+      timeout: 8000
+    })
+  } catch (e: any) {
+    toast.add({ title: 'Failed to save settings', description: e?.message, color: 'error' })
+  } finally {
+    appSettingsSaving.value = false
+  }
+}
 
 function timestampForBackupName() {
   const now = new Date()
-  const pad = (value: number) => String(value).padStart(2, '0')
-  return [
-    now.getFullYear(),
-    pad(now.getMonth() + 1),
-    pad(now.getDate()),
-    '_',
-    pad(now.getHours()),
-    pad(now.getMinutes()),
-    pad(now.getSeconds()),
-  ].join('')
+  const opts: Intl.DateTimeFormatOptions = {
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hourCycle: 'h23',
+    timeZone: (appSettings.value.timezone && appSettings.value.timezone !== 'system') ? appSettings.value.timezone : undefined
+  }
+  const parts = new Intl.DateTimeFormat('en-US', opts).formatToParts(now)
+  const get = (type: string) => parts.find(p => p.type === type)?.value || '00'
+  return `${get('year')}${get('month')}${get('day')}_${get('hour')}${get('minute')}${get('second')}`
 }
 
 async function exportDatabaseBackup() {
@@ -555,6 +616,31 @@ watch(activeTab, (val) => {
 
     <!-- General -->
     <div v-if="activeTab === 'general'" class="space-y-6">
+      <UCard>
+        <template #header><h3 class="font-semibold">System Timezone</h3></template>
+        <div class="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
+          <div class="flex-1">
+            <p class="text-sm text-gray-500 mb-2">
+              Set the global timezone for scheduled jobs and database backups. If not set, the system's default timezone will be used.
+            </p>
+            <USelectMenu
+              v-model="appSettings.timezone"
+              :items="availableTimezones"
+              value-key="value"
+              virtualize
+              class="w-full sm:max-w-md"
+            />
+          </div>
+          <UButton
+            icon="i-lucide-save"
+            label="Save"
+            :loading="appSettingsSaving"
+            @click="handleSaveAppSettings"
+            class="shrink-0"
+          />
+        </div>
+      </UCard>
+
       <UCard>
         <template #header><h3 class="font-semibold">Database Backup</h3></template>
         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
