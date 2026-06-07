@@ -201,11 +201,11 @@ async function submit() {
 
         <div class="flex justify-between pt-4 mt-6">
           <UButton v-if="currentStep > 1" label="Back" variant="outline" icon="i-lucide-arrow-left" @click="prevStep" />
-          <div v-else></div>
+          <div v-else/>
 
           <div class="flex gap-2">
             <UButton label="Cancel" variant="ghost" color="neutral" @click="emit('cancel')" />
-            <UButton v-if="currentStep === 1" type="button" label="Next" icon="i-lucide-arrow-right" trailing @click="nextStep" :disabled="!form.repository" />
+            <UButton v-if="currentStep === 1" type="button" label="Next" icon="i-lucide-arrow-right" trailing :disabled="!form.repository" @click="nextStep" />
             <UButton
               v-else
               type="submit"

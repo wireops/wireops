@@ -211,7 +211,7 @@ async function handleSubmit() {
     @update:open="emit('update:open', $event)"
   >
     <template #content>
-      <form @submit.prevent="handleSubmit" class="w-full">
+      <form class="w-full" @submit.prevent="handleSubmit">
         <UCard class="sm:min-w-[640px] w-full" :ui="{ body: { base: 'p-6' }, header: { base: 'px-6 py-4' }, footer: { base: 'px-6 py-4' } }">
           <template #header>
             <div class="space-y-4">
@@ -225,8 +225,8 @@ async function handleSubmit() {
                   variant="ghost"
                   icon="i-lucide-x"
                   class="-my-1"
-                  @click="close"
                   aria-label="Close modal"
+                  @click="close"
                 />
               </div>
               
@@ -279,11 +279,11 @@ async function handleSubmit() {
           <template #footer>
             <div class="flex justify-between items-center w-full">
               <UButton v-if="currentStep > 1" label="Back" variant="outline" icon="i-lucide-arrow-left" @click="prevStep" />
-              <div v-else></div>
+              <div v-else/>
 
               <div class="flex gap-2">
                 <UButton label="Cancel" variant="ghost" color="neutral" @click="close" />
-                <UButton v-if="currentStep === 1" type="button" label="Next" icon="i-lucide-arrow-right" trailing @click="nextStep" :disabled="!form.name || !form.repository" />
+                <UButton v-if="currentStep === 1" type="button" label="Next" icon="i-lucide-arrow-right" trailing :disabled="!form.name || !form.repository" @click="nextStep" />
                 <UButton v-else type="submit" label="Create" icon="i-lucide-check" :loading="saving" />
               </div>
             </div>

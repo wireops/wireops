@@ -18,17 +18,19 @@ function toggleBoolean() {
       :icon="model === true ? 'i-lucide-power' : 'i-lucide-power-off'"
       :color="model === true ? 'primary' : 'gray'"
       :variant="model !== null ? 'solid' : 'ghost'"
-      @click="toggleBoolean"
       :title="model === true ? 'Enabled' : 'Disabled'"
+      :aria-label="model === true ? 'Disable' : 'Enable'"
       class="rounded-md px-3 transition-all"
+      @click="toggleBoolean"
     />
     <UButton
       icon="i-lucide-globe"
       :color="model === null ? 'primary' : 'gray'"
       :variant="model === null ? 'solid' : 'ghost'"
-      @click="select(null)"
       title="Inherit from global policy"
+      aria-label="Inherit from global policy"
       class="rounded-md px-3"
+      @click="select(null)"
     />
   </div>
 </template>

@@ -333,7 +333,7 @@ type PolicyJSON struct {
 
 // ToJSON converts a WorkerPolicy to the API wire format.
 func (p *WorkerPolicy) ToJSON() PolicyJSON {
-	return PolicyJSON{
+	res := PolicyJSON{
 		Enabled:             !p.Disabled,
 		AllowedVolumes:      p.AllowedVolumes,
 		AllowedNetworks:     p.AllowedNetworks,
@@ -341,6 +341,16 @@ func (p *WorkerPolicy) ToJSON() PolicyJSON {
 		PreventLatestImages: p.PreventLatestImages,
 		BlockHostVolumes:    p.BlockHostVolumes,
 	}
+	if res.AllowedVolumes == nil {
+		res.AllowedVolumes = []string{}
+	}
+	if res.AllowedNetworks == nil {
+		res.AllowedNetworks = []string{}
+	}
+	if res.AllowedImages == nil {
+		res.AllowedImages = []string{}
+	}
+	return res
 }
 
 // WorkerPolicyOverrideJSON is the full wire format for per-worker policy,

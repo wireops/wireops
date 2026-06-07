@@ -235,7 +235,7 @@ function executeDeleteRule(type: 'image' | 'volume' | 'network', index: number) 
 
     <!-- Policy Overrides -->
     <div :class="{ 'opacity-50 pointer-events-none select-none transition-all': policy.inherit }" class="space-y-4 relative">
-      <div v-if="policy.inherit" class="absolute inset-0 z-10" title="Inheriting global policy. Disable inherit to edit."></div>
+      <div v-if="policy.inherit" class="absolute inset-0 z-10" title="Inheriting global policy. Disable inherit to edit."/>
       
       <!-- Images Policy Card -->
       <UCard>
