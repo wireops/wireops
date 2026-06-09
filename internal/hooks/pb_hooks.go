@@ -8,16 +8,19 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
+	"strings"
 	"time"
 
-	validation "github.com/go-ozzo/ozzo-validation/v4"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	gogithttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	gogitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
+	validation "github.com/go-ozzo/ozzo-validation/v4"
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 	"gopkg.in/yaml.v3"
 
+	"github.com/wireops/wireops/internal/audit"
 	"github.com/wireops/wireops/internal/config"
 	"github.com/wireops/wireops/internal/crypto"
 	"github.com/wireops/wireops/internal/git"
@@ -30,6 +33,7 @@ import (
 
 func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Scheduler) {
 	secretKey := []byte(os.Getenv("SECRET_KEY"))
+	registerAuditHooks(app)
 
 	// OIDC_REQUIRE_EMAIL_VERIFIED: secure by default — reject when email_verified is absent or false.
 	// Set explicitly to "false" to opt out (e.g. IdPs that omit the claim or treat it like Authentik by default).
@@ -455,6 +459,198 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 		e.Message.Text = "Reset your wireops password by visiting: " + actionURL
 		return e.Next()
 	})
+}
+
+func registerAuditHooks(app core.App) {
+	auditedCollections := map[string]string{
+		core.CollectionNameSuperusers: "user",
+		"app_settings":                "app_settings",
+		"invites":                     "invite",
+		"job_env_vars":                "job_env_var",
+		"repositories":                "repository",
+		"repository_keys":             "repository_key",
+		"scheduled_jobs":              "scheduled_job",
+		"stack_env_vars":              "stack_env_var",
+		"stack_sync_events":           "stack_sync_events",
+		"stacks":                      "stack",
+		"worker_policies":             "worker_policy",
+		"workers":                     "worker",
+	}
+
+	app.OnRecordCreateRequest().BindFunc(func(e *core.RecordRequestEvent) error {
+		if err := blockAuditLogMutation(e.Collection.Name); err != nil {
+			return err
+		}
+		resourceType, ok := auditedCollections[e.Collection.Name]
+		if !ok || shouldSkipRequestAudit(e.RequestEvent) {
+			return e.Next()
+		}
+		metadata := audit.RequestMetadata(e.RequestEvent)
+		err := e.Next()
+		status, code := auditStatus(err)
+		audit.RecordRequest(app, e.RequestEvent, audit.Event{
+			Action:       resourceType + ".create",
+			ResourceType: resourceType,
+			ResourceID:   e.Record.Id,
+			Metadata:     metadata,
+			Status:       status,
+			ErrorCode:    code,
+		})
+		return err
+	})
+
+	app.OnRecordUpdateRequest().BindFunc(func(e *core.RecordRequestEvent) error {
+		if err := blockAuditLogMutation(e.Collection.Name); err != nil {
+			return err
+		}
+		resourceType, ok := auditedCollections[e.Collection.Name]
+		if !ok || shouldSkipRequestAudit(e.RequestEvent) {
+			return e.Next()
+		}
+		metadata := mergeMetadata(
+			audit.RequestMetadata(e.RequestEvent),
+			recordChangeMetadata(e.Record),
+		)
+		err := e.Next()
+		status, code := auditStatus(err)
+		audit.RecordRequest(app, e.RequestEvent, audit.Event{
+			Action:       resourceType + ".update",
+			ResourceType: resourceType,
+			ResourceID:   e.Record.Id,
+			Metadata:     metadata,
+			Status:       status,
+			ErrorCode:    code,
+		})
+		return err
+	})
+
+	app.OnRecordDeleteRequest().BindFunc(func(e *core.RecordRequestEvent) error {
+		if err := blockAuditLogMutation(e.Collection.Name); err != nil {
+			return err
+		}
+		resourceType, ok := auditedCollections[e.Collection.Name]
+		if !ok || shouldSkipRequestAudit(e.RequestEvent) {
+			return e.Next()
+		}
+		resourceID := e.Record.Id
+		metadata := mergeMetadata(
+			audit.RequestMetadata(e.RequestEvent),
+			recordChangeMetadata(e.Record),
+		)
+		err := e.Next()
+		status, code := auditStatus(err)
+		audit.RecordRequest(app, e.RequestEvent, audit.Event{
+			Action:       resourceType + ".delete",
+			ResourceType: resourceType,
+			ResourceID:   resourceID,
+			Metadata:     metadata,
+			Status:       status,
+			ErrorCode:    code,
+		})
+		return err
+	})
+}
+
+func shouldSkipRequestAudit(req *core.RequestEvent) bool {
+	return req != nil && strings.HasPrefix(req.Request.URL.Path, "/api/custom/")
+}
+
+func blockAuditLogMutation(collectionName string) error {
+	if collectionName == "audit_logs" {
+		return fmt.Errorf("audit logs are append-only")
+	}
+	return nil
+}
+
+func auditStatus(err error) (string, string) {
+	if err == nil {
+		return audit.StatusSuccess, ""
+	}
+	return audit.StatusError, "write_failed"
+}
+
+func recordChangeMetadata(record *core.Record) map[string]any {
+	if record == nil {
+		return nil
+	}
+
+	changedFields := make([]string, 0, len(record.Collection().Fields))
+	sensitiveFields := make([]string, 0)
+
+	for _, field := range record.Collection().Fields {
+		name := field.GetName()
+		current, currentErr := field.PrepareValue(record, record.GetRaw(name))
+		original, originalErr := field.PrepareValue(record.Original(), record.Original().GetRaw(name))
+		if currentErr != nil || originalErr != nil {
+			continue
+		}
+		if valuesEqual(current, original) {
+			continue
+		}
+
+		changedFields = append(changedFields, name)
+		if isSensitiveAuditField(name) {
+			sensitiveFields = append(sensitiveFields, name)
+		}
+	}
+
+	if len(changedFields) == 0 {
+		return nil
+	}
+
+	slices.Sort(changedFields)
+	slices.Sort(sensitiveFields)
+
+	metadata := map[string]any{
+		"record_changed_fields": changedFields,
+	}
+	if len(sensitiveFields) > 0 {
+		metadata["record_sensitive_fields"] = sensitiveFields
+	}
+
+	return metadata
+}
+
+func mergeMetadata(parts ...map[string]any) map[string]any {
+	merged := map[string]any{}
+	for _, part := range parts {
+		for key, value := range part {
+			merged[key] = value
+		}
+	}
+
+	if len(merged) == 0 {
+		return nil
+	}
+
+	return merged
+}
+
+func valuesEqual(a, b any) bool {
+	return fmt.Sprintf("%v", a) == fmt.Sprintf("%v", b)
+}
+
+func isSensitiveAuditField(name string) bool {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" {
+		return false
+	}
+
+	for _, word := range []string{
+		"password",
+		"secret",
+		"token",
+		"private_key",
+		"ssh_private_key",
+		"ssh_passphrase",
+		"git_password",
+	} {
+		if strings.Contains(name, word) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func buildPasswordResetEmailHTML(actionURL string) string {

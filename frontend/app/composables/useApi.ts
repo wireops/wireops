@@ -19,6 +19,7 @@ export function useApi() {
       headers: {
         'Content-Type': 'application/json',
         Authorization: $pb.authStore.token ? `Bearer ${$pb.authStore.token}` : '',
+        'X-Wireops-Origin': 'ui',
       },
       body: body ? JSON.stringify(body) : undefined,
     })
@@ -29,6 +30,7 @@ export function useApi() {
     const res = await fetch(`${baseUrl()}${path}`, {
       headers: {
         Authorization: $pb.authStore.token ? `Bearer ${$pb.authStore.token}` : '',
+        'X-Wireops-Origin': 'ui',
       },
     })
     return handleResponse<T>(res)
@@ -39,6 +41,7 @@ export function useApi() {
       method: 'DELETE',
       headers: {
         Authorization: $pb.authStore.token ? `Bearer ${$pb.authStore.token}` : '',
+        'X-Wireops-Origin': 'ui',
       },
     })
     return handleResponse<T>(res)
@@ -50,6 +53,7 @@ export function useApi() {
       headers: {
         'Content-Type': 'application/json',
         Authorization: $pb.authStore.token ? `Bearer ${$pb.authStore.token}` : '',
+        'X-Wireops-Origin': 'ui',
       },
       body: body ? JSON.stringify(body) : undefined,
     })
@@ -62,6 +66,7 @@ export function useApi() {
       headers: {
         'Content-Type': 'application/json',
         Authorization: $pb.authStore.token ? `Bearer ${$pb.authStore.token}` : '',
+        'X-Wireops-Origin': 'ui',
       },
       body: body ? JSON.stringify(body) : undefined,
     })
@@ -241,6 +246,8 @@ export function useApi() {
   type AppSettings = {
     id: string
     timezone: string
+    audit_retention_days: number
+    job_run_retention_days: number
   }
   const getAppSettings = async () => {
     try {
@@ -253,5 +260,50 @@ export function useApi() {
     return await customPut<AppSettings>('/api/custom/settings/app-settings', data)
   }
 
-  return { triggerSync, triggerRollback, forceRedeploy, getServices, getStackResources, stopContainer, restartContainer, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, getRepoFiles, getStackFiles, getJobFiles, testCredentials, keyscan, listOrphans, purgeOrphan, getSystemInfo, customPost, customGet, customPut, customPatch, customDelete, getSyncEventsWebhook, setSyncEventsWebhook, setNotificationsEnabled, deleteSyncEventsWebhook, testSyncEventsWebhook, getWorkers, createWorkerToken, revokeWorker, transferStack, discoverProjects, importStack, listJobs, triggerJobRun, cancelJobRun, deleteJobRun, getJobDefinition, getJobRaw, getWorkerPolicy, saveWorkerPolicy, resetWorkerPolicy, getGlobalWorkerPolicy, saveGlobalWorkerPolicy, getAppSettings, saveAppSettings }
+  // --- Audit Logs ---
+  type AuditLog = {
+    id: string
+    actor_type: 'anonymous' | 'user' | 'system' | 'worker'
+    actor_id: string
+    action: string
+    resource_type: string
+    resource_id: string
+    origin: 'api' | 'setup' | 'system' | 'ui' | 'webhook' | 'worker'
+    status: 'success' | 'error'
+    error_code: string
+    metadata?: Record<string, any>
+    expires_at: string
+    created: string
+  }
+  type AuditLogResponse = {
+    page: number
+    perPage: number
+    totalItems: number
+    items: AuditLog[]
+  }
+  type AuditLogFilters = {
+    page?: number
+    perPage?: number
+    from?: string
+    to?: string
+    actor_type?: string
+    actor_id?: string
+    action?: string
+    resource_type?: string
+    resource_id?: string
+    origin?: string
+    status?: string
+  }
+  const listAuditLogs = (filters: AuditLogFilters = {}) => {
+    const params = new URLSearchParams()
+    for (const [key, value] of Object.entries(filters)) {
+      if (value !== undefined && value !== '') {
+        params.set(key, String(value))
+      }
+    }
+    const query = params.toString()
+    return customGet<AuditLogResponse>(`/api/custom/audit-logs${query ? `?${query}` : ''}`)
+  }
+
+  return { triggerSync, triggerRollback, forceRedeploy, getServices, getStackResources, stopContainer, restartContainer, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, getRepoFiles, getStackFiles, getJobFiles, testCredentials, keyscan, listOrphans, purgeOrphan, getSystemInfo, customPost, customGet, customPut, customPatch, customDelete, getSyncEventsWebhook, setSyncEventsWebhook, setNotificationsEnabled, deleteSyncEventsWebhook, testSyncEventsWebhook, getWorkers, createWorkerToken, revokeWorker, transferStack, discoverProjects, importStack, listJobs, triggerJobRun, cancelJobRun, deleteJobRun, getJobDefinition, getJobRaw, getWorkerPolicy, saveWorkerPolicy, resetWorkerPolicy, getGlobalWorkerPolicy, saveGlobalWorkerPolicy, getAppSettings, saveAppSettings, listAuditLogs }
 }

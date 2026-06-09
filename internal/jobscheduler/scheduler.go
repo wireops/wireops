@@ -21,6 +21,7 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/robfig/cron/v3"
 
+	"github.com/wireops/wireops/internal/audit"
 	"github.com/wireops/wireops/internal/contextutil"
 	"github.com/wireops/wireops/internal/crypto"
 	"github.com/wireops/wireops/internal/git"
@@ -680,7 +681,7 @@ func (s *Scheduler) createJobRun(jobID, workerID, trigger, status string, output
 	if len(output) > 0 {
 		rec.Set("output", output[0])
 	}
-	rec.Set("expires_at", time.Now().AddDate(0, 0, 30))
+	rec.Set("expires_at", time.Now().AddDate(0, 0, audit.JobRunRetentionDays(s.app)))
 	if workerID != "" {
 		rec.Set("worker", workerID)
 	}

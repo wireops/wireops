@@ -19,6 +19,7 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/plugins/migratecmd"
 
+	"github.com/wireops/wireops/internal/audit"
 	"github.com/wireops/wireops/internal/config"
 	"github.com/wireops/wireops/internal/docker"
 	"github.com/wireops/wireops/internal/hooks"
@@ -130,11 +131,13 @@ func Execute() error {
 		}
 
 		if err := e.Next(); err != nil {
+			audit.RecordSystem(app, "schema_migration", "database", "pocketbase", audit.StatusError, "migration_failed")
 			if isMigrationCmd {
 				log.Printf("[db] Database migrations failed: %v", err)
 			}
 			return err
 		}
+		audit.RecordSystem(app, "schema_migration", "database", "pocketbase", audit.StatusSuccess, "")
 
 		// Disable all PocketBase dbx SQL logging. All three hooks (LogFunc,
 		// QueryLogFunc, ExecLogFunc) pass the full SQL body including parameter
@@ -289,6 +292,7 @@ func Execute() error {
 
 		// Configure CORS middleware based on APP_URL
 		se.Router.BindFunc(configureCORSMiddleware)
+		se.Router.BindFunc(audit.CustomRouteMiddleware(app))
 
 		se.Router.GET("/{path...}", apis.Static(os.DirFS("./pb_public"), false))
 
@@ -296,6 +300,7 @@ func Execute() error {
 		routes.Register(se.Router, app, scheduler, dockerClient, workerServer)
 		routes.RegisterWorkerRoutes(se.Router, app, workerSvc, workerServer, workerServer)
 		routes.RegisterJobRoutes(se.Router, app, jobSched)
+		routes.RegisterAuditRoutes(se.Router, app)
 		routes.RegisterAuthRoutes(se.Router, app)
 
 		if err := wiresync.RecoverOrphanState(app); err != nil {
@@ -320,16 +325,9 @@ func Execute() error {
 			}
 		})
 
-		// Purge job_runs older than 30 days every night at 03:00.
-		app.Cron().Add("job_log_cleanup", "0 3 * * *", func() {
-			result, err := app.DB().NewQuery("DELETE FROM job_runs WHERE expires_at < {:now}").
-				Bind(dbx.Params{"now": time.Now()}).Execute()
-			if err != nil {
-				log.Printf("[cron] job_log_cleanup failed: %v", err)
-				return
-			}
-			if n, _ := result.RowsAffected(); n > 0 {
-				log.Printf("[cron] job_log_cleanup: deleted %d expired run(s)", n)
+		app.Cron().Add("retention_cleanup", "0 3 * * *", func() {
+			if err := audit.PurgeExpired(app); err != nil {
+				log.Printf("[cron] retention_cleanup failed: %v", err)
 			}
 		})
 

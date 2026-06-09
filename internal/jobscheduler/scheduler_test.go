@@ -250,6 +250,7 @@ func ensureJobSchedulerCollections(t *testing.T, app core.App) {
 	env.Fields.Add(&core.TextField{Name: "value"})
 	env.Fields.Add(&core.BoolField{Name: "secret"})
 	mustSaveCollection(t, app, env)
+
 }
 
 func createJobRepoRecord(t *testing.T, app core.App) *core.Record {

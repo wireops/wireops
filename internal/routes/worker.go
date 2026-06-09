@@ -2,6 +2,7 @@ package routes
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/router"
 
+	"github.com/wireops/wireops/internal/audit"
 	"github.com/wireops/wireops/internal/job"
 	"github.com/wireops/wireops/internal/policy"
 	"github.com/wireops/wireops/internal/sync"
@@ -361,9 +363,20 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
 		if len(records) > 0 {
-			return e.JSON(http.StatusOK, records[0])
+			rec := records[0]
+			return e.JSON(http.StatusOK, map[string]interface{}{
+				"id":                     rec.Id,
+				"timezone":               rec.GetString("timezone"),
+				"audit_retention_days":   audit.AuditRetentionDays(app),
+				"job_run_retention_days": audit.JobRunRetentionDays(app),
+			})
 		}
-		return e.JSON(http.StatusOK, map[string]interface{}{"id": "", "timezone": ""})
+		return e.JSON(http.StatusOK, map[string]interface{}{
+			"id":                     "",
+			"timezone":               "",
+			"audit_retention_days":   audit.DefaultAuditRetentionDays,
+			"job_run_retention_days": audit.DefaultJobRunRetentionDays,
+		})
 	})
 
 	// PUT /api/custom/settings/app-settings
@@ -373,7 +386,9 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 		}
 
 		var body struct {
-			Timezone string `json:"timezone"`
+			Timezone            string `json:"timezone"`
+			AuditRetentionDays  *int   `json:"audit_retention_days"`
+			JobRunRetentionDays *int   `json:"job_run_retention_days"`
 		}
 		if err := json.NewDecoder(e.Request.Body).Decode(&body); err != nil {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid JSON body"})
@@ -383,6 +398,9 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 			if _, err := time.LoadLocation(body.Timezone); err != nil {
 				return e.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid timezone"})
 			}
+		}
+		if err := validateRetentionDays(body.AuditRetentionDays, body.JobRunRetentionDays); err != nil {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 		}
 
 		records, err := app.FindAllRecords("app_settings")
@@ -402,12 +420,37 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 		}
 
 		rec.Set("timezone", body.Timezone)
+		if body.AuditRetentionDays != nil {
+			rec.Set("audit_retention_days", *body.AuditRetentionDays)
+		} else if rec.GetInt("audit_retention_days") <= 0 {
+			rec.Set("audit_retention_days", audit.DefaultAuditRetentionDays)
+		}
+		if body.JobRunRetentionDays != nil {
+			rec.Set("job_run_retention_days", *body.JobRunRetentionDays)
+		} else if rec.GetInt("job_run_retention_days") <= 0 {
+			rec.Set("job_run_retention_days", audit.DefaultJobRunRetentionDays)
+		}
 
 		if err := app.Save(rec); err != nil {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to save app settings: " + err.Error()})
 		}
-		return e.JSON(http.StatusOK, rec)
+		return e.JSON(http.StatusOK, map[string]interface{}{
+			"id":                     rec.Id,
+			"timezone":               rec.GetString("timezone"),
+			"audit_retention_days":   audit.AuditRetentionDays(app),
+			"job_run_retention_days": audit.JobRunRetentionDays(app),
+		})
 	})
+}
+
+func validateRetentionDays(auditDays, jobRunDays *int) error {
+	if auditDays != nil && *auditDays < 1 {
+		return errors.New("Retention days must be at least 1")
+	}
+	if jobRunDays != nil && *jobRunDays < 1 {
+		return errors.New("Retention days must be at least 1")
+	}
+	return nil
 }
 
 func buildWorkerJobCatalog(app core.App) ([]workerJobSummary, error) {

@@ -55,7 +55,11 @@ export function useAuth() {
     try {
       const elevated = await $fetch<{ token: string; record: RecordModel }>(
         `${baseURL}/api/custom/auth/elevate`,
-        { method: 'POST', body: { token: ssoAuth.token } }
+        {
+          method: 'POST',
+          body: { token: ssoAuth.token },
+          headers: { 'X-Wireops-Origin': 'ui' },
+        }
       )
 
       $pb.authStore.save(elevated.token, elevated.record)
