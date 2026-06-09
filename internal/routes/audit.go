@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
@@ -89,7 +90,16 @@ func auditLogFilters(from, to, actorType, actorID, action, resourceType, resourc
 	}
 
 	add("created", ">=", strings.TrimSpace(from), "from")
-	add("created", "<=", strings.TrimSpace(to), "to")
+	toVal := strings.TrimSpace(to)
+	if len(toVal) == 10 {
+		if t, err := time.Parse("2006-01-02", toVal); err == nil {
+			add("created", "<", t.AddDate(0, 0, 1).Format("2006-01-02"), "to")
+		} else {
+			add("created", "<=", toVal, "to")
+		}
+	} else {
+		add("created", "<=", toVal, "to")
+	}
 	add("actor_type", "=", strings.TrimSpace(actorType), "actor_type")
 	add("actor_id", "=", strings.TrimSpace(actorID), "actor_id")
 	add("action", "=", strings.TrimSpace(action), "action")

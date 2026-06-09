@@ -1,6 +1,7 @@
 package audit
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -144,7 +145,7 @@ func TestEventContractHasNoPayloadLikeFields(t *testing.T) {
 }
 
 func TestRequestOriginUsesHeader(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/api/custom/stacks/stack123/sync", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/custom/stacks/stack123/sync", nil)
 	req.Header.Set("X-Wireops-Origin", "ui")
 	e := &core.RequestEvent{Event: router.Event{Request: req}}
 
@@ -154,13 +155,13 @@ func TestRequestOriginUsesHeader(t *testing.T) {
 }
 
 func TestRequestOriginInfersSetupAndWebhook(t *testing.T) {
-	setupReq := httptest.NewRequest(http.MethodPost, "/api/custom/setup", nil)
+	setupReq := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/custom/setup", nil)
 	setupEvent := &core.RequestEvent{Event: router.Event{Request: setupReq}}
 	if got := RequestOrigin(setupEvent); got != OriginSetup {
 		t.Fatalf("expected setup origin, got %q", got)
 	}
 
-	webhookReq := httptest.NewRequest(http.MethodPost, "/api/custom/webhook/stack123", nil)
+	webhookReq := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/custom/webhook/stack123", nil)
 	webhookEvent := &core.RequestEvent{Event: router.Event{Request: webhookReq}}
 	if got := RequestOrigin(webhookEvent); got != OriginWebhook {
 		t.Fatalf("expected webhook origin, got %q", got)
@@ -168,7 +169,7 @@ func TestRequestOriginInfersSetupAndWebhook(t *testing.T) {
 }
 
 func TestRequestMetadataOnlyPersistsFieldNames(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/api/custom/stacks/stack123/rollback?force=true", strings.NewReader(`{"commit_sha":"abc123","token":"secret-value"}`))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/custom/stacks/stack123/rollback?force=true", strings.NewReader(`{"commit_sha":"abc123","token":"secret-value"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Request-Id", "req-123")
 

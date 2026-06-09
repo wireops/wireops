@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -627,7 +628,17 @@ func mergeMetadata(parts ...map[string]any) map[string]any {
 }
 
 func valuesEqual(a, b any) bool {
-	return fmt.Sprintf("%v", a) == fmt.Sprintf("%v", b)
+	if aStr, ok := a.(string); ok {
+		if bBytes, ok := b.([]byte); ok {
+			return aStr == string(bBytes)
+		}
+	}
+	if aBytes, ok := a.([]byte); ok {
+		if bStr, ok := b.(string); ok {
+			return string(aBytes) == bStr
+		}
+	}
+	return reflect.DeepEqual(a, b)
 }
 
 func isSensitiveAuditField(name string) bool {

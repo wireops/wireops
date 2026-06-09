@@ -13,11 +13,9 @@ const isCurrentUser = computed(() => user.value?.id === $pb.authStore.record?.id
 
 function formatDate(value?: string) {
   if (!value || value.startsWith('0001-01-01')) return 'Never'
-  try {
-    return new Date(value).toLocaleString()
-  } catch {
-    return value
-  }
+  const d = new Date(value)
+  if (isNaN(d.getTime())) return value
+  return d.toLocaleString()
 }
 </script>
 

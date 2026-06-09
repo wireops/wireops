@@ -18,7 +18,7 @@ func init() {
 
 		actorTypeField, ok := col.Fields.GetByName("actor_type").(*core.SelectField)
 		if !ok {
-			return nil
+			return fmt.Errorf("migration: audit_logs.actor_type has unexpected type: %T", col.Fields.GetByName("actor_type"))
 		}
 		actorTypeField.Values = []string{"anonymous", "user", "system", "worker"}
 
@@ -68,6 +68,13 @@ func init() {
 		if actorTypeField, ok := col.Fields.GetByName("actor_type").(*core.SelectField); ok {
 			actorTypeField.Values = []string{"user", "system", "agent"}
 		}
+
+		for i := len(col.Indexes) - 1; i >= 0; i-- {
+			if col.Indexes[i] == auditLogsOriginCreatedIndexSQL {
+				col.Indexes = append(col.Indexes[:i], col.Indexes[i+1:]...)
+			}
+		}
+
 		col.Fields.RemoveByName("origin")
 		col.Fields.RemoveByName("metadata_json")
 		if err := app.Save(col); err != nil {

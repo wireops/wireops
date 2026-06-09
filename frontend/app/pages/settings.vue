@@ -18,6 +18,7 @@ const appSettings = ref({
 })
 const appSettingsLoading = ref(false)
 const appSettingsSaving = ref(false)
+const appSettingsLoaded = ref(false)
 const showAuditSettingsModal = ref(false)
 
 const systemTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone
@@ -47,6 +48,7 @@ async function loadAppSettings() {
       appSettings.value.timezone = data.timezone || 'system'
       appSettings.value.audit_retention_days = data.audit_retention_days || 30
       appSettings.value.job_run_retention_days = data.job_run_retention_days || 7
+      appSettingsLoaded.value = true
     }
   } catch (e) {
     // ignore
@@ -59,15 +61,17 @@ async function handleSaveAppSettings(options: { title?: string; description?: st
   appSettingsSaving.value = true
   try {
     const tzToSave = appSettings.value.timezone === 'system' ? '' : appSettings.value.timezone
-    const data = await saveAppSettings({
-      timezone: tzToSave,
-      audit_retention_days: appSettings.value.audit_retention_days,
-      job_run_retention_days: appSettings.value.job_run_retention_days,
-    })
+    const payload: any = { timezone: tzToSave }
+    if (appSettingsLoaded.value) {
+      payload.audit_retention_days = appSettings.value.audit_retention_days
+      payload.job_run_retention_days = appSettings.value.job_run_retention_days
+    }
+    const data = await saveAppSettings(payload)
     if (data) {
       appSettings.value.id = data.id
       appSettings.value.audit_retention_days = data.audit_retention_days || 30
       appSettings.value.job_run_retention_days = data.job_run_retention_days || 7
+      appSettingsLoaded.value = true
     }
     toast.add({
       title: options.title || 'Settings saved',
@@ -773,7 +777,7 @@ watch(activeTab, (val) => {
   if (val === 'integrations') loadIntegrations()
   if (val === 'worker-policies') loadWorkerPolicy()
   if (val === 'audit') loadAuditLogs()
-})
+}, { immediate: true })
 </script>
 
 <template>

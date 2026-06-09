@@ -62,21 +62,40 @@ func RecordRequest(app core.App, req *core.RequestEvent, ev Event) {
 	}
 
 	if ev.ActorType == "" {
+		isVerified := isInternalOrVerified(req)
 		switch ev.Origin {
 		case OriginWorker:
-			ev.ActorType = ActorWorker
-			ev.ActorID = strings.TrimSpace(req.Request.Header.Get(headerAuditWorkerID))
+			if isVerified {
+				ev.ActorType = ActorWorker
+				if req != nil && req.Request != nil {
+					ev.ActorID = strings.TrimSpace(req.Request.Header.Get(headerAuditWorkerID))
+				}
+			}
 		case OriginSystem:
-			ev.ActorType = ActorSystem
-		default:
+			if isVerified {
+				ev.ActorType = ActorSystem
+			}
+		}
+
+		if ev.ActorType == "" {
 			ev.ActorType = ActorAnonymous
-			if req != nil {
+			if req != nil && req.Request != nil {
 				ev.ActorID = strings.TrimSpace(req.Request.Header.Get(headerAuditActorID))
 			}
 		}
 	}
 
 	Record(app, ev)
+}
+
+func isInternalOrVerified(req *core.RequestEvent) bool {
+	if req == nil || req.Request == nil {
+		return true
+	}
+	if req.HasSuperuserAuth() || req.Auth != nil {
+		return true
+	}
+	return false
 }
 
 func RecordSystem(app core.App, action, resourceType, resourceID, status, errorCode string) {

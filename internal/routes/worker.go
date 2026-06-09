@@ -386,7 +386,7 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 		}
 
 		var body struct {
-			Timezone            string `json:"timezone"`
+			Timezone            *string `json:"timezone"`
 			AuditRetentionDays  *int   `json:"audit_retention_days"`
 			JobRunRetentionDays *int   `json:"job_run_retention_days"`
 		}
@@ -394,8 +394,8 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid JSON body"})
 		}
 
-		if body.Timezone != "" {
-			if _, err := time.LoadLocation(body.Timezone); err != nil {
+		if body.Timezone != nil && *body.Timezone != "" {
+			if _, err := time.LoadLocation(*body.Timezone); err != nil {
 				return e.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid timezone"})
 			}
 		}
@@ -419,7 +419,9 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 			rec = core.NewRecord(col)
 		}
 
-		rec.Set("timezone", body.Timezone)
+		if body.Timezone != nil {
+			rec.Set("timezone", *body.Timezone)
+		}
 		if body.AuditRetentionDays != nil {
 			rec.Set("audit_retention_days", *body.AuditRetentionDays)
 		} else if rec.GetInt("audit_retention_days") <= 0 {
