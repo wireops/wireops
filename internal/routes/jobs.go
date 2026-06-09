@@ -25,21 +25,21 @@ type jobRunSummary struct {
 }
 
 type jobListItem struct {
-	ID              string           `json:"id"`
-	Name            string           `json:"name"`
-	Description     string           `json:"description"`
-	JobFile         string           `json:"job_file"`
-	Enabled         bool             `json:"enabled"`
-	Status          string           `json:"status"`
-	LastRunAt       string           `json:"last_run_at"`
-	Created         string           `json:"created"`
-	Updated         string           `json:"updated"`
-	Repository      jobRepoInfo      `json:"repository"`
-	Definition      *job.Definition  `json:"definition"`
-	DefinitionError string           `json:"definition_error,omitempty"`
-	Errors          []string         `json:"errors,omitempty"`
-	StalledReason   string           `json:"stalled_reason,omitempty"`
-	RecentRuns      []jobRunSummary  `json:"recent_runs"`
+	ID              string          `json:"id"`
+	Name            string          `json:"name"`
+	Description     string          `json:"description"`
+	JobFile         string          `json:"job_file"`
+	Enabled         bool            `json:"enabled"`
+	Status          string          `json:"status"`
+	LastRunAt       string          `json:"last_run_at"`
+	Created         string          `json:"created"`
+	Updated         string          `json:"updated"`
+	Repository      jobRepoInfo     `json:"repository"`
+	Definition      *job.Definition `json:"definition"`
+	DefinitionError string          `json:"definition_error,omitempty"`
+	Errors          []string        `json:"errors,omitempty"`
+	StalledReason   string          `json:"stalled_reason,omitempty"`
+	RecentRuns      []jobRunSummary `json:"recent_runs"`
 }
 
 type jobRepoInfo struct {
@@ -230,20 +230,20 @@ func RegisterJobRoutes(r *router.Router[*core.RequestEvent], app core.App, sched
 		if runID == "" {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "missing run id"})
 		}
-		
+
 		rec, err := app.FindRecordById("job_runs", runID)
 		if err != nil {
 			return e.JSON(http.StatusNotFound, map[string]string{"error": "job run not found"})
 		}
-		
+
 		if rec.GetString("status") != "stalled" {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "only stalled job runs can be deleted"})
 		}
-		
+
 		if err := app.Delete(rec); err != nil {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
-		
+
 		// If we delete the latest run and there are no other stalled runs, we might want to update the job status,
 		// but typically jobs transition to "stalled" via the scheduler. For now, just delete the run.
 		return e.JSON(http.StatusOK, map[string]string{"status": "deleted"})
