@@ -109,7 +109,7 @@ func createRBACUsers(app core.App) error {
 	col.ListRule = strPtr(rbacAdminRule)
 	col.ViewRule = strPtr("id = @request.auth.id || @request.auth.role = 'admin'")
 	col.CreateRule = strPtr(rbacAdminRule)
-	col.UpdateRule = strPtr("id = @request.auth.id || @request.auth.role = 'admin'")
+	col.UpdateRule = strPtr(rbacAdminRule)
 	col.DeleteRule = nil
 
 	return app.Save(col)
@@ -270,14 +270,14 @@ func applyRBACRules(app core.App) error {
 		"repository_keys":   {strPtr(rbacOperatorRule), strPtr(rbacOperatorRule), strPtr(rbacOperatorRule), strPtr(rbacOperatorRule), strPtr(rbacOperatorRule)},
 		"workers":           {strPtr(rbacOperatorRule), strPtr(rbacOperatorRule), nil, nil, nil},
 		"stacks":            {strPtr(rbacReadRule), strPtr(rbacReadRule), strPtr(rbacOperatorRule), strPtr(rbacOperatorRule), strPtr(rbacOperatorRule)},
-		"sync_logs":         {strPtr(rbacReadRule), strPtr(rbacReadRule), strPtr(""), strPtr(""), strPtr(rbacOperatorRule)},
-		"stack_services":    {strPtr(rbacReadRule), strPtr(rbacReadRule), strPtr(""), strPtr(""), strPtr("")},
+		"sync_logs":         {strPtr(rbacReadRule), strPtr(rbacReadRule), nil, nil, strPtr(rbacOperatorRule)},
+		"stack_services":    {strPtr(rbacReadRule), strPtr(rbacReadRule), nil, nil, nil},
 		"stack_env_vars":    {strPtr(rbacReadRule), strPtr(rbacReadRule), strPtr(rbacOperatorRule), strPtr(rbacOperatorRule), strPtr(rbacOperatorRule)},
 		"stack_sync_events": {strPtr(rbacAdminRule), strPtr(rbacAdminRule), strPtr(rbacAdminRule), strPtr(rbacAdminRule), strPtr(rbacAdminRule)},
 		"stack_revisions":   {strPtr(rbacReadRule), strPtr(rbacReadRule), nil, nil, nil},
 		"scheduled_jobs":    {strPtr(rbacReadRule), strPtr(rbacReadRule), strPtr(rbacOperatorRule), strPtr(rbacOperatorRule), strPtr(rbacOperatorRule)},
 		"job_env_vars":      {strPtr(rbacReadRule), strPtr(rbacReadRule), strPtr(rbacOperatorRule), strPtr(rbacOperatorRule), strPtr(rbacOperatorRule)},
-		"job_runs":          {strPtr(rbacReadRule), strPtr(rbacReadRule), strPtr(""), strPtr(""), strPtr(rbacOperatorRule)},
+		"job_runs":          {strPtr(rbacReadRule), strPtr(rbacReadRule), nil, nil, strPtr(rbacOperatorRule)},
 		"audit_logs":        {strPtr(rbacAdminRule), strPtr(rbacAdminRule), nil, nil, nil},
 		"integrations":      {strPtr(rbacAdminRule), strPtr(rbacAdminRule), nil, nil, nil},
 		"app_settings":      {strPtr(rbacAdminRule), strPtr(rbacAdminRule), strPtr(rbacAdminRule), strPtr(rbacAdminRule), nil},

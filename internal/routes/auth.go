@@ -226,10 +226,11 @@ const (
 )
 
 var (
-	errElevateInvalidToken       = errors.New("elevate: invalid sso token")
-	errElevateSSOAlreadyConsumed = errors.New("elevate: sso session already consumed")
-	errElevateNoEmail            = errors.New("elevate: sso record has no email")
-	errElevateNoUser             = errors.New("elevate: no matching user")
+	errElevateInvalidToken         = errors.New("elevate: invalid sso token")
+	errElevateSSOAlreadyConsumed   = errors.New("elevate: sso session already consumed")
+	errElevateNoEmail              = errors.New("elevate: sso record has no email")
+	errElevateNoUser               = errors.New("elevate: no matching user")
+	errElevateSSOResolvedRoleEmpty = errors.New("elevate: sso resolved role empty")
 )
 
 // sqlClaimSSOForElevate performs a single-row compare-and-set: only rows with
@@ -290,6 +291,11 @@ func RegisterAuthRoutes(r *router.Router[*core.RequestEvent], app core.App) {
 			}
 			elevatedEmail = email
 
+			role := ssoRecord.GetString("role")
+			if role == "" {
+				return errElevateSSOResolvedRoleEmpty
+			}
+
 			user, err := txApp.FindAuthRecordByEmail("users", email)
 			if err != nil {
 				// Auto-provision user if they don't exist
@@ -304,7 +310,7 @@ func RegisterAuthRoutes(r *router.Router[*core.RequestEvent], app core.App) {
 				user.SetPassword(security.RandomString(32))
 				user.Set("name", ssoRecord.GetString("name"))
 				user.Set("avatar", ssoRecord.GetString("avatar"))
-				user.Set("role", ssoRecord.GetString("role"))
+				user.Set("role", role)
 				user.Set("is_sso", true)
 				user.Set("emailVisibility", true)
 				
@@ -315,7 +321,7 @@ func RegisterAuthRoutes(r *router.Router[*core.RequestEvent], app core.App) {
 			}
 			
 			needsSave := false
-			if role := ssoRecord.GetString("role"); role != "" && user.GetString("role") != role {
+			if user.GetString("role") != role {
 				user.Set("role", role)
 				needsSave = true
 			}
@@ -373,6 +379,9 @@ func RegisterAuthRoutes(r *router.Router[*core.RequestEvent], app core.App) {
 			return e.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication failed"})
 		case errors.Is(txErr, errElevateNoUser):
 			log.Printf("[auth] elevate failed: no user for %s from IP %s", maskEmail(elevatedEmail), clientIP)
+			return e.JSON(http.StatusForbidden, map[string]string{"error": "access denied"})
+		case errors.Is(txErr, errElevateSSOResolvedRoleEmpty):
+			log.Printf("[auth] elevate failed: resolved role empty for %s from IP %s", maskEmail(elevatedEmail), clientIP)
 			return e.JSON(http.StatusForbidden, map[string]string{"error": "access denied"})
 		case txErr != nil:
 			log.Printf("[auth] elevate failed: transaction error from IP %s: %v", clientIP, txErr)

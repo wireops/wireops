@@ -464,6 +464,22 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 	}
 	app.OnMailerRecordPasswordResetSend("_superusers").BindFunc(passwordResetHandler)
 	app.OnMailerRecordPasswordResetSend("users").BindFunc(passwordResetHandler)
+
+	app.OnRecordRequestPasswordResetRequest("users").BindFunc(func(e *core.RecordRequestPasswordResetRequestEvent) error {
+		if e.Record != nil && e.Record.GetBool("is_sso") {
+			// Return a generic success to prevent email enumeration, but do not send anything.
+			return e.NoContent(204)
+		}
+		return e.Next()
+	})
+
+	app.OnRecordConfirmPasswordResetRequest("users").BindFunc(func(e *core.RecordConfirmPasswordResetRequestEvent) error {
+		if e.Record != nil && e.Record.GetBool("is_sso") {
+			// Explicitly reject confirmation for SSO users.
+			return e.JSON(400, map[string]string{"error": "SSO accounts cannot reset local password"})
+		}
+		return e.Next()
+	})
 }
 
 func registerAuditHooks(app core.App) {
@@ -528,9 +544,11 @@ func registerAuditHooks(app core.App) {
 					return apis.NewForbiddenError("the initial admin cannot be disabled", nil)
 				}
 			}
-			if disabledChanged(e.Record) && e.Record.GetBool("disabled") ||
-				(roleChanged(e.Record) && e.Record.GetString("role") != rbac.RoleAdmin &&
-					e.Record.Original().GetString("role") == rbac.RoleAdmin) {
+			wasActiveAdmin := e.Record.Original().GetString("role") == rbac.RoleAdmin && !e.Record.Original().GetBool("disabled")
+			isDisablingAdmin := disabledChanged(e.Record) && e.Record.GetBool("disabled") && wasActiveAdmin
+			isDemotingAdmin := roleChanged(e.Record) && e.Record.GetString("role") != rbac.RoleAdmin && wasActiveAdmin
+
+			if isDisablingAdmin || isDemotingAdmin {
 				if count, err := countActiveAdminsFromApp(app); err == nil && count <= 1 {
 					return apis.NewForbiddenError("cannot remove the last active admin", nil)
 				}

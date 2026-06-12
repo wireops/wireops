@@ -341,6 +341,14 @@ func Execute() error {
 
 	hooks.Register(app, scheduler, jobSched)
 
+	syncHandler := func(e *core.RecordEvent) error {
+		syncSuperusers(app)
+		return e.Next()
+	}
+	app.OnRecordAfterCreateSuccess("users").BindFunc(syncHandler)
+	app.OnRecordAfterUpdateSuccess("users").BindFunc(syncHandler)
+	app.OnRecordAfterDeleteSuccess("users").BindFunc(syncHandler)
+
 	// Cancel all scheduler goroutines before PocketBase tears down the DB.
 	// This prevents the nil-pointer panic that occurs when a cron tick fires
 	// during shutdown and calls r.app.Save() on an already-closed connection.
@@ -472,7 +480,7 @@ func configureOIDC(app core.App) {
 // syncSuperusers mirrors admin users into the _superusers table to ensure
 // their PocketBase internal UI access credentials match WireOps.
 func syncSuperusers(app core.App) {
-	adminUsers, err := app.FindAllRecords("users", dbx.HashExp{"role": "admin"})
+	adminUsers, err := app.FindAllRecords("users", dbx.HashExp{"role": "admin", "disabled": false})
 	if err != nil {
 		log.Printf("[boot] warning: failed to fetch admin users for sync: %v", err)
 		return
@@ -483,47 +491,62 @@ func syncSuperusers(app core.App) {
 		return
 	}
 
+	validAdmins := make(map[string]*core.Record)
 	for _, u := range adminUsers {
 		email := u.GetString("email")
-		if email == "" {
-			continue
+		if email != "" {
+			validAdmins[email] = u
 		}
+	}
 
+	currentSuperusers, err := app.FindAllRecords(core.CollectionNameSuperusers)
+	if err == nil {
+		for _, su := range currentSuperusers {
+			email := su.GetString("email")
+			if _, ok := validAdmins[email]; !ok {
+				if err := app.Delete(su); err != nil {
+					log.Printf("[boot] warning: failed to prune superuser %s: %v", email, err)
+				} else {
+					log.Printf("[boot] pruned superuser %s (no longer an active admin)", email)
+				}
+			}
+		}
+	}
+
+	for _, u := range validAdmins {
+		email := u.GetString("email")
 		superRecord, err := app.FindAuthRecordByEmail(core.CollectionNameSuperusers, email)
 		if err != nil {
 			superRecord = core.NewRecord(superCol)
 			superRecord.Set("email", email)
 		}
 
-		// Use passwordHash directly since password is a virtual write-only field
-		superRecord.Set("passwordHash", u.GetString("passwordHash"))
-		superRecord.Set("tokenKey", u.GetString("tokenKey"))
+		if superRecord.GetString("passwordHash") != u.GetString("passwordHash") || superRecord.GetString("tokenKey") != u.GetString("tokenKey") {
+			superRecord.Set("passwordHash", u.GetString("passwordHash"))
+			superRecord.Set("tokenKey", u.GetString("tokenKey"))
 
-		if err := app.SaveNoValidate(superRecord); err != nil {
-			if strings.Contains(err.Error(), "Invalid or duplicated auth record id") {
-				// PocketBase v0.36 cross-checks auth IDs. If the _superusers record
-				// shares the exact same ID with the users record, it fails.
-				// We must delete the invalid superRecord and recreate it with a new ID.
-				if superRecord.Id != "" && !superRecord.IsNew() {
-					app.Delete(superRecord)
-					superRecord = core.NewRecord(superCol)
-					superRecord.Set("email", email)
-					superRecord.Set("passwordHash", u.GetString("passwordHash"))
-					superRecord.Set("tokenKey", u.GetString("tokenKey"))
-					if err2 := app.SaveNoValidate(superRecord); err2 != nil {
-						log.Printf("[boot] warning: failed to recreate superuser %s: %v", email, err2)
+			if err := app.SaveNoValidate(superRecord); err != nil {
+				if strings.Contains(err.Error(), "Invalid or duplicated auth record id") {
+					if superRecord.Id != "" && !superRecord.IsNew() {
+						app.Delete(superRecord)
+						superRecord = core.NewRecord(superCol)
+						superRecord.Set("email", email)
+						superRecord.Set("passwordHash", u.GetString("passwordHash"))
+						superRecord.Set("tokenKey", u.GetString("tokenKey"))
+						if err2 := app.SaveNoValidate(superRecord); err2 != nil {
+							log.Printf("[boot] warning: failed to recreate superuser %s: %v", email, err2)
+						} else {
+							log.Printf("[boot] resolved duplicated ID for superuser %s", email)
+						}
 					} else {
-						log.Printf("[boot] resolved duplicated ID for superuser %s", email)
+						log.Printf("[boot] warning: failed to sync superuser %s: %v", email, err)
 					}
 				} else {
 					log.Printf("[boot] warning: failed to sync superuser %s: %v", email, err)
 				}
-			} else {
-				log.Printf("[boot] warning: failed to sync superuser %s: %v", email, err)
 			}
 		}
 	}
-	log.Printf("[boot] synchronized %d admin users to _superusers", len(adminUsers))
 }
 
 // parseTags splits a comma-separated tag string into a trimmed, non-empty slice.

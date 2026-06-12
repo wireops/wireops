@@ -10,7 +10,7 @@ const toast = useToast()
 const { isViewer } = usePermissions()
 
 if (isViewer.value) {
-  navigateTo('/')
+  return navigateTo('/')
 }
 
 const workerId = route.params.id as string

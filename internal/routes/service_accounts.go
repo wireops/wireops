@@ -24,7 +24,10 @@ func RegisterServiceAccountRoutes(r *router.Router[*core.RequestEvent], app core
 		}
 		result := make([]map[string]any, 0, len(accounts))
 		for _, account := range accounts {
-			keys, _ := app.FindAllRecords("api_keys", dbx.HashExp{"service_account": account.Id})
+			keys, err := app.FindAllRecords("api_keys", dbx.HashExp{"service_account": account.Id})
+			if err != nil {
+				return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to retrieve api keys"})
+			}
 			keySummaries := make([]map[string]any, 0, len(keys))
 			for _, key := range keys {
 				keySummaries = append(keySummaries, map[string]any{
@@ -121,7 +124,11 @@ func RegisterServiceAccountRoutes(r *router.Router[*core.RequestEvent], app core
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid body"})
 		}
 		if body.Name != nil {
-			rec.Set("name", strings.TrimSpace(*body.Name))
+			trimmed := strings.TrimSpace(*body.Name)
+			if trimmed == "" {
+				return e.JSON(http.StatusBadRequest, map[string]string{"error": "name and valid role are required"})
+			}
+			rec.Set("name", trimmed)
 		}
 		if body.Description != nil {
 			rec.Set("description", *body.Description)

@@ -547,7 +547,7 @@ const serviceAccounts = ref<any[]>([])
 const serviceAccountsLoading = ref(false)
 const serviceAccountForm = ref({ name: '', description: '', role: 'viewer' })
 const createdApiKey = ref('')
-const apiKeyName = ref('default')
+const apiKeyNames = ref<Record<string, string>>({})
 
 const ssoGroupRoles = ref<any[]>([])
 const ssoGroupRolesLoading = ref(false)
@@ -572,7 +572,11 @@ async function loadServiceAccounts() {
   if (!isAdmin.value) return
   serviceAccountsLoading.value = true
   try {
-    serviceAccounts.value = await apiFetch('/api/custom/service-accounts')
+    const accounts = await apiFetch('/api/custom/service-accounts')
+    accounts.forEach((acc: any) => {
+      if (!apiKeyNames.value[acc.id]) apiKeyNames.value[acc.id] = 'default'
+    })
+    serviceAccounts.value = accounts
   } catch (e: any) {
     toast.add({ title: 'Failed to load service accounts', description: e?.message, color: 'error' })
   } finally {
@@ -598,10 +602,10 @@ async function issueApiKey(account: any) {
   try {
     const data = await apiFetch(`/api/custom/service-accounts/${account.id}/keys`, {
       method: 'POST',
-      body: JSON.stringify({ name: apiKeyName.value || 'default' }),
+      body: JSON.stringify({ name: apiKeyNames.value[account.id] || 'default' }),
     })
     createdApiKey.value = data.api_key
-    apiKeyName.value = 'default'
+    apiKeyNames.value[account.id] = 'default'
     await loadServiceAccounts()
     toast.add({ title: 'API key issued', description: 'Copy it now. It will not be shown again.', color: 'success' })
   } catch (e: any) {
@@ -1109,7 +1113,7 @@ watch(activeTab, (val) => {
                   <UBadge :label="account.role" color="primary" variant="subtle" size="xs" class="mt-2" />
                 </div>
                 <div class="flex gap-2">
-                  <UInput v-model="apiKeyName" placeholder="key name" size="xs" class="w-32" />
+                  <UInput v-model="apiKeyNames[account.id]" placeholder="key name" size="xs" class="w-32" />
                   <UButton size="xs" label="Issue Key" icon="i-lucide-key-round" @click="issueApiKey(account)" />
                 </div>
               </div>

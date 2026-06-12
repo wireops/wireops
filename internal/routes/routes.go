@@ -1211,7 +1211,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			"disk_usage":      diskUsage,
 			"workspace_path":  workspace,
 		})
-	}).BindFunc(rbac.Require(rbac.CapViewStacks))
+	}).BindFunc(rbac.Require(rbac.CapManageSettings))
 
 	// Purge an orphan directory (compose down -v + remove dir)
 	r.DELETE("/api/custom/orphans/{dirName}", func(e *core.RequestEvent) error {

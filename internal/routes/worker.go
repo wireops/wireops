@@ -402,6 +402,9 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 			rec.Set("job_run_retention_days", audit.DefaultJobRunRetentionDays)
 		}
 		if body.SSOGroupsClaim != nil {
+			if *body.SSOGroupsClaim != rec.GetString("sso_groups_claim") && !rbac.Can(e, rbac.CapManageSecurity) {
+				return e.JSON(http.StatusForbidden, map[string]string{"error": "CapManageSecurity is required to modify sso_groups_claim"})
+			}
 			rec.Set("sso_groups_claim", *body.SSOGroupsClaim)
 		} else if rec.GetString("sso_groups_claim") == "" {
 			rec.Set("sso_groups_claim", "groups")
