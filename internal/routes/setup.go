@@ -40,7 +40,7 @@ func localhostOnly(next func(*core.RequestEvent) error) func(*core.RequestEvent)
 
 func handleSetupStatus(app core.App) func(*core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
-		count, err := countRealSuperusers(app)
+		count, err := countRealUsers(app)
 		if err != nil {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to check setup status"})
 		}
@@ -75,7 +75,7 @@ func handleSetupCreate(app core.App) func(*core.RequestEvent) error {
 		// Run the guard-check and record creation in a single transaction to
 		// prevent concurrent requests from creating multiple admin accounts.
 		txErr := app.RunInTransaction(func(txApp core.App) error {
-			count, err := countRealSuperusers(txApp)
+			count, err := countRealUsers(txApp)
 			if err != nil {
 				// Propagate DB errors unchanged so the outer handler maps them
 				// to a 500 rather than a misleading 403.
@@ -85,15 +85,29 @@ func handleSetupCreate(app core.App) func(*core.RequestEvent) error {
 				return errSetupAlreadyDone
 			}
 
-			superusers, err := txApp.FindCollectionByNameOrId(core.CollectionNameSuperusers)
+			users, err := txApp.FindCollectionByNameOrId("users")
 			if err != nil {
 				return err
 			}
 
-			record := core.NewRecord(superusers)
+			record := core.NewRecord(users)
 			record.Set("email", body.Email)
 			record.Set("password", body.Password)
-			return txApp.Save(record)
+			record.Set("role", "admin")
+			record.Set("verified", true)
+			record.Set("protected", true)
+			if err := txApp.Save(record); err != nil {
+				return err
+			}
+
+			superusers, err := txApp.FindCollectionByNameOrId(core.CollectionNameSuperusers)
+			if err != nil {
+				return err
+			}
+			superRecord := core.NewRecord(superusers)
+			superRecord.Set("email", body.Email)
+			superRecord.Set("password", body.Password)
+			return txApp.Save(superRecord)
 		})
 
 		if txErr == errSetupAlreadyDone {
@@ -111,12 +125,12 @@ func handleSetupCreate(app core.App) func(*core.RequestEvent) error {
 // that a real superuser already exists so we can map it to a 403 response.
 var errSetupAlreadyDone = errors.New("setup already done")
 
-// countRealSuperusers returns the number of superusers excluding the
+// countRealUsers returns the number of RBAC users excluding the
 // temporary installer account that PocketBase auto-creates on first boot
 // (email: __pbinstaller@example.com).
-func countRealSuperusers(app core.App) (int64, error) {
-	return app.CountRecords(
-		core.CollectionNameSuperusers,
-		dbx.Not(dbx.HashExp{"email": core.DefaultInstallerEmail}),
-	)
+func countRealUsers(app core.App) (int64, error) {
+	if _, err := app.FindCollectionByNameOrId("users"); err == nil {
+		return app.CountRecords("users", dbx.Not(dbx.HashExp{"email": core.DefaultInstallerEmail}))
+	}
+	return app.CountRecords(core.CollectionNameSuperusers, dbx.Not(dbx.HashExp{"email": core.DefaultInstallerEmail}))
 }

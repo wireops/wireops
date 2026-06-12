@@ -177,7 +177,14 @@ OIDC_USER_INFO_URL=https://authentik.example.com/application/o/userinfo/
 OIDC_DISPLAY_NAME=Authentik
 ```
 
-**Note:** Only users whose OIDC identity email already exists in wireops as a superuser will be able to log in. No new superuser accounts are created automatically via SSO.
+> [!WARNING]
+> **SSO and the Initial Admin Account**
+>
+> If you log in via SSO using the **exact same email address** that you used to create the initial wireops instance (the first protected admin account), the system will automatically link your local account to the SSO identity.
+>
+> When this happens, the wireops frontend **will forcibly override your local role** with whatever role your identity provider (IdP) assigns you. If your IdP maps your account to a lesser role (like `viewer`), you will lose your administrative privileges inside the wireops UI. 
+> 
+> **Make absolutely sure** that your initial admin email is mapped to the `admin` role in your IdP before logging in via SSO.
 
 ### Worker
 

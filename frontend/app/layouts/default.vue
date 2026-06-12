@@ -15,22 +15,26 @@ function toggleSidebar() {
   sidebarCollapsed.value = !sidebarCollapsed.value
 }
 
-const navItems = [
-  { label: 'Dashboard', icon: 'i-lucide-layout-dashboard', to: '/' },
-  {
-    label: 'Workloads',
-    icon: 'i-lucide-container',
-    to: '/workloads',
-    children: [
-      { label: 'Stacks', icon: 'i-lucide-layers', to: '/stacks' },
-      { label: 'Jobs', icon: 'i-lucide-calendar-clock', to: '/jobs' },
-    ],
-  },
-  { label: 'Repositories', icon: 'i-lucide-git-branch', to: '/repositories' },
-  { label: 'Workers', icon: 'i-lucide-network', to: '/workers' },
-  { label: 'Settings', icon: 'i-lucide-settings', to: '/settings' },
-  { label: 'About', icon: 'i-lucide-info', to: '/about' },
-]
+const { isViewer } = usePermissions()
+
+const navItems = computed(() => {
+  return [
+    { label: 'Dashboard', icon: 'i-lucide-layout-dashboard', to: '/' },
+    {
+      label: 'Workloads',
+      icon: 'i-lucide-container',
+      to: '/workloads',
+      children: [
+        { label: 'Stacks', icon: 'i-lucide-layers', to: '/stacks' },
+        { label: 'Jobs', icon: 'i-lucide-calendar-clock', to: '/jobs' },
+      ],
+    },
+    { label: 'Repositories', icon: 'i-lucide-git-branch', to: '/repositories' },
+    ...(isViewer.value ? [] : [{ label: 'Workers', icon: 'i-lucide-network', to: '/workers' }]),
+    ...(isViewer.value ? [] : [{ label: 'Settings', icon: 'i-lucide-settings', to: '/settings' }]),
+    { label: 'About', icon: 'i-lucide-info', to: '/about' },
+  ]
+})
 
 function isActive(to: string) {
   if (to === '/') return route.path === '/'
@@ -41,7 +45,7 @@ function isActive(to: string) {
 }
 
 const activeNavLabel = computed(() => {
-  for (const item of navItems) {
+  for (const item of navItems.value) {
     if (item.children?.some(child => isActive(child.to))) {
       return item.children.find(child => isActive(child.to))?.label || item.label
     }

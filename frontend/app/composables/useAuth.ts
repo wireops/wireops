@@ -5,7 +5,7 @@ export function useAuth() {
   const user = useState('auth_user', () => $pb.authStore.record)
 
   const login = async (email: string, password: string) => {
-    const record = await $pb.collection('_superusers').authWithPassword(email, password)
+    const record = await $pb.collection('users').authWithPassword(email, password)
     user.value = record.record
     return record
   }
@@ -19,15 +19,15 @@ export function useAuth() {
   const changePassword = async (oldPassword: string, password: string, passwordConfirm: string) => {
     const userId = $pb.authStore.record?.id
     if (!userId) throw new Error('Not authenticated')
-    return $pb.collection('_superusers').update(userId, { oldPassword, password, passwordConfirm })
+    return $pb.collection('users').update(userId, { oldPassword, password, passwordConfirm })
   }
 
   const requestPasswordReset = async (email: string) => {
-    return $pb.collection('_superusers').requestPasswordReset(email)
+    return $pb.collection('users').requestPasswordReset(email)
   }
 
   const confirmPasswordReset = async (token: string, password: string, passwordConfirm: string) => {
-    return $pb.collection('_superusers').confirmPasswordReset(token, password, passwordConfirm)
+    return $pb.collection('users').confirmPasswordReset(token, password, passwordConfirm)
   }
 
   const getSSOProviders = async (): Promise<{ name: string; displayName: string }[]> => {
@@ -46,7 +46,7 @@ export function useAuth() {
     const ssoAuth = await $pb.collection('sso_users').authWithOAuth2({ provider: providerName })
 
     // Clear the SSO token immediately - we don't want it to be used for admin endpoints
-    // The SSO token is only valid for sso_users collection, not for _superusers
+    // The SSO token is only valid for sso_users collection, not for app users
     $pb.authStore.clear()
 
     const config = useRuntimeConfig()

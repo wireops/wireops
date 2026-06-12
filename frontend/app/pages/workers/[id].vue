@@ -7,6 +7,11 @@ const { subscribe } = useRealtime()
 const { copy } = useCopy()
 const { getWorkers, getWorkerPolicy, saveWorkerPolicy, resetWorkerPolicy, revokeWorker } = useApi()
 const toast = useToast()
+const { isViewer } = usePermissions()
+
+if (isViewer.value) {
+  await navigateTo('/')
+}
 
 const workerId = route.params.id as string
 

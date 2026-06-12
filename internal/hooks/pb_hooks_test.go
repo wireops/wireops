@@ -113,7 +113,7 @@ func TestHandleSSOAuthRequest(t *testing.T) {
 			requireEmailVerified: true,
 			oauth2User: &auth.AuthUser{
 				Email:   "test@example.com",
-				RawUser: map[string]any{"email_verified": true},
+				RawUser: map[string]any{"email_verified": true, "groups": []any{"wireops-operators"}},
 			},
 			record:             core.NewRecord(core.NewBaseCollection("sso_users")),
 			expectError:        false,
@@ -134,7 +134,7 @@ func TestHandleSSOAuthRequest(t *testing.T) {
 			requireEmailVerified: false,
 			oauth2User: &auth.AuthUser{
 				Email:   "test@example.com",
-				RawUser: map[string]any{"email_verified": false},
+				RawUser: map[string]any{"email_verified": false, "groups": []any{"wireops-operators"}},
 			},
 			record:             core.NewRecord(core.NewBaseCollection("sso_users")),
 			expectError:        false,
@@ -145,7 +145,7 @@ func TestHandleSSOAuthRequest(t *testing.T) {
 			requireEmailVerified: false,
 			oauth2User: &auth.AuthUser{
 				Email:   "",
-				RawUser: map[string]any{"email": "recovered@example.com"},
+				RawUser: map[string]any{"email": "recovered@example.com", "groups": []any{"wireops-operators"}},
 			},
 			record:             core.NewRecord(core.NewBaseCollection("sso_users")),
 			expectError:        false,
@@ -166,7 +166,7 @@ func TestHandleSSOAuthRequest(t *testing.T) {
 			requireEmailVerified: true,
 			oauth2User: &auth.AuthUser{
 				Email:   "test@example.com",
-				RawUser: map[string]any{"email_verified": true},
+				RawUser: map[string]any{"email_verified": true, "groups": []any{"wireops-operators"}},
 			},
 			record:      core.NewRecord(core.NewBaseCollection("sso_users")),
 			nextErr:     errors.New("downstream auth failed"),
@@ -181,6 +181,9 @@ func TestHandleSSOAuthRequest(t *testing.T) {
 				t.Fatalf("new test app: %v", err)
 			}
 			t.Cleanup(func() { app.Cleanup() })
+			if tt.oauth2User != nil && tt.oauth2User.RawUser["groups"] != nil {
+				createSSOGroupRoleMapping(t, app, "wireops-operators", "operator")
+			}
 
 			handler := HandleSSOAuthRequest(tt.requireEmailVerified)
 			app.OnRecordAuthWithOAuth2Request("sso_users").BindFunc(handler)
@@ -236,6 +239,7 @@ func TestHandleSSOAuthRequestPersistsElevateResetAfterSuccess(t *testing.T) {
 		t.Fatalf("new test app: %v", err)
 	}
 	t.Cleanup(func() { app.Cleanup() })
+	createSSOGroupRoleMapping(t, app, "wireops-operators", "operator")
 
 	col := core.NewBaseCollection("sso_users")
 	col.Fields.Add(&core.BoolField{Name: "elevate_consumed"})
@@ -257,7 +261,7 @@ func TestHandleSSOAuthRequestPersistsElevateResetAfterSuccess(t *testing.T) {
 		RequestEvent: &core.RequestEvent{App: app},
 		OAuth2User: &auth.AuthUser{
 			Email:   "test@example.com",
-			RawUser: map[string]any{"email_verified": true},
+			RawUser: map[string]any{"email_verified": true, "groups": []any{"wireops-operators"}},
 		},
 		Record: record,
 	}
@@ -278,5 +282,29 @@ func TestHandleSSOAuthRequestPersistsElevateResetAfterSuccess(t *testing.T) {
 	}
 	if reloaded.GetString("elevate_consumed_at") != "" {
 		t.Fatalf("expected elevate_consumed_at to be NULL in db, got %q", reloaded.GetString("elevate_consumed_at"))
+	}
+}
+
+func createSSOGroupRoleMapping(t *testing.T, app core.App, group, role string) {
+	t.Helper()
+	col, err := app.FindCollectionByNameOrId("sso_group_roles")
+	if err != nil {
+		col = core.NewBaseCollection("sso_group_roles")
+		col.Fields.Add(&core.TextField{Name: "group", Required: true})
+		col.Fields.Add(&core.SelectField{
+			Name:      "role",
+			Required:  true,
+			MaxSelect: 1,
+			Values:    []string{"viewer", "operator", "admin"},
+		})
+		if err := app.Save(col); err != nil {
+			t.Fatalf("create sso_group_roles fixture: %v", err)
+		}
+	}
+	rec := core.NewRecord(col)
+	rec.Set("group", group)
+	rec.Set("role", role)
+	if err := app.Save(rec); err != nil {
+		t.Fatalf("save sso group role mapping: %v", err)
 	}
 }

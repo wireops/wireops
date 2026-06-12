@@ -9,14 +9,12 @@ import (
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/router"
+
+	"github.com/wireops/wireops/internal/rbac"
 )
 
 func RegisterAuditRoutes(r *router.Router[*core.RequestEvent], app core.App) {
 	r.GET("/api/custom/audit-logs", func(e *core.RequestEvent) error {
-		if !e.HasSuperuserAuth() {
-			return e.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized. Admin only."})
-		}
-
 		q := e.Request.URL.Query()
 		page := parsePositiveInt(q.Get("page"), 1)
 		perPage := parsePositiveInt(q.Get("perPage"), 25)
@@ -64,7 +62,7 @@ func RegisterAuditRoutes(r *router.Router[*core.RequestEvent], app core.App) {
 			"totalItems": total,
 			"items":      items,
 		})
-	})
+	}).BindFunc(rbac.Require(rbac.CapViewAuditLogs))
 }
 
 func parsePositiveInt(raw string, fallback int) int {

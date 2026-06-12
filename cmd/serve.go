@@ -20,6 +20,7 @@ import (
 	"github.com/pocketbase/pocketbase/plugins/migratecmd"
 
 	"github.com/wireops/wireops/internal/audit"
+	wireauth "github.com/wireops/wireops/internal/auth"
 	"github.com/wireops/wireops/internal/config"
 	"github.com/wireops/wireops/internal/docker"
 	"github.com/wireops/wireops/internal/hooks"
@@ -180,8 +181,6 @@ func Execute() error {
 			log.Printf("[smtp] configured from environment (host: %s, port: %d)", smtpHost, smtpPort)
 		}
 
-		configureOIDC(app)
-
 		return nil
 	})
 
@@ -279,6 +278,9 @@ func Execute() error {
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
 		log.Println("[db] Database migrations completed successfully.")
 
+		configureOIDC(app)
+		syncSuperusers(app)
+
 		// OIDC client secret lives only in OIDC_CLIENT_SECRET; inject into the collection cache
 		// for OAuth handlers, then reload the cache so it is not retained for other routes.
 		// Suppress HTTP access logs (activity logger) unless running in DEBUG mode.
@@ -292,6 +294,7 @@ func Execute() error {
 
 		// Configure CORS middleware based on APP_URL
 		se.Router.BindFunc(configureCORSMiddleware)
+		se.Router.BindFunc(wireauth.APIKeyMiddleware(app))
 		se.Router.BindFunc(audit.CustomRouteMiddleware(app))
 
 		se.Router.GET("/{path...}", apis.Static(os.DirFS("./pb_public"), false))
@@ -302,6 +305,8 @@ func Execute() error {
 		routes.RegisterJobRoutes(se.Router, app, jobSched)
 		routes.RegisterAuditRoutes(se.Router, app)
 		routes.RegisterAuthRoutes(se.Router, app)
+		routes.RegisterServiceAccountRoutes(se.Router, app)
+		routes.RegisterSSOGroupRoleRoutes(se.Router, app)
 
 		if err := wiresync.RecoverOrphanState(app); err != nil {
 			log.Printf("Warning: orphan state recovery error: %v", err)
@@ -335,6 +340,14 @@ func Execute() error {
 	})
 
 	hooks.Register(app, scheduler, jobSched)
+
+	syncHandler := func(e *core.RecordEvent) error {
+		syncSuperusers(app)
+		return e.Next()
+	}
+	app.OnRecordAfterCreateSuccess("users").BindFunc(syncHandler)
+	app.OnRecordAfterUpdateSuccess("users").BindFunc(syncHandler)
+	app.OnRecordAfterDeleteSuccess("users").BindFunc(syncHandler)
 
 	// Cancel all scheduler goroutines before PocketBase tears down the DB.
 	// This prevents the nil-pointer panic that occurs when a cron tick fires
@@ -462,6 +475,78 @@ func configureOIDC(app core.App) {
 		return
 	}
 	log.Printf("[oidc] configured provider '%s' on sso_users", displayName)
+}
+
+// syncSuperusers mirrors admin users into the _superusers table to ensure
+// their PocketBase internal UI access credentials match WireOps.
+func syncSuperusers(app core.App) {
+	adminUsers, err := app.FindAllRecords("users", dbx.HashExp{"role": "admin", "disabled": false})
+	if err != nil {
+		log.Printf("[boot] warning: failed to fetch admin users for sync: %v", err)
+		return
+	}
+
+	superCol, err := app.FindCollectionByNameOrId(core.CollectionNameSuperusers)
+	if err != nil {
+		return
+	}
+
+	validAdmins := make(map[string]*core.Record)
+	for _, u := range adminUsers {
+		email := u.GetString("email")
+		if email != "" {
+			validAdmins[email] = u
+		}
+	}
+
+	currentSuperusers, err := app.FindAllRecords(core.CollectionNameSuperusers)
+	if err == nil {
+		for _, su := range currentSuperusers {
+			email := su.GetString("email")
+			if _, ok := validAdmins[email]; !ok {
+				if err := app.Delete(su); err != nil {
+					log.Printf("[boot] warning: failed to prune superuser %s: %v", email, err)
+				} else {
+					log.Printf("[boot] pruned superuser %s (no longer an active admin)", email)
+				}
+			}
+		}
+	}
+
+	for _, u := range validAdmins {
+		email := u.GetString("email")
+		superRecord, err := app.FindAuthRecordByEmail(core.CollectionNameSuperusers, email)
+		if err != nil {
+			superRecord = core.NewRecord(superCol)
+			superRecord.Set("email", email)
+		}
+
+		if superRecord.GetString("passwordHash") != u.GetString("passwordHash") || superRecord.GetString("tokenKey") != u.GetString("tokenKey") {
+			superRecord.Set("passwordHash", u.GetString("passwordHash"))
+			superRecord.Set("tokenKey", u.GetString("tokenKey"))
+
+			if err := app.SaveNoValidate(superRecord); err != nil {
+				if strings.Contains(err.Error(), "Invalid or duplicated auth record id") {
+					if superRecord.Id != "" && !superRecord.IsNew() {
+						app.Delete(superRecord)
+						superRecord = core.NewRecord(superCol)
+						superRecord.Set("email", email)
+						superRecord.Set("passwordHash", u.GetString("passwordHash"))
+						superRecord.Set("tokenKey", u.GetString("tokenKey"))
+						if err2 := app.SaveNoValidate(superRecord); err2 != nil {
+							log.Printf("[boot] warning: failed to recreate superuser %s: %v", email, err2)
+						} else {
+							log.Printf("[boot] resolved duplicated ID for superuser %s", email)
+						}
+					} else {
+						log.Printf("[boot] warning: failed to sync superuser %s: %v", email, err)
+					}
+				} else {
+					log.Printf("[boot] warning: failed to sync superuser %s: %v", email, err)
+				}
+			}
+		}
+	}
 }
 
 // parseTags splits a comma-separated tag string into a trimmed, non-empty slice.

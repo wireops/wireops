@@ -14,6 +14,7 @@ import (
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/router"
+	"github.com/pocketbase/pocketbase/tools/security"
 	"github.com/pocketbase/pocketbase/tools/types"
 )
 
@@ -225,10 +226,11 @@ const (
 )
 
 var (
-	errElevateInvalidToken       = errors.New("elevate: invalid sso token")
-	errElevateSSOAlreadyConsumed = errors.New("elevate: sso session already consumed")
-	errElevateNoEmail            = errors.New("elevate: sso record has no email")
-	errElevateNoSuperuser        = errors.New("elevate: no matching superuser")
+	errElevateInvalidToken         = errors.New("elevate: invalid sso token")
+	errElevateSSOAlreadyConsumed   = errors.New("elevate: sso session already consumed")
+	errElevateNoEmail              = errors.New("elevate: sso record has no email")
+	errElevateNoUser               = errors.New("elevate: no matching user")
+	errElevateSSOResolvedRoleEmpty = errors.New("elevate: sso resolved role empty")
 )
 
 // sqlClaimSSOForElevate performs a single-row compare-and-set: only rows with
@@ -289,9 +291,53 @@ func RegisterAuthRoutes(r *router.Router[*core.RequestEvent], app core.App) {
 			}
 			elevatedEmail = email
 
-			superuser, err := txApp.FindAuthRecordByEmail("_superusers", email)
+			role := ssoRecord.GetString("role")
+			if role == "" {
+				return errElevateSSOResolvedRoleEmpty
+			}
+
+			user, err := txApp.FindAuthRecordByEmail("users", email)
 			if err != nil {
-				return errElevateNoSuperuser
+				// Auto-provision user if they don't exist
+				userCol, colErr := txApp.FindCollectionByNameOrId("users")
+				if colErr != nil {
+					log.Printf("[auth] failed to find users collection: %v", colErr)
+					return errElevateNoUser
+				}
+				user = core.NewRecord(userCol)
+				user.SetEmail(email)
+				user.SetVerified(true)
+				user.SetPassword(security.RandomString(32))
+				user.Set("name", ssoRecord.GetString("name"))
+				user.Set("avatar", ssoRecord.GetString("avatar"))
+				user.Set("role", role)
+				user.Set("is_sso", true)
+				user.Set("emailVisibility", true)
+				
+				if saveErr := txApp.Save(user); saveErr != nil {
+					log.Printf("[auth] failed to auto-provision user %s: %v", email, saveErr)
+					return errElevateNoUser
+				}
+			}
+			
+			needsSave := false
+			if user.GetString("role") != role {
+				user.Set("role", role)
+				needsSave = true
+			}
+			if !user.GetBool("is_sso") {
+				user.Set("is_sso", true)
+				needsSave = true
+			}
+			if !user.GetBool("emailVisibility") {
+				user.Set("emailVisibility", true)
+				needsSave = true
+			}
+			
+			if needsSave {
+				if err := txApp.Save(user); err != nil {
+					return err
+				}
 			}
 
 			consumedAt := types.NowDateTime()
@@ -311,13 +357,13 @@ func RegisterAuthRoutes(r *router.Router[*core.RequestEvent], app core.App) {
 				return errElevateSSOAlreadyConsumed
 			}
 
-			token, err := superuser.NewAuthToken()
+			token, err := user.NewAuthToken()
 			if err != nil {
 				return err
 			}
 
 			elevatedToken = token
-			superRecord = superuser
+			superRecord = user
 			return nil
 		})
 
@@ -331,8 +377,11 @@ func RegisterAuthRoutes(r *router.Router[*core.RequestEvent], app core.App) {
 		case errors.Is(txErr, errElevateNoEmail):
 			log.Printf("[auth] elevate failed: no email in SSO record from IP %s", clientIP)
 			return e.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication failed"})
-		case errors.Is(txErr, errElevateNoSuperuser):
-			log.Printf("[auth] elevate failed: no superuser for %s from IP %s", maskEmail(elevatedEmail), clientIP)
+		case errors.Is(txErr, errElevateNoUser):
+			log.Printf("[auth] elevate failed: no user for %s from IP %s", maskEmail(elevatedEmail), clientIP)
+			return e.JSON(http.StatusForbidden, map[string]string{"error": "access denied"})
+		case errors.Is(txErr, errElevateSSOResolvedRoleEmpty):
+			log.Printf("[auth] elevate failed: resolved role empty for %s from IP %s", maskEmail(elevatedEmail), clientIP)
 			return e.JSON(http.StatusForbidden, map[string]string{"error": "access denied"})
 		case txErr != nil:
 			log.Printf("[auth] elevate failed: transaction error from IP %s: %v", clientIP, txErr)

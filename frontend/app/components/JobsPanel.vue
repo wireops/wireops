@@ -3,6 +3,7 @@ const { $pb } = useNuxtApp()
 const { listJobs, triggerJobRun } = useApi()
 const { subscribe } = useRealtime()
 const toast = useToast()
+const { isViewer } = usePermissions()
 
 const { data: repos, refresh: refreshRepos } = useAsyncData('repos_for_jobs', () =>
   $pb.collection('repositories').getFullList({ sort: 'name' })
@@ -84,6 +85,7 @@ function formatRelative(dateStr: string) {
         Scheduled Jobs
       </h1>
       <UButton
+        v-if="!isViewer"
         icon="i-lucide-plus"
         label="New Job"
         class="shadow-[0_0_16px_rgba(255,198,0,0.35)] hover:shadow-[0_0_24px_rgba(255,198,0,0.55)] transition-shadow"
@@ -212,25 +214,27 @@ function formatRelative(dateStr: string) {
                 <span class="text-xs text-gray-400 dark:text-wire-200/40 uppercase tracking-wider font-semibold">Last run</span>
                 <span class="text-sm text-gray-700 dark:text-wire-200">{{ formatRelative(job.last_run_at) }}</span>
               </div>
-              <UTooltip :text="job.enabled ? 'Click to disable' : 'Click to enable'">
-                <UBadge
-                  :label="job.enabled ? 'ENABLED' : 'DISABLED'"
-                  :color="job.enabled ? 'success' : 'neutral'"
-                  variant="subtle"
-                  class="cursor-pointer select-none hover:opacity-80 transition-opacity uppercase font-semibold text-xs px-2.5 py-0.5"
-                  @click="toggleEnabled(job)"
-                />
-              </UTooltip>
-              <UTooltip text="Run now">
-                <UButton
-                  icon="i-lucide-play"
-                  variant="ghost"
-                  size="xs"
-                  color="neutral"
-                  :disabled="!job.enabled"
-                  @click="triggerRun(job)"
-                />
-              </UTooltip>
+              <template v-if="!isViewer">
+                <UTooltip :text="job.enabled ? 'Click to disable' : 'Click to enable'">
+                  <UBadge
+                    :label="job.enabled ? 'ENABLED' : 'DISABLED'"
+                    :color="job.enabled ? 'success' : 'neutral'"
+                    variant="subtle"
+                    class="cursor-pointer select-none hover:opacity-80 transition-opacity uppercase font-semibold text-xs px-2.5 py-0.5"
+                    @click="toggleEnabled(job)"
+                  />
+                </UTooltip>
+                <UTooltip text="Run now">
+                  <UButton
+                    icon="i-lucide-play"
+                    variant="ghost"
+                    size="xs"
+                    color="neutral"
+                    :disabled="!job.enabled"
+                    @click="triggerRun(job)"
+                  />
+                </UTooltip>
+              </template>
             </div>
           </div>
         </div>

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { ref } from 'vue'
 
 describe('default layout accessibility', () => {
   beforeEach(() => {
@@ -21,6 +22,9 @@ describe('default layout accessibility', () => {
     })
     ;(globalThis as any).useA11yAnnouncer = () => ({
       announce: vi.fn(),
+    })
+    ;(globalThis as any).usePermissions = () => ({
+      isViewer: ref(false),
     })
     ;(globalThis as any).useCookie = (_key: string, opts?: { default?: () => any }) => {
       const val = opts?.default ? opts.default() : undefined

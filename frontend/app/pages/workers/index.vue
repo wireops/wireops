@@ -1,6 +1,11 @@
 <script setup lang="ts">
 const { getWorkers, createWorkerToken } = useApi()
 const toast = useToast()
+const { isViewer } = usePermissions()
+
+if (isViewer.value) {
+  navigateTo('/')
+}
 
 const { data: workers, pending, refresh } = useAsyncData('workers', getWorkers)
 

@@ -13,7 +13,7 @@ async function handleSubmit() {
   loading.value = true
   error.value = ''
   try {
-    await $pb.collection('_superusers').requestPasswordReset(email.value)
+    await $pb.collection('users').requestPasswordReset(email.value)
     sent.value = true
     announce('If the account exists, a password reset link has been sent')
   } catch (e: any) {
