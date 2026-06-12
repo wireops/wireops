@@ -1,6 +1,7 @@
 package pb_migrations
 
 import (
+	"fmt"
 	"log"
 
 	"github.com/pocketbase/pocketbase/core"

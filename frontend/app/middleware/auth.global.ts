@@ -33,7 +33,7 @@ export default defineNuxtRouteMiddleware(async (to) => {
 
   // Verify the session is still valid
   try {
-    await $pb.collection('_superusers').authRefresh()
+    await $pb.collection('users').authRefresh()
   } catch {
     $pb.authStore.clear()
     return navigateTo('/login')

@@ -12,6 +12,7 @@ import (
 
 	"github.com/wireops/wireops/internal/job"
 	"github.com/wireops/wireops/internal/jobscheduler"
+	"github.com/wireops/wireops/internal/rbac"
 	"github.com/wireops/wireops/internal/safepath"
 )
 
@@ -144,7 +145,7 @@ func RegisterJobRoutes(r *router.Router[*core.RequestEvent], app core.App, sched
 		}
 
 		return e.JSON(http.StatusOK, items)
-	})
+	}).BindFunc(rbac.Require(rbac.CapViewJobs))
 
 	// Cancel a running job run (kills the container).
 	r.POST("/api/custom/job-runs/{runId}/cancel", func(e *core.RequestEvent) error {
@@ -156,7 +157,7 @@ func RegisterJobRoutes(r *router.Router[*core.RequestEvent], app core.App, sched
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 		}
 		return e.JSON(http.StatusOK, map[string]string{"status": "cancelled"})
-	})
+	}).BindFunc(rbac.Require(rbac.CapManageJobs))
 
 	// Trigger a manual run immediately.
 	r.POST("/api/custom/jobs/{id}/run", func(e *core.RequestEvent) error {
@@ -180,7 +181,7 @@ func RegisterJobRoutes(r *router.Router[*core.RequestEvent], app core.App, sched
 		}
 		sched.TriggerManual(rec.Id, userID)
 		return e.JSON(http.StatusOK, map[string]string{"status": "triggered"})
-	})
+	}).BindFunc(rbac.Require(rbac.CapManageJobs))
 
 	// Return the parsed job.yaml definition for a single scheduled job.
 	r.GET("/api/custom/jobs/{id}/definition", func(e *core.RequestEvent) error {
@@ -198,7 +199,7 @@ func RegisterJobRoutes(r *router.Router[*core.RequestEvent], app core.App, sched
 		}
 
 		return e.JSON(http.StatusOK, def)
-	})
+	}).BindFunc(rbac.Require(rbac.CapViewJobs))
 
 	// Return the raw, unparsed job.yaml definition file content for a single scheduled job.
 	r.GET("/api/custom/jobs/{id}/raw", func(e *core.RequestEvent) error {
@@ -222,7 +223,7 @@ func RegisterJobRoutes(r *router.Router[*core.RequestEvent], app core.App, sched
 			"content":  string(data),
 			"filename": filepath.Base(jobFile),
 		})
-	})
+	}).BindFunc(rbac.Require(rbac.CapViewJobs))
 
 	// Delete a job run (only if stalled).
 	r.DELETE("/api/custom/job-runs/{runId}", func(e *core.RequestEvent) error {
@@ -247,5 +248,5 @@ func RegisterJobRoutes(r *router.Router[*core.RequestEvent], app core.App, sched
 		// If we delete the latest run and there are no other stalled runs, we might want to update the job status,
 		// but typically jobs transition to "stalled" via the scheduler. For now, just delete the run.
 		return e.JSON(http.StatusOK, map[string]string{"status": "deleted"})
-	})
+	}).BindFunc(rbac.Require(rbac.CapManageJobs))
 }

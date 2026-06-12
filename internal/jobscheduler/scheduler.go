@@ -111,9 +111,10 @@ func (s *Scheduler) Start() {
 	log.Printf("[jobscheduler] started with %d job(s)", len(jobs))
 }
 
-// Shutdown stops the cron runner and cancels all in-flight executions.
 func (s *Scheduler) Shutdown() {
-	s.cron.Stop()
+	if s.cron != nil {
+		s.cron.Stop()
+	}
 	s.rootCancel()
 	log.Printf("[jobscheduler] shutdown")
 }

@@ -1,12 +1,13 @@
 <script setup lang="ts">
 const route = useRoute()
 const { $pb } = useNuxtApp()
+const toast = useToast()
 
 const userId = computed(() => String(route.params.id || ''))
 
 const { data: user, pending, error, refresh } = useAsyncData(
   () => `settings_user_${userId.value}`,
-  () => $pb.collection('_superusers').getOne(userId.value)
+  () => $pb.collection('users').getOne(userId.value)
 )
 
 const isCurrentUser = computed(() => user.value?.id === $pb.authStore.record?.id)
@@ -16,6 +17,29 @@ function formatDate(value?: string) {
   const d = new Date(value)
   if (isNaN(d.getTime())) return value
   return d.toLocaleString()
+}
+
+async function toggleDisabled() {
+  if (!user.value) return
+  const willDisable = !user.value.disabled
+  if (!window.confirm(`Are you sure you want to ${willDisable ? 'disable' : 'enable'} this user?`)) return
+  try {
+    const res = await fetch(`${$pb.baseURL}/api/custom/users/${user.value.id}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${$pb.authStore.token}`,
+        'X-Wireops-Origin': 'ui',
+      },
+      body: JSON.stringify({ disabled: willDisable }),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error)
+    await refresh()
+    toast.add({ title: willDisable ? 'User disabled' : 'User enabled', color: 'success' })
+  } catch (e: any) {
+    toast.add({ title: 'Failed to update user', description: e?.message, color: 'error' })
+  }
 }
 </script>
 
@@ -39,19 +63,32 @@ function formatDate(value?: string) {
             <h1 class="text-2xl font-bold text-gray-900 dark:text-white">
               {{ user?.email || 'User Profile' }}
             </h1>
-            <p class="text-sm text-gray-500">Administrator account</p>
+            <p class="text-sm text-gray-500">{{ user?.role || 'user' }} account</p>
           </div>
         </div>
       </div>
 
-      <UButton
-        v-if="isCurrentUser"
-        to="/settings?tab=security"
-        icon="i-lucide-key-round"
-        label="Change Password"
-        color="neutral"
-        variant="outline"
-      />
+      <div class="flex items-center gap-2">
+        <UBadge v-if="user?.protected" label="Protected" color="warning" variant="subtle" />
+        <UBadge v-else-if="user?.disabled" label="Disabled" color="neutral" variant="subtle" />
+        <UButton
+          v-if="!user?.protected && !isCurrentUser"
+          :icon="user?.disabled ? 'i-lucide-user-check' : 'i-lucide-user-x'"
+          :label="user?.disabled ? 'Enable User' : 'Disable User'"
+          :color="user?.disabled ? 'success' : 'warning'"
+          variant="outline"
+          size="sm"
+          @click="toggleDisabled"
+        />
+        <UButton
+          v-if="isCurrentUser"
+          to="/settings?tab=security"
+          icon="i-lucide-key-round"
+          label="Change Password"
+          color="neutral"
+          variant="outline"
+        />
+      </div>
     </div>
 
     <UCard>
@@ -93,13 +130,21 @@ function formatDate(value?: string) {
           <dd class="break-all font-mono text-xs text-gray-700 sm:col-span-2 dark:text-gray-300">{{ user.id }}</dd>
         </div>
         <div class="grid gap-1 py-3 sm:grid-cols-3 sm:gap-4">
-          <dt class="text-sm text-gray-500">Status</dt>
+          <dt class="text-sm text-gray-500">Role</dt>
           <dd class="sm:col-span-2">
+            <UBadge :label="user.role || 'viewer'" color="primary" variant="subtle" />
+          </dd>
+        </div>
+        <div class="grid gap-1 py-3 sm:grid-cols-3 sm:gap-4">
+          <dt class="text-sm text-gray-500">Status</dt>
+          <dd class="flex items-center gap-2 sm:col-span-2">
             <UBadge
               :label="user.verified === false ? 'Unverified' : 'Verified'"
               :color="user.verified === false ? 'warning' : 'success'"
               variant="subtle"
             />
+            <UBadge v-if="user.disabled" label="Disabled" color="neutral" variant="subtle" />
+            <UBadge v-if="user.protected" label="Protected" color="warning" variant="subtle" />
           </dd>
         </div>
         <div class="grid gap-1 py-3 sm:grid-cols-3 sm:gap-4">

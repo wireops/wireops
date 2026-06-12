@@ -28,7 +28,7 @@ async function handleSubmit() {
   loading.value = true
   error.value = ''
   try {
-    await $pb.collection('_superusers').confirmPasswordReset(token.value, password.value, passwordConfirm.value)
+    await $pb.collection('users').confirmPasswordReset(token.value, password.value, passwordConfirm.value)
     success.value = true
     announce('Password updated successfully')
     setTimeout(() => navigateTo('/login'), 3000)

@@ -19,16 +19,18 @@ func newSetupTestApp(t *testing.T) *tests.TestApp {
 	if err != nil {
 		t.Fatalf("failed to create test app: %v", err)
 	}
+	ensureTestUsersRoleField(t, app)
 	t.Cleanup(func() { app.Cleanup() })
 	return app
 }
 
-// newEmptySetupTestApp returns a test app with all superusers removed,
+// newEmptySetupTestApp returns a test app with all RBAC users removed,
 // simulating a fresh, unconfigured instance.
 func newEmptySetupTestApp(t *testing.T) *tests.TestApp {
 	t.Helper()
 	app := newSetupTestApp(t)
 	clearAllSuperusers(t, app)
+	clearAllUsers(t, app)
 	return app
 }
 
@@ -44,6 +46,14 @@ func clearAllSuperusers(t *testing.T, app core.App) {
 		Execute()
 	if err != nil {
 		t.Fatalf("failed to clear superusers: %v", err)
+	}
+}
+
+func clearAllUsers(t *testing.T, app core.App) {
+	t.Helper()
+	_, err := app.DB().NewQuery("DELETE FROM users").Execute()
+	if err != nil {
+		t.Fatalf("failed to clear users: %v", err)
 	}
 }
 
@@ -92,13 +102,13 @@ func TestSetupStatusWhenEmpty(t *testing.T) {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 	if !resp["needsSetup"] {
-		t.Error("expected needsSetup to be true when no superusers exist")
+		t.Error("expected needsSetup to be true when no users exist")
 	}
 }
 
 func TestSetupStatusWhenAdminExists(t *testing.T) {
 	app := newSetupTestApp(t)
-	createTestSuperuser(t, app, "admin@example.com", "password123")
+	createTestUser(t, app, "admin@example.com", "password123", "admin")
 
 	rec := callHandler(t, app, http.MethodGet, "/api/custom/setup/status", nil, handleSetupStatus(app))
 
@@ -111,7 +121,7 @@ func TestSetupStatusWhenAdminExists(t *testing.T) {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 	if resp["needsSetup"] {
-		t.Error("expected needsSetup to be false when a superuser exists")
+		t.Error("expected needsSetup to be false when an admin user exists")
 	}
 }
 
@@ -129,15 +139,21 @@ func TestSetupCreateFirstAdmin(t *testing.T) {
 		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	created, err := app.FindAuthRecordByEmail(core.CollectionNameSuperusers, "first@example.com")
+	created, err := app.FindAuthRecordByEmail("users", "first@example.com")
 	if err != nil || created == nil {
-		t.Fatal("expected superuser to exist after setup")
+		t.Fatal("expected user to exist after setup")
+	}
+	if created.GetString("role") != "admin" {
+		t.Fatalf("expected first user to be admin, got %q", created.GetString("role"))
+	}
+	if !created.GetBool("protected") {
+		t.Fatal("expected first admin to be protected")
 	}
 }
 
 func TestSetupBlockedAfterAdminExists(t *testing.T) {
 	app := newSetupTestApp(t)
-	createTestSuperuser(t, app, "existing@example.com", "password123")
+	createTestUser(t, app, "existing@example.com", "password123", "admin")
 
 	body := map[string]string{
 		"email":           "attacker@example.com",
@@ -221,4 +237,52 @@ func createTestSuperuser(t *testing.T, app core.App, email, password string) *co
 		t.Fatalf("failed to create superuser: %v", err)
 	}
 	return record
+}
+
+func createTestUser(t *testing.T, app core.App, email, password, role string) *core.Record {
+	t.Helper()
+	col, err := app.FindCollectionByNameOrId("users")
+	if err != nil {
+		t.Fatalf("failed to find users collection: %v", err)
+	}
+	record := core.NewRecord(col)
+	record.Set("email", email)
+	record.Set("password", password)
+	record.Set("role", role)
+	record.Set("verified", true)
+	if err := app.Save(record); err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
+	return record
+}
+
+func ensureTestUsersRoleField(t *testing.T, app core.App) {
+	t.Helper()
+	col, err := app.FindCollectionByNameOrId("users")
+	if err != nil {
+		return
+	}
+	changed := false
+	if col.Fields.GetByName("role") == nil {
+		col.Fields.Add(&core.SelectField{
+			Name:      "role",
+			Required:  true,
+			MaxSelect: 1,
+			Values:    []string{"viewer", "operator", "admin"},
+		})
+		changed = true
+	}
+	if col.Fields.GetByName("disabled") == nil {
+		col.Fields.Add(&core.BoolField{Name: "disabled"})
+		changed = true
+	}
+	if col.Fields.GetByName("protected") == nil {
+		col.Fields.Add(&core.BoolField{Name: "protected", Hidden: true})
+		changed = true
+	}
+	if changed {
+		if err := app.Save(col); err != nil {
+			t.Fatalf("failed to add fields to users fixture: %v", err)
+		}
+	}
 }

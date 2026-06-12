@@ -15,28 +15,31 @@ import (
 	"github.com/pocketbase/pocketbase/tools/router"
 
 	"github.com/wireops/wireops/internal/config"
+	"github.com/wireops/wireops/internal/rbac"
 )
 
 func RegisterUserRoutes(r *router.Router[*core.RequestEvent], app core.App) {
-	r.POST("/api/custom/users/invite", handleCreateInvite(app))
+	r.POST("/api/custom/users/invite", handleCreateInvite(app)).BindFunc(rbac.Require(rbac.CapManageUsers))
 	r.GET("/api/custom/users/invite/validate", handleValidateInvite(app))
 	r.POST("/api/custom/users/invite/accept", handleAcceptInvite(app))
+	r.PUT("/api/custom/users/{id}", handleUpdateUser(app)).BindFunc(rbac.Require(rbac.CapManageUsers))
 }
 
 func handleCreateInvite(app core.App) func(*core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
-		if !e.HasSuperuserAuth() {
-			return e.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
-		}
-
 		var body struct {
 			Email string `json:"email"`
+			Role  string `json:"role"`
 		}
 		if err := json.NewDecoder(e.Request.Body).Decode(&body); err != nil || body.Email == "" {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "email is required"})
 		}
+		role := rbac.NormalizeRole(body.Role)
+		if role == "" {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "valid role is required"})
+		}
 
-		existing, _ := app.FindAllRecords(core.CollectionNameSuperusers, dbx.HashExp{"email": body.Email})
+		existing, _ := app.FindAllRecords("users", dbx.HashExp{"email": body.Email})
 		if len(existing) > 0 {
 			return e.JSON(http.StatusConflict, map[string]string{"error": "a user with this email already exists"})
 		}
@@ -53,6 +56,7 @@ func handleCreateInvite(app core.App) func(*core.RequestEvent) error {
 
 		invite := core.NewRecord(col)
 		invite.Set("email", body.Email)
+		invite.Set("role", role)
 		invite.Set("token", token)
 		invite.Set("expires_at", time.Now().UTC().Add(24*time.Hour))
 		invite.Set("used", false)
@@ -106,6 +110,7 @@ func handleValidateInvite(app core.App) func(*core.RequestEvent) error {
 
 		return e.JSON(http.StatusOK, map[string]string{
 			"email":  invite.GetString("email"),
+			"role":   invite.GetString("role"),
 			"status": "valid",
 		})
 	}
@@ -142,21 +147,23 @@ func handleAcceptInvite(app core.App) func(*core.RequestEvent) error {
 		}
 
 		email := invite.GetString("email")
-		existing, _ := app.FindAllRecords(core.CollectionNameSuperusers, dbx.HashExp{"email": email})
+		existing, _ := app.FindAllRecords("users", dbx.HashExp{"email": email})
 		if len(existing) > 0 {
 			invite.Set("used", true)
 			_ = app.Save(invite)
 			return e.JSON(http.StatusConflict, map[string]string{"error": "a user with this email already exists"})
 		}
 
-		superusers, err := app.FindCollectionByNameOrId(core.CollectionNameSuperusers)
+		users, err := app.FindCollectionByNameOrId("users")
 		if err != nil {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		}
 
-		record := core.NewRecord(superusers)
+		record := core.NewRecord(users)
 		record.Set("email", email)
 		record.Set("password", body.Password)
+		record.Set("role", rbac.MustNormalizeRole(invite.GetString("role")))
+		record.Set("verified", true)
 		if err := app.Save(record); err != nil {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
@@ -166,6 +173,79 @@ func handleAcceptInvite(app core.App) func(*core.RequestEvent) error {
 
 		return e.JSON(http.StatusCreated, map[string]string{"status": "created"})
 	}
+}
+
+func handleUpdateUser(app core.App) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
+		userID := e.Request.PathValue("id")
+		rec, err := app.FindRecordById("users", userID)
+		if err != nil {
+			return e.JSON(http.StatusNotFound, map[string]string{"error": "user not found"})
+		}
+
+		var body struct {
+			Role     *string `json:"role"`
+			Name     *string `json:"name"`
+			Disabled *bool   `json:"disabled"`
+		}
+		if err := json.NewDecoder(e.Request.Body).Decode(&body); err != nil {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		}
+
+		isProtected := rec.GetBool("protected")
+
+		if body.Name != nil {
+			rec.Set("name", *body.Name)
+		}
+		if body.Role != nil {
+			role := rbac.NormalizeRole(*body.Role)
+			if role == "" {
+				return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid role"})
+			}
+			if isProtected && role != rbac.RoleAdmin {
+				return e.JSON(http.StatusConflict, map[string]string{"error": "the initial admin cannot be demoted"})
+			}
+			if rec.GetString("role") == rbac.RoleAdmin && role != rbac.RoleAdmin {
+				count, err := countActiveAdmins(app)
+				if err != nil {
+					return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to validate admins"})
+				}
+				if count <= 1 {
+					return e.JSON(http.StatusConflict, map[string]string{"error": "cannot demote the last active admin"})
+				}
+			}
+			rec.Set("role", role)
+		}
+		if body.Disabled != nil {
+			if isProtected && *body.Disabled {
+				return e.JSON(http.StatusConflict, map[string]string{"error": "the initial admin cannot be disabled"})
+			}
+			if *body.Disabled && rec.GetString("role") == rbac.RoleAdmin {
+				count, err := countActiveAdmins(app)
+				if err != nil {
+					return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to validate admins"})
+				}
+				if count <= 1 {
+					return e.JSON(http.StatusConflict, map[string]string{"error": "cannot disable the last active admin"})
+				}
+			}
+			rec.Set("disabled", *body.Disabled)
+		}
+		if err := app.Save(rec); err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+		return e.JSON(http.StatusOK, map[string]string{"status": "saved"})
+	}
+}
+
+func countActiveAdmins(app core.App) (int, error) {
+	records, err := app.FindAllRecords("users",
+		dbx.HashExp{"role": rbac.RoleAdmin, "disabled": false},
+	)
+	if err != nil {
+		return 0, err
+	}
+	return len(records), nil
 }
 
 func generateSecureToken() (string, error) {

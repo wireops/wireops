@@ -18,6 +18,7 @@ import (
 	gogitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
 	validation "github.com/go-ozzo/ozzo-validation/v4"
 	"github.com/pocketbase/dbx"
+	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
 	"gopkg.in/yaml.v3"
 
@@ -27,6 +28,7 @@ import (
 	"github.com/wireops/wireops/internal/git"
 	"github.com/wireops/wireops/internal/jobscheduler"
 	"github.com/wireops/wireops/internal/oidc"
+	"github.com/wireops/wireops/internal/rbac"
 	"github.com/wireops/wireops/internal/safepath"
 	"github.com/wireops/wireops/internal/secrets"
 	"github.com/wireops/wireops/internal/sync"
@@ -449,7 +451,7 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 	})
 
 	// Override password reset email to point to custom frontend route
-	app.OnMailerRecordPasswordResetSend("_superusers").BindFunc(func(e *core.MailerRecordEvent) error {
+	passwordResetHandler := func(e *core.MailerRecordEvent) error {
 		token, _ := e.Meta["token"].(string)
 		if token == "" {
 			return e.Next()
@@ -459,12 +461,15 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 		e.Message.HTML = buildPasswordResetEmailHTML(actionURL)
 		e.Message.Text = "Reset your wireops password by visiting: " + actionURL
 		return e.Next()
-	})
+	}
+	app.OnMailerRecordPasswordResetSend("_superusers").BindFunc(passwordResetHandler)
+	app.OnMailerRecordPasswordResetSend("users").BindFunc(passwordResetHandler)
 }
 
 func registerAuditHooks(app core.App) {
 	auditedCollections := map[string]string{
 		core.CollectionNameSuperusers: "user",
+		"api_keys":                    "api_key",
 		"app_settings":                "app_settings",
 		"invites":                     "invite",
 		"job_env_vars":                "job_env_var",
@@ -474,6 +479,9 @@ func registerAuditHooks(app core.App) {
 		"stack_env_vars":              "stack_env_var",
 		"stack_sync_events":           "stack_sync_events",
 		"stacks":                      "stack",
+		"service_accounts":            "service_account",
+		"sso_group_roles":             "sso_group_role",
+		"users":                       "user",
 		"worker_policies":             "worker_policy",
 		"workers":                     "worker",
 	}
@@ -508,6 +516,26 @@ func registerAuditHooks(app core.App) {
 		if !ok || shouldSkipRequestAudit(e.RequestEvent) {
 			return e.Next()
 		}
+		if e.Collection.Name == "users" {
+			if roleChanged(e.Record) && !requestHasAdminRole(e.RequestEvent) {
+				return apis.NewForbiddenError("only admins can change user roles", nil)
+			}
+			if e.Record.GetBool("protected") {
+				if roleChanged(e.Record) && e.Record.GetString("role") != rbac.RoleAdmin {
+					return apis.NewForbiddenError("the initial admin cannot be demoted", nil)
+				}
+				if disabledChanged(e.Record) && e.Record.GetBool("disabled") {
+					return apis.NewForbiddenError("the initial admin cannot be disabled", nil)
+				}
+			}
+			if disabledChanged(e.Record) && e.Record.GetBool("disabled") ||
+				(roleChanged(e.Record) && e.Record.GetString("role") != rbac.RoleAdmin &&
+					e.Record.Original().GetString("role") == rbac.RoleAdmin) {
+				if count, err := countActiveAdminsFromApp(app); err == nil && count <= 1 {
+					return apis.NewForbiddenError("cannot remove the last active admin", nil)
+				}
+			}
+		}
 		metadata := mergeMetadata(
 			audit.RequestMetadata(e.RequestEvent),
 			recordChangeMetadata(e.Record),
@@ -522,12 +550,27 @@ func registerAuditHooks(app core.App) {
 			Status:       status,
 			ErrorCode:    code,
 		})
+		if err == nil && (e.Collection.Name == "users" || e.Collection.Name == "service_accounts") && roleChanged(e.Record) {
+			audit.RecordRequest(app, e.RequestEvent, audit.Event{
+				Action:       resourceType + ".role_changed",
+				ResourceType: resourceType,
+				ResourceID:   e.Record.Id,
+				Metadata: map[string]any{
+					"old_role": e.Record.Original().GetString("role"),
+					"new_role": e.Record.GetString("role"),
+				},
+				Status: audit.StatusSuccess,
+			})
+		}
 		return err
 	})
 
 	app.OnRecordDeleteRequest().BindFunc(func(e *core.RecordRequestEvent) error {
 		if err := blockAuditLogMutation(e.Collection.Name); err != nil {
 			return err
+		}
+		if e.Collection.Name == "users" {
+			return apis.NewForbiddenError("users cannot be deleted; deactivate instead", nil)
 		}
 		resourceType, ok := auditedCollections[e.Collection.Name]
 		if !ok || shouldSkipRequestAudit(e.RequestEvent) {
@@ -625,6 +668,40 @@ func mergeMetadata(parts ...map[string]any) map[string]any {
 	}
 
 	return merged
+}
+
+func roleChanged(record *core.Record) bool {
+	if record == nil || record.Original() == nil {
+		return false
+	}
+	return record.GetString("role") != record.Original().GetString("role")
+}
+
+func disabledChanged(record *core.Record) bool {
+	if record == nil || record.Original() == nil {
+		return false
+	}
+	return record.GetBool("disabled") != record.Original().GetBool("disabled")
+}
+
+func countActiveAdminsFromApp(app core.App) (int, error) {
+	records, err := app.FindAllRecords("users",
+		dbx.HashExp{"role": rbac.RoleAdmin, "disabled": false},
+	)
+	if err != nil {
+		return 0, err
+	}
+	return len(records), nil
+}
+
+func requestHasAdminRole(req *core.RequestEvent) bool {
+	if req == nil || req.Auth == nil {
+		return false
+	}
+	if req.Auth.IsSuperuser() {
+		return true
+	}
+	return rbac.NormalizeRole(req.Auth.GetString("role")) == rbac.RoleAdmin
 }
 
 func valuesEqual(a, b any) bool {
@@ -861,11 +938,18 @@ func HandleSSOAuthRequest(requireEmailVerified bool) func(e *core.RecordAuthWith
 			return fmt.Errorf("auth: provider did not return email claim; ensure email scope/claim is present")
 		}
 
+		resolvedRole, err := resolveSSORoleFromGroups(e.App, e.OAuth2User.RawUser)
+		if err != nil {
+			log.Printf("[oidc] login rejected: no matching SSO group role for %s: %v", maskEmailForLog(e.OAuth2User.Email), err)
+			return err
+		}
+
 		if err := e.Next(); err != nil {
 			return err
 		}
 
 		if e.Record != nil {
+			e.Record.Set("role", resolvedRole)
 			e.Record.Set("elevate_consumed", false)
 			e.Record.Set("elevate_consumed_at", nil)
 
@@ -878,4 +962,77 @@ func HandleSSOAuthRequest(requireEmailVerified bool) func(e *core.RecordAuthWith
 
 		return nil
 	}
+}
+
+func resolveSSORoleFromGroups(app core.App, rawClaims map[string]any) (string, error) {
+	claimName := ssoGroupsClaimName(app)
+	groups := extractSSOGroups(rawClaims[claimName])
+	if len(groups) == 0 {
+		return "", fmt.Errorf("no groups found in claim %q", claimName)
+	}
+
+	mappings, err := app.FindAllRecords("sso_group_roles")
+	if err != nil {
+		return "", err
+	}
+	groupSet := make(map[string]struct{}, len(groups))
+	for _, group := range groups {
+		groupSet[group] = struct{}{}
+	}
+
+	var matchedRoles []string
+	for _, mapping := range mappings {
+		if _, ok := groupSet[mapping.GetString("group")]; ok {
+			matchedRoles = append(matchedRoles, mapping.GetString("role"))
+		}
+	}
+	if len(matchedRoles) == 0 {
+		return "", fmt.Errorf("no configured role mapping matched claim %q", claimName)
+	}
+	return rbac.HighestRole(matchedRoles...), nil
+}
+
+func ssoGroupsClaimName(app core.App) string {
+	records, err := app.FindAllRecords("app_settings")
+	if err == nil && len(records) > 0 {
+		if claim := strings.TrimSpace(records[0].GetString("sso_groups_claim")); claim != "" {
+			return claim
+		}
+	}
+	return "groups"
+}
+
+func extractSSOGroups(raw any) []string {
+	seen := map[string]struct{}{}
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			seen[value] = struct{}{}
+		}
+	}
+
+	switch v := raw.(type) {
+	case []any:
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				add(s)
+			}
+		}
+	case []string:
+		for _, item := range v {
+			add(item)
+		}
+	case string:
+		for _, item := range strings.FieldsFunc(v, func(r rune) bool {
+			return r == ',' || r == ' '
+		}) {
+			add(item)
+		}
+	}
+
+	groups := make([]string, 0, len(seen))
+	for group := range seen {
+		groups = append(groups, group)
+	}
+	return groups
 }

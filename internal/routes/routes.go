@@ -35,6 +35,7 @@ import (
 	"github.com/wireops/wireops/internal/job"
 	"github.com/wireops/wireops/internal/notify"
 	"github.com/wireops/wireops/internal/protocol"
+	"github.com/wireops/wireops/internal/rbac"
 	"github.com/wireops/wireops/internal/safepath"
 	"github.com/wireops/wireops/internal/sync"
 )
@@ -94,7 +95,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		}
 		scheduler.TriggerSync(id, "manual", 0, userID)
 		return e.JSON(http.StatusOK, map[string]string{"status": "triggered"})
-	})
+	}).BindFunc(rbac.Require(rbac.CapOperateStacks))
 
 	// Rollback a stack to a specific commit
 	r.POST("/api/custom/stacks/{id}/rollback", func(e *core.RequestEvent) error {
@@ -114,7 +115,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		}
 		scheduler.TriggerRollback(id, body.CommitSHA, userID)
 		return e.JSON(http.StatusOK, map[string]string{"status": "triggered"})
-	})
+	}).BindFunc(rbac.Require(rbac.CapOperateStacks))
 
 	// Get webhook URL for a stack
 	r.GET("/api/custom/stacks/{id}/webhook-url", func(e *core.RequestEvent) error {
@@ -124,7 +125,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		}
 		webhookURL := config.GetWebhookURL(id)
 		return e.JSON(http.StatusOK, map[string]string{"webhook_url": webhookURL})
-	})
+	}).BindFunc(rbac.Require(rbac.CapOperateStacks))
 
 	// Webhook trigger for a stack
 	r.POST("/api/custom/webhook/{id}", func(e *core.RequestEvent) error {
@@ -166,7 +167,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		}
 
 		return nil
-	})
+	}).BindFunc(rbac.Require(rbac.CapViewLogs))
 
 	// Force redeploy a stack with recreate options
 	r.POST("/api/custom/stacks/{id}/force-redeploy", func(e *core.RequestEvent) error {
@@ -191,7 +192,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		}
 		scheduler.TriggerForceRedeploy(stackID, body.RecreateContainers, body.RecreateVolumes, body.RecreateNetworks, userID)
 		return e.JSON(http.StatusOK, map[string]string{"status": "triggered"})
-	})
+	}).BindFunc(rbac.Require(rbac.CapOperateStacks))
 
 	// Get stack services (live container statuses from Docker)
 	r.GET("/api/custom/stacks/{id}/services", func(e *core.RequestEvent) error {
@@ -247,7 +248,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			})
 		}
 		return e.JSON(http.StatusOK, result)
-	})
+	}).BindFunc(rbac.Require(rbac.CapViewStacks))
 
 	// Get stack resources (volumes and networks) from the agent or local Docker
 	r.GET("/api/custom/stacks/{id}/resources", func(e *core.RequestEvent) error {
@@ -296,7 +297,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			return e.JSON(http.StatusOK, empty)
 		}
 		return e.JSON(http.StatusOK, resources)
-	})
+	}).BindFunc(rbac.Require(rbac.CapViewStacks))
 
 	// Get container stats (CPU, memory, network)
 	r.GET("/api/custom/stacks/{id}/container/{containerId}/stats", func(e *core.RequestEvent) error {
@@ -324,7 +325,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
 		return e.JSON(http.StatusOK, stats)
-	})
+	}).BindFunc(rbac.Require(rbac.CapViewStacks))
 
 	// Get container logs (last N lines)
 	r.GET("/api/custom/stacks/{id}/container/{containerId}/logs", func(e *core.RequestEvent) error {
@@ -383,7 +384,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		}
 
 		return e.JSON(http.StatusOK, map[string]string{"logs": buf.String()})
-	})
+	}).BindFunc(rbac.Require(rbac.CapViewLogs))
 
 	// Get last N commits for a repository
 	r.GET("/api/custom/repositories/{id}/commits", func(e *core.RequestEvent) error {
@@ -449,7 +450,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		})
 
 		return e.JSON(http.StatusOK, commits)
-	})
+	}).BindFunc(rbac.Require(rbac.CapViewStacks))
 
 	// Get files for a repository (filtered to .yml and .yaml)
 	r.GET("/api/custom/repositories/{id}/files", func(e *core.RequestEvent) error {
@@ -518,7 +519,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		}
 
 		return e.JSON(http.StatusOK, files)
-	})
+	}).BindFunc(rbac.Require(rbac.CapManageRepos))
 
 	// listYAMLFiles walks repoDir and returns relative paths of .yml/.yaml files
 	// accepted by the given filter function. Candidate paths are collected first,
@@ -619,7 +620,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			files = []string{}
 		}
 		return e.JSON(http.StatusOK, files)
-	})
+	}).BindFunc(rbac.Require(rbac.CapManageRepos))
 
 	// Get job files for a repository (only files with title, image, and cron fields)
 	r.GET("/api/custom/repositories/{id}/job-files", func(e *core.RequestEvent) error {
@@ -635,7 +636,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			files = []string{}
 		}
 		return e.JSON(http.StatusOK, files)
-	})
+	}).BindFunc(rbac.Require(rbac.CapManageRepos))
 
 	// Test git credentials
 	r.POST("/api/custom/credentials/test", func(e *core.RequestEvent) error {
@@ -699,7 +700,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		}
 
 		return e.JSON(http.StatusOK, map[string]string{"success": "true"})
-	})
+	}).BindFunc(rbac.Require(rbac.CapManageRepos))
 
 	// SSH keyscan
 	r.POST("/api/custom/credentials/keyscan", func(e *core.RequestEvent) error {
@@ -765,7 +766,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			return e.JSON(http.StatusOK, map[string]string{"success": "false", "error": err.Error()})
 		}
 		return e.JSON(http.StatusOK, map[string]string{"success": "true", "result": result})
-	})
+	}).BindFunc(rbac.Require(rbac.CapManageRepos))
 
 	// Get docker-compose file content
 	r.GET("/api/custom/stacks/{id}/compose", func(e *core.RequestEvent) error {
@@ -846,7 +847,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		}
 
 		return e.JSON(http.StatusOK, map[string]string{"content": string(data), "filename": composeFile})
-	})
+	}).BindFunc(rbac.Require(rbac.CapViewStacks))
 
 	// Stop a container
 	r.POST("/api/custom/stacks/{id}/container/stop", func(e *core.RequestEvent) error {
@@ -886,7 +887,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		}
 
 		return e.JSON(http.StatusOK, map[string]string{"status": "stopped"})
-	})
+	}).BindFunc(rbac.Require(rbac.CapOperateStacks))
 
 	// Restart a container
 	r.POST("/api/custom/stacks/{id}/container/restart", func(e *core.RequestEvent) error {
@@ -926,7 +927,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		}
 
 		return e.JSON(http.StatusOK, map[string]string{"status": "restarted"})
-	})
+	}).BindFunc(rbac.Require(rbac.CapOperateStacks))
 
 	// Delete a stack: teardown via agent first, then remove DB records
 	r.DELETE("/api/custom/stacks/{id}", func(e *core.RequestEvent) error {
@@ -1068,7 +1069,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		}
 
 		return e.JSON(http.StatusOK, map[string]string{"status": "deleted", "compose_output": teardownOutput})
-	})
+	}).BindFunc(rbac.Require(rbac.CapOperateStacks))
 
 	// Transfer a stack from its current worker to another worker
 	r.POST("/api/custom/stacks/{id}/transfer", func(e *core.RequestEvent) error {
@@ -1113,7 +1114,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		}
 		scheduler.TriggerTransfer(stackID, body.TargetWorkerID, userID)
 		return e.JSON(http.StatusAccepted, map[string]string{"status": "transfer_started"})
-	})
+	}).BindFunc(rbac.Require(rbac.CapOperateStacks))
 
 	// List orphan directories in repos workspace
 	r.GET("/api/custom/orphans", func(e *core.RequestEvent) error {
@@ -1166,7 +1167,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			orphans = []orphanInfo{}
 		}
 		return e.JSON(http.StatusOK, orphans)
-	})
+	}).BindFunc(rbac.Require(rbac.CapManageSettings))
 
 	// Get system info
 	r.GET("/api/custom/system/info", func(e *core.RequestEvent) error {
@@ -1210,7 +1211,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			"disk_usage":      diskUsage,
 			"workspace_path":  workspace,
 		})
-	})
+	}).BindFunc(rbac.Require(rbac.CapViewStacks))
 
 	// Purge an orphan directory (compose down -v + remove dir)
 	r.DELETE("/api/custom/orphans/{dirName}", func(e *core.RequestEvent) error {
@@ -1246,7 +1247,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		}
 
 		return e.JSON(http.StatusOK, map[string]string{"status": "purged"})
-	})
+	}).BindFunc(rbac.Require(rbac.CapManageSettings))
 
 	// --- Sync event webhook (global singleton) ---
 
@@ -1269,7 +1270,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			"ntfy_topic":    rec.GetString("ntfy_topic"),
 			"ntfy_template": rec.GetString("ntfy_template"),
 		})
-	})
+	}).BindFunc(rbac.Require(rbac.CapManageSettings))
 
 	// PUT: upsert provider config (enabled flag is managed separately via PATCH)
 	r.PUT("/api/custom/sync-events-webhook", func(e *core.RequestEvent) error {
@@ -1318,7 +1319,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
 		return e.JSON(http.StatusOK, map[string]string{"status": "saved"})
-	})
+	}).BindFunc(rbac.Require(rbac.CapManageSettings))
 
 	// PATCH: toggle notifications enabled at the settings level
 	r.PATCH("/api/custom/sync-events-webhook/enabled", func(e *core.RequestEvent) error {
@@ -1346,7 +1347,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
 		return e.JSON(http.StatusOK, map[string]string{"status": "saved"})
-	})
+	}).BindFunc(rbac.Require(rbac.CapManageSettings))
 
 	// DELETE: remove config
 	r.DELETE("/api/custom/sync-events-webhook", func(e *core.RequestEvent) error {
@@ -1358,7 +1359,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
 		return e.JSON(http.StatusOK, map[string]string{"status": "deleted"})
-	})
+	}).BindFunc(rbac.Require(rbac.CapManageSettings))
 
 	// Discover unmanaged Docker Compose projects on a given worker host
 	r.GET("/api/custom/stacks/import/discover", func(e *core.RequestEvent) error {
@@ -1387,7 +1388,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to decode worker response"})
 		}
 		return e.JSON(http.StatusOK, res.Projects)
-	})
+	}).BindFunc(rbac.Require(rbac.CapOperateStacks))
 
 	// Import a local Docker Compose stack into wireops
 	r.POST("/api/custom/stacks/import", func(e *core.RequestEvent) error {
@@ -1460,7 +1461,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		scheduler.TriggerSync(stack.Id, "manual", 0, userID)
 		log.Printf("[routes] import stack=%s worker=%s path=%s", stack.Id, body.WorkerID, body.ImportPath)
 		return e.JSON(http.StatusOK, map[string]string{"id": stack.Id, "status": "import_triggered"})
-	})
+	}).BindFunc(rbac.Require(rbac.CapOperateStacks))
 
 	// API custom integrations
 	r.GET("/api/custom/integrations", func(e *core.RequestEvent) error {
@@ -1504,7 +1505,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			out = append(out, item)
 		}
 		return e.JSON(http.StatusOK, out)
-	})
+	}).BindFunc(rbac.Require(rbac.CapManageSettings))
 
 	r.PUT("/api/custom/integrations/{slug}", func(e *core.RequestEvent) error {
 		slug := e.Request.PathValue("slug")
@@ -1548,7 +1549,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			"enabled": body.Enabled,
 			"config":  body.Config,
 		})
-	})
+	}).BindFunc(rbac.Require(rbac.CapManageSettings))
 
 	r.DELETE("/api/custom/integrations/{slug}", func(e *core.RequestEvent) error {
 		slug := e.Request.PathValue("slug")
@@ -1566,7 +1567,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
 		return e.JSON(http.StatusOK, map[string]string{"status": "deleted"})
-	})
+	}).BindFunc(rbac.Require(rbac.CapManageSettings))
 
 	r.GET("/api/custom/stacks/{id}/integration-actions", func(e *core.RequestEvent) error {
 		stackID := e.Request.PathValue("id")
@@ -1652,7 +1653,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		}
 
 		return e.JSON(http.StatusOK, result)
-	})
+	}).BindFunc(rbac.Require(rbac.CapViewStacks))
 
 	RegisterUserRoutes(r, app)
 
@@ -1717,5 +1718,5 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		}
 
 		return e.JSON(http.StatusOK, map[string]string{"status": "dispatched"})
-	})
+	}).BindFunc(rbac.Require(rbac.CapManageSettings))
 }

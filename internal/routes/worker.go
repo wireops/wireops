@@ -15,6 +15,7 @@ import (
 	"github.com/wireops/wireops/internal/audit"
 	"github.com/wireops/wireops/internal/job"
 	"github.com/wireops/wireops/internal/policy"
+	"github.com/wireops/wireops/internal/rbac"
 	"github.com/wireops/wireops/internal/sync"
 	"github.com/wireops/wireops/internal/worker"
 )
@@ -31,10 +32,6 @@ type workerJobSummary struct {
 func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, workerSvc *worker.Service, dispatcher sync.WorkerDispatcher, workerServer *worker.WorkerServer) {
 
 	r.POST("/api/custom/worker/tokens", func(e *core.RequestEvent) error {
-		if !e.HasSuperuserAuth() {
-			return e.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized. Admin only."})
-		}
-
 		createdBy := ""
 		if e.Auth != nil {
 			createdBy = e.Auth.Id
@@ -52,13 +49,9 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 			"status":     record.GetString("status"),
 			"expires_at": record.GetDateTime("expires_at").String(),
 		})
-	})
+	}).BindFunc(rbac.Require(rbac.CapManageSecurity))
 
 	r.GET("/api/custom/workers", func(e *core.RequestEvent) error {
-		if !e.HasSuperuserAuth() {
-			return e.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized. Admin only."})
-		}
-
 		records, err := app.FindAllRecords("workers")
 		if err != nil {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -139,13 +132,9 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 		}
 
 		return e.JSON(http.StatusOK, result)
-	})
+	}).BindFunc(rbac.Require(rbac.CapManageWorkers))
 
 	r.POST("/api/custom/workers/{id}/revoke", func(e *core.RequestEvent) error {
-		if !e.HasSuperuserAuth() {
-			return e.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized. Admin only."})
-		}
-
 		workerID := e.Request.PathValue("id")
 
 		if _, err := app.FindRecordById("workers", workerID); err != nil {
@@ -169,16 +158,13 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 		workerServer.DisconnectWorker(workerID)
 
 		return e.JSON(http.StatusOK, map[string]string{"status": "revoked"})
-	})
+	}).BindFunc(rbac.Require(rbac.CapManageWorkers))
 
 	// --- Per-worker policy ---
 
 	// GET /api/custom/workers/{id}/policy
 	// Returns the effective resolved policy for this worker plus its local override fields.
 	r.GET("/api/custom/workers/{id}/policy", func(e *core.RequestEvent) error {
-		if !e.HasSuperuserAuth() {
-			return e.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized. Admin only."})
-		}
 		workerID := e.Request.PathValue("id")
 		rec, err := app.FindRecordById("workers", workerID)
 		if err != nil {
@@ -220,14 +206,11 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 			"block_host_volumes":    flagsOut.BlockHostVolumes,
 			"effective":             effective.ToJSON(),
 		})
-	})
+	}).BindFunc(rbac.Require(rbac.CapManageSettings))
 
 	// PUT /api/custom/workers/{id}/policy
 	// Saves or updates the per-worker policy override.
 	r.PUT("/api/custom/workers/{id}/policy", func(e *core.RequestEvent) error {
-		if !e.HasSuperuserAuth() {
-			return e.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized. Admin only."})
-		}
 		workerID := e.Request.PathValue("id")
 		rec, err := app.FindRecordById("workers", workerID)
 		if err != nil {
@@ -261,14 +244,11 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to save worker policy: " + err.Error()})
 		}
 		return e.JSON(http.StatusOK, map[string]string{"status": "saved"})
-	})
+	}).BindFunc(rbac.Require(rbac.CapManageSettings))
 
 	// DELETE /api/custom/workers/{id}/policy
 	// Resets the per-worker policy to inherit-from-global (clears local overrides).
 	r.DELETE("/api/custom/workers/{id}/policy", func(e *core.RequestEvent) error {
-		if !e.HasSuperuserAuth() {
-			return e.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized. Admin only."})
-		}
 		workerID := e.Request.PathValue("id")
 		rec, err := app.FindRecordById("workers", workerID)
 		if err != nil {
@@ -285,28 +265,21 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to reset worker policy: " + err.Error()})
 		}
 		return e.JSON(http.StatusOK, map[string]string{"status": "reset"})
-	})
+	}).BindFunc(rbac.Require(rbac.CapManageSettings))
 
 	// --- Global worker policy (Settings) ---
 
 	// GET /api/custom/settings/worker-policy
 	r.GET("/api/custom/settings/worker-policy", func(e *core.RequestEvent) error {
-		if !e.HasSuperuserAuth() {
-			return e.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized. Admin only."})
-		}
 		p, err := policy.LoadGlobal(app)
 		if err != nil {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
 		return e.JSON(http.StatusOK, p.ToJSON())
-	})
+	}).BindFunc(rbac.Require(rbac.CapManageSettings))
 
 	// PUT /api/custom/settings/worker-policy
 	r.PUT("/api/custom/settings/worker-policy", func(e *core.RequestEvent) error {
-		if !e.HasSuperuserAuth() {
-			return e.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized. Admin only."})
-		}
-
 		var body policy.PolicyJSON
 		if err := json.NewDecoder(e.Request.Body).Decode(&body); err != nil {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid JSON body"})
@@ -349,15 +322,12 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to save global policy: " + err.Error()})
 		}
 		return e.JSON(http.StatusOK, map[string]string{"status": "saved"})
-	})
+	}).BindFunc(rbac.Require(rbac.CapManageSettings))
 
 	// --- App Settings ---
 
 	// GET /api/custom/settings/app-settings
 	r.GET("/api/custom/settings/app-settings", func(e *core.RequestEvent) error {
-		if !e.HasSuperuserAuth() {
-			return e.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized. Admin only."})
-		}
 		records, err := app.FindAllRecords("app_settings")
 		if err != nil {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -369,6 +339,7 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 				"timezone":               rec.GetString("timezone"),
 				"audit_retention_days":   audit.AuditRetentionDays(app),
 				"job_run_retention_days": audit.JobRunRetentionDays(app),
+				"sso_groups_claim":       rec.GetString("sso_groups_claim"),
 			})
 		}
 		return e.JSON(http.StatusOK, map[string]interface{}{
@@ -376,19 +347,17 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 			"timezone":               "",
 			"audit_retention_days":   audit.DefaultAuditRetentionDays,
 			"job_run_retention_days": audit.DefaultJobRunRetentionDays,
+			"sso_groups_claim":       "groups",
 		})
-	})
+	}).BindFunc(rbac.Require(rbac.CapManageSettings))
 
 	// PUT /api/custom/settings/app-settings
 	r.PUT("/api/custom/settings/app-settings", func(e *core.RequestEvent) error {
-		if !e.HasSuperuserAuth() {
-			return e.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized. Admin only."})
-		}
-
 		var body struct {
 			Timezone            *string `json:"timezone"`
-			AuditRetentionDays  *int   `json:"audit_retention_days"`
-			JobRunRetentionDays *int   `json:"job_run_retention_days"`
+			AuditRetentionDays  *int    `json:"audit_retention_days"`
+			JobRunRetentionDays *int    `json:"job_run_retention_days"`
+			SSOGroupsClaim      *string `json:"sso_groups_claim"`
 		}
 		if err := json.NewDecoder(e.Request.Body).Decode(&body); err != nil {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid JSON body"})
@@ -432,6 +401,11 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 		} else if rec.GetInt("job_run_retention_days") <= 0 {
 			rec.Set("job_run_retention_days", audit.DefaultJobRunRetentionDays)
 		}
+		if body.SSOGroupsClaim != nil {
+			rec.Set("sso_groups_claim", *body.SSOGroupsClaim)
+		} else if rec.GetString("sso_groups_claim") == "" {
+			rec.Set("sso_groups_claim", "groups")
+		}
 
 		if err := app.Save(rec); err != nil {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to save app settings: " + err.Error()})
@@ -441,8 +415,9 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 			"timezone":               rec.GetString("timezone"),
 			"audit_retention_days":   audit.AuditRetentionDays(app),
 			"job_run_retention_days": audit.JobRunRetentionDays(app),
+			"sso_groups_claim":       rec.GetString("sso_groups_claim"),
 		})
-	})
+	}).BindFunc(rbac.Require(rbac.CapManageSettings))
 }
 
 func validateRetentionDays(auditDays, jobRunDays *int) error {

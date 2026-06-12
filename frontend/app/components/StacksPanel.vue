@@ -7,6 +7,7 @@ const { getWorkers, listOrphans, purgeOrphan } = useApi()
 const { subscribe } = useRealtime()
 const toast = useToast()
 const { announce } = useA11yAnnouncer()
+const { isViewer } = usePermissions()
 
 const { data: stacks, refresh } = useAsyncData('stacks_list', () =>
   $pb.collection('stacks').getFullList({ sort: '-updated', expand: 'repository,worker' })
@@ -230,7 +231,7 @@ async function handlePurge(dirName: string) {
           <span class="hidden sm:inline">Updating...</span>
         </div>
       </div>
-      <div class="flex items-center gap-2">
+      <div v-if="!isViewer" class="flex items-center gap-2">
         <UButton icon="i-lucide-package-plus" label="Import" variant="outline" @click="showImport = true" />
         <UButton icon="i-lucide-plus" label="Add Stack" class="shadow-[0_0_16px_rgba(255,198,0,0.35)] hover:shadow-[0_0_24px_rgba(255,198,0,0.55)] transition-shadow" @click="openCreate()" />
       </div>
@@ -244,7 +245,7 @@ async function handlePurge(dirName: string) {
             <span v-if="stacks?.length" class="ml-1.5 text-yellow-400">({{ stacks.length }})</span>
           </h3>
           <div class="flex items-center gap-3">
-            <UButton icon="i-lucide-package-search" label="Manage Orphans" variant="outline" color="warning" size="xs" class="hidden sm:inline-flex" @click="openOrphans" />
+            <UButton v-if="!isViewer" icon="i-lucide-package-search" label="Manage Orphans" variant="outline" color="warning" size="xs" class="hidden sm:inline-flex" @click="openOrphans" />
             <UTooltip text="Refresh">
               <UButton icon="i-lucide-refresh-cw" variant="ghost" size="xs" color="neutral" aria-label="Refresh stacks" @click="refreshList()" />
             </UTooltip>
@@ -304,7 +305,7 @@ async function handlePurge(dirName: string) {
             :class="cardAccentClass(stack.status)"
           >
             <div class="relative">
-              <div class="absolute right-0 top-0 z-10 flex shrink-0 items-center gap-1">
+              <div v-if="!isViewer" class="absolute right-0 top-0 z-10 flex shrink-0 items-center gap-1">
                 <UButton
                   icon="i-lucide-refresh-cw"
                   variant="soft"

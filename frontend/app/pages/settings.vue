@@ -3,6 +3,17 @@ import { DateFormatter, getLocalTimeZone, today } from '@internationalized/date'
 
 const { $pb } = useNuxtApp()
 const toast = useToast()
+const { isAdmin, isViewer } = usePermissions()
+
+if (isViewer.value) {
+  navigateTo('/')
+}
+
+const roleOptions = [
+  { label: 'Viewer', value: 'viewer' },
+  { label: 'Operator', value: 'operator' },
+  { label: 'Admin', value: 'admin' },
+]
 
 const keyscanHost = ref('')
 const keyscanPort = ref(22)
@@ -15,6 +26,7 @@ const appSettings = ref({
   timezone: '',
   audit_retention_days: 30,
   job_run_retention_days: 7,
+  sso_groups_claim: 'groups',
 })
 const appSettingsLoading = ref(false)
 const appSettingsSaving = ref(false)
@@ -48,6 +60,7 @@ async function loadAppSettings() {
       appSettings.value.timezone = data.timezone || 'system'
       appSettings.value.audit_retention_days = data.audit_retention_days || 30
       appSettings.value.job_run_retention_days = data.job_run_retention_days || 7
+      appSettings.value.sso_groups_claim = data.sso_groups_claim || 'groups'
       appSettingsLoaded.value = true
     }
   } catch (e) {
@@ -65,12 +78,14 @@ async function handleSaveAppSettings(options: { title?: string; description?: st
     if (appSettingsLoaded.value) {
       payload.audit_retention_days = appSettings.value.audit_retention_days
       payload.job_run_retention_days = appSettings.value.job_run_retention_days
+      payload.sso_groups_claim = appSettings.value.sso_groups_claim || 'groups'
     }
     const data = await saveAppSettings(payload)
     if (data) {
       appSettings.value.id = data.id
       appSettings.value.audit_retention_days = data.audit_retention_days || 30
       appSettings.value.job_run_retention_days = data.job_run_retention_days || 7
+      appSettings.value.sso_groups_claim = data.sso_groups_claim || appSettings.value.sso_groups_claim || 'groups'
       appSettingsLoaded.value = true
     }
     toast.add({
@@ -424,7 +439,7 @@ async function handleChangePassword() {
       toast.add({ title: 'Session invalid', description: 'Please log in again.', color: 'error' })
       return
     }
-    await $pb.collection('_superusers').update(userId, {
+    await $pb.collection('users').update(userId, {
       oldPassword: changePasswordForm.value.oldPassword,
       password: changePasswordForm.value.password,
       passwordConfirm: changePasswordForm.value.passwordConfirm,
@@ -442,12 +457,13 @@ async function handleChangePassword() {
 const users = ref<any[]>([])
 const usersLoading = ref(false)
 const inviteEmail = ref('')
+const inviteRole = ref('viewer')
 const inviteLoading = ref(false)
 
 async function loadUsers() {
   usersLoading.value = true
   try {
-    users.value = await $pb.collection('_superusers').getFullList({ sort: 'created' })
+    users.value = await $pb.collection('users').getFullList({ sort: 'created' })
   } catch (e: any) {
     toast.add({ title: 'Failed to load users', description: e?.message, color: 'error' })
   } finally {
@@ -466,11 +482,12 @@ async function sendInvite() {
         Authorization: `Bearer ${$pb.authStore.token}`,
         'X-Wireops-Origin': 'ui',
       },
-      body: JSON.stringify({ email: inviteEmail.value }),
+      body: JSON.stringify({ email: inviteEmail.value, role: inviteRole.value }),
     })
     const data = await res.json()
     if (!res.ok) throw new Error(data.error)
     inviteEmail.value = ''
+    inviteRole.value = 'viewer'
     toast.add({ title: 'Invitation sent', color: 'success' })
   } catch (e: any) {
     toast.add({ title: 'Failed to send invite', description: e?.message, color: 'error' })
@@ -479,16 +496,162 @@ async function sendInvite() {
   }
 }
 
-async function deleteUser(user: any) {
-  if (!window.confirm(`Are you sure you want to remove user ${user.email}?`)) {
+async function toggleUserDisabled(user: any) {
+  const action = user.disabled ? 'enable' : 'disable'
+  if (!window.confirm(`Are you sure you want to ${action} user ${user.email}?`)) {
     return
   }
   try {
-    await $pb.collection('_superusers').delete(user.id)
-    await loadUsers()
-    toast.add({ title: 'User removed', color: 'success' })
+    const res = await fetch(`${$pb.baseURL}/api/custom/users/${user.id}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${$pb.authStore.token}`,
+        'X-Wireops-Origin': 'ui',
+      },
+      body: JSON.stringify({ disabled: !user.disabled }),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error)
+    user.disabled = !user.disabled
+    toast.add({ title: user.disabled ? 'User disabled' : 'User enabled', color: 'success' })
   } catch (e: any) {
-    toast.add({ title: 'Failed to remove user', description: e?.message, color: 'error' })
+    toast.add({ title: `Failed to ${action} user`, description: e?.message, color: 'error' })
+    await loadUsers()
+  }
+}
+
+async function updateUserRole(user: any, role: string) {
+  try {
+    const res = await fetch(`${$pb.baseURL}/api/custom/users/${user.id}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${$pb.authStore.token}`,
+        'X-Wireops-Origin': 'ui',
+      },
+      body: JSON.stringify({ role }),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error)
+    user.role = role
+    toast.add({ title: 'Role updated', color: 'success' })
+  } catch (e: any) {
+    toast.add({ title: 'Failed to update role', description: e?.message, color: 'error' })
+    await loadUsers()
+  }
+}
+
+// --- Service Accounts & SSO Group Roles ---
+const serviceAccounts = ref<any[]>([])
+const serviceAccountsLoading = ref(false)
+const serviceAccountForm = ref({ name: '', description: '', role: 'viewer' })
+const createdApiKey = ref('')
+const apiKeyName = ref('default')
+
+const ssoGroupRoles = ref<any[]>([])
+const ssoGroupRolesLoading = ref(false)
+const ssoGroupRoleForm = ref({ group: '', role: 'viewer' })
+
+async function apiFetch(path: string, options: RequestInit = {}) {
+  const res = await fetch(`${$pb.baseURL}${path}`, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${$pb.authStore.token}`,
+      'X-Wireops-Origin': 'ui',
+      ...(options.headers || {}),
+    },
+  })
+  const data = await res.json().catch(() => null)
+  if (!res.ok) throw new Error(data?.error || 'request failed')
+  return data
+}
+
+async function loadServiceAccounts() {
+  if (!isAdmin.value) return
+  serviceAccountsLoading.value = true
+  try {
+    serviceAccounts.value = await apiFetch('/api/custom/service-accounts')
+  } catch (e: any) {
+    toast.add({ title: 'Failed to load service accounts', description: e?.message, color: 'error' })
+  } finally {
+    serviceAccountsLoading.value = false
+  }
+}
+
+async function createServiceAccount() {
+  try {
+    await apiFetch('/api/custom/service-accounts', {
+      method: 'POST',
+      body: JSON.stringify({ ...serviceAccountForm.value, enabled: true }),
+    })
+    serviceAccountForm.value = { name: '', description: '', role: 'viewer' }
+    await loadServiceAccounts()
+    toast.add({ title: 'Service account created', color: 'success' })
+  } catch (e: any) {
+    toast.add({ title: 'Failed to create service account', description: e?.message, color: 'error' })
+  }
+}
+
+async function issueApiKey(account: any) {
+  try {
+    const data = await apiFetch(`/api/custom/service-accounts/${account.id}/keys`, {
+      method: 'POST',
+      body: JSON.stringify({ name: apiKeyName.value || 'default' }),
+    })
+    createdApiKey.value = data.api_key
+    apiKeyName.value = 'default'
+    await loadServiceAccounts()
+    toast.add({ title: 'API key issued', description: 'Copy it now. It will not be shown again.', color: 'success' })
+  } catch (e: any) {
+    toast.add({ title: 'Failed to issue API key', description: e?.message, color: 'error' })
+  }
+}
+
+async function revokeApiKey(account: any, key: any) {
+  try {
+    await apiFetch(`/api/custom/service-accounts/${account.id}/keys/${key.id}`, { method: 'DELETE' })
+    await loadServiceAccounts()
+    toast.add({ title: 'API key revoked', color: 'success' })
+  } catch (e: any) {
+    toast.add({ title: 'Failed to revoke API key', description: e?.message, color: 'error' })
+  }
+}
+
+async function loadSSOGroupRoles() {
+  if (!isAdmin.value) return
+  ssoGroupRolesLoading.value = true
+  try {
+    ssoGroupRoles.value = await apiFetch('/api/custom/sso-group-roles')
+  } catch (e: any) {
+    toast.add({ title: 'Failed to load SSO group mappings', description: e?.message, color: 'error' })
+  } finally {
+    ssoGroupRolesLoading.value = false
+  }
+}
+
+async function createSSOGroupRole() {
+  try {
+    await apiFetch('/api/custom/sso-group-roles', {
+      method: 'POST',
+      body: JSON.stringify(ssoGroupRoleForm.value),
+    })
+    ssoGroupRoleForm.value = { group: '', role: 'viewer' }
+    await loadSSOGroupRoles()
+    toast.add({ title: 'SSO group mapping saved', color: 'success' })
+  } catch (e: any) {
+    toast.add({ title: 'Failed to save SSO mapping', description: e?.message, color: 'error' })
+  }
+}
+
+async function deleteSSOGroupRole(mapping: any) {
+  try {
+    await apiFetch(`/api/custom/sso-group-roles/${mapping.id}`, { method: 'DELETE' })
+    await loadSSOGroupRoles()
+    toast.add({ title: 'SSO group mapping deleted', color: 'success' })
+  } catch (e: any) {
+    toast.add({ title: 'Failed to delete SSO mapping', description: e?.message, color: 'error' })
   }
 }
 
@@ -669,6 +832,7 @@ const auditActorTypeOptions = [
   { label: 'Any actor', value: 'all' },
   { label: 'Anonymous', value: 'anonymous' },
   { label: 'User', value: 'user' },
+  { label: 'Agent', value: 'agent' },
   { label: 'System', value: 'system' },
   { label: 'Worker', value: 'worker' },
 ]
@@ -677,6 +841,7 @@ const auditOriginOptions = [
   { label: 'Any origin', value: 'all' },
   { label: 'UI', value: 'ui' },
   { label: 'API', value: 'api' },
+  { label: 'API Key', value: 'api_key' },
   { label: 'Webhook', value: 'webhook' },
   { label: 'Setup', value: 'setup' },
   { label: 'System', value: 'system' },
@@ -777,6 +942,10 @@ watch(activeTab, (val) => {
   if (val === 'integrations') loadIntegrations()
   if (val === 'worker-policies') loadWorkerPolicy()
   if (val === 'audit') loadAuditLogs()
+  if (val === 'security') {
+    loadServiceAccounts()
+    loadSSOGroupRoles()
+  }
 }, { immediate: true })
 </script>
 
@@ -878,6 +1047,82 @@ watch(activeTab, (val) => {
           <UButton type="submit" label="Update Password" icon="i-lucide-check" :loading="changePasswordLoading" />
         </form>
       </UCard>
+
+      <UCard v-if="isAdmin">
+        <template #header>
+          <h3 class="font-semibold">SSO Group Role Mapping</h3>
+          <p class="text-xs text-gray-500 mt-0.5">Map identity provider groups to fixed WireOps roles. No match means SSO login is denied.</p>
+        </template>
+        <div class="space-y-4">
+          <UFormField label="Groups Claim">
+            <div class="flex gap-2">
+              <UInput v-model="appSettings.sso_groups_claim" placeholder="groups" class="max-w-sm" />
+              <UButton label="Save Claim" :loading="appSettingsSaving" @click="handleSaveAppSettings({ title: 'SSO claim saved', description: 'SSO group claim mapping was updated.' })" />
+            </div>
+          </UFormField>
+          <form class="flex flex-col gap-2 sm:flex-row" @submit.prevent="createSSOGroupRole">
+            <UInput v-model="ssoGroupRoleForm.group" placeholder="wireops-admins" class="flex-1" required />
+            <USelectMenu v-model="ssoGroupRoleForm.role" :items="roleOptions" value-key="value" class="w-full sm:w-40" />
+            <UButton type="submit" label="Add Mapping" icon="i-lucide-plus" />
+          </form>
+          <div v-if="ssoGroupRolesLoading" class="text-sm text-gray-500">Loading mappings...</div>
+          <ul v-else class="divide-y divide-gray-100 dark:divide-gray-800">
+            <li v-for="mapping in ssoGroupRoles" :key="mapping.id" class="flex items-center justify-between py-3">
+              <div>
+                <p class="text-sm font-medium">{{ mapping.group }}</p>
+                <p class="text-xs text-gray-500">Role: {{ mapping.role }}</p>
+              </div>
+              <UButton icon="i-lucide-trash-2" size="xs" variant="ghost" color="error" @click="deleteSSOGroupRole(mapping)" />
+            </li>
+          </ul>
+        </div>
+      </UCard>
+
+      <UCard v-if="isAdmin">
+        <template #header>
+          <h3 class="font-semibold">Service Accounts & API Keys</h3>
+          <p class="text-xs text-gray-500 mt-0.5">Programmatic access for agents and external clients. API keys inherit the service account role.</p>
+        </template>
+        <div class="space-y-4">
+          <UAlert
+            v-if="createdApiKey"
+            color="warning"
+            title="Copy this API key now"
+            :description="createdApiKey"
+            icon="i-lucide-key-round"
+          />
+          <form class="grid gap-2 md:grid-cols-[1fr_1fr_160px_auto]" @submit.prevent="createServiceAccount">
+            <UInput v-model="serviceAccountForm.name" placeholder="automation-bot" required />
+            <UInput v-model="serviceAccountForm.description" placeholder="Description" />
+            <USelectMenu v-model="serviceAccountForm.role" :items="roleOptions" value-key="value" />
+            <UButton type="submit" label="Create" icon="i-lucide-plus" />
+          </form>
+          <div v-if="serviceAccountsLoading" class="text-sm text-gray-500">Loading service accounts...</div>
+          <div v-else-if="serviceAccounts.length === 0" class="text-sm text-gray-500">No service accounts yet.</div>
+          <div v-else class="space-y-3">
+            <div v-for="account in serviceAccounts" :key="account.id" class="rounded-lg border border-gray-200 p-3 dark:border-gray-800">
+              <div class="flex items-start justify-between gap-3">
+                <div>
+                  <p class="text-sm font-medium">{{ account.name }}</p>
+                  <p class="text-xs text-gray-500">{{ account.description || 'No description' }}</p>
+                  <p v-if="account.created_by_email" class="text-xs text-gray-400 mt-0.5">Created by {{ account.created_by_email }}</p>
+                  <UBadge :label="account.role" color="primary" variant="subtle" size="xs" class="mt-2" />
+                </div>
+                <div class="flex gap-2">
+                  <UInput v-model="apiKeyName" placeholder="key name" size="xs" class="w-32" />
+                  <UButton size="xs" label="Issue Key" icon="i-lucide-key-round" @click="issueApiKey(account)" />
+                </div>
+              </div>
+              <ul v-if="account.keys?.length" class="mt-3 divide-y divide-gray-100 text-xs dark:divide-gray-800">
+                <li v-for="key in account.keys" :key="key.id" class="flex items-center justify-between py-2">
+                  <span>{{ key.name }} · {{ key.key_prefix }} · {{ key.revoked ? 'revoked' : 'active' }}</span>
+                  <UButton v-if="!key.revoked" size="xs" variant="ghost" color="error" label="Revoke" @click="revokeApiKey(account, key)" />
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </UCard>
     </div>
 
     <!-- Users -->
@@ -887,42 +1132,63 @@ watch(activeTab, (val) => {
           <h3 class="font-semibold">Invite User</h3>
           <p class="text-xs text-gray-500 mt-0.5">Send a magic-link invitation to a new administrator.</p>
         </template>
-        <form class="flex gap-2" @submit.prevent="sendInvite">
+        <form class="flex flex-col gap-2 sm:flex-row" @submit.prevent="sendInvite">
           <UInput v-model="inviteEmail" type="email" placeholder="user@example.com" icon="i-lucide-mail" class="flex-1" required />
+          <USelectMenu v-model="inviteRole" :items="roleOptions" value-key="value" class="w-full sm:w-40" />
           <UButton type="submit" label="Send Invite" icon="i-lucide-send" :loading="inviteLoading" />
         </form>
       </UCard>
 
       <UCard>
-        <template #header><h3 class="font-semibold">Administrators</h3></template>
+        <template #header><h3 class="font-semibold">Users</h3></template>
         <div v-if="usersLoading" class="text-sm text-gray-500">Loading...</div>
         <div v-else-if="users.length === 0" class="text-sm text-gray-500">No users found.</div>
         <ul v-else class="divide-y divide-gray-100 dark:divide-gray-800">
           <li v-for="u in users" :key="u.id" class="flex items-center justify-between py-3 first:pt-0 last:pb-0">
             <div class="flex items-center gap-3">
-              <div class="flex items-center justify-center w-8 h-8 rounded-full bg-yellow-400/10">
-                <UIcon name="i-lucide-user" class="w-4 h-4 text-yellow-400" />
+              <div class="flex items-center justify-center w-8 h-8 rounded-full" :class="u.disabled ? 'bg-gray-400/10' : 'bg-yellow-400/10'">
+                <UIcon name="i-lucide-user" class="w-4 h-4" :class="u.disabled ? 'text-gray-400' : 'text-yellow-400'" />
               </div>
               <div>
                 <ULink
                   :to="`/settings/users/${u.id}`"
                   active-class="text-primary"
                   inactive-class="text-sm font-medium text-gray-900 hover:text-yellow-500 dark:text-white dark:hover:text-yellow-400"
+                  :class="{ 'opacity-50': u.disabled }"
                 >
                   {{ u.email }}
                 </ULink>
-                <p class="text-xs text-gray-500">Joined {{ new Date(u.created).toLocaleDateString() }}</p>
+                <UBadge v-if="u.is_sso" label="SSO" color="primary" variant="subtle" size="xs" class="ml-2" />
+                <p class="text-xs text-gray-500 mt-0.5">Joined {{ new Date(u.created).toLocaleDateString() }}</p>
               </div>
             </div>
-            <UBadge v-if="u.id === $pb.authStore.record?.id" label="You" color="neutral" variant="subtle" size="xs" />
-            <UButton
-              v-else
-              icon="i-lucide-trash-2"
-              size="xs"
-              variant="ghost"
-              color="error"
-              @click="deleteUser(u)"
-            />
+            <div class="flex items-center gap-2">
+              <template v-if="u.protected">
+                <span class="text-sm font-medium text-gray-500 w-36 text-right px-3">Admin</span>
+                <UBadge label="Protected" color="warning" variant="subtle" size="xs" />
+              </template>
+              <template v-else>
+                <USelectMenu
+                  :model-value="u.role || 'viewer'"
+                  :items="roleOptions"
+                  value-key="value"
+                  class="w-36"
+                  :disabled="u.is_sso"
+                  @update:model-value="updateUserRole(u, String($event))"
+                />
+                <UBadge v-if="u.disabled" label="Disabled" color="neutral" variant="subtle" size="xs" />
+              </template>
+              <UBadge v-if="u.id === $pb.authStore.record?.id" label="You" color="neutral" variant="subtle" size="xs" />
+              <UButton
+                v-if="!u.protected && u.id !== $pb.authStore.record?.id"
+                :icon="u.disabled ? 'i-lucide-user-check' : 'i-lucide-user-x'"
+                size="xs"
+                variant="ghost"
+                :color="u.disabled ? 'success' : 'warning'"
+                :title="u.disabled ? 'Enable user' : 'Disable user'"
+                @click="toggleUserDisabled(u)"
+              />
+            </div>
           </li>
         </ul>
       </UCard>

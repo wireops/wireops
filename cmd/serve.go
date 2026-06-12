@@ -20,6 +20,7 @@ import (
 	"github.com/pocketbase/pocketbase/plugins/migratecmd"
 
 	"github.com/wireops/wireops/internal/audit"
+	wireauth "github.com/wireops/wireops/internal/auth"
 	"github.com/wireops/wireops/internal/config"
 	"github.com/wireops/wireops/internal/docker"
 	"github.com/wireops/wireops/internal/hooks"
@@ -180,8 +181,6 @@ func Execute() error {
 			log.Printf("[smtp] configured from environment (host: %s, port: %d)", smtpHost, smtpPort)
 		}
 
-		configureOIDC(app)
-
 		return nil
 	})
 
@@ -279,6 +278,9 @@ func Execute() error {
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
 		log.Println("[db] Database migrations completed successfully.")
 
+		configureOIDC(app)
+		syncSuperusers(app)
+
 		// OIDC client secret lives only in OIDC_CLIENT_SECRET; inject into the collection cache
 		// for OAuth handlers, then reload the cache so it is not retained for other routes.
 		// Suppress HTTP access logs (activity logger) unless running in DEBUG mode.
@@ -292,6 +294,7 @@ func Execute() error {
 
 		// Configure CORS middleware based on APP_URL
 		se.Router.BindFunc(configureCORSMiddleware)
+		se.Router.BindFunc(wireauth.APIKeyMiddleware(app))
 		se.Router.BindFunc(audit.CustomRouteMiddleware(app))
 
 		se.Router.GET("/{path...}", apis.Static(os.DirFS("./pb_public"), false))
@@ -302,6 +305,8 @@ func Execute() error {
 		routes.RegisterJobRoutes(se.Router, app, jobSched)
 		routes.RegisterAuditRoutes(se.Router, app)
 		routes.RegisterAuthRoutes(se.Router, app)
+		routes.RegisterServiceAccountRoutes(se.Router, app)
+		routes.RegisterSSOGroupRoleRoutes(se.Router, app)
 
 		if err := wiresync.RecoverOrphanState(app); err != nil {
 			log.Printf("Warning: orphan state recovery error: %v", err)
@@ -462,6 +467,63 @@ func configureOIDC(app core.App) {
 		return
 	}
 	log.Printf("[oidc] configured provider '%s' on sso_users", displayName)
+}
+
+// syncSuperusers mirrors admin users into the _superusers table to ensure
+// their PocketBase internal UI access credentials match WireOps.
+func syncSuperusers(app core.App) {
+	adminUsers, err := app.FindAllRecords("users", dbx.HashExp{"role": "admin"})
+	if err != nil {
+		log.Printf("[boot] warning: failed to fetch admin users for sync: %v", err)
+		return
+	}
+
+	superCol, err := app.FindCollectionByNameOrId(core.CollectionNameSuperusers)
+	if err != nil {
+		return
+	}
+
+	for _, u := range adminUsers {
+		email := u.GetString("email")
+		if email == "" {
+			continue
+		}
+
+		superRecord, err := app.FindAuthRecordByEmail(core.CollectionNameSuperusers, email)
+		if err != nil {
+			superRecord = core.NewRecord(superCol)
+			superRecord.Set("email", email)
+		}
+
+		// Use passwordHash directly since password is a virtual write-only field
+		superRecord.Set("passwordHash", u.GetString("passwordHash"))
+		superRecord.Set("tokenKey", u.GetString("tokenKey"))
+
+		if err := app.SaveNoValidate(superRecord); err != nil {
+			if strings.Contains(err.Error(), "Invalid or duplicated auth record id") {
+				// PocketBase v0.36 cross-checks auth IDs. If the _superusers record
+				// shares the exact same ID with the users record, it fails.
+				// We must delete the invalid superRecord and recreate it with a new ID.
+				if superRecord.Id != "" && !superRecord.IsNew() {
+					app.Delete(superRecord)
+					superRecord = core.NewRecord(superCol)
+					superRecord.Set("email", email)
+					superRecord.Set("passwordHash", u.GetString("passwordHash"))
+					superRecord.Set("tokenKey", u.GetString("tokenKey"))
+					if err2 := app.SaveNoValidate(superRecord); err2 != nil {
+						log.Printf("[boot] warning: failed to recreate superuser %s: %v", email, err2)
+					} else {
+						log.Printf("[boot] resolved duplicated ID for superuser %s", email)
+					}
+				} else {
+					log.Printf("[boot] warning: failed to sync superuser %s: %v", email, err)
+				}
+			} else {
+				log.Printf("[boot] warning: failed to sync superuser %s: %v", email, err)
+			}
+		}
+	}
+	log.Printf("[boot] synchronized %d admin users to _superusers", len(adminUsers))
 }
 
 // parseTags splits a comma-separated tag string into a trimmed, non-empty slice.

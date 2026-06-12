@@ -16,11 +16,13 @@ import (
 
 const (
 	ActorAnonymous = "anonymous"
+	ActorAgent     = "agent"
 	ActorSystem    = "system"
 	ActorUser      = "user"
 	ActorWorker    = "worker"
 
 	OriginAPI     = "api"
+	OriginAPIKey  = "api_key"
 	OriginSetup   = "setup"
 	OriginSystem  = "system"
 	OriginUI      = "ui"
@@ -54,6 +56,9 @@ type Event struct {
 func RecordRequest(app core.App, req *core.RequestEvent, ev Event) {
 	if req != nil && req.Auth != nil {
 		ev.ActorType = ActorUser
+		if req.Auth.Collection() != nil && req.Auth.Collection().Name == "service_accounts" {
+			ev.ActorType = ActorAgent
+		}
 		ev.ActorID = req.Auth.Id
 	}
 
@@ -317,8 +322,14 @@ func MatchCustomRoute(method, path string) (Event, bool) {
 	if len(p) == 2 && p[0] == "settings" && p[1] == "app-settings" && method == http.MethodPut {
 		return custom("settings.app.update", "app_settings", "global"), true
 	}
+	if len(p) == 2 && p[0] == "settings" && p[1] == "sso-groups-claim" && method == http.MethodPut {
+		return custom("settings.sso_claim.update", "app_settings", "global"), true
+	}
 	if len(p) == 2 && p[0] == "users" && p[1] == "invite" && method == http.MethodPost {
 		return custom("user.invite", "user", ""), true
+	}
+	if len(p) == 2 && p[0] == "users" && method == http.MethodPut {
+		return custom("user.update", "user", p[1]), true
 	}
 	if len(p) == 3 && p[0] == "users" && p[1] == "invite" && p[2] == "accept" && method == http.MethodPost {
 		return custom("user.invite_accept", "user", ""), true
@@ -351,6 +362,28 @@ func MatchCustomRoute(method, path string) (Event, bool) {
 		}
 		if method == http.MethodDelete {
 			return custom("integration.delete", "integration", p[1]), true
+		}
+	}
+	if len(p) == 1 && p[0] == "service-accounts" && method == http.MethodPost {
+		return custom("service_account.create", "service_account", ""), true
+	}
+	if len(p) == 2 && p[0] == "service-accounts" {
+		switch method {
+		case http.MethodPut:
+			return custom("service_account.update", "service_account", p[1]), true
+		case http.MethodDelete:
+			return custom("service_account.delete", "service_account", p[1]), true
+		}
+	}
+	if len(p) == 1 && p[0] == "sso-group-roles" && method == http.MethodPost {
+		return custom("sso_group_role.create", "sso_group_role", ""), true
+	}
+	if len(p) == 2 && p[0] == "sso-group-roles" {
+		switch method {
+		case http.MethodPut:
+			return custom("sso_group_role.update", "sso_group_role", p[1]), true
+		case http.MethodDelete:
+			return custom("sso_group_role.delete", "sso_group_role", p[1]), true
 		}
 	}
 
@@ -461,6 +494,8 @@ func normalizeOrigin(raw string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case OriginAPI:
 		return OriginAPI
+	case OriginAPIKey:
+		return OriginAPIKey
 	case OriginSetup:
 		return OriginSetup
 	case OriginSystem:
