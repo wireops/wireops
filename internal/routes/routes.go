@@ -638,6 +638,27 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		return e.JSON(http.StatusOK, files)
 	}).BindFunc(rbac.Require(rbac.CapManageRepos))
 
+	// Manually trigger repository sync/clone
+	r.POST("/api/custom/repositories/{id}/sync", func(e *core.RequestEvent) error {
+		repoDir, ok := repoFilesSetup(e)
+		if !ok {
+			return nil
+		}
+
+		repo, err := gogit.PlainOpen(repoDir)
+		if err == nil {
+			if ref, err := repo.Head(); err == nil {
+				repoID := e.Request.PathValue("id")
+				if rec, err := app.FindRecordById("repositories", repoID); err == nil {
+					rec.Set("last_commit_sha", ref.Hash().String())
+					_ = app.Save(rec)
+				}
+			}
+		}
+
+		return e.JSON(http.StatusOK, map[string]string{"success": "true"})
+	}).BindFunc(rbac.Require(rbac.CapManageRepos))
+
 	// Test git credentials
 	r.POST("/api/custom/credentials/test", func(e *core.RequestEvent) error {
 		var body struct {
@@ -666,6 +687,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		// Load saved credentials if repository_id is provided and fields are empty
 		if body.RepositoryID != "" {
 			savedCred, err := loadRepositoryCredential(app, body.RepositoryID)
+			if err != nil { log.Printf("TestConnection: failed to load credentials: %v", err) }
 			if err == nil && savedCred != nil {
 				// Override with saved values only if form fields are empty
 				if cred.AuthType == git.AuthTypeNone || cred.AuthType == "" {
