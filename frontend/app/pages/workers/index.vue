@@ -4,7 +4,7 @@ const toast = useToast()
 const { isViewer } = usePermissions()
 
 if (isViewer.value) {
-  return navigateTo('/')
+  navigateTo('/')
 }
 
 const { data: workers, pending, refresh } = useAsyncData('workers', getWorkers)

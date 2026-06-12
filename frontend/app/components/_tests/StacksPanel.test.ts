@@ -27,6 +27,9 @@ describe('StacksPanel', () => {
     ;(globalThis as any).useA11yAnnouncer = () => ({
       announce: vi.fn(),
     })
+    ;(globalThis as any).usePermissions = () => ({
+      isViewer: ref(false),
+    })
     ;(globalThis as any).useRepositoryPlatform = () => ({
       platformIconUrl: vi.fn(),
     })
