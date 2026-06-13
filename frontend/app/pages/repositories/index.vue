@@ -1,7 +1,7 @@
 <script setup lang="ts">
 const { $pb } = useNuxtApp()
 const { platformIconUrl } = useRepositoryPlatform()
-const { isViewer } = usePermissions()
+const { canManageRepos } = usePermissions()
 
 const { data: repos, refresh } = useAsyncData('repos_list', () =>
   $pb.collection('repositories').getFullList({ sort: '-updated' })
@@ -78,7 +78,7 @@ const statusColor = (s: string) => {
         </div>
         Repositories
       </h1>
-      <UButton v-if="!isViewer" icon="i-lucide-plus" label="Add Repository" class="shadow-[0_0_16px_rgba(255,198,0,0.35)] hover:shadow-[0_0_24px_rgba(255,198,0,0.55)] transition-shadow" @click="showCreate = true" />
+      <UButton v-if="canManageRepos" icon="i-lucide-plus" label="Add Repository" class="shadow-[0_0_16px_rgba(255,198,0,0.35)] hover:shadow-[0_0_24px_rgba(255,198,0,0.55)] transition-shadow" @click="showCreate = true" />
     </div>
 
     <UCard>
@@ -168,7 +168,7 @@ const statusColor = (s: string) => {
                 </span>
               </div>
             </NuxtLink>
-            <div v-if="!isViewer" class="ml-2 border-l border-gray-200 dark:border-carbon-700 pl-4 flex items-center">
+            <div v-if="canManageRepos" class="ml-2 border-l border-gray-200 dark:border-carbon-700 pl-4 flex items-center">
               <UTooltip text="Delete repository">
                 <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="xs" @click.stop="openDeleteModal(repo)" />
               </UTooltip>

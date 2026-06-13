@@ -23,7 +23,6 @@ import (
 	"github.com/wireops/wireops/internal/docker"
 	gitpkg "github.com/wireops/wireops/internal/git"
 	"github.com/wireops/wireops/internal/notify"
-	"github.com/wireops/wireops/internal/policy"
 	"github.com/wireops/wireops/internal/protocol"
 	"github.com/wireops/wireops/internal/safepath"
 	"github.com/wireops/wireops/internal/secrets"
@@ -66,20 +65,6 @@ func NewReconciler(app core.App, dockerClient *docker.Client, notifier *notify.N
 		dispatcher:      dispatcher,
 		secretsRegistry: reg,
 	}
-}
-
-// validateStackImages is a stub that will validate compose service images against
-// the worker's effective policy. Currently a no-op — stack image policy enforcement
-// is planned for a future iteration.
-//
-// TODO: extract image names from composeContent YAML and call
-// policy.Load(r.app, workerID).ValidateImages(images) when ready to enforce.
-func (r *Reconciler) validateStackImages(_ core.App, _ string, _ []byte) error {
-	// Intentionally returns nil — validation not yet active for stacks.
-	// The policy package is imported to keep the dependency declared and avoid
-	// removing it from go.mod; a direct call is made below to satisfy the compiler.
-	_ = policy.WorkerPolicy{}
-	return nil
 }
 
 // resolveWorker returns the assigned worker id and fingerprint for a stack.
@@ -273,7 +258,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	prevChecksum := stack.GetString("checksum")
 	prevVersion := stack.GetInt("current_version")
 
-	renderRes, err := r.renderer.GenerateRevision(ctx, stack, repo, workDir, composeFile, envVars, remoteSHA, false, workerFingerprint)
+	renderRes, err := r.renderer.GenerateRevision(ctx, stack, repo, workDir, composeFile, envVars, remoteSHA, false, workerID, workerFingerprint)
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to generate label revision: %v", err)
 		r.logFailure(stackID, trigger, remoteSHA, errMsg)
@@ -490,7 +475,7 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 		log.Printf("[reconciler] warning: failed to update .gitignore for stack %s (rollback): %v", stackID, giErr)
 	}
 
-	renderRes, err := r.renderer.GenerateRevision(ctx, stack, repo, workDir, composeFile, envVars, commitSHA, true, workerFingerprint)
+	renderRes, err := r.renderer.GenerateRevision(ctx, stack, repo, workDir, composeFile, envVars, commitSHA, true, workerID, workerFingerprint)
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to generate label revision on rollback: %v", err)
 		r.logFailure(stackID, "manual", commitSHA, errMsg)
@@ -656,7 +641,7 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 		log.Printf("[reconciler] warning: failed to update .gitignore for stack %s (redeploy): %v", stackID, giErr)
 	}
 
-	renderRes, err := r.renderer.GenerateRevision(ctx, stack, repo, workDir, composeFile, envVars, lastSHA, true, workerFingerprint)
+	renderRes, err := r.renderer.GenerateRevision(ctx, stack, repo, workDir, composeFile, envVars, lastSHA, true, workerID, workerFingerprint)
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to generate label revision on redeploy: %v", err)
 		r.logFailure(stackID, "redeploy", lastSHA, errMsg)
@@ -884,7 +869,7 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 		log.Printf("[reconciler] warning: failed to ensure .gitignore for stack %s (local sync): %v", stackID, gitignoreErr)
 	}
 
-	renderRes, err := r.renderer.GenerateRevision(ctx, stack, nil, workDir, composeFile, envVars, "imported", false, workerFingerprint)
+	renderRes, err := r.renderer.GenerateRevision(ctx, stack, nil, workDir, composeFile, envVars, "imported", false, workerID, workerFingerprint)
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to generate label revision: %v", err)
 		r.logFailure(stackID, trigger, "", errMsg)
@@ -1171,6 +1156,16 @@ func (r *Reconciler) updateSyncLog(id, status, output string, durationMs int64) 
 		return fmt.Errorf("update sync log id=%s status=%s: %w", id, status, err)
 	}
 	record.Set("status", status)
+
+	// Truncate output to prevent database bloat
+	const maxOutputLength = 1000000
+	if len(output) > maxOutputLength {
+		marker := "\n\n... [OUTPUT TRUNCATED FOR SIZE] ...\n\n"
+		prefixLen := (maxOutputLength - len(marker)) / 2
+		suffixLen := maxOutputLength - len(marker) - prefixLen
+		output = output[:prefixLen] + marker + output[len(output)-suffixLen:]
+	}
+
 	record.Set("output", output)
 	record.Set("duration_ms", durationMs)
 	if err := r.app.Save(record); err != nil {
@@ -1178,7 +1173,6 @@ func (r *Reconciler) updateSyncLog(id, status, output string, durationMs int64) 
 	}
 	return nil
 }
-
 func (r *Reconciler) saveRecord(rec *core.Record, collection, op string) error {
 	if err := r.app.Save(rec); err != nil {
 		return fmt.Errorf("%s persistence failed collection=%s record=%s status=%s: %w", op, collection, rec.Id, rec.GetString("status"), err)

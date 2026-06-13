@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -44,6 +45,18 @@ var stackDir = func() string {
 	return cleaned
 }()
 
+// runInWorkDir encapsulates the work directory preparation, logger error handling, and deferred cleanup
+// for commands that execute in a temporary compose workspace.
+func runInWorkDir(stackID, commandID, composeFileB64, envFileB64 string, action string, fn func(workDir, composeFile string) (string, error)) (string, error) {
+	workDir, composeFile, cleanup, err := prepareWorkDir(stackID, commandID, composeFileB64, envFileB64)
+	if err != nil {
+		log.Printf("[executor] %s error stack=%s: %v", action, stackID, err)
+		return "", err
+	}
+	defer cleanup()
+	return fn(workDir, composeFile)
+}
+
 // Deploy decodes the base64 compose file, writes it to a temp file, and runs
 // `docker compose up`. Environment variables are passed via cmd.Env, never
 // interpolated into the YAML. If EnvFileB64 is set, a .env file is also written
@@ -60,22 +73,11 @@ func Deploy(ctx context.Context, cmd protocol.DeployCommand) protocol.CommandRes
 	}
 	start := time.Now()
 
-	workDir, composeFile, cleanup, err := prepareComposeFile(cmd.StackID, cmd.CommandID, cmd.ComposeFileB64)
-	if err != nil {
-		log.Printf("[executor] deploy error stack=%s trigger=%s: %v", cmd.StackID, trigger, err)
-		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
-	}
-	defer cleanup()
-
-	if envErr := applyEnvFile(workDir, cmd.EnvFileB64); envErr != nil {
-		err := fmt.Errorf("failed to apply env file for stack %s: %w", cmd.StackID, envErr)
-		log.Printf("[executor] deploy error stack=%s trigger=%s: %v", cmd.StackID, trigger, err)
-		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
-	}
-
-	output, runErr := compose.RunUp(ctx, compose.RunOptions{
-		WorkDir:     workDir,
-		ComposeFile: composeFile,
+	output, runErr := runInWorkDir(cmd.StackID, cmd.CommandID, cmd.ComposeFileB64, cmd.EnvFileB64, "deploy", func(workDir, composeFile string) (string, error) {
+		return compose.RunUp(ctx, compose.RunOptions{
+			WorkDir:     workDir,
+			ComposeFile: composeFile,
+		})
 	})
 
 	result := protocol.CommandResult{CommandID: cmd.CommandID, Output: output}
@@ -103,27 +105,16 @@ func Redeploy(ctx context.Context, cmd protocol.RedeployCommand) protocol.Comman
 	}
 	start := time.Now()
 
-	workDir, composeFile, cleanup, err := prepareComposeFile(cmd.StackID, cmd.CommandID, cmd.ComposeFileB64)
-	if err != nil {
-		log.Printf("[executor] redeploy error stack=%s trigger=%s: %v", cmd.StackID, trigger, err)
-		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
-	}
-	defer cleanup()
-
-	if envErr := applyEnvFile(workDir, cmd.EnvFileB64); envErr != nil {
-		err := fmt.Errorf("failed to apply env file for stack %s: %w", cmd.StackID, envErr)
-		log.Printf("[executor] redeploy error stack=%s trigger=%s: %v", cmd.StackID, trigger, err)
-		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
-	}
-
-	output, runErr := compose.RunForceUp(ctx, compose.ForceUpOptions{
-		RunOptions: compose.RunOptions{
-			WorkDir:     workDir,
-			ComposeFile: composeFile,
-		},
-		RecreateContainers: cmd.RecreateContainers,
-		RecreateVolumes:    cmd.RecreateVolumes,
-		RecreateNetworks:   cmd.RecreateNetworks,
+	output, runErr := runInWorkDir(cmd.StackID, cmd.CommandID, cmd.ComposeFileB64, cmd.EnvFileB64, "redeploy", func(workDir, composeFile string) (string, error) {
+		return compose.RunForceUp(ctx, compose.ForceUpOptions{
+			RunOptions: compose.RunOptions{
+				WorkDir:     workDir,
+				ComposeFile: composeFile,
+			},
+			RecreateContainers: cmd.RecreateContainers,
+			RecreateVolumes:    cmd.RecreateVolumes,
+			RecreateNetworks:   cmd.RecreateNetworks,
+		})
 	})
 
 	result := protocol.CommandResult{CommandID: cmd.CommandID, Output: output}
@@ -142,22 +133,11 @@ func Teardown(ctx context.Context, cmd protocol.TeardownCommand) protocol.Comman
 	log.Printf("[executor] teardown start stack=%s command=%s", cmd.StackID, cmd.CommandID)
 	start := time.Now()
 
-	workDir, composeFile, cleanup, err := prepareComposeFile(cmd.StackID, cmd.CommandID, cmd.ComposeFileB64)
-	if err != nil {
-		log.Printf("[executor] teardown error stack=%s: %v", cmd.StackID, err)
-		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
-	}
-	defer cleanup()
-
-	if envErr := applyEnvFile(workDir, cmd.EnvFileB64); envErr != nil {
-		err := fmt.Errorf("failed to apply env file for stack %s: %w", cmd.StackID, envErr)
-		log.Printf("[executor] teardown error stack=%s: %v", cmd.StackID, err)
-		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
-	}
-
-	output, runErr := compose.RunDown(ctx, compose.RunOptions{
-		WorkDir:     workDir,
-		ComposeFile: composeFile,
+	output, runErr := runInWorkDir(cmd.StackID, cmd.CommandID, cmd.ComposeFileB64, cmd.EnvFileB64, "teardown", func(workDir, composeFile string) (string, error) {
+		return compose.RunDown(ctx, compose.RunOptions{
+			WorkDir:     workDir,
+			ComposeFile: composeFile,
+		})
 	})
 
 	result := protocol.CommandResult{CommandID: cmd.CommandID, Output: output}
@@ -177,27 +157,23 @@ func Probe(ctx context.Context, cmd protocol.ProbeCommand) protocol.CommandResul
 	log.Printf("[executor] probe start stack=%s command=%s", cmd.StackID, cmd.CommandID)
 	start := time.Now()
 
-	workDir, composeFile, cleanup, err := prepareComposeFile(cmd.StackID, cmd.CommandID, cmd.ComposeFileB64)
-	if err != nil {
-		log.Printf("[executor] probe error stack=%s: %v", cmd.StackID, err)
-		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
-	}
-	defer cleanup()
-
-	if envErr := applyEnvFile(workDir, cmd.EnvFileB64); envErr != nil {
-		err := fmt.Errorf("failed to apply env file for stack %s: %w", cmd.StackID, envErr)
-		log.Printf("[executor] probe error stack=%s: %v", cmd.StackID, err)
-		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
-	}
-
-	services, psErr := compose.RunPs(ctx, compose.RunOptions{
-		WorkDir:     workDir,
-		ComposeFile: composeFile,
+	var services []string
+	_, runErr := runInWorkDir(cmd.StackID, cmd.CommandID, cmd.ComposeFileB64, cmd.EnvFileB64, "probe", func(workDir, composeFile string) (string, error) {
+		var psErr error
+		services, psErr = compose.RunPs(ctx, compose.RunOptions{
+			WorkDir:     workDir,
+			ComposeFile: composeFile,
+		})
+		if psErr != nil {
+			// Treat ps errors as "nothing found" so a network hiccup doesn't block transfers.
+			log.Printf("[executor] probe ps error stack=%s (treating as empty): %v", cmd.StackID, psErr)
+			services = nil
+		}
+		return "", nil
 	})
-	if psErr != nil {
-		// Treat ps errors as "nothing found" so a network hiccup doesn't block transfers.
-		log.Printf("[executor] probe ps error stack=%s (treating as empty): %v", cmd.StackID, psErr)
-		services = nil
+
+	if runErr != nil {
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: runErr.Error()}
 	}
 
 	probeResult := protocol.ProbeResult{
@@ -310,22 +286,35 @@ func RestartContainer(ctx context.Context, cmd protocol.ContainerActionCommand) 
 	return executeContainerAction(ctx, cmd, "restart")
 }
 
+// verifyContainerAndGetClient validates that the container belongs to the specified project and returns the docker client.
+// The caller is responsible for calling defer cli.Close() if no error is returned.
+func verifyContainerAndGetClient(ctx context.Context, containerID, projectName string) (*docker.Client, error) {
+	cli, err := docker.NewClient()
+	if err != nil {
+		return nil, err
+	}
+
+	belongs, err := compose.ContainerBelongsToProject(ctx, cli.Raw(), containerID, projectName)
+	if err != nil {
+		cli.Close()
+		return nil, err
+	}
+	if !belongs {
+		cli.Close()
+		return nil, errors.New("container does not belong to stack")
+	}
+
+	return cli, nil
+}
+
 func executeContainerAction(ctx context.Context, cmd protocol.ContainerActionCommand, action string) protocol.CommandResult {
 	log.Printf("[executor] %s_container start stack=%s project=%s container=%s command=%s", action, cmd.StackID, cmd.ProjectName, cmd.ContainerID, cmd.CommandID)
 
-	cli, err := docker.NewClient()
+	cli, err := verifyContainerAndGetClient(ctx, cmd.ContainerID, cmd.ProjectName)
 	if err != nil {
 		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
 	}
 	defer cli.Close()
-
-	belongs, err := compose.ContainerBelongsToProject(ctx, cli.Raw(), cmd.ContainerID, cmd.ProjectName)
-	if err != nil {
-		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
-	}
-	if !belongs {
-		return protocol.CommandResult{CommandID: cmd.CommandID, Error: "container does not belong to stack"}
-	}
 
 	timeout := 10
 	var actionErr error
@@ -529,6 +518,23 @@ func KillJob(cmd protocol.KillJobCommand) protocol.CommandResult {
 	return protocol.CommandResult{CommandID: cmd.CommandID, Output: "stopped"}
 }
 
+// prepareWorkDir prepares the compose work dir and applies the .env file if provided.
+// It returns the workDir, composeFile, a cleanup function, and any error.
+// If an error is returned, any created resources are cleaned up before returning.
+func prepareWorkDir(stackID, commandID, composeFileB64, envFileB64 string) (string, string, func(), error) {
+	workDir, composeFile, cleanup, err := prepareComposeFile(stackID, commandID, composeFileB64)
+	if err != nil {
+		return "", "", func() {}, err
+	}
+
+	if envErr := applyEnvFile(workDir, envFileB64); envErr != nil {
+		cleanup()
+		return "", "", func() {}, fmt.Errorf("failed to apply env file for stack %s: %w", stackID, envErr)
+	}
+
+	return workDir, composeFile, cleanup, nil
+}
+
 // prepareComposeFile decodes the base64 YAML, writes it to a structured directory
 // under stackDir/stacks/<stackID>/cmd-<commandID>/, and returns (workDir, filename, cleanupFn, error).
 // filepath.Base sanitizes both IDs to prevent path traversal.
@@ -642,6 +648,83 @@ func safeEnv() []string {
 		env = append(env, safePath)
 	}
 	return env
+}
+
+// GetContainerStats queries Docker on the worker for CPU, memory, and network stats of a container
+// after verifying it belongs to the specified compose project.
+func GetContainerStats(ctx context.Context, cmd protocol.GetContainerStatsCommand) protocol.CommandResult {
+	log.Printf("[executor] get_container_stats start stack=%s project=%s container=%s command=%s", cmd.StackID, cmd.ProjectName, cmd.ContainerID, cmd.CommandID)
+
+	cli, err := verifyContainerAndGetClient(ctx, cmd.ContainerID, cmd.ProjectName)
+	if err != nil {
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
+	}
+	defer cli.Close()
+
+	stats, err := compose.GetContainerStats(ctx, cli.Raw(), cmd.ContainerID)
+	if err != nil {
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
+	}
+
+	encoded, err := json.Marshal(stats)
+	if err != nil {
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
+	}
+
+	return protocol.CommandResult{CommandID: cmd.CommandID, Output: string(encoded)}
+}
+
+// GetContainerLogs retrieves logs for a container after verifying it belongs to the project.
+func GetContainerLogs(ctx context.Context, cmd protocol.GetContainerLogsCommand) protocol.CommandResult {
+	log.Printf("[executor] get_container_logs start stack=%s project=%s container=%s command=%s tail=%s", cmd.StackID, cmd.ProjectName, cmd.ContainerID, cmd.CommandID, cmd.Tail)
+
+	cli, err := verifyContainerAndGetClient(ctx, cmd.ContainerID, cmd.ProjectName)
+	if err != nil {
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
+	}
+	defer cli.Close()
+
+	tail := cmd.Tail
+	if tail == "" {
+		tail = "100"
+	}
+
+	reader, err := cli.Raw().ContainerLogs(ctx, cmd.ContainerID, container.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Tail:       tail,
+		Timestamps: true,
+	})
+	if err != nil {
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
+	}
+	defer reader.Close()
+
+	const maxPayloadSize = 10 * 1024 * 1024
+	buf := new(strings.Builder)
+	header := make([]byte, 8)
+	for {
+		_, err := io.ReadFull(reader, header)
+		if err != nil {
+			break
+		}
+		size := int(header[4])<<24 | int(header[5])<<16 | int(header[6])<<8 | int(header[7])
+		if size == 0 {
+			continue
+		}
+		if size < 0 || size > maxPayloadSize {
+			log.Printf("[executor] invalid payload size %d", size)
+			break
+		}
+		payload := make([]byte, size)
+		_, err = io.ReadFull(reader, payload)
+		if err != nil {
+			break
+		}
+		buf.Write(payload)
+	}
+
+	return protocol.CommandResult{CommandID: cmd.CommandID, Output: buf.String()}
 }
 
 

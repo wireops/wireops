@@ -151,7 +151,9 @@ async function testConnection() {
 }
 
 async function saveCredentials(repositoryId: string) {
-  if (!isPrivate.value && !existingCredId.value) return
+  if (!isPrivate.value && !existingCredId.value) {
+    return
+  }
 
   const payload: any = {
     ...credForm.value,
@@ -307,7 +309,7 @@ function cancel() {
               <UInput
                 v-model="credForm.git_password"
                 type="password"
-                :placeholder="isEditMode ? 'Leave empty to keep current' : ''"
+                :placeholder="isEditMode && existingCredId ? 'Leave empty to keep current' : ''"
                 class="w-full"
                 aria-label="Git password or token"
               />
@@ -319,7 +321,7 @@ function cancel() {
             <UFormField label="SSH Private Key" class="w-full">
               <UTextarea
                 v-model="credForm.ssh_private_key"
-                :placeholder="isEditMode ? 'Leave empty to keep current key' : 'Paste your private key here'"
+                :placeholder="isEditMode && existingCredId ? 'Leave empty to keep current key' : 'Paste your private key here'"
                 :rows="8"
                 class="font-mono text-xs w-full"
                 aria-label="SSH private key"
@@ -329,7 +331,7 @@ function cancel() {
               <UInput
                 v-model="credForm.ssh_passphrase"
                 type="password"
-                :placeholder="isEditMode ? 'Leave empty to keep current' : 'Optional passphrase for encrypted keys'"
+                :placeholder="isEditMode && existingCredId ? 'Leave empty to keep current' : 'Optional passphrase for encrypted keys'"
                 class="w-full"
                 aria-label="SSH key passphrase"
               />

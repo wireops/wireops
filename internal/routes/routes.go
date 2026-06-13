@@ -5,19 +5,16 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	stdsync "sync"
 
-	"github.com/docker/docker/api/types/container"
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
@@ -78,6 +75,22 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			return false
 		}
 		return true
+	}
+
+	// resolveStackAndWorker fetches the stack record, checks if the worker is online, and derives the project name.
+	// If the worker is offline or stack not found, it writes the JSON error and returns false.
+	resolveStackAndWorker := func(e *core.RequestEvent, stackID string) (*core.Record, string, string, bool) {
+		if !workerOnline(e, stackID) {
+			return nil, "", "", false
+		}
+		stack, err := app.FindRecordById("stacks", stackID)
+		if err != nil {
+			_ = e.JSON(http.StatusNotFound, map[string]string{"error": "stack not found"})
+			return nil, "", "", false
+		}
+		projectName := compose.ProjectName(stackWorkDir(app, stack))
+		workerID := stack.GetString("worker")
+		return stack, projectName, workerID, true
 	}
 
 	// Trigger sync for a stack
@@ -301,89 +314,78 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 
 	// Get container stats (CPU, memory, network)
 	r.GET("/api/custom/stacks/{id}/container/{containerId}/stats", func(e *core.RequestEvent) error {
-		if dockerClient == nil {
-			return e.JSON(http.StatusServiceUnavailable, map[string]string{"error": "docker not available"})
-		}
 		stackID := e.Request.PathValue("id")
 		containerID := e.Request.PathValue("containerId")
 		if containerID == "" {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "missing containerId"})
 		}
 
-		stack, err := app.FindRecordById("stacks", stackID)
-		if err != nil {
-			return e.JSON(http.StatusNotFound, map[string]string{"error": "stack not found"})
-		}
-		projectName := compose.ProjectName(stackWorkDir(app, stack))
-		belongs, err := compose.ContainerBelongsToProject(e.Request.Context(), dockerClient.Raw(), containerID, projectName)
-		if err != nil || !belongs {
-			return e.JSON(http.StatusForbidden, map[string]string{"error": "container does not belong to stack"})
+		_, projectName, workerID, ok := resolveStackAndWorker(e, stackID)
+		if !ok {
+			return nil
 		}
 
-		stats, err := compose.GetContainerStats(e.Request.Context(), dockerClient.Raw(), containerID)
-		if err != nil {
-			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		res, dispatchErr := workerSvc.Dispatch(e.Request.Context(), workerID, protocol.GetContainerStatsCommand{
+			CommandID:   fmt.Sprintf("stats-container-%s", containerID),
+			StackID:     stackID,
+			ProjectName: projectName,
+			ContainerID: containerID,
+		})
+		if dispatchErr != nil {
+			return e.JSON(http.StatusServiceUnavailable, map[string]string{"error": dispatchErr.Error()})
+		}
+		if res.Error != "" {
+			status := http.StatusInternalServerError
+			if strings.Contains(strings.ToLower(res.Error), "does not belong to stack") {
+				status = http.StatusForbidden
+			}
+			return e.JSON(status, map[string]string{"error": res.Error})
+		}
+
+		var stats compose.ContainerStats
+		if err := json.Unmarshal([]byte(res.Output), &stats); err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to decode stats: " + err.Error()})
 		}
 		return e.JSON(http.StatusOK, stats)
 	}).BindFunc(rbac.Require(rbac.CapViewStacks))
 
 	// Get container logs (last N lines)
 	r.GET("/api/custom/stacks/{id}/container/{containerId}/logs", func(e *core.RequestEvent) error {
-		if dockerClient == nil {
-			return e.JSON(http.StatusServiceUnavailable, map[string]string{"error": "docker not available"})
-		}
 		stackID := e.Request.PathValue("id")
 		containerID := e.Request.PathValue("containerId")
 		if containerID == "" {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "missing containerId"})
 		}
 
-		stack, err := app.FindRecordById("stacks", stackID)
-		if err != nil {
-			return e.JSON(http.StatusNotFound, map[string]string{"error": "stack not found"})
-		}
-		projectName := compose.ProjectName(stackWorkDir(app, stack))
-		belongs, err := compose.ContainerBelongsToProject(e.Request.Context(), dockerClient.Raw(), containerID, projectName)
-		if err != nil || !belongs {
-			return e.JSON(http.StatusForbidden, map[string]string{"error": "container does not belong to stack"})
+		_, projectName, workerID, ok := resolveStackAndWorker(e, stackID)
+		if !ok {
+			return nil
 		}
 
 		tail := e.Request.URL.Query().Get("tail")
 		if tail == "" {
 			tail = "100"
 		}
-		reader, err := dockerClient.Raw().ContainerLogs(e.Request.Context(), containerID, container.LogsOptions{
-			ShowStdout: true,
-			ShowStderr: true,
-			Tail:       tail,
-			Timestamps: true,
+
+		res, dispatchErr := workerSvc.Dispatch(e.Request.Context(), workerID, protocol.GetContainerLogsCommand{
+			CommandID:   fmt.Sprintf("logs-container-%s", containerID),
+			StackID:     stackID,
+			ProjectName: projectName,
+			ContainerID: containerID,
+			Tail:        tail,
 		})
-		if err != nil {
-			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		if dispatchErr != nil {
+			return e.JSON(http.StatusServiceUnavailable, map[string]string{"error": dispatchErr.Error()})
 		}
-		defer reader.Close()
-
-		buf := new(strings.Builder)
-		// Docker multiplexed stream: 8-byte header per frame
-		header := make([]byte, 8)
-		for {
-			_, err := io.ReadFull(reader, header)
-			if err != nil {
-				break
+		if res.Error != "" {
+			status := http.StatusInternalServerError
+			if strings.Contains(strings.ToLower(res.Error), "does not belong to stack") {
+				status = http.StatusForbidden
 			}
-			size := int(header[4])<<24 | int(header[5])<<16 | int(header[6])<<8 | int(header[7])
-			if size == 0 {
-				continue
-			}
-			payload := make([]byte, size)
-			_, err = io.ReadFull(reader, payload)
-			buf.Write(payload)
-			if err != nil {
-				break
-			}
+			return e.JSON(status, map[string]string{"error": res.Error})
 		}
 
-		return e.JSON(http.StatusOK, map[string]string{"logs": buf.String()})
+		return e.JSON(http.StatusOK, map[string]string{"logs": res.Output})
 	}).BindFunc(rbac.Require(rbac.CapViewLogs))
 
 	// Get last N commits for a repository
@@ -638,6 +640,27 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		return e.JSON(http.StatusOK, files)
 	}).BindFunc(rbac.Require(rbac.CapManageRepos))
 
+	// Manually trigger repository sync/clone
+	r.POST("/api/custom/repositories/{id}/sync", func(e *core.RequestEvent) error {
+		repoDir, ok := repoFilesSetup(e)
+		if !ok {
+			return nil
+		}
+
+		repo, err := gogit.PlainOpen(repoDir)
+		if err == nil {
+			if ref, err := repo.Head(); err == nil {
+				repoID := e.Request.PathValue("id")
+				if rec, err := app.FindRecordById("repositories", repoID); err == nil {
+					rec.Set("last_commit_sha", ref.Hash().String())
+					_ = app.Save(rec)
+				}
+			}
+		}
+
+		return e.JSON(http.StatusOK, map[string]string{"success": "true"})
+	}).BindFunc(rbac.Require(rbac.CapManageRepos))
+
 	// Test git credentials
 	r.POST("/api/custom/credentials/test", func(e *core.RequestEvent) error {
 		var body struct {
@@ -666,6 +689,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		// Load saved credentials if repository_id is provided and fields are empty
 		if body.RepositoryID != "" {
 			savedCred, err := loadRepositoryCredential(app, body.RepositoryID)
+			if err != nil { log.Printf("TestConnection: failed to load credentials: %v", err) }
 			if err == nil && savedCred != nil {
 				// Override with saved values only if form fields are empty
 				if cred.AuthType == git.AuthTypeNone || cred.AuthType == "" {
@@ -858,16 +882,11 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		if err := json.NewDecoder(e.Request.Body).Decode(&body); err != nil || body.ContainerID == "" {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "container_id required"})
 		}
-		if !workerOnline(e, stackID) {
+
+		_, projectName, workerID, ok := resolveStackAndWorker(e, stackID)
+		if !ok {
 			return nil
 		}
-
-		stack, err := app.FindRecordById("stacks", stackID)
-		if err != nil {
-			return e.JSON(http.StatusNotFound, map[string]string{"error": "stack not found"})
-		}
-		projectName := compose.ProjectName(stackWorkDir(app, stack))
-		workerID := stack.GetString("worker")
 
 		res, dispatchErr := workerSvc.Dispatch(e.Request.Context(), workerID, protocol.ContainerActionCommand{
 			CommandID:   fmt.Sprintf("stop-container-%s", body.ContainerID),
@@ -898,16 +917,11 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		if err := json.NewDecoder(e.Request.Body).Decode(&body); err != nil || body.ContainerID == "" {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "container_id required"})
 		}
-		if !workerOnline(e, stackID) {
+
+		_, projectName, workerID, ok := resolveStackAndWorker(e, stackID)
+		if !ok {
 			return nil
 		}
-
-		stack, err := app.FindRecordById("stacks", stackID)
-		if err != nil {
-			return e.JSON(http.StatusNotFound, map[string]string{"error": "stack not found"})
-		}
-		projectName := compose.ProjectName(stackWorkDir(app, stack))
-		workerID := stack.GetString("worker")
 
 		res, dispatchErr := workerSvc.Dispatch(e.Request.Context(), workerID, protocol.ContainerActionCommand{
 			CommandID:   fmt.Sprintf("restart-container-%s", body.ContainerID),
@@ -1171,27 +1185,6 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 
 	// Get system info
 	r.GET("/api/custom/system/info", func(e *core.RequestEvent) error {
-		ctx := context.Background()
-
-		// Get Docker version
-		dockerVersion := "N/A"
-		composeVersion := "N/A"
-		if dockerClient != nil {
-			version, err := dockerClient.Raw().ServerVersion(ctx)
-			if err == nil {
-				dockerVersion = version.Version
-			}
-			// Get compose version by running docker compose version
-			cmd := exec.CommandContext(ctx, "docker", "compose", "version", "--short")
-			if output, err := cmd.Output(); err == nil {
-				composeVersion = strings.TrimSpace(string(output))
-			}
-		}
-
-		// Count repos and stacks
-		repos, _ := app.FindAllRecords("repositories")
-		stacks, _ := app.FindAllRecords("stacks")
-
 		// Get workspace disk usage
 		workspace := filepath.Join(app.DataDir(), "repositories")
 		var diskUsage int64
@@ -1203,13 +1196,9 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		})
 
 		return e.JSON(http.StatusOK, map[string]interface{}{
-			"version":         "1.0.0", // TODO: read from version file or build tag
-			"docker_version":  dockerVersion,
-			"compose_version": composeVersion,
-			"repositories":    len(repos),
-			"stacks":          len(stacks),
-			"disk_usage":      diskUsage,
-			"workspace_path":  workspace,
+			"version":        "1.0.0", // TODO: read from version file or build tag
+			"disk_usage":     diskUsage,
+			"workspace_path": workspace,
 		})
 	}).BindFunc(rbac.Require(rbac.CapManageSettings))
 

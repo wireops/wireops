@@ -479,3 +479,73 @@ func TestExecuteJobConvertsResources(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+func TestUpdateJobRunTruncatesOutput(t *testing.T) {
+	app := newJobSchedulerTestApp(t)
+	repo := createJobRepoRecord(t, app)
+	jobRec := createScheduledJobRecord(t, app, repo.Id, "job.yaml")
+	s := NewScheduler(app, fakeJobDispatcher{}, app.DataDir())
+
+	// Increase the output validation limit in the database schema for this test
+	col, err := app.FindCollectionByNameOrId("job_runs")
+	if err != nil {
+		t.Fatalf("failed to find collection: %v", err)
+	}
+	outputField := col.Fields.GetByName("output").(*core.TextField)
+	outputField.Max = 2000000
+	if err := app.Save(col); err != nil {
+		t.Fatalf("failed to update schema: %v", err)
+	}
+
+	runID, err := s.createJobRun(jobRec.Id, "", "manual", "running")
+	if err != nil {
+		t.Fatalf("failed to create job run: %v", err)
+	}
+
+	// Create output larger than 1,000,000 characters with distinct head and tail
+	headStr := "HEAD-JOBRUN123"
+	tailStr := "TAIL-JOBRUN123"
+	var sb strings.Builder
+	sb.WriteString(headStr)
+	for i := 0; i < 1200000-len(headStr)-len(tailStr); i++ {
+		sb.WriteByte('A')
+	}
+	sb.WriteString(tailStr)
+	largeOutput := sb.String()
+
+	err = s.updateJobRun(runID, "success", largeOutput, 100, 10, 90)
+	if err != nil {
+		t.Fatalf("updateJobRun failed: %v", err)
+	}
+
+	// Reload the run and assert that it was truncated
+	refreshed, err := app.FindRecordById("job_runs", runID)
+	if err != nil {
+		t.Fatalf("failed to reload job run: %v", err)
+	}
+
+	truncatedOutput := refreshed.GetString("output")
+	if len(truncatedOutput) != 1000000 {
+		t.Errorf("expected output length 1000000, got %d", len(truncatedOutput))
+	}
+
+	marker := "\n\n... [OUTPUT TRUNCATED FOR SIZE] ...\n\n"
+	if strings.Count(truncatedOutput, marker) != 1 {
+		t.Errorf("expected truncation marker to appear exactly once, but count was %d", strings.Count(truncatedOutput, marker))
+	}
+
+	if !strings.HasPrefix(truncatedOutput, headStr) {
+		t.Errorf("expected truncated output to start with %q", headStr)
+	}
+
+	if !strings.HasSuffix(truncatedOutput, tailStr) {
+		t.Errorf("expected truncated output to end with %q", tailStr)
+	}
+
+	headIdx := strings.Index(truncatedOutput, headStr)
+	markerIdx := strings.Index(truncatedOutput, marker)
+	tailIdx := strings.LastIndex(truncatedOutput, tailStr)
+	if headIdx < 0 || markerIdx < 0 || tailIdx < 0 || !(headIdx < markerIdx && markerIdx < tailIdx) {
+		t.Error("expected marker to be present between preserved head and tail")
+	}
+}

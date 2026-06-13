@@ -15,6 +15,7 @@ import (
 
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/wireops/wireops/internal/compose"
+	"github.com/wireops/wireops/internal/policy"
 )
 
 // RenderResult represents the result of the label injection process.
@@ -62,6 +63,7 @@ func (r *Renderer) GenerateRevision(
 	envVars []string,
 	commitSHA string,
 	forceIncrement bool,
+	workerID string,
 	workerFingerprint string,
 ) (*RenderResult, error) {
 
@@ -96,6 +98,15 @@ func (r *Renderer) GenerateRevision(
 	// Validation: ensure top-level name exists
 	if _, ok := configMap["name"]; !ok {
 		return nil, fmt.Errorf("rendered compose file missing top-level 'name' field")
+	}
+
+	// Validate against worker policy
+	wp, err := policy.Load(r.app, workerID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load worker policy: %w", err)
+	}
+	if err := wp.ValidateComposeConfig(configMap); err != nil {
+		return nil, err
 	}
 
 	// Validation: Ensure services exist

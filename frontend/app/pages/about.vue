@@ -10,6 +10,14 @@ function formatBytes(bytes: number): string {
   const i = Math.floor(Math.log(bytes) / Math.log(k))
   return `${(bytes / Math.pow(k, i)).toFixed(2)} ${sizes[i]}`
 }
+
+function truncatePath(path: string): string {
+  if (!path) return ''
+  if (path.length > 40) {
+    return path.slice(0, 15) + '...' + path.slice(-20)
+  }
+  return path
+}
 </script>
 
 <template>
@@ -94,43 +102,13 @@ function formatBytes(bytes: number): string {
         </div>
 
         <div class="flex items-start gap-3 p-3 rounded-xl bg-carbon-800/40 border border-carbon-700">
-          <div class="p-2 rounded-lg bg-wire-400/10 border border-wire-400/10">
-            <UIcon name="i-lucide-container" class="w-5 h-5 text-wire-400" />
-          </div>
-          <div>
-            <p class="text-xs text-wire-200/40 uppercase tracking-wider font-semibold">Docker</p>
-            <p class="text-lg font-bold text-wire-200">{{ systemInfo.docker_version }}</p>
-          </div>
-        </div>
-
-        <div class="flex items-start gap-3 p-3 rounded-xl bg-carbon-800/40 border border-carbon-700">
-          <div class="p-2 rounded-lg bg-wire-700/20 border border-wire-700/20">
-            <UIcon name="i-lucide-layers" class="w-5 h-5 text-wire-400" />
-          </div>
-          <div>
-            <p class="text-xs text-wire-200/40 uppercase tracking-wider font-semibold">Docker Compose</p>
-            <p class="text-lg font-bold text-wire-200">{{ systemInfo.compose_version }}</p>
-          </div>
-        </div>
-
-        <div class="flex items-start gap-3 p-3 rounded-xl bg-carbon-800/40 border border-carbon-700">
-          <div class="p-2 rounded-lg bg-yellow-400/10 border border-yellow-400/10">
-            <UIcon name="i-lucide-database" class="w-5 h-5 text-yellow-400/80" />
-          </div>
-          <div>
-            <p class="text-xs text-wire-200/40 uppercase tracking-wider font-semibold">Resources</p>
-            <p class="text-sm font-semibold text-wire-200">{{ systemInfo.repositories }} repos · {{ systemInfo.stacks }} stacks</p>
-          </div>
-        </div>
-
-        <div class="flex items-start gap-3 p-3 rounded-xl bg-carbon-800/40 border border-carbon-700 sm:col-span-2">
           <div class="p-2 rounded-lg bg-wire-700/20 border border-wire-700/20">
             <UIcon name="i-lucide-hard-drive" class="w-5 h-5 text-wire-400" />
           </div>
-          <div class="flex-1">
+          <div class="flex-1 min-w-0">
             <p class="text-xs text-wire-200/40 uppercase tracking-wider font-semibold">Workspace Storage</p>
             <p class="text-lg font-bold text-wire-200">{{ formatBytes(systemInfo.disk_usage) }}</p>
-            <p class="text-xs text-wire-200/30 mt-1 font-mono">{{ systemInfo.workspace_path }}</p>
+            <p class="text-xs text-wire-200/30 mt-1 font-mono truncate" :title="systemInfo.workspace_path">{{ truncatePath(systemInfo.workspace_path) }}</p>
           </div>
         </div>
       </div>

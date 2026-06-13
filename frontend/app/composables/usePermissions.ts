@@ -22,6 +22,7 @@ export function usePermissions() {
     isOperator: computed(() => atLeast('operator')),
     isAdmin: computed(() => atLeast('admin')),
     canOperate: computed(() => atLeast('operator')),
+    canManageRepos: computed(() => atLeast('operator')),
     canManageSettings: computed(() => atLeast('admin')),
   }
 }

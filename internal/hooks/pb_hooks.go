@@ -71,6 +71,21 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 		return e.Next()
 	})
 
+	// Dynamically hide credential fields on record enrich for standard API requests
+	app.OnRecordEnrich("repository_keys").BindFunc(func(e *core.RecordEnrichEvent) error {
+		isSuperuser := false
+		if e.RequestInfo != nil && e.RequestInfo.Auth != nil {
+			authCol := e.RequestInfo.Auth.Collection()
+			if authCol != nil && authCol.Name == core.CollectionNameSuperusers {
+				isSuperuser = true
+			}
+		}
+		if !isSuperuser {
+			e.Record.Hide("ssh_private_key", "ssh_passphrase", "git_password")
+		}
+		return e.Next()
+	})
+
 	app.OnRecordCreate("worker_policies").BindFunc(func(e *core.RecordEvent) error {
 		records, err := app.FindAllRecords("worker_policies")
 		if err != nil {
@@ -122,10 +137,25 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 			// Small delay to allow nested records (like credentials) to be saved if created in a transaction
 			time.Sleep(1 * time.Second)
 
-			// Try to load auth
+			// Try to load auth with retries to handle the race condition
+			// where the frontend creates the repository and then takes a moment
+			// to create the associated repository_keys.
 			var auth transport.AuthMethod
-			records, err := app.FindAllRecords("repository_keys", dbx.HashExp{"repository": repoID})
-			if err == nil && len(records) > 0 {
+			var records []*core.Record
+			for i := 0; i < 10; i++ {
+				var err error
+				records, err = app.FindAllRecords("repository_keys", dbx.HashExp{"repository": repoID})
+				if err != nil {
+					log.Printf("[hooks] database error finding repository keys for repo %s: %v", repoID, err)
+					return
+				}
+				if len(records) > 0 {
+					break
+				}
+				time.Sleep(1 * time.Second)
+			}
+
+			if len(records) > 0 {
 				rec := records[0]
 				authType := git.AuthType(rec.GetString("auth_type"))
 				cred := &git.Credential{AuthType: authType}

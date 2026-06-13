@@ -262,6 +262,10 @@ func readLoop(conn *websocket.Conn, disconnectCh chan<- disconnectReason) {
 			go handleStopContainer(env.Payload)
 		case protocol.MsgRestartContainer:
 			go handleRestartContainer(env.Payload)
+		case protocol.MsgGetContainerStats:
+			go handleGetContainerStats(env.Payload)
+		case protocol.MsgGetContainerLogs:
+			go handleGetContainerLogs(env.Payload)
 		case protocol.MsgDiscoverProjects:
 			go handleDiscoverProjects(env.Payload)
 		case protocol.MsgReadFile:
@@ -364,6 +368,26 @@ func handleRestartContainer(payload interface{}) {
 		return
 	}
 	result := executor.RestartContainer(context.Background(), cmd)
+	sendResult(result)
+}
+
+func handleGetContainerStats(payload interface{}) {
+	cmd, err := unmarshalPayload[protocol.GetContainerStatsCommand](payload)
+	if err != nil {
+		log.Printf("[worker] invalid get_container_stats payload error=%v", err)
+		return
+	}
+	result := executor.GetContainerStats(context.Background(), cmd)
+	sendResult(result)
+}
+
+func handleGetContainerLogs(payload interface{}) {
+	cmd, err := unmarshalPayload[protocol.GetContainerLogsCommand](payload)
+	if err != nil {
+		log.Printf("[worker] invalid get_container_logs payload error=%v", err)
+		return
+	}
+	result := executor.GetContainerLogs(context.Background(), cmd)
 	sendResult(result)
 }
 
