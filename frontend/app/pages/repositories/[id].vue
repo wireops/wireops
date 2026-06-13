@@ -4,6 +4,7 @@ const { $pb } = useNuxtApp()
 const { getRepoCommits } = useApi()
 const { copy } = useCopy()
 const { platformIconUrl, PLATFORM_OPTIONS } = useRepositoryPlatform()
+const toast = useToast()
 
 function platformLabel(value: string): string {
   return PLATFORM_OPTIONS.find(p => p.value === value)?.label ?? (value ? value.charAt(0).toUpperCase() + value.slice(1) : '-')
@@ -17,6 +18,7 @@ const { data: repo, refresh: refreshRepo } = useAsyncData(`repo_${repoId}`, () =
 
 // Edit repo — delegated to RepositoryCreateModal
 const showEdit = ref(false)
+const syncing = ref(false)
 
 const commits = ref<{ sha: string; message: string; author: string; date: string }[]>([])
 async function loadCommits() {
@@ -25,6 +27,21 @@ async function loadCommits() {
   } catch { commits.value = [] }
 }
 onMounted(() => loadCommits())
+
+async function syncRepo() {
+  syncing.value = true
+  try {
+    const { customPost } = useApi()
+    await customPost(`/api/custom/repositories/${repoId}/sync`)
+    toast.add({ title: 'Repository synced successfully', color: 'green' })
+    await refreshRepo()
+    await loadCommits()
+  } catch (err: any) {
+    toast.add({ title: 'Sync failed', description: err.data?.error || err.message, color: 'red' })
+  } finally {
+    syncing.value = false
+  }
+}
 </script>
 
 <template>
@@ -47,7 +64,10 @@ onMounted(() => loadCommits())
       <template #header>
         <div class="flex justify-between items-center">
           <h3 class="font-semibold">Git Connection</h3>
-          <UButton v-if="repo" icon="i-lucide-pencil" variant="ghost" size="xs" @click="showEdit = true" />
+          <div class="flex gap-2">
+            <UButton v-if="repo" icon="i-lucide-refresh-cw" variant="ghost" size="xs" :loading="syncing" @click="syncRepo" />
+            <UButton v-if="repo" icon="i-lucide-pencil" variant="ghost" size="xs" @click="showEdit = true" />
+          </div>
         </div>
       </template>
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">

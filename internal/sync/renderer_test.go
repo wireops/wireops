@@ -37,7 +37,7 @@ services:
 	ctx := context.Background()
 
 	// 1. First Generation
-	res1, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitA", false, "embedded")
+	res1, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitA", false, "", "embedded")
 	if err != nil {
 		t.Fatalf("unexpected error on first render: %v", err)
 	}
@@ -51,7 +51,7 @@ services:
 
 	// 2. Second Generation, no changes (using SAME commitA to verify identity)
 	time.Sleep(50 * time.Millisecond) // ensure time moves
-	res2, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitA", false, "embedded")
+	res2, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitA", false, "", "embedded")
 	if err != nil {
 		t.Fatalf("unexpected error on second render: %v", err)
 	}
@@ -63,7 +63,7 @@ services:
 	}
 
 	// 3. Third Generation, force bump (still using commitA, but forced)
-	res3, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitA", true, "embedded")
+	res3, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitA", true, "", "embedded")
 	if err != nil {
 		t.Fatalf("unexpected error on forced render: %v", err)
 	}
@@ -85,7 +85,7 @@ services:
 `
 	writeTestComposeFile(t, composePath, composeContent2)
 
-	res4, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitC", false, "embedded")
+	res4, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitC", false, "", "embedded")
 	if err != nil {
 		t.Fatalf("unexpected error on changed render: %v", err)
 	}
@@ -140,7 +140,7 @@ services:
 	renderer := sync.NewRenderer(app)
 	ctx := context.Background()
 
-	res, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitX", false, "embedded")
+	res, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitX", false, "", "embedded")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -194,7 +194,7 @@ services:
 		"ANOTHER_VAR=my_override",
 	}
 
-	res, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", envVars, "commit123", false, "embedded")
+	res, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", envVars, "commit123", false, "", "embedded")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -286,6 +286,31 @@ func createTestCollections(t *testing.T, app core.App) {
 		t.Fatalf("failed to create repos collection: %v", err)
 	}
 
+	// Worker Policies
+	policies := core.NewBaseCollection("worker_policies")
+	policies.Fields.Add(&core.BoolField{Name: "enabled"})
+	policies.Fields.Add(&core.JSONField{Name: "allowed_volumes"})
+	policies.Fields.Add(&core.JSONField{Name: "allowed_networks"})
+	policies.Fields.Add(&core.JSONField{Name: "allowed_images"})
+	policies.Fields.Add(&core.BoolField{Name: "prevent_latest_images"})
+	policies.Fields.Add(&core.BoolField{Name: "block_host_volumes"})
+	if err := app.Save(policies); err != nil {
+		t.Fatalf("failed to create worker_policies collection: %v", err)
+	}
+
+	// Workers
+	workers := core.NewBaseCollection("workers")
+	workers.Fields.Add(&core.TextField{Name: "hostname"})
+	workers.Fields.Add(&core.TextField{Name: "fingerprint"})
+	workers.Fields.Add(&core.BoolField{Name: "policy_inherit"})
+	workers.Fields.Add(&core.JSONField{Name: "policy_flags"})
+	workers.Fields.Add(&core.JSONField{Name: "policy_volumes"})
+	workers.Fields.Add(&core.JSONField{Name: "policy_networks"})
+	workers.Fields.Add(&core.JSONField{Name: "policy_images"})
+	if err := app.Save(workers); err != nil {
+		t.Fatalf("failed to create workers collection: %v", err)
+	}
+
 	// Stacks
 	stacks := core.NewBaseCollection("stacks")
 	stacks.Fields.Add(&core.TextField{Name: "name"})
@@ -352,7 +377,7 @@ services:
 	renderer := sync.NewRenderer(app)
 	ctx := context.Background()
 
-	res, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitL", false, "embedded")
+	res, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitL", false, "", "embedded")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -365,5 +390,89 @@ services:
 	}
 	if !contains(contentStr, "user.safe: value") {
 		t.Errorf("user label lost:\n%s", contentStr)
+	}
+}
+
+func TestRendererPolicyRejection(t *testing.T) {
+	app, workDir, composePath := setupRendererTest(t)
+
+	// Enable policy that blocks latest tags, host volumes, and restricts networks/images
+	col, _ := app.FindCollectionByNameOrId("worker_policies")
+	globalPolicy := core.NewRecord(col)
+	globalPolicy.Set("enabled", true)
+	globalPolicy.Set("prevent_latest_images", true)
+	globalPolicy.Set("block_host_volumes", true)
+	globalPolicy.Set("allowed_networks", `["safe_net"]`)
+	globalPolicy.Set("allowed_images", `["nginx:alpine", "postgres:15"]`)
+	if err := app.Save(globalPolicy); err != nil {
+		t.Fatalf("failed to save global policy: %v", err)
+	}
+
+	tests := []struct {
+		name    string
+		compose string
+	}{
+		{
+			name: "violates latest image",
+			compose: `
+name: policy_stack
+services:
+  web:
+    image: nginx:latest
+`,
+		},
+		{
+			name: "violates allowed images",
+			compose: `
+name: policy_stack
+services:
+  web:
+    image: mysql:8
+`,
+		},
+		{
+			name: "violates host volume",
+			compose: `
+name: policy_stack
+services:
+  web:
+    image: nginx:alpine
+    volumes:
+      - /etc/shadow:/etc/shadow
+`,
+		},
+		{
+			name: "violates allowed networks",
+			compose: `
+name: policy_stack
+services:
+  web:
+    image: nginx:alpine
+    networks:
+      - malicious_net
+`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			writeTestComposeFile(t, composePath, tc.compose)
+
+			repo := createTestRepo(t, app, tc.name, "main")
+			stack := createTestStack(t, app, repo.Id, "policy_stack")
+
+			renderer := sync.NewRenderer(app)
+			ctx := context.Background()
+
+			// Generation should fail due to policy violation
+			_, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitA", false, "", "embedded")
+			if err == nil {
+				t.Fatalf("expected error due to policy violation, got nil")
+			}
+
+			if !contains(err.Error(), "policy violation") {
+				t.Errorf("expected policy violation error, got: %v", err)
+			}
+		})
 	}
 }

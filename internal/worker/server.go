@@ -282,6 +282,12 @@ func (s *WorkerServer) Dispatch(ctx context.Context, workerID string, cmd interf
 			logger.SafeLogf("[WORKER] unknown or malformed container action command ID: %s", v.CommandID)
 			return protocol.CommandResult{}, fmt.Errorf("unknown or malformed container action command ID: %s", v.CommandID)
 		}
+	case protocol.GetContainerStatsCommand:
+		msgType = protocol.MsgGetContainerStats
+		commandID = v.CommandID
+	case protocol.GetContainerLogsCommand:
+		msgType = protocol.MsgGetContainerLogs
+		commandID = v.CommandID
 	case protocol.DiscoverProjectsCommand:
 		msgType = protocol.MsgDiscoverProjects
 		commandID = v.CommandID

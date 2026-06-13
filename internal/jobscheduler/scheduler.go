@@ -824,6 +824,13 @@ func (s *Scheduler) updateJobRun(runID, status, output string, durationMs int64,
 		return fmt.Errorf("update job_run run=%s status=%s: %w", runID, status, err)
 	}
 	rec.Set("status", status)
+
+	// Truncate output to prevent database bloat
+	const maxOutputLength = 1000000
+	if len(output) > maxOutputLength {
+		output = output[:maxOutputLength/2] + "\n\n... [OUTPUT TRUNCATED FOR SIZE] ...\n\n" + output[len(output)-maxOutputLength/2:]
+	}
+
 	rec.Set("output", output)
 	rec.Set("duration_ms", durationMs)
 

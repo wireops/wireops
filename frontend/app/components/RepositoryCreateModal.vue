@@ -151,20 +151,29 @@ async function testConnection() {
 }
 
 async function saveCredentials(repositoryId: string) {
-  if (!isPrivate.value && !existingCredId.value) return
+  console.log('[DEBUG-UI] saveCredentials started, isPrivate:', isPrivate.value, 'existingCredId:', existingCredId.value)
+  console.log('[DEBUG-UI] saveCredentials credForm:', JSON.stringify(credForm.value))
+  if (!isPrivate.value && !existingCredId.value) {
+    console.log('[DEBUG-UI] saveCredentials early exit')
+    return
+  }
 
   const payload: any = {
     ...credForm.value,
     auth_type: isPrivate.value ? credForm.value.auth_type : 'none',
     repository: repositoryId,
   }
+  console.log('[DEBUG-UI] saveCredentials payload before delete:', JSON.stringify(payload))
   if (!payload.ssh_private_key) delete payload.ssh_private_key
   if (!payload.ssh_passphrase) delete payload.ssh_passphrase
   if (!payload.git_password) delete payload.git_password
+  console.log('[DEBUG-UI] saveCredentials payload after delete:', JSON.stringify(payload))
 
   if (existingCredId.value) {
+    console.log('[DEBUG-UI] saveCredentials updating:', existingCredId.value)
     await $pb.collection('repository_keys').update(existingCredId.value, payload)
   } else if (isPrivate.value) {
+    console.log('[DEBUG-UI] saveCredentials creating')
     await $pb.collection('repository_keys').create(payload)
   }
 }
@@ -307,7 +316,7 @@ function cancel() {
               <UInput
                 v-model="credForm.git_password"
                 type="password"
-                :placeholder="isEditMode ? 'Leave empty to keep current' : ''"
+                :placeholder="isEditMode && existingCredId ? 'Leave empty to keep current' : ''"
                 class="w-full"
                 aria-label="Git password or token"
               />
@@ -319,7 +328,7 @@ function cancel() {
             <UFormField label="SSH Private Key" class="w-full">
               <UTextarea
                 v-model="credForm.ssh_private_key"
-                :placeholder="isEditMode ? 'Leave empty to keep current key' : 'Paste your private key here'"
+                :placeholder="isEditMode && existingCredId ? 'Leave empty to keep current key' : 'Paste your private key here'"
                 :rows="8"
                 class="font-mono text-xs w-full"
                 aria-label="SSH private key"
@@ -329,7 +338,7 @@ function cancel() {
               <UInput
                 v-model="credForm.ssh_passphrase"
                 type="password"
-                :placeholder="isEditMode ? 'Leave empty to keep current' : 'Optional passphrase for encrypted keys'"
+                :placeholder="isEditMode && existingCredId ? 'Leave empty to keep current' : 'Optional passphrase for encrypted keys'"
                 class="w-full"
                 aria-label="SSH key passphrase"
               />

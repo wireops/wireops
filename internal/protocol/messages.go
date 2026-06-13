@@ -16,6 +16,8 @@ const (
 	MsgGetResources MessageType = "get_resources"
 	MsgStopContainer    MessageType = "stop_container"
 	MsgRestartContainer MessageType = "restart_container"
+	MsgGetContainerStats MessageType = "get_container_stats"
+	MsgGetContainerLogs  MessageType = "get_container_logs"
 
 	MsgDiscoverProjects MessageType = "discover_projects"
 	MsgReadFile         MessageType = "read_file"
@@ -187,6 +189,25 @@ type ContainerActionCommand struct {
 	StackID     string `json:"stack_id"`
 	ProjectName string `json:"project_name"`
 	ContainerID string `json:"container_id"`
+}
+
+// GetContainerStatsCommand queries the worker for CPU, memory, and network stats
+// of a container after verifying it belongs to the compose project.
+type GetContainerStatsCommand struct {
+	CommandID   string `json:"command_id"`
+	StackID     string `json:"stack_id"`
+	ProjectName string `json:"project_name"`
+	ContainerID string `json:"container_id"`
+}
+
+// GetContainerLogsCommand queries the worker for the logs of a container
+// after verifying it belongs to the compose project.
+type GetContainerLogsCommand struct {
+	CommandID   string `json:"command_id"`
+	StackID     string `json:"stack_id"`
+	ProjectName string `json:"project_name"`
+	ContainerID string `json:"container_id"`
+	Tail        string `json:"tail"`
 }
 
 // DiscoverProjectsCommand asks the worker to list Docker Compose projects on this

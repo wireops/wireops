@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -642,6 +643,94 @@ func safeEnv() []string {
 		env = append(env, safePath)
 	}
 	return env
+}
+
+// GetContainerStats queries Docker on the worker for CPU, memory, and network stats of a container
+// after verifying it belongs to the specified compose project.
+func GetContainerStats(ctx context.Context, cmd protocol.GetContainerStatsCommand) protocol.CommandResult {
+	log.Printf("[executor] get_container_stats start stack=%s project=%s container=%s command=%s", cmd.StackID, cmd.ProjectName, cmd.ContainerID, cmd.CommandID)
+
+	cli, err := docker.NewClient()
+	if err != nil {
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
+	}
+	defer cli.Close()
+
+	belongs, err := compose.ContainerBelongsToProject(ctx, cli.Raw(), cmd.ContainerID, cmd.ProjectName)
+	if err != nil {
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
+	}
+	if !belongs {
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: "container does not belong to stack"}
+	}
+
+	stats, err := compose.GetContainerStats(ctx, cli.Raw(), cmd.ContainerID)
+	if err != nil {
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
+	}
+
+	encoded, err := json.Marshal(stats)
+	if err != nil {
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
+	}
+
+	return protocol.CommandResult{CommandID: cmd.CommandID, Output: string(encoded)}
+}
+
+// GetContainerLogs retrieves logs for a container after verifying it belongs to the project.
+func GetContainerLogs(ctx context.Context, cmd protocol.GetContainerLogsCommand) protocol.CommandResult {
+	log.Printf("[executor] get_container_logs start stack=%s project=%s container=%s command=%s tail=%s", cmd.StackID, cmd.ProjectName, cmd.ContainerID, cmd.CommandID, cmd.Tail)
+
+	cli, err := docker.NewClient()
+	if err != nil {
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
+	}
+	defer cli.Close()
+
+	belongs, err := compose.ContainerBelongsToProject(ctx, cli.Raw(), cmd.ContainerID, cmd.ProjectName)
+	if err != nil {
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
+	}
+	if !belongs {
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: "container does not belong to stack"}
+	}
+
+	tail := cmd.Tail
+	if tail == "" {
+		tail = "100"
+	}
+
+	reader, err := cli.Raw().ContainerLogs(ctx, cmd.ContainerID, container.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Tail:       tail,
+		Timestamps: true,
+	})
+	if err != nil {
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
+	}
+	defer reader.Close()
+
+	buf := new(strings.Builder)
+	header := make([]byte, 8)
+	for {
+		_, err := io.ReadFull(reader, header)
+		if err != nil {
+			break
+		}
+		size := int(header[4])<<24 | int(header[5])<<16 | int(header[6])<<8 | int(header[7])
+		if size == 0 {
+			continue
+		}
+		payload := make([]byte, size)
+		_, err = io.ReadFull(reader, payload)
+		if err != nil {
+			break
+		}
+		buf.Write(payload)
+	}
+
+	return protocol.CommandResult{CommandID: cmd.CommandID, Output: buf.String()}
 }
 
 
