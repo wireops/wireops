@@ -126,12 +126,15 @@ func TestUpdateSyncLogTruncatesOutput(t *testing.T) {
 		t.Fatalf("failed to update schema: %v", err)
 	}
 
-	// Create output larger than 1,000,000 characters
-	// Let's create a string of 1,200,000 'A' characters
+	// Create output larger than 1,000,000 characters with distinct head and tail
+	headStr := "HEAD-SYNCLOG123"
+	tailStr := "TAIL-SYNCLOG123"
 	var sb strings.Builder
-	for i := 0; i < 1200000; i++ {
+	sb.WriteString(headStr)
+	for i := 0; i < 1200000-len(headStr)-len(tailStr); i++ {
 		sb.WriteByte('A')
 	}
+	sb.WriteString(tailStr)
 	largeOutput := sb.String()
 
 	if err := r.updateSyncLog(logRec.Id, "success", largeOutput, 42); err != nil {
@@ -150,7 +153,22 @@ func TestUpdateSyncLogTruncatesOutput(t *testing.T) {
 	}
 
 	marker := "\n\n... [OUTPUT TRUNCATED FOR SIZE] ...\n\n"
-	if !strings.Contains(truncatedOutput, marker) {
-		t.Error("expected output to contain the truncation marker")
+	if strings.Count(truncatedOutput, marker) != 1 {
+		t.Errorf("expected truncation marker to appear exactly once, but count was %d", strings.Count(truncatedOutput, marker))
+	}
+
+	if !strings.HasPrefix(truncatedOutput, headStr) {
+		t.Errorf("expected truncated output to start with %q", headStr)
+	}
+
+	if !strings.HasSuffix(truncatedOutput, tailStr) {
+		t.Errorf("expected truncated output to end with %q", tailStr)
+	}
+
+	headIdx := strings.Index(truncatedOutput, headStr)
+	markerIdx := strings.Index(truncatedOutput, marker)
+	tailIdx := strings.LastIndex(truncatedOutput, tailStr)
+	if headIdx < 0 || markerIdx < 0 || tailIdx < 0 || !(headIdx < markerIdx && markerIdx < tailIdx) {
+		t.Error("expected marker to be present between preserved head and tail")
 	}
 }

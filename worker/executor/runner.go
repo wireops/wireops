@@ -286,22 +286,35 @@ func RestartContainer(ctx context.Context, cmd protocol.ContainerActionCommand) 
 	return executeContainerAction(ctx, cmd, "restart")
 }
 
+// verifyContainerAndGetClient validates that the container belongs to the specified project and returns the docker client.
+// The caller is responsible for calling defer cli.Close() if no error is returned.
+func verifyContainerAndGetClient(ctx context.Context, containerID, projectName string) (*docker.Client, error) {
+	cli, err := docker.NewClient()
+	if err != nil {
+		return nil, err
+	}
+
+	belongs, err := compose.ContainerBelongsToProject(ctx, cli.Raw(), containerID, projectName)
+	if err != nil {
+		cli.Close()
+		return nil, err
+	}
+	if !belongs {
+		cli.Close()
+		return nil, errors.New("container does not belong to stack")
+	}
+
+	return cli, nil
+}
+
 func executeContainerAction(ctx context.Context, cmd protocol.ContainerActionCommand, action string) protocol.CommandResult {
 	log.Printf("[executor] %s_container start stack=%s project=%s container=%s command=%s", action, cmd.StackID, cmd.ProjectName, cmd.ContainerID, cmd.CommandID)
 
-	cli, err := docker.NewClient()
+	cli, err := verifyContainerAndGetClient(ctx, cmd.ContainerID, cmd.ProjectName)
 	if err != nil {
 		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
 	}
 	defer cli.Close()
-
-	belongs, err := compose.ContainerBelongsToProject(ctx, cli.Raw(), cmd.ContainerID, cmd.ProjectName)
-	if err != nil {
-		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
-	}
-	if !belongs {
-		return protocol.CommandResult{CommandID: cmd.CommandID, Error: "container does not belong to stack"}
-	}
 
 	timeout := 10
 	var actionErr error
@@ -642,19 +655,11 @@ func safeEnv() []string {
 func GetContainerStats(ctx context.Context, cmd protocol.GetContainerStatsCommand) protocol.CommandResult {
 	log.Printf("[executor] get_container_stats start stack=%s project=%s container=%s command=%s", cmd.StackID, cmd.ProjectName, cmd.ContainerID, cmd.CommandID)
 
-	cli, err := docker.NewClient()
+	cli, err := verifyContainerAndGetClient(ctx, cmd.ContainerID, cmd.ProjectName)
 	if err != nil {
 		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
 	}
 	defer cli.Close()
-
-	belongs, err := compose.ContainerBelongsToProject(ctx, cli.Raw(), cmd.ContainerID, cmd.ProjectName)
-	if err != nil {
-		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
-	}
-	if !belongs {
-		return protocol.CommandResult{CommandID: cmd.CommandID, Error: "container does not belong to stack"}
-	}
 
 	stats, err := compose.GetContainerStats(ctx, cli.Raw(), cmd.ContainerID)
 	if err != nil {
@@ -673,19 +678,11 @@ func GetContainerStats(ctx context.Context, cmd protocol.GetContainerStatsComman
 func GetContainerLogs(ctx context.Context, cmd protocol.GetContainerLogsCommand) protocol.CommandResult {
 	log.Printf("[executor] get_container_logs start stack=%s project=%s container=%s command=%s tail=%s", cmd.StackID, cmd.ProjectName, cmd.ContainerID, cmd.CommandID, cmd.Tail)
 
-	cli, err := docker.NewClient()
+	cli, err := verifyContainerAndGetClient(ctx, cmd.ContainerID, cmd.ProjectName)
 	if err != nil {
 		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
 	}
 	defer cli.Close()
-
-	belongs, err := compose.ContainerBelongsToProject(ctx, cli.Raw(), cmd.ContainerID, cmd.ProjectName)
-	if err != nil {
-		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
-	}
-	if !belongs {
-		return protocol.CommandResult{CommandID: cmd.CommandID, Error: "container does not belong to stack"}
-	}
 
 	tail := cmd.Tail
 	if tail == "" {
@@ -703,6 +700,7 @@ func GetContainerLogs(ctx context.Context, cmd protocol.GetContainerLogsCommand)
 	}
 	defer reader.Close()
 
+	const maxPayloadSize = 10 * 1024 * 1024
 	buf := new(strings.Builder)
 	header := make([]byte, 8)
 	for {
@@ -713,6 +711,10 @@ func GetContainerLogs(ctx context.Context, cmd protocol.GetContainerLogsCommand)
 		size := int(header[4])<<24 | int(header[5])<<16 | int(header[6])<<8 | int(header[7])
 		if size == 0 {
 			continue
+		}
+		if size < 0 || size > maxPayloadSize {
+			log.Printf("[executor] invalid payload size %d", size)
+			break
 		}
 		payload := make([]byte, size)
 		_, err = io.ReadFull(reader, payload)

@@ -77,6 +77,22 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		return true
 	}
 
+	// resolveStackAndWorker fetches the stack record, checks if the worker is online, and derives the project name.
+	// If the worker is offline or stack not found, it writes the JSON error and returns false.
+	resolveStackAndWorker := func(e *core.RequestEvent, stackID string) (*core.Record, string, string, bool) {
+		if !workerOnline(e, stackID) {
+			return nil, "", "", false
+		}
+		stack, err := app.FindRecordById("stacks", stackID)
+		if err != nil {
+			_ = e.JSON(http.StatusNotFound, map[string]string{"error": "stack not found"})
+			return nil, "", "", false
+		}
+		projectName := compose.ProjectName(stackWorkDir(app, stack))
+		workerID := stack.GetString("worker")
+		return stack, projectName, workerID, true
+	}
+
 	// Trigger sync for a stack
 	r.POST("/api/custom/stacks/{id}/sync", func(e *core.RequestEvent) error {
 		id := e.Request.PathValue("id")
@@ -304,16 +320,10 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "missing containerId"})
 		}
 
-		if !workerOnline(e, stackID) {
+		_, projectName, workerID, ok := resolveStackAndWorker(e, stackID)
+		if !ok {
 			return nil
 		}
-
-		stack, err := app.FindRecordById("stacks", stackID)
-		if err != nil {
-			return e.JSON(http.StatusNotFound, map[string]string{"error": "stack not found"})
-		}
-		projectName := compose.ProjectName(stackWorkDir(app, stack))
-		workerID := stack.GetString("worker")
 
 		res, dispatchErr := workerSvc.Dispatch(e.Request.Context(), workerID, protocol.GetContainerStatsCommand{
 			CommandID:   fmt.Sprintf("stats-container-%s", containerID),
@@ -347,16 +357,10 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "missing containerId"})
 		}
 
-		if !workerOnline(e, stackID) {
+		_, projectName, workerID, ok := resolveStackAndWorker(e, stackID)
+		if !ok {
 			return nil
 		}
-
-		stack, err := app.FindRecordById("stacks", stackID)
-		if err != nil {
-			return e.JSON(http.StatusNotFound, map[string]string{"error": "stack not found"})
-		}
-		projectName := compose.ProjectName(stackWorkDir(app, stack))
-		workerID := stack.GetString("worker")
 
 		tail := e.Request.URL.Query().Get("tail")
 		if tail == "" {
@@ -878,16 +882,11 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		if err := json.NewDecoder(e.Request.Body).Decode(&body); err != nil || body.ContainerID == "" {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "container_id required"})
 		}
-		if !workerOnline(e, stackID) {
+
+		_, projectName, workerID, ok := resolveStackAndWorker(e, stackID)
+		if !ok {
 			return nil
 		}
-
-		stack, err := app.FindRecordById("stacks", stackID)
-		if err != nil {
-			return e.JSON(http.StatusNotFound, map[string]string{"error": "stack not found"})
-		}
-		projectName := compose.ProjectName(stackWorkDir(app, stack))
-		workerID := stack.GetString("worker")
 
 		res, dispatchErr := workerSvc.Dispatch(e.Request.Context(), workerID, protocol.ContainerActionCommand{
 			CommandID:   fmt.Sprintf("stop-container-%s", body.ContainerID),
@@ -918,16 +917,11 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		if err := json.NewDecoder(e.Request.Body).Decode(&body); err != nil || body.ContainerID == "" {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "container_id required"})
 		}
-		if !workerOnline(e, stackID) {
+
+		_, projectName, workerID, ok := resolveStackAndWorker(e, stackID)
+		if !ok {
 			return nil
 		}
-
-		stack, err := app.FindRecordById("stacks", stackID)
-		if err != nil {
-			return e.JSON(http.StatusNotFound, map[string]string{"error": "stack not found"})
-		}
-		projectName := compose.ProjectName(stackWorkDir(app, stack))
-		workerID := stack.GetString("worker")
 
 		res, dispatchErr := workerSvc.Dispatch(e.Request.Context(), workerID, protocol.ContainerActionCommand{
 			CommandID:   fmt.Sprintf("restart-container-%s", body.ContainerID),
