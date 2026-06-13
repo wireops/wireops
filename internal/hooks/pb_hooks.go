@@ -143,7 +143,12 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 			var auth transport.AuthMethod
 			var records []*core.Record
 			for i := 0; i < 10; i++ {
-				records, _ = app.FindAllRecords("repository_keys", dbx.HashExp{"repository": repoID})
+				var err error
+				records, err = app.FindAllRecords("repository_keys", dbx.HashExp{"repository": repoID})
+				if err != nil {
+					log.Printf("[hooks] database error finding repository keys for repo %s: %v", repoID, err)
+					return
+				}
 				if len(records) > 0 {
 					break
 				}

@@ -94,7 +94,7 @@ func loadRepositoryCredential(app core.App, repoID string) (*git.Credential, err
 		pwdEnc := rec.GetString("git_password")
 		if pwdEnc != "" && len(secretKey) == 32 {
 			if pwdBytes, err := crypto.Decrypt(pwdEnc, secretKey); err == nil {
-				cred.GitPassword = strings.TrimSpace(string(pwdBytes))
+				cred.GitPassword = string(pwdBytes)
 			} else {
 				log.Printf("ERROR: DECRYPT FAILED: %v", err)
 			}

@@ -100,6 +100,34 @@ func TestValidateComposeConfig(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "invalid short-syntax volume",
+			config: `{
+				"services": {
+					"web": {
+						"image": "nginx:1.23",
+						"volumes": [
+							"- \"/etc/shadow:/etc/shadow\""
+						]
+					}
+				}
+			}`,
+			wantErr: true,
+		},
+		{
+			name: "invalid standard short-syntax volume",
+			config: `{
+				"services": {
+					"web": {
+						"image": "nginx:1.23",
+						"volumes": [
+							"/etc/shadow:/etc/shadow"
+						]
+					}
+				}
+			}`,
+			wantErr: true,
+		},
+		{
 			name: "invalid network",
 			config: `{
 				"services": {

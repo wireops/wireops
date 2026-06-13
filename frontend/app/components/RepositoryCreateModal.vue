@@ -151,10 +151,7 @@ async function testConnection() {
 }
 
 async function saveCredentials(repositoryId: string) {
-  console.log('[DEBUG-UI] saveCredentials started, isPrivate:', isPrivate.value, 'existingCredId:', existingCredId.value)
-  console.log('[DEBUG-UI] saveCredentials credForm:', JSON.stringify(credForm.value))
   if (!isPrivate.value && !existingCredId.value) {
-    console.log('[DEBUG-UI] saveCredentials early exit')
     return
   }
 
@@ -163,17 +160,13 @@ async function saveCredentials(repositoryId: string) {
     auth_type: isPrivate.value ? credForm.value.auth_type : 'none',
     repository: repositoryId,
   }
-  console.log('[DEBUG-UI] saveCredentials payload before delete:', JSON.stringify(payload))
   if (!payload.ssh_private_key) delete payload.ssh_private_key
   if (!payload.ssh_passphrase) delete payload.ssh_passphrase
   if (!payload.git_password) delete payload.git_password
-  console.log('[DEBUG-UI] saveCredentials payload after delete:', JSON.stringify(payload))
 
   if (existingCredId.value) {
-    console.log('[DEBUG-UI] saveCredentials updating:', existingCredId.value)
     await $pb.collection('repository_keys').update(existingCredId.value, payload)
   } else if (isPrivate.value) {
-    console.log('[DEBUG-UI] saveCredentials creating')
     await $pb.collection('repository_keys').create(payload)
   }
 }

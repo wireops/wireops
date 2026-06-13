@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/pocketbase/dbx"
@@ -103,4 +104,53 @@ func newReconcilerPhase1TestApp(t *testing.T) (*tests.TestApp, *core.Record) {
 		t.Fatalf("failed to create stack: %v", err)
 	}
 	return app, stack
+}
+
+func TestUpdateSyncLogTruncatesOutput(t *testing.T) {
+	app, stack := newReconcilerPhase1TestApp(t)
+	r := &Reconciler{app: app}
+
+	logRec, err := r.createSyncLog(stack.Id, "manual", "abc123", "test sync")
+	if err != nil {
+		t.Fatalf("createSyncLog failed: %v", err)
+	}
+
+	// Make sure schema allows large output during testing
+	col, err := app.FindCollectionByNameOrId("sync_logs")
+	if err != nil {
+		t.Fatalf("failed to find sync_logs collection: %v", err)
+	}
+	outputField := col.Fields.GetByName("output").(*core.TextField)
+	outputField.Max = 2000000
+	if err := app.Save(col); err != nil {
+		t.Fatalf("failed to update schema: %v", err)
+	}
+
+	// Create output larger than 1,000,000 characters
+	// Let's create a string of 1,200,000 'A' characters
+	var sb strings.Builder
+	for i := 0; i < 1200000; i++ {
+		sb.WriteByte('A')
+	}
+	largeOutput := sb.String()
+
+	if err := r.updateSyncLog(logRec.Id, "success", largeOutput, 42); err != nil {
+		t.Fatalf("updateSyncLog failed: %v", err)
+	}
+
+	// Reload the run and assert that it was truncated
+	refreshed, err := app.FindRecordById("sync_logs", logRec.Id)
+	if err != nil {
+		t.Fatalf("failed to reload sync log: %v", err)
+	}
+
+	truncatedOutput := refreshed.GetString("output")
+	if len(truncatedOutput) != 1000000 {
+		t.Errorf("expected output length 1000000, got %d", len(truncatedOutput))
+	}
+
+	marker := "\n\n... [OUTPUT TRUNCATED FOR SIZE] ...\n\n"
+	if !strings.Contains(truncatedOutput, marker) {
+		t.Error("expected output to contain the truncation marker")
+	}
 }

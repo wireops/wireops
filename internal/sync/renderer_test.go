@@ -475,4 +475,40 @@ services:
 			}
 		})
 	}
+
+	t.Run("worker specific override path", func(t *testing.T) {
+		// Create a worker record to exercise the worker override path
+		workersCol, _ := app.FindCollectionByNameOrId("workers")
+		worker := core.NewRecord(workersCol)
+		worker.Id = "workeroverride1"
+		worker.Set("hostname", "worker-1")
+		worker.Set("policy_inherit", true)
+		if err := app.Save(worker); err != nil {
+			t.Fatalf("failed to save worker: %v", err)
+		}
+
+		compose := `
+name: policy_stack
+services:
+  web:
+    image: nginx:latest
+`
+		writeTestComposeFile(t, composePath, compose)
+
+		repo := createTestRepo(t, app, "worker-override-test", "main")
+		stack := createTestStack(t, app, repo.Id, "policy_stack")
+
+		renderer := sync.NewRenderer(app)
+		ctx := context.Background()
+
+		// Generation should fail due to policy violation on the specific worker path
+		_, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitA", false, "workeroverride1", "embedded")
+		if err == nil {
+			t.Fatalf("expected error due to policy violation, got nil")
+		}
+
+		if !contains(err.Error(), "policy violation") {
+			t.Errorf("expected policy violation error, got: %v", err)
+		}
+	})
 }

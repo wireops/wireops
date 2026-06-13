@@ -45,6 +45,18 @@ var stackDir = func() string {
 	return cleaned
 }()
 
+// runInWorkDir encapsulates the work directory preparation, logger error handling, and deferred cleanup
+// for commands that execute in a temporary compose workspace.
+func runInWorkDir(stackID, commandID, composeFileB64, envFileB64 string, action string, fn func(workDir, composeFile string) (string, error)) (string, error) {
+	workDir, composeFile, cleanup, err := prepareWorkDir(stackID, commandID, composeFileB64, envFileB64)
+	if err != nil {
+		log.Printf("[executor] %s error stack=%s: %v", action, stackID, err)
+		return "", err
+	}
+	defer cleanup()
+	return fn(workDir, composeFile)
+}
+
 // Deploy decodes the base64 compose file, writes it to a temp file, and runs
 // `docker compose up`. Environment variables are passed via cmd.Env, never
 // interpolated into the YAML. If EnvFileB64 is set, a .env file is also written
@@ -61,22 +73,11 @@ func Deploy(ctx context.Context, cmd protocol.DeployCommand) protocol.CommandRes
 	}
 	start := time.Now()
 
-	workDir, composeFile, cleanup, err := prepareComposeFile(cmd.StackID, cmd.CommandID, cmd.ComposeFileB64)
-	if err != nil {
-		log.Printf("[executor] deploy error stack=%s trigger=%s: %v", cmd.StackID, trigger, err)
-		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
-	}
-	defer cleanup()
-
-	if envErr := applyEnvFile(workDir, cmd.EnvFileB64); envErr != nil {
-		err := fmt.Errorf("failed to apply env file for stack %s: %w", cmd.StackID, envErr)
-		log.Printf("[executor] deploy error stack=%s trigger=%s: %v", cmd.StackID, trigger, err)
-		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
-	}
-
-	output, runErr := compose.RunUp(ctx, compose.RunOptions{
-		WorkDir:     workDir,
-		ComposeFile: composeFile,
+	output, runErr := runInWorkDir(cmd.StackID, cmd.CommandID, cmd.ComposeFileB64, cmd.EnvFileB64, "deploy", func(workDir, composeFile string) (string, error) {
+		return compose.RunUp(ctx, compose.RunOptions{
+			WorkDir:     workDir,
+			ComposeFile: composeFile,
+		})
 	})
 
 	result := protocol.CommandResult{CommandID: cmd.CommandID, Output: output}
@@ -104,27 +105,16 @@ func Redeploy(ctx context.Context, cmd protocol.RedeployCommand) protocol.Comman
 	}
 	start := time.Now()
 
-	workDir, composeFile, cleanup, err := prepareComposeFile(cmd.StackID, cmd.CommandID, cmd.ComposeFileB64)
-	if err != nil {
-		log.Printf("[executor] redeploy error stack=%s trigger=%s: %v", cmd.StackID, trigger, err)
-		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
-	}
-	defer cleanup()
-
-	if envErr := applyEnvFile(workDir, cmd.EnvFileB64); envErr != nil {
-		err := fmt.Errorf("failed to apply env file for stack %s: %w", cmd.StackID, envErr)
-		log.Printf("[executor] redeploy error stack=%s trigger=%s: %v", cmd.StackID, trigger, err)
-		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
-	}
-
-	output, runErr := compose.RunForceUp(ctx, compose.ForceUpOptions{
-		RunOptions: compose.RunOptions{
-			WorkDir:     workDir,
-			ComposeFile: composeFile,
-		},
-		RecreateContainers: cmd.RecreateContainers,
-		RecreateVolumes:    cmd.RecreateVolumes,
-		RecreateNetworks:   cmd.RecreateNetworks,
+	output, runErr := runInWorkDir(cmd.StackID, cmd.CommandID, cmd.ComposeFileB64, cmd.EnvFileB64, "redeploy", func(workDir, composeFile string) (string, error) {
+		return compose.RunForceUp(ctx, compose.ForceUpOptions{
+			RunOptions: compose.RunOptions{
+				WorkDir:     workDir,
+				ComposeFile: composeFile,
+			},
+			RecreateContainers: cmd.RecreateContainers,
+			RecreateVolumes:    cmd.RecreateVolumes,
+			RecreateNetworks:   cmd.RecreateNetworks,
+		})
 	})
 
 	result := protocol.CommandResult{CommandID: cmd.CommandID, Output: output}
@@ -143,22 +133,11 @@ func Teardown(ctx context.Context, cmd protocol.TeardownCommand) protocol.Comman
 	log.Printf("[executor] teardown start stack=%s command=%s", cmd.StackID, cmd.CommandID)
 	start := time.Now()
 
-	workDir, composeFile, cleanup, err := prepareComposeFile(cmd.StackID, cmd.CommandID, cmd.ComposeFileB64)
-	if err != nil {
-		log.Printf("[executor] teardown error stack=%s: %v", cmd.StackID, err)
-		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
-	}
-	defer cleanup()
-
-	if envErr := applyEnvFile(workDir, cmd.EnvFileB64); envErr != nil {
-		err := fmt.Errorf("failed to apply env file for stack %s: %w", cmd.StackID, envErr)
-		log.Printf("[executor] teardown error stack=%s: %v", cmd.StackID, err)
-		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
-	}
-
-	output, runErr := compose.RunDown(ctx, compose.RunOptions{
-		WorkDir:     workDir,
-		ComposeFile: composeFile,
+	output, runErr := runInWorkDir(cmd.StackID, cmd.CommandID, cmd.ComposeFileB64, cmd.EnvFileB64, "teardown", func(workDir, composeFile string) (string, error) {
+		return compose.RunDown(ctx, compose.RunOptions{
+			WorkDir:     workDir,
+			ComposeFile: composeFile,
+		})
 	})
 
 	result := protocol.CommandResult{CommandID: cmd.CommandID, Output: output}
@@ -178,27 +157,23 @@ func Probe(ctx context.Context, cmd protocol.ProbeCommand) protocol.CommandResul
 	log.Printf("[executor] probe start stack=%s command=%s", cmd.StackID, cmd.CommandID)
 	start := time.Now()
 
-	workDir, composeFile, cleanup, err := prepareComposeFile(cmd.StackID, cmd.CommandID, cmd.ComposeFileB64)
-	if err != nil {
-		log.Printf("[executor] probe error stack=%s: %v", cmd.StackID, err)
-		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
-	}
-	defer cleanup()
-
-	if envErr := applyEnvFile(workDir, cmd.EnvFileB64); envErr != nil {
-		err := fmt.Errorf("failed to apply env file for stack %s: %w", cmd.StackID, envErr)
-		log.Printf("[executor] probe error stack=%s: %v", cmd.StackID, err)
-		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
-	}
-
-	services, psErr := compose.RunPs(ctx, compose.RunOptions{
-		WorkDir:     workDir,
-		ComposeFile: composeFile,
+	var services []string
+	_, runErr := runInWorkDir(cmd.StackID, cmd.CommandID, cmd.ComposeFileB64, cmd.EnvFileB64, "probe", func(workDir, composeFile string) (string, error) {
+		var psErr error
+		services, psErr = compose.RunPs(ctx, compose.RunOptions{
+			WorkDir:     workDir,
+			ComposeFile: composeFile,
+		})
+		if psErr != nil {
+			// Treat ps errors as "nothing found" so a network hiccup doesn't block transfers.
+			log.Printf("[executor] probe ps error stack=%s (treating as empty): %v", cmd.StackID, psErr)
+			services = nil
+		}
+		return "", nil
 	})
-	if psErr != nil {
-		// Treat ps errors as "nothing found" so a network hiccup doesn't block transfers.
-		log.Printf("[executor] probe ps error stack=%s (treating as empty): %v", cmd.StackID, psErr)
-		services = nil
+
+	if runErr != nil {
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: runErr.Error()}
 	}
 
 	probeResult := protocol.ProbeResult{
@@ -528,6 +503,23 @@ func KillJob(cmd protocol.KillJobCommand) protocol.CommandResult {
 	}
 	log.Printf("[executor] kill_job sent job_run=%s", cmd.JobRunID)
 	return protocol.CommandResult{CommandID: cmd.CommandID, Output: "stopped"}
+}
+
+// prepareWorkDir prepares the compose work dir and applies the .env file if provided.
+// It returns the workDir, composeFile, a cleanup function, and any error.
+// If an error is returned, any created resources are cleaned up before returning.
+func prepareWorkDir(stackID, commandID, composeFileB64, envFileB64 string) (string, string, func(), error) {
+	workDir, composeFile, cleanup, err := prepareComposeFile(stackID, commandID, composeFileB64)
+	if err != nil {
+		return "", "", func() {}, err
+	}
+
+	if envErr := applyEnvFile(workDir, envFileB64); envErr != nil {
+		cleanup()
+		return "", "", func() {}, fmt.Errorf("failed to apply env file for stack %s: %w", stackID, envErr)
+	}
+
+	return workDir, composeFile, cleanup, nil
 }
 
 // prepareComposeFile decodes the base64 YAML, writes it to a structured directory

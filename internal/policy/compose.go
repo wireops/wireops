@@ -2,6 +2,7 @@ package policy
 
 import (
 	"fmt"
+	"strings"
 )
 
 // ValidateComposeConfig validates a docker-compose config map against the worker policy.
@@ -29,6 +30,28 @@ func (p *WorkerPolicy) ValidateComposeConfig(configMap map[string]interface{}) e
 
 			if vols, ok := svc["volumes"].([]interface{}); ok {
 				for _, volRaw := range vols {
+					if volStr, ok := volRaw.(string); ok {
+						volStr = strings.TrimSpace(volStr)
+						volStr = strings.TrimPrefix(volStr, "-")
+						volStr = strings.TrimSpace(volStr)
+						volStr = strings.Trim(volStr, `"'`)
+
+						parts := strings.Split(volStr, ":")
+						src := ""
+						if len(parts) > 1 {
+							src = strings.TrimSpace(parts[0])
+						} else if len(parts) == 1 {
+							p := strings.TrimSpace(parts[0])
+							if strings.HasPrefix(p, "/") || strings.HasPrefix(p, "./") || strings.HasPrefix(p, "../") || strings.HasPrefix(p, "~") {
+								src = p
+							}
+						}
+						if src != "" {
+							volumes = append(volumes, src)
+						}
+						continue
+					}
+
 					vol, ok := volRaw.(map[string]interface{})
 					if !ok {
 						continue

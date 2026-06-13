@@ -1160,7 +1160,10 @@ func (r *Reconciler) updateSyncLog(id, status, output string, durationMs int64) 
 	// Truncate output to prevent database bloat
 	const maxOutputLength = 1000000
 	if len(output) > maxOutputLength {
-		output = output[:maxOutputLength/2] + "\n\n... [OUTPUT TRUNCATED FOR SIZE] ...\n\n" + output[len(output)-maxOutputLength/2:]
+		marker := "\n\n... [OUTPUT TRUNCATED FOR SIZE] ...\n\n"
+		prefixLen := (maxOutputLength - len(marker)) / 2
+		suffixLen := maxOutputLength - len(marker) - prefixLen
+		output = output[:prefixLen] + marker + output[len(output)-suffixLen:]
 	}
 
 	record.Set("output", output)

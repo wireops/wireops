@@ -28,7 +28,13 @@ async function loadCommits() {
 }
 onMounted(() => loadCommits())
 
+const { canManageRepos } = usePermissions()
+
 async function syncRepo() {
+  if (!canManageRepos.value) {
+    toast.add({ title: 'Permission denied', description: 'You do not have permission to sync this repository', color: 'red' })
+    return
+  }
   syncing.value = true
   try {
     const { customPost } = useApi()
@@ -65,8 +71,8 @@ async function syncRepo() {
         <div class="flex justify-between items-center">
           <h3 class="font-semibold">Git Connection</h3>
           <div class="flex gap-2">
-            <UButton v-if="repo" icon="i-lucide-refresh-cw" variant="ghost" size="xs" :loading="syncing" @click="syncRepo" />
-            <UButton v-if="repo" icon="i-lucide-pencil" variant="ghost" size="xs" @click="showEdit = true" />
+            <UButton v-if="repo && canManageRepos" icon="i-lucide-refresh-cw" variant="ghost" size="xs" :loading="syncing" aria-label="Sync repository" title="Sync repository" @click="syncRepo" />
+            <UButton v-if="repo && canManageRepos" icon="i-lucide-pencil" variant="ghost" size="xs" aria-label="Edit repository" title="Edit repository" @click="showEdit = true" />
           </div>
         </div>
       </template>
