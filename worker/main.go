@@ -78,6 +78,7 @@ var lastCPUTotal, lastCPUIdle uint64
 
 func main() {
 	logger.InitLogger()
+	sanitizeProcessPATH()
 	cleanupLeftoverWorkdirs()
 	initWorkerInfo()
 
@@ -873,7 +874,11 @@ func unmarshalPayload[T any](payload interface{}) (T, error) {
 func queryDockerVersion() string {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "docker", "version", "--format", "{{.Server.Version}}")
+	dockerPath, err := lookPathSecure("docker")
+	if err != nil {
+		return ""
+	}
+	cmd := exec.CommandContext(ctx, dockerPath, "version", "--format", "{{.Server.Version}}")
 	out, err := cmd.Output()
 	if err != nil {
 		return ""
@@ -884,7 +889,11 @@ func queryDockerVersion() string {
 func queryComposeVersion() string {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "docker", "compose", "version", "--short")
+	dockerPath, err := lookPathSecure("docker")
+	if err != nil {
+		return ""
+	}
+	cmd := exec.CommandContext(ctx, dockerPath, "compose", "version", "--short")
 	out, err := cmd.Output()
 	if err != nil {
 		return ""
@@ -1096,4 +1105,21 @@ func serializeMetrics() string {
 	sb.WriteString(fmt.Sprintf("wireops_worker_queued_messages{queue=\"completed_jobs\"} %d\n", qJobsLen))
 
 	return sb.String()
+}
+
+func sanitizeProcessPATH() {
+	safeDirs := []string{"/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/local/bin"}
+	safePath := strings.Join(safeDirs, string(filepath.ListSeparator))
+	os.Setenv("PATH", safePath)
+}
+
+func lookPathSecure(file string) (string, error) {
+	safeDirs := []string{"/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/local/bin"}
+	for _, dir := range safeDirs {
+		path := filepath.Join(dir, file)
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			return path, nil
+		}
+	}
+	return "", fmt.Errorf("executable %q not found in safe paths", file)
 }

@@ -183,8 +183,8 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		if err != nil {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to open backup"})
 		}
-		defer file.Close()
 		defer os.Remove(backupPath)
+		defer file.Close()
 
 		info, err := file.Stat()
 		if err != nil {

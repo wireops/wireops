@@ -417,11 +417,16 @@ func ReadFile(_ context.Context, cmd protocol.ReadFileCommand) protocol.CommandR
 		return protocol.CommandResult{CommandID: cmd.CommandID, Error: "only .yml/.yaml files are allowed"}
 	}
 
-	if !isAllowedPath(cleanedPath) {
+	resolvedPath, err := filepath.EvalSymlinks(cleanedPath)
+	if err != nil {
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
+	}
+
+	if !isAllowedPath(resolvedPath) {
 		return protocol.CommandResult{CommandID: cmd.CommandID, Error: "access to the requested path is denied by worker policy"}
 	}
 
-	data, err := os.ReadFile(cleanedPath)
+	data, err := os.ReadFile(resolvedPath)
 	if err != nil {
 		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
 	}
@@ -509,7 +514,16 @@ func RunJob(cmd protocol.RunJobCommand) protocol.JobCompletedMessage {
 
 	start := time.Now()
 	args := cmd.BuildDockerRunArgs()
-	runCmd := exec.CommandContext(ctx, "docker", args...)
+	dockerPath, err := lookPathSecure("docker")
+	if err != nil {
+		return protocol.JobCompletedMessage{
+			JobRunID:   cmd.JobRunID,
+			Success:    false,
+			Output:     "failed to find docker binary: " + err.Error(),
+			DurationMs: 0,
+		}
+	}
+	runCmd := exec.CommandContext(ctx, dockerPath, args...)
 	runCmd.Env = safeEnv()
 	out, runErr := runCmd.CombinedOutput()
 	output := string(out)
@@ -522,9 +536,11 @@ func RunJob(cmd protocol.RunJobCommand) protocol.JobCompletedMessage {
 			// Execution timed out. Explicitly kill the container to ensure it's not orphan.
 			log.Printf("[executor] run_job timeout exceeded for job_run=%s (took longer than %v) — stopping container", cmd.JobRunID, timeout)
 			stopCtx, stopCancel := context.WithTimeout(context.Background(), 15*time.Second)
-			stopCmd := exec.CommandContext(stopCtx, "docker", "stop", "wireops-job-"+cmd.JobRunID)
-			stopCmd.Env = safeEnv()
-			_ = stopCmd.Run()
+			if dockerPath, err := lookPathSecure("docker"); err == nil {
+				stopCmd := exec.CommandContext(stopCtx, dockerPath, "stop", "wireops-job-"+cmd.JobRunID)
+				stopCmd.Env = safeEnv()
+				_ = stopCmd.Run()
+			}
 			stopCancel()
 			output = fmt.Sprintf("failed to start job, timeout exceeded: execution took longer than %v", timeout)
 		} else {
@@ -555,7 +571,11 @@ func KillJob(cmd protocol.KillJobCommand) protocol.CommandResult {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	killCmd := exec.CommandContext(ctx, "docker", "stop", containerName)
+	dockerPath, err := lookPathSecure("docker")
+	if err != nil {
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: "failed to find docker binary: " + err.Error()}
+	}
+	killCmd := exec.CommandContext(ctx, dockerPath, "stop", containerName)
 	killCmd.Env = safeEnv()
 	out, err := killCmd.CombinedOutput()
 	if err != nil {
@@ -781,4 +801,15 @@ func GetContainerLogs(ctx context.Context, cmd protocol.GetContainerLogsCommand)
 	}
 
 	return protocol.CommandResult{CommandID: cmd.CommandID, Output: buf.String()}
+}
+
+func lookPathSecure(file string) (string, error) {
+	safeDirs := []string{"/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/local/bin"}
+	for _, dir := range safeDirs {
+		path := filepath.Join(dir, file)
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			return path, nil
+		}
+	}
+	return "", fmt.Errorf("executable %q not found in safe paths", file)
 }
