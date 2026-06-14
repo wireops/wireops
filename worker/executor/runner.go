@@ -435,6 +435,40 @@ func ReadFile(_ context.Context, cmd protocol.ReadFileCommand) protocol.CommandR
 	return protocol.CommandResult{CommandID: cmd.CommandID, Output: base64.StdEncoding.EncodeToString(data)}
 }
 
+func isSubpath(parent, child string) bool {
+	parent = filepath.Clean(parent)
+	child = filepath.Clean(child)
+	if parent == child {
+		return true
+	}
+	if !strings.HasSuffix(parent, string(filepath.Separator)) {
+		parent += string(filepath.Separator)
+	}
+	return strings.HasPrefix(child, parent)
+}
+
+func resolvePathSymlinks(path string) string {
+	cleaned := filepath.Clean(path)
+	resolved, err := filepath.EvalSymlinks(cleaned)
+	if err == nil {
+		return resolved
+	}
+	dir := cleaned
+	var suffix []string
+	for {
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		suffix = append([]string{filepath.Base(dir)}, suffix...)
+		dir = parent
+		if resolvedDir, err := filepath.EvalSymlinks(dir); err == nil {
+			return filepath.Join(append([]string{resolvedDir}, suffix...)...)
+		}
+	}
+	return cleaned
+}
+
 func isAllowedPath(path string) bool {
 	if err := safepath.ValidateHostPath(path); err != nil {
 		return false
@@ -444,8 +478,10 @@ func isAllowedPath(path string) bool {
 		return false
 	}
 
+	resolved := resolvePathSymlinks(cleaned)
+
 	// 1. Always allow inside stackDir
-	if strings.HasPrefix(cleaned, filepath.Clean(stackDir)+string(filepath.Separator)) || cleaned == filepath.Clean(stackDir) {
+	if isSubpath(resolvePathSymlinks(stackDir), resolved) {
 		return true
 	}
 
@@ -457,8 +493,7 @@ func isAllowedPath(path string) bool {
 			if dir == "" {
 				continue
 			}
-			cleanedDir := filepath.Clean(dir)
-			if strings.HasPrefix(cleaned, cleanedDir+string(filepath.Separator)) || cleaned == cleanedDir {
+			if isSubpath(resolvePathSymlinks(dir), resolved) {
 				return true
 			}
 		}
@@ -478,7 +513,7 @@ func isAllowedPath(path string) bool {
 		"/dev",
 	}
 	for _, root := range sensitiveRoots {
-		if strings.HasPrefix(cleaned, root+string(filepath.Separator)) || cleaned == root {
+		if isSubpath(resolvePathSymlinks(root), resolved) {
 			return false
 		}
 	}
@@ -488,7 +523,7 @@ func isAllowedPath(path string) bool {
 
 // RunJob starts a one-shot `docker run` container and blocks until it completes.
 // It returns a JobCompletedMessage with the final result.
-func RunJob(cmd protocol.RunJobCommand) protocol.JobCompletedMessage {
+func RunJob(ctx context.Context, cmd protocol.RunJobCommand) protocol.JobCompletedMessage {
 	log.Printf("[executor] run_job dispatched job_run=%s image=%s command=%s", cmd.JobRunID, cmd.Image, cmd.CommandID)
 
 	// Validate volume host paths for traversal / relative paths only.
@@ -509,7 +544,7 @@ func RunJob(cmd protocol.RunJobCommand) protocol.JobCompletedMessage {
 	if cmd.TimeoutSeconds > 0 {
 		timeout = time.Duration(cmd.TimeoutSeconds) * time.Second
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	start := time.Now()
@@ -523,7 +558,7 @@ func RunJob(cmd protocol.RunJobCommand) protocol.JobCompletedMessage {
 			DurationMs: 0,
 		}
 	}
-	runCmd := exec.CommandContext(ctx, dockerPath, args...)
+	runCmd := exec.CommandContext(runCtx, dockerPath, args...)
 	runCmd.Env = safeEnv()
 	out, runErr := runCmd.CombinedOutput()
 	output := string(out)
@@ -532,9 +567,9 @@ func RunJob(cmd protocol.RunJobCommand) protocol.JobCompletedMessage {
 	success := runErr == nil
 
 	if !success {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			// Execution timed out. Explicitly kill the container to ensure it's not orphan.
-			log.Printf("[executor] run_job timeout exceeded for job_run=%s (took longer than %v) — stopping container", cmd.JobRunID, timeout)
+		if errors.Is(runCtx.Err(), context.DeadlineExceeded) || errors.Is(runCtx.Err(), context.Canceled) {
+			// Execution timed out or cancelled. Explicitly kill the container to ensure it's not orphan.
+			log.Printf("[executor] run_job timeout or cancel exceeded for job_run=%s — stopping container", cmd.JobRunID)
 			stopCtx, stopCancel := context.WithTimeout(context.Background(), 15*time.Second)
 			if dockerPath, err := lookPathSecure("docker"); err == nil {
 				stopCmd := exec.CommandContext(stopCtx, dockerPath, "stop", "wireops-job-"+cmd.JobRunID)
@@ -542,7 +577,11 @@ func RunJob(cmd protocol.RunJobCommand) protocol.JobCompletedMessage {
 				_ = stopCmd.Run()
 			}
 			stopCancel()
-			output = fmt.Sprintf("failed to start job, timeout exceeded: execution took longer than %v", timeout)
+			if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+				output = fmt.Sprintf("failed to start job, timeout exceeded: execution took longer than %v", timeout)
+			} else {
+				output = "failed to start job, execution was cancelled"
+			}
 		} else {
 			if output != "" {
 				output += "\n"

@@ -44,3 +44,4 @@ data/
 repos/
 __debug_bin*
 docs/roadmap
+worker_bin

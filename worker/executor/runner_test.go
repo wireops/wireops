@@ -134,3 +134,95 @@ func TestSafeEnv(t *testing.T) {
 		}
 	}
 }
+
+func TestIsAllowedPath(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "wireops-test-stackdir")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	oldStackDir := stackDir
+	stackDir = tmpDir
+	defer func() { stackDir = oldStackDir }()
+
+	oldAllowedDirs := os.Getenv("WORKER_ALLOWED_IMPORT_DIRS")
+	defer func() {
+		if oldAllowedDirs == "" {
+			os.Unsetenv("WORKER_ALLOWED_IMPORT_DIRS")
+		} else {
+			os.Setenv("WORKER_ALLOWED_IMPORT_DIRS", oldAllowedDirs)
+		}
+	}()
+
+	safeFile := filepath.Join(tmpDir, "compose.yml")
+	if err := os.WriteFile(safeFile, []byte("version: '3'"), 0600); err != nil {
+		t.Fatalf("failed to write temp file: %v", err)
+	}
+
+	passwdSymlink := filepath.Join(tmpDir, "evil-symlink.yml")
+	_ = os.Symlink("/etc/passwd", passwdSymlink)
+
+	safeSymlink := filepath.Join(tmpDir, "safe-symlink.yml")
+	_ = os.Symlink(safeFile, safeSymlink)
+
+	cases := []struct {
+		name        string
+		path        string
+		allowedDirs string
+		want        bool
+	}{
+		{
+			name: "allow safe file inside stackDir",
+			path: safeFile,
+			want: true,
+		},
+		{
+			name: "allow safe symlink inside stackDir pointing inside stackDir",
+			path: safeSymlink,
+			want: true,
+		},
+		{
+			name: "block evil symlink pointing outside stackDir to sensitive root",
+			path: passwdSymlink,
+			want: false,
+		},
+		{
+			name:        "block prefix collision (e.g. stackDir + evil)",
+			path:        tmpDir + "-evil",
+			allowedDirs: tmpDir,
+			want:        false,
+		},
+		{
+			name: "block sensitive root (/etc/passwd)",
+			path: "/etc/passwd",
+			want: false,
+		},
+		{
+			name:        "allow extra allowed import dirs if configured",
+			path:        "/tmp/some-external-file.yml",
+			allowedDirs: "/tmp",
+			want:        true,
+		},
+		{
+			name:        "deny extra allowed import dirs if not matching allowed",
+			path:        "/var/log/syslog.yml",
+			allowedDirs: "/tmp",
+			want:        false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.allowedDirs != "" {
+				os.Setenv("WORKER_ALLOWED_IMPORT_DIRS", tc.allowedDirs)
+			} else {
+				os.Unsetenv("WORKER_ALLOWED_IMPORT_DIRS")
+			}
+			got := isAllowedPath(tc.path)
+			if got != tc.want {
+				t.Errorf("isAllowedPath(%q) = %v, want %v", tc.path, got, tc.want)
+			}
+		})
+	}
+}
