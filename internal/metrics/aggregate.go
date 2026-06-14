@@ -20,6 +20,12 @@ const PrometheusContentType = prometheusContentType
 
 const workerMetricsTimeout = 5 * time.Second
 
+var prometheusLabelEscaper = strings.NewReplacer(
+	"\\", `\\`,
+	`"`, `\"`,
+	"\n", `\n`,
+)
+
 // CollectWorker fetches Prometheus metrics from a single connected worker.
 func CollectWorker(ctx context.Context, dispatcher sync.WorkerDispatcher, workerID string) (string, error) {
 	if dispatcher == nil || !dispatcher.IsConnected(workerID) {
@@ -104,7 +110,11 @@ func CollectAll(ctx context.Context, app core.App, dispatcher sync.WorkerDispatc
 
 	for res := range ch {
 		if res.err != nil {
-			sb.WriteString(fmt.Sprintf("wireops_worker_connected{worker=\"%s\",hostname=\"%s\"} 0\n", res.workerID, res.hostname))
+			sb.WriteString(fmt.Sprintf(
+				"wireops_worker_connected{worker=\"%s\",hostname=\"%s\"} 0\n",
+				escapePrometheusLabelValue(res.workerID),
+				escapePrometheusLabelValue(res.hostname),
+			))
 			continue
 		}
 
@@ -149,6 +159,8 @@ func writeAggregateHeaders(sb *strings.Builder) {
 
 // InjectWorkerLabels adds worker and hostname labels to each metric sample line.
 func InjectWorkerLabels(metricsText, workerID, hostname string) string {
+	escapedWorkerID := escapePrometheusLabelValue(workerID)
+	escapedHostname := escapePrometheusLabelValue(hostname)
 	lines := strings.Split(metricsText, "\n")
 	var sb strings.Builder
 	for _, line := range lines {
@@ -169,15 +181,19 @@ func InjectWorkerLabels(metricsText, workerID, hostname string) string {
 		if strings.Contains(nameAndLabels, "{") {
 			braceIdx := strings.LastIndex(nameAndLabels, "}")
 			if braceIdx != -1 {
-				rewritten = nameAndLabels[:braceIdx] + fmt.Sprintf(`,worker="%s",hostname="%s"`, workerID, hostname) + "}"
+				rewritten = nameAndLabels[:braceIdx] + fmt.Sprintf(`,worker="%s",hostname="%s"`, escapedWorkerID, escapedHostname) + "}"
 			} else {
 				rewritten = nameAndLabels
 			}
 		} else {
-			rewritten = nameAndLabels + fmt.Sprintf(`{worker="%s",hostname="%s"}`, workerID, hostname)
+			rewritten = nameAndLabels + fmt.Sprintf(`{worker="%s",hostname="%s"}`, escapedWorkerID, escapedHostname)
 		}
 
 		sb.WriteString(rewritten + value + "\n")
 	}
 	return sb.String()
+}
+
+func escapePrometheusLabelValue(value string) string {
+	return prometheusLabelEscaper.Replace(value)
 }

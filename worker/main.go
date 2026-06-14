@@ -22,10 +22,10 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/wireops/wireops/internal/docker"
 	"github.com/wireops/wireops/internal/protocol"
+	"github.com/wireops/wireops/pkg/logger"
 	"github.com/wireops/wireops/worker/api"
 	"github.com/wireops/wireops/worker/executor"
 	wsync "github.com/wireops/wireops/worker/sync"
-	"github.com/wireops/wireops/pkg/logger"
 )
 
 var (
@@ -227,7 +227,7 @@ func runSession(serverURL, workerToken, hostname string, tags []string, sigChan 
 				return true
 			})
 			heartbeat, _ := json.Marshal(protocol.Envelope{
-				Type:    protocol.MsgHeartbeat,
+				Type: protocol.MsgHeartbeat,
 				Payload: protocol.HeartbeatPayload{
 					ActiveJobRunIDs: activeIDs,
 					WorkerInfo:      cachedWorkerInfo,
@@ -412,8 +412,14 @@ func handleProbe(payload interface{}) {
 		log.Printf("[worker] invalid probe payload error=%v", err)
 		return
 	}
+	ctx, cancel := context.WithCancel(context.Background())
+	activeCommands.Store(cmd.CommandID, cancel)
+	defer func() {
+		cancel()
+		activeCommands.Delete(cmd.CommandID)
+	}()
 	start := time.Now()
-	result := executor.Probe(context.Background(), cmd)
+	result := executor.Probe(ctx, cmd)
 	duration := time.Since(start)
 
 	atomic.AddUint64(&metricsTasksProbe, 1)
@@ -433,8 +439,14 @@ func handleInspect(payload interface{}) {
 		log.Printf("[worker] invalid inspect payload error=%v", err)
 		return
 	}
+	ctx, cancel := context.WithCancel(context.Background())
+	activeCommands.Store(cmd.CommandID, cancel)
+	defer func() {
+		cancel()
+		activeCommands.Delete(cmd.CommandID)
+	}()
 	start := time.Now()
-	result := executor.Inspect(context.Background(), cmd)
+	result := executor.Inspect(ctx, cmd)
 	duration := time.Since(start)
 
 	atomic.AddUint64(&metricsTasksInspect, 1)
@@ -616,11 +628,22 @@ func handleGetMetrics(payload interface{}) {
 	activeConnMu.RLock()
 	c := activeConn
 	activeConnMu.RUnlock()
-	if c != nil {
-		connWriteMu.Lock()
-		_ = c.SetWriteDeadline(time.Now().Add(10 * time.Second))
-		_ = c.WriteMessage(websocket.TextMessage, msg)
-		connWriteMu.Unlock()
+	if c == nil {
+		log.Printf("[worker] metrics send failed: no active connection (command %s). Enqueueing for retry.", cmd.CommandID)
+		queuedEnvelopesMu.Lock()
+		queuedEnvelopes = append(queuedEnvelopes, msg)
+		queuedEnvelopesMu.Unlock()
+		return
+	}
+	connWriteMu.Lock()
+	_ = c.SetWriteDeadline(time.Now().Add(10 * time.Second))
+	err = c.WriteMessage(websocket.TextMessage, msg)
+	connWriteMu.Unlock()
+	if err != nil {
+		log.Printf("[worker] metrics send error=%v. Enqueueing for retry.", err)
+		queuedEnvelopesMu.Lock()
+		queuedEnvelopes = append(queuedEnvelopes, msg)
+		queuedEnvelopesMu.Unlock()
 	}
 }
 
@@ -700,7 +723,7 @@ func sendInitialHeartbeat() {
 		return true
 	})
 	hb, _ := json.Marshal(protocol.Envelope{
-		Type:    protocol.MsgHeartbeat,
+		Type: protocol.MsgHeartbeat,
 		Payload: protocol.HeartbeatPayload{
 			ActiveJobRunIDs: activeIDs,
 			WorkerInfo:      cachedWorkerInfo,
@@ -848,7 +871,9 @@ func unmarshalPayload[T any](payload interface{}) (T, error) {
 }
 
 func queryDockerVersion() string {
-	cmd := exec.Command("docker", "version", "--format", "{{.Server.Version}}")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "docker", "version", "--format", "{{.Server.Version}}")
 	out, err := cmd.Output()
 	if err != nil {
 		return ""
@@ -857,7 +882,9 @@ func queryDockerVersion() string {
 }
 
 func queryComposeVersion() string {
-	cmd := exec.Command("docker", "compose", "version", "--short")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "docker", "compose", "version", "--short")
 	out, err := cmd.Output()
 	if err != nil {
 		return ""

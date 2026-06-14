@@ -33,6 +33,7 @@ const statusDotClass = computed(() => {
 })
 
 watch(worker, async (currentWorker, previousWorker) => {
+  if (!previousWorker) return
   if (redirectingAfterRevoke.value) return
   if (currentWorker?.status !== WORKER_STATUS.REVOKED) return
   if (previousWorker?.status === WORKER_STATUS.REVOKED) return

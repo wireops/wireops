@@ -20,6 +20,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/plumbing/transport"
+	"github.com/google/uuid"
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/router"
@@ -172,11 +173,12 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid filename"})
 		}
 
-		if err := app.CreateBackup(context.Background(), filename); err != nil {
+		storageFilename := fmt.Sprintf("wireops_backup_%s.zip", uuid.NewString())
+		if err := app.CreateBackup(context.Background(), storageFilename); err != nil {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to create backup"})
 		}
 
-		backupPath := filepath.Join(app.DataDir(), core.LocalBackupsDirName, filename)
+		backupPath := filepath.Join(app.DataDir(), core.LocalBackupsDirName, storageFilename)
 		file, err := os.Open(backupPath)
 		if err != nil {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to open backup"})
@@ -734,7 +736,9 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		// Load saved credentials if repository_id is provided and fields are empty
 		if body.RepositoryID != "" {
 			savedCred, err := loadRepositoryCredential(app, body.RepositoryID)
-			if err != nil { log.Printf("TestConnection: failed to load credentials: %v", err) }
+			if err != nil {
+				log.Printf("TestConnection: failed to load credentials: %v", err)
+			}
 			if err == nil && savedCred != nil {
 				// Override with saved values only if form fields are empty
 				if cred.AuthType == git.AuthTypeNone || cred.AuthType == "" {

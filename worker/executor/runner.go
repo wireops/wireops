@@ -408,19 +408,20 @@ func DiscoverProjects(ctx context.Context, cmd protocol.DiscoverProjectsCommand)
 func ReadFile(_ context.Context, cmd protocol.ReadFileCommand) protocol.CommandResult {
 	log.Printf("[executor] read_file command=%s path=%s", cmd.CommandID, cmd.Path)
 
-	if !filepath.IsAbs(cmd.Path) {
-		return protocol.CommandResult{CommandID: cmd.CommandID, Error: "path must be absolute"}
+	if err := safepath.ValidateHostPath(cmd.Path); err != nil {
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
 	}
-	ext := strings.ToLower(filepath.Ext(cmd.Path))
+	cleanedPath := filepath.Clean(cmd.Path)
+	ext := strings.ToLower(filepath.Ext(cleanedPath))
 	if ext != ".yml" && ext != ".yaml" {
 		return protocol.CommandResult{CommandID: cmd.CommandID, Error: "only .yml/.yaml files are allowed"}
 	}
 
-	if !isAllowedPath(cmd.Path) {
+	if !isAllowedPath(cleanedPath) {
 		return protocol.CommandResult{CommandID: cmd.CommandID, Error: "access to the requested path is denied by worker policy"}
 	}
 
-	data, err := os.ReadFile(cmd.Path)
+	data, err := os.ReadFile(cleanedPath)
 	if err != nil {
 		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
 	}
@@ -430,6 +431,9 @@ func ReadFile(_ context.Context, cmd protocol.ReadFileCommand) protocol.CommandR
 }
 
 func isAllowedPath(path string) bool {
+	if err := safepath.ValidateHostPath(path); err != nil {
+		return false
+	}
 	cleaned := filepath.Clean(path)
 	if !filepath.IsAbs(cleaned) {
 		return false
@@ -778,5 +782,3 @@ func GetContainerLogs(ctx context.Context, cmd protocol.GetContainerLogsCommand)
 
 	return protocol.CommandResult{CommandID: cmd.CommandID, Output: buf.String()}
 }
-
-

@@ -9,12 +9,19 @@ import (
 
 func init() {
 	m.Register(func(app core.App) error {
+		optionalCollections := map[string]bool{
+			"service_accounts": true,
+			"sso_group_roles":  true,
+		}
 		collections := []string{"users", "service_accounts", "invites", "sso_group_roles"}
 		for _, name := range collections {
 			col, err := app.FindCollectionByNameOrId(name)
 			if err != nil {
-				log.Printf("[MIGRATE] Warning: Collection %s not found, skipping: %v", name, err)
-				continue
+				if optionalCollections[name] {
+					log.Printf("[MIGRATE] Warning: Optional collection %s not found, skipping: %v", name, err)
+					continue
+				}
+				return err
 			}
 
 			field := col.Fields.GetByName("role")
@@ -41,11 +48,18 @@ func init() {
 		}
 		return nil
 	}, func(app core.App) error {
+		optionalCollections := map[string]bool{
+			"service_accounts": true,
+			"sso_group_roles":  true,
+		}
 		collections := []string{"users", "service_accounts", "invites", "sso_group_roles"}
 		for _, name := range collections {
 			col, err := app.FindCollectionByNameOrId(name)
 			if err != nil {
-				continue
+				if optionalCollections[name] {
+					continue
+				}
+				return err
 			}
 
 			field := col.Fields.GetByName("role")

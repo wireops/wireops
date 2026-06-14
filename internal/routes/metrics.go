@@ -2,6 +2,8 @@ package routes
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -42,7 +44,10 @@ func RegisterMetricsRoutes(r *router.Router[*core.RequestEvent], app core.App, d
 		workerID := e.Request.PathValue("id")
 		worker, err := app.FindRecordById("workers", workerID)
 		if err != nil {
-			return e.JSON(http.StatusNotFound, map[string]string{"error": "Worker not found"})
+			if errors.Is(err, sql.ErrNoRows) {
+				return e.JSON(http.StatusNotFound, map[string]string{"error": "Worker not found"})
+			}
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load worker"})
 		}
 
 		ctx, cancel := context.WithTimeout(e.Request.Context(), 10*time.Second)

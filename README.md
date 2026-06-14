@@ -292,7 +292,7 @@ prometheus.scrape "wireops" {
 
 Store the header line in `credentials_file`:
 
-```
+```text
 X-Wireops-Api-Key: wireops_sk_...
 ```
 

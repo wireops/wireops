@@ -63,6 +63,16 @@ func TestInjectWorkerLabelsSkipsCommentsAndBlankLines(t *testing.T) {
 	}
 }
 
+func TestInjectWorkerLabelsEscapesPrometheusLabelValues(t *testing.T) {
+	input := "wireops_worker_active_tasks 2\n"
+	got := InjectWorkerLabels(input, "wk\"1\\line\nbreak", "node\"a\\rack\n1")
+
+	want := "wireops_worker_active_tasks{worker=\"wk\\\"1\\\\line\\nbreak\",hostname=\"node\\\"a\\\\rack\\n1\"} 2"
+	if !strings.Contains(got, want) {
+		t.Fatalf("expected escaped labels, got:\n%s", got)
+	}
+}
+
 func newMetricsTestApp(t *testing.T) core.App {
 	t.Helper()
 	app, err := tests.NewTestApp()
@@ -108,6 +118,32 @@ func TestCollectAllOfflineWorkerEmitsZeroConnected(t *testing.T) {
 	}
 	if !strings.Contains(out, "# TYPE wireops_worker_connected gauge") {
 		t.Fatal("expected aggregate metric headers")
+	}
+}
+
+func TestCollectAllOfflineWorkerEscapesLabels(t *testing.T) {
+	app := newMetricsTestApp(t)
+
+	workersCol, _ := app.FindCollectionByNameOrId("workers")
+	rec := core.NewRecord(workersCol)
+	rec.Set("hostname", "offline\"node\\rack\n1")
+	rec.Set("fingerprint", "fp-offline-escaped")
+	if err := app.Save(rec); err != nil {
+		t.Fatalf("save worker: %v", err)
+	}
+
+	dispatcher := &fakeDispatcher{
+		connected: map[string]bool{rec.Id: false},
+	}
+
+	out, err := CollectAll(context.Background(), app, dispatcher)
+	if err != nil {
+		t.Fatalf("CollectAll: %v", err)
+	}
+
+	want := `wireops_worker_connected{worker="` + rec.Id + `",hostname="offline\"node\\rack\n1"} 0`
+	if !strings.Contains(out, want) {
+		t.Fatalf("expected escaped offline connected gauge, got:\n%s", out)
 	}
 }
 

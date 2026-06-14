@@ -1,6 +1,7 @@
 package pb_migrations
 
 import (
+	"fmt"
 	"log"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -15,24 +16,27 @@ func init() {
 		}
 
 		field := col.Fields.GetByName("command_type")
-		if field != nil {
-			if selectField, ok := field.(*core.SelectField); ok {
-				hasMetrics := false
-				for _, v := range selectField.Values {
-					if v == "get_metrics" {
-						hasMetrics = true
-						break
-					}
-				}
-
-				if !hasMetrics {
-					selectField.Values = append(selectField.Values, "get_metrics")
-					if err := app.Save(col); err != nil {
-						return err
-					}
-					log.Println("[MIGRATE] Added 'get_metrics' to worker_commands.command_type allowed values")
-				}
+		if field == nil {
+			return fmt.Errorf("worker_commands.command_type field not found")
+		}
+		selectField, ok := field.(*core.SelectField)
+		if !ok {
+			return fmt.Errorf("worker_commands.command_type field is %T, expected *core.SelectField", field)
+		}
+		hasMetrics := false
+		for _, v := range selectField.Values {
+			if v == "get_metrics" {
+				hasMetrics = true
+				break
 			}
+		}
+
+		if !hasMetrics {
+			selectField.Values = append(selectField.Values, "get_metrics")
+			if err := app.Save(col); err != nil {
+				return err
+			}
+			log.Println("[MIGRATE] Added 'get_metrics' to worker_commands.command_type allowed values")
 		}
 		return nil
 	}, func(app core.App) error {
@@ -42,18 +46,20 @@ func init() {
 		}
 
 		field := col.Fields.GetByName("command_type")
-		if field != nil {
-			if selectField, ok := field.(*core.SelectField); ok {
-				var newValues []string
-				for _, v := range selectField.Values {
-					if v != "get_metrics" {
-						newValues = append(newValues, v)
-					}
-				}
-				selectField.Values = newValues
-				return app.Save(col)
+		if field == nil {
+			return fmt.Errorf("worker_commands.command_type field not found")
+		}
+		selectField, ok := field.(*core.SelectField)
+		if !ok {
+			return fmt.Errorf("worker_commands.command_type field is %T, expected *core.SelectField", field)
+		}
+		var newValues []string
+		for _, v := range selectField.Values {
+			if v != "get_metrics" {
+				newValues = append(newValues, v)
 			}
 		}
-		return nil
+		selectField.Values = newValues
+		return app.Save(col)
 	})
 }
