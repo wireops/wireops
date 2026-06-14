@@ -904,7 +904,7 @@ func queryComposeVersion() string {
 func cleanupLeftoverWorkdirs() {
 	stackDirVar := strings.TrimSpace(os.Getenv("WORKER_STACK_DIR"))
 	if stackDirVar == "" {
-		stackDirVar = filepath.Join(os.TempDir(), "wireops")
+		stackDirVar = getSecureDefaultStackDir()
 	}
 	stacksPath := filepath.Join(stackDirVar, "stacks")
 	if _, err := os.Stat(stacksPath); os.IsNotExist(err) {
@@ -1023,7 +1023,7 @@ func getTelemetry() *protocol.TelemetryInfo {
 	// 4. Disk Usage
 	stackDirVar := strings.TrimSpace(os.Getenv("WORKER_STACK_DIR"))
 	if stackDirVar == "" {
-		stackDirVar = filepath.Join(os.TempDir(), "wireops")
+		stackDirVar = getSecureDefaultStackDir()
 	}
 	_ = os.MkdirAll(stackDirVar, 0700)
 	var stat syscall.Statfs_t
@@ -1122,4 +1122,24 @@ func lookPathSecure(file string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("executable %q not found in safe paths", file)
+}
+
+var defaultStackDir string
+
+func init() {
+	home, err := os.UserHomeDir()
+	if err == nil {
+		defaultStackDir = filepath.Join(home, ".wireops")
+		return
+	}
+	tempDir, err := os.MkdirTemp("", "wireops-*")
+	if err == nil {
+		defaultStackDir = tempDir
+		return
+	}
+	defaultStackDir = filepath.Join(os.TempDir(), "wireops-fallback")
+}
+
+func getSecureDefaultStackDir() string {
+	return defaultStackDir
 }

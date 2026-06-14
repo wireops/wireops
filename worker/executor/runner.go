@@ -28,7 +28,7 @@ import (
 // The supplied path must be absolute and must not contain ".." segments;
 // invalid values are rejected with a warning and the default is used instead.
 var stackDir = func() string {
-	defaultDir := filepath.Join(os.TempDir(), "wireops")
+	defaultDir := getSecureDefaultStackDir()
 	d := strings.TrimSpace(os.Getenv("WORKER_STACK_DIR"))
 	if d == "" {
 		return defaultDir
@@ -812,4 +812,24 @@ func lookPathSecure(file string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("executable %q not found in safe paths", file)
+}
+
+var defaultStackDir string
+
+func init() {
+	home, err := os.UserHomeDir()
+	if err == nil {
+		defaultStackDir = filepath.Join(home, ".wireops")
+		return
+	}
+	tempDir, err := os.MkdirTemp("", "wireops-*")
+	if err == nil {
+		defaultStackDir = tempDir
+		return
+	}
+	defaultStackDir = filepath.Join(os.TempDir(), "wireops-fallback")
+}
+
+func getSecureDefaultStackDir() string {
+	return defaultStackDir
 }
