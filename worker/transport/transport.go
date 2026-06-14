@@ -155,6 +155,28 @@ func pendingCounts() (results int, jobs int) {
 	return results, jobs
 }
 
+func resolveWebSocketURL(serverURL string) (string, error) {
+	u, err := url.Parse(serverURL)
+	if err != nil {
+		return "", err
+	}
+
+	scheme := u.Scheme
+	switch scheme {
+	case "ws", "wss":
+		// Keep unchanged
+	case "https":
+		scheme = "wss"
+	case "http":
+		scheme = "ws"
+	default:
+		scheme = "ws"
+	}
+	u.Scheme = scheme
+	u.Path = "/worker/ws"
+	return u.String(), nil
+}
+
 func Connect(serverURL, token string) (*websocket.Conn, error) {
 	dialer := *websocket.DefaultDialer
 
@@ -163,23 +185,16 @@ func Connect(serverURL, token string) (*websocket.Conn, error) {
 		dialer.TLSClientConfig = tlsCfg
 	}
 
-	u, err := url.Parse(serverURL)
+	resolvedURL, err := resolveWebSocketURL(serverURL)
 	if err != nil {
 		return nil, err
 	}
 
-	scheme := "ws"
-	if u.Scheme == "https" {
-		scheme = "wss"
-	}
-	u.Scheme = scheme
-	u.Path = "/worker/ws"
-
 	headers := make(http.Header)
 	headers.Set("X-Wireops-Worker-Token", strings.TrimSpace(token))
 
-	log.Printf("[worker] websocket dialing url=%s", u.String())
-	conn, resp, err := dialer.Dial(u.String(), headers)
+	log.Printf("[worker] websocket dialing url=%s", resolvedURL)
+	conn, resp, err := dialer.Dial(resolvedURL, headers)
 	if err != nil {
 		if resp != nil {
 			return nil, fmt.Errorf("websocket dial failed (status %d): %w", resp.StatusCode, err)
@@ -191,12 +206,12 @@ func Connect(serverURL, token string) (*websocket.Conn, error) {
 	return conn, nil
 }
 
-func RunSession(serverURL, workerToken, hostname, stackDir string, tags []string, shutdownCtx context.Context) DisconnectReason {
+func RunSession(serverURL, workerToken, hostname, stackDir string, tags []string, shutdownCtx context.Context) (DisconnectReason, bool) {
 	currentStackDir = stackDir
 	store, err := spool.New(stackDir, workerToken)
 	if err != nil {
 		log.Printf("[worker] failed to initialize spool: %v", err)
-		return ReasonUnknown
+		return ReasonUnknown, false
 	}
 	setOutboxStore(store)
 
@@ -210,24 +225,24 @@ func RunSession(serverURL, workerToken, hostname, stackDir string, tags []string
 		}
 		if errors.Is(err, api.ErrRevoked) || errors.Is(err, api.ErrUnauthorized) {
 			_ = purgeOutbox()
-			return ReasonRevoked
+			return ReasonRevoked, false
 		}
 
 		select {
 		case <-shutdownCtx.Done():
-			return ReasonShutdown
+			return ReasonShutdown, false
 		default:
 		}
 
 		log.Printf("[worker] registration attempt=%d error=%v retrying_in=5s", i, err)
 		if i == 5 {
 			log.Printf("[worker] registration failed after 5 attempts")
-			return ReasonUnknown
+			return ReasonUnknown, false
 		}
 
 		select {
 		case <-shutdownCtx.Done():
-			return ReasonShutdown
+			return ReasonShutdown, false
 		case <-time.After(5 * time.Second):
 		}
 	}
@@ -235,7 +250,7 @@ func RunSession(serverURL, workerToken, hostname, stackDir string, tags []string
 	conn, err := Connect(serverURL, workerToken)
 	if err != nil {
 		log.Printf("[worker] websocket connect error=%v", err)
-		return ReasonUnknown
+		return ReasonUnknown, false
 	}
 	defer func() {
 		activeConnMu.Lock()
@@ -270,13 +285,13 @@ func RunSession(serverURL, workerToken, hostname, stackDir string, tags []string
 		case <-shutdownCtx.Done():
 			handlers.SetAcceptingWork(false)
 			drainAndFlush()
-			return ReasonShutdown
+			return ReasonShutdown, true
 
 		case reason := <-disconnectCh:
 			if reason == ReasonRevoked {
 				_ = purgeOutbox()
 			}
-			return reason
+			return reason, true
 
 		case <-ticker.C:
 			sendHeartbeat()
@@ -289,11 +304,13 @@ func CloseActiveConnection() {
 	activeConnMu.Lock()
 	defer activeConnMu.Unlock()
 	if activeConn != nil {
+		connWriteMu.Lock()
 		_ = activeConn.WriteControl(
 			websocket.CloseMessage,
 			websocket.FormatCloseMessage(websocket.CloseNormalClosure, "worker shutting down"),
 			time.Now().Add(2*time.Second),
 		)
+		connWriteMu.Unlock()
 		activeConn.Close()
 		activeConn = nil
 	}
@@ -350,12 +367,12 @@ func FlushPersistentMessages() {
 		if err := store.MarkAttempt(msg.MessageID); err != nil {
 			log.Printf("[worker] failed to mark spool attempt message=%s error=%v", msg.MessageID, err)
 		}
+		atomic.AddUint64(&metrics.FlushAttemptsTotal, 1)
 		if err := sendEnvelope(msg.Envelope); err != nil {
 			atomic.AddUint64(&metrics.FlushFailedTotal, 1)
 			log.Printf("[worker] failed to flush spool message=%s kind=%s error=%v", msg.MessageID, msg.Kind, err)
 			return
 		}
-		atomic.AddUint64(&metrics.FlushAttemptsTotal, 1)
 	}
 }
 

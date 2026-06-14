@@ -234,3 +234,31 @@ func TestHandleRunJobRejectsWhenWorkerOverloaded(t *testing.T) {
 		t.Fatalf("expected no queued ack output on rejection, got %+v", results[0])
 	}
 }
+
+func TestInitSemaphoresPanicsOnInvalidParameters(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Errorf("expected panic for invalid heavy parameter")
+		}
+	}()
+	InitSemaphores(0, 1, 1, 1)
+}
+
+func TestInitSemaphoresPanicsOnInvalidLight(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Errorf("expected panic for invalid light parameter")
+		}
+	}()
+	InitSemaphores(1, 0, 1, 1)
+}
+
+func TestInitSemaphoresPanicsOnInvalidInteractive(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Errorf("expected panic for invalid interactive parameter")
+		}
+	}()
+	InitSemaphores(1, 1, 0, 1)
+}
+

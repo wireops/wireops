@@ -32,6 +32,15 @@ type Sender interface {
 }
 
 func InitSemaphores(heavy, light, interactive, queueDepth int) {
+	if heavy <= 0 {
+		panic("InitSemaphores: heavy parameter must be greater than zero")
+	}
+	if light <= 0 {
+		panic("InitSemaphores: light parameter must be greater than zero")
+	}
+	if interactive <= 0 {
+		panic("InitSemaphores: interactive parameter must be greater than zero")
+	}
 	HeavySemaphore = make(chan struct{}, heavy)
 	LightSemaphore = make(chan struct{}, light)
 	InteractiveSemaphore = make(chan struct{}, interactive)

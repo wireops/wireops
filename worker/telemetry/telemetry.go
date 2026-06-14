@@ -103,9 +103,6 @@ func GetTelemetry(stackDir string) *protocol.TelemetryInfo {
 			}
 			_ = file.Close()
 		}
-	} else {
-		// Mock CPU for Darwin development
-		info.CPUUsagePercent = 5.0
 	}
 
 	// 3. Memory Usage
@@ -129,9 +126,6 @@ func GetTelemetry(stackDir string) *protocol.TelemetryInfo {
 				info.MemoryUsagePercent = (usedMem / totalMem) * 100.0
 			}
 		}
-	} else {
-		// Mock Memory for Darwin development
-		info.MemoryUsagePercent = 45.0
 	}
 
 	// 4. Disk Usage

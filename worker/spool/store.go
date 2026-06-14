@@ -224,7 +224,34 @@ func (s *Store) writeRecordAt(path string, record storedMessage) error {
 	if err := os.WriteFile(tmpPath, data, filePerm); err != nil {
 		return err
 	}
-	return os.Rename(tmpPath, path)
+	if err := os.Rename(tmpPath, path); err != nil {
+		return err
+	}
+
+	// Open the renamed file and call Sync()
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	f.Close()
+
+	// Open the parent directory and call Sync()
+	dir := filepath.Dir(path)
+	df, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	if err := df.Sync(); err != nil {
+		df.Close()
+		return err
+	}
+	df.Close()
+
+	return nil
 }
 
 func (s *Store) readRecord(messageID string) (storedMessage, string, error) {

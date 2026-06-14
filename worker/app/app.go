@@ -178,7 +178,11 @@ func Run() {
 	stackDir := getStackDir()
 
 	for {
-		reason := transport.RunSession(serverURL, workerToken, hostname, stackDir, tags, shutdownCtx)
+		reason, connected := transport.RunSession(serverURL, workerToken, hostname, stackDir, tags, shutdownCtx)
+
+		if connected {
+			backoff = initialBackoff
+		}
 
 		switch reason {
 		case transport.ReasonRevoked:

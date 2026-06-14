@@ -50,3 +50,28 @@ func TestNewMessageID(t *testing.T) {
 		t.Fatalf("expected distinct message IDs, got %q and %q", a, b)
 	}
 }
+
+func TestResolveWebSocketURL(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{"https://example.com", "wss://example.com/worker/ws"},
+		{"http://example.com", "ws://example.com/worker/ws"},
+		{"wss://example.com", "wss://example.com/worker/ws"},
+		{"ws://example.com", "ws://example.com/worker/ws"},
+		{"ftp://example.com", "ws://example.com/worker/ws"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.input, func(t *testing.T) {
+			got, err := resolveWebSocketURL(tc.input)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("resolveWebSocketURL(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}

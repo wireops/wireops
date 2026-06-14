@@ -161,10 +161,14 @@ func TestIsAllowedPath(t *testing.T) {
 	}
 
 	passwdSymlink := filepath.Join(tmpDir, "evil-symlink.yml")
-	_ = os.Symlink("/etc/passwd", passwdSymlink)
+	if err := os.Symlink("/etc/passwd", passwdSymlink); err != nil {
+		t.Fatalf("failed to create evil symlink: %v", err)
+	}
 
 	safeSymlink := filepath.Join(tmpDir, "safe-symlink.yml")
-	_ = os.Symlink(safeFile, safeSymlink)
+	if err := os.Symlink(safeFile, safeSymlink); err != nil {
+		t.Fatalf("failed to create safe symlink: %v", err)
+	}
 
 	cases := []struct {
 		name        string
