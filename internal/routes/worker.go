@@ -128,6 +128,14 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 				"token_last_used": lastUsedAt,
 				"job_count":       len(jobs),
 				"jobs":            jobs,
+				"docker_version":  rec.GetString("docker_version"),
+				"compose_version": rec.GetString("compose_version"),
+				"os":              rec.GetString("os"),
+				"arch":            rec.GetString("arch"),
+				"cpu_usage":       rec.Get("cpu_usage"),
+				"memory_usage":    rec.Get("memory_usage"),
+				"disk_usage":      rec.Get("disk_usage"),
+				"docker_online":   rec.GetBool("docker_online"),
 			})
 		}
 

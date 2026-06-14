@@ -23,6 +23,9 @@ const (
 	MsgReadFile         MessageType = "read_file"
 	MsgRunJob           MessageType = "run_job"
 	MsgKillJob          MessageType = "kill_job"
+	MsgCancelCommand    MessageType = "cancel_command"
+	MsgGetMetrics       MessageType = "get_metrics"
+	MsgGetMetricsResult MessageType = "get_metrics_result"
 
 	// Server → Worker lifecycle
 	MsgRequestRenewal   MessageType = "request_renewal"
@@ -370,5 +373,35 @@ type JobCompletedMessage struct {
 // ActiveJobRunIDs lists the job_run IDs whose containers are still running on
 // this worker — the server uses this as a liveness signal.
 type HeartbeatPayload struct {
-	ActiveJobRunIDs []string `json:"active_job_run_ids,omitempty"`
+	ActiveJobRunIDs []string       `json:"active_job_run_ids,omitempty"`
+	WorkerInfo      *WorkerInfo    `json:"worker_info,omitempty"`
+	Telemetry       *TelemetryInfo `json:"telemetry,omitempty"`
+}
+
+type WorkerInfo struct {
+	DockerVersion  string `json:"docker_version"`
+	ComposeVersion string `json:"compose_version"`
+	OS             string `json:"os"`
+	Arch           string `json:"arch"`
+}
+
+type TelemetryInfo struct {
+	CPUUsagePercent    float64 `json:"cpu_usage_percent"`
+	MemoryUsagePercent float64 `json:"memory_usage_percent"`
+	DiskUsagePercent   float64 `json:"disk_usage_percent"`
+	DockerOnline       bool    `json:"docker_online"`
+}
+
+type CancelCommand struct {
+	CommandID       string `json:"command_id"`
+	TargetCommandID string `json:"target_command_id"`
+}
+
+type GetMetricsCommand struct {
+	CommandID string `json:"command_id"`
+}
+
+type GetMetricsResult struct {
+	CommandID string `json:"command_id"`
+	Metrics   string `json:"metrics"`
 }

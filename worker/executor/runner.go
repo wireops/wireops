@@ -416,6 +416,10 @@ func ReadFile(_ context.Context, cmd protocol.ReadFileCommand) protocol.CommandR
 		return protocol.CommandResult{CommandID: cmd.CommandID, Error: "only .yml/.yaml files are allowed"}
 	}
 
+	if !isAllowedPath(cmd.Path) {
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: "access to the requested path is denied by worker policy"}
+	}
+
 	data, err := os.ReadFile(cmd.Path)
 	if err != nil {
 		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
@@ -423,6 +427,54 @@ func ReadFile(_ context.Context, cmd protocol.ReadFileCommand) protocol.CommandR
 
 	log.Printf("[executor] read_file done command=%s bytes=%d", cmd.CommandID, len(data))
 	return protocol.CommandResult{CommandID: cmd.CommandID, Output: base64.StdEncoding.EncodeToString(data)}
+}
+
+func isAllowedPath(path string) bool {
+	cleaned := filepath.Clean(path)
+	if !filepath.IsAbs(cleaned) {
+		return false
+	}
+
+	// 1. Always allow inside stackDir
+	if strings.HasPrefix(cleaned, filepath.Clean(stackDir)+string(filepath.Separator)) || cleaned == filepath.Clean(stackDir) {
+		return true
+	}
+
+	// 2. Allow if inside WORKER_ALLOWED_IMPORT_DIRS if configured
+	if allowedEnv := os.Getenv("WORKER_ALLOWED_IMPORT_DIRS"); allowedEnv != "" {
+		dirs := strings.Split(allowedEnv, ",")
+		for _, dir := range dirs {
+			dir = strings.TrimSpace(dir)
+			if dir == "" {
+				continue
+			}
+			cleanedDir := filepath.Clean(dir)
+			if strings.HasPrefix(cleaned, cleanedDir+string(filepath.Separator)) || cleaned == cleanedDir {
+				return true
+			}
+		}
+		// If WORKER_ALLOWED_IMPORT_DIRS is set, we strictly enforce it
+		return false
+	}
+
+	// 3. Fallback blocklist: block known sensitive system directories
+	sensitiveRoots := []string{
+		"/etc",
+		"/root",
+		"/var/run",
+		"/run",
+		"/proc",
+		"/sys",
+		"/boot",
+		"/dev",
+	}
+	for _, root := range sensitiveRoots {
+		if strings.HasPrefix(cleaned, root+string(filepath.Separator)) || cleaned == root {
+			return false
+		}
+	}
+
+	return true
 }
 
 // RunJob starts a one-shot `docker run` container and blocks until it completes.

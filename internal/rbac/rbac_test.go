@@ -30,6 +30,9 @@ func TestAtLeast(t *testing.T) {
 		{name: "operator can view", role: RoleOperator, minimum: RoleViewer, want: true},
 		{name: "admin can operate", role: RoleAdmin, minimum: RoleOperator, want: true},
 		{name: "unknown cannot view", role: "", minimum: RoleViewer, want: false},
+		{name: "monitoring reads metrics", role: RoleMonitoring, minimum: RoleMonitoring, want: true},
+		{name: "monitoring cannot view stacks", role: RoleMonitoring, minimum: RoleViewer, want: false},
+		{name: "viewer can read metrics", role: RoleViewer, minimum: RoleMonitoring, want: true},
 	}
 
 	for _, tc := range cases {

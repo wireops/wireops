@@ -11,6 +11,7 @@ import (
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
+	"github.com/wireops/wireops/internal/protocol"
 )
 
 const (
@@ -324,5 +325,31 @@ func (s *Service) RecordHealthEvent(workerID string, status string) error {
 	}
 
 	record.Set("health_history", history)
+	return s.app.Save(record)
+}
+
+// UpdateWorkerInfo updates worker record with docker, compose, OS, arch details.
+func (s *Service) UpdateWorkerInfo(workerID string, info protocol.WorkerInfo) error {
+	record, err := s.app.FindRecordById("workers", workerID)
+	if err != nil {
+		return err
+	}
+	record.Set("docker_version", info.DockerVersion)
+	record.Set("compose_version", info.ComposeVersion)
+	record.Set("os", info.OS)
+	record.Set("arch", info.Arch)
+	return s.app.Save(record)
+}
+
+// UpdateWorkerTelemetry updates worker record with hardware telemetry details.
+func (s *Service) UpdateWorkerTelemetry(workerID string, t protocol.TelemetryInfo) error {
+	record, err := s.app.FindRecordById("workers", workerID)
+	if err != nil {
+		return err
+	}
+	record.Set("cpu_usage", t.CPUUsagePercent)
+	record.Set("memory_usage", t.MemoryUsagePercent)
+	record.Set("disk_usage", t.DiskUsagePercent)
+	record.Set("docker_online", t.DockerOnline)
 	return s.app.Save(record)
 }

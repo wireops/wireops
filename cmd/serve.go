@@ -297,9 +297,8 @@ func Execute() error {
 		se.Router.BindFunc(wireauth.APIKeyMiddleware(app))
 		se.Router.BindFunc(audit.CustomRouteMiddleware(app))
 
-		se.Router.GET("/{path...}", apis.Static(os.DirFS("./pb_public"), false))
-
 		routes.RegisterSetupRoutes(se.Router, app)
+		routes.RegisterMetricsRoutes(se.Router, app, workerServer)
 		routes.Register(se.Router, app, scheduler, dockerClient, workerServer)
 		routes.RegisterWorkerRoutes(se.Router, app, workerSvc, workerServer, workerServer)
 		routes.RegisterJobRoutes(se.Router, app, jobSched)
@@ -307,6 +306,8 @@ func Execute() error {
 		routes.RegisterAuthRoutes(se.Router, app)
 		routes.RegisterServiceAccountRoutes(se.Router, app)
 		routes.RegisterSSOGroupRoleRoutes(se.Router, app)
+
+		se.Router.GET("/{path...}", apis.Static(os.DirFS("./pb_public"), false))
 
 		if err := wiresync.RecoverOrphanState(app); err != nil {
 			log.Printf("Warning: orphan state recovery error: %v", err)

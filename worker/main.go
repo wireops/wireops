@@ -1,19 +1,26 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	gosync "sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/wireops/wireops/internal/docker"
 	"github.com/wireops/wireops/internal/protocol"
 	"github.com/wireops/wireops/worker/api"
 	"github.com/wireops/wireops/worker/executor"
@@ -28,9 +35,30 @@ var (
 	activeConn        *websocket.Conn
 	completedJobsMu   gosync.Mutex
 	completedJobs     []protocol.JobCompletedMessage
+	isFlushingJobs    bool
+	isFlushingJobsMu  gosync.Mutex
 	queuedEnvelopesMu gosync.Mutex
 	queuedEnvelopes   [][]byte
 	taskSemaphore     chan struct{}
+	activeCommands    gosync.Map // commandID -> context.CancelFunc
+	cachedWorkerInfo  *protocol.WorkerInfo
+	concurrencyLimit  int
+
+	// Atomic metric counters
+	metricsConnAttempts       uint64
+	metricsQueuedTasks        int64
+	metricsTasksDeploy        uint64
+	metricsTasksRedeploy      uint64
+	metricsTasksTeardown      uint64
+	metricsTasksProbe         uint64
+	metricsTasksInspect       uint64
+	metricsTasksSuccess       uint64
+	metricsTasksError         uint64
+	metricsTasksDurationSumNs uint64
+	metricsJobsTotal          uint64
+	metricsJobsSuccess        uint64
+	metricsJobsError          uint64
+	metricsJobsDurationSumNs  uint64
 )
 
 const (
@@ -46,8 +74,13 @@ const (
 	reasonShutdown
 )
 
+var lastCPUTotal, lastCPUIdle uint64
+
 func main() {
 	logger.InitLogger()
+	cleanupLeftoverWorkdirs()
+	initWorkerInfo()
+
 	serverURL := os.Getenv("SERVER_URL")
 	workerToken := os.Getenv("WORKER_TOKEN")
 	hostname := os.Getenv("HOSTNAME")
@@ -67,7 +100,7 @@ func main() {
 		}
 	}
 
-	concurrencyLimit := 3
+	concurrencyLimit = 3
 	if limitStr := os.Getenv("WORKER_MAX_CONCURRENT_TASKS"); limitStr != "" {
 		if val, err := strconv.Atoi(limitStr); err == nil && val > 0 {
 			concurrencyLimit = val
@@ -106,6 +139,7 @@ func runSession(serverURL, workerToken, hostname string, tags []string, sigChan 
 	client := api.NewClient()
 
 	for i := 1; i <= 5; i++ {
+		atomic.AddUint64(&metricsConnAttempts, 1)
 		err := api.Register(client, serverURL, workerToken, hostname, "1.0.0", tags)
 		if err == nil {
 			break
@@ -194,7 +228,11 @@ func runSession(serverURL, workerToken, hostname string, tags []string, sigChan 
 			})
 			heartbeat, _ := json.Marshal(protocol.Envelope{
 				Type:    protocol.MsgHeartbeat,
-				Payload: protocol.HeartbeatPayload{ActiveJobRunIDs: activeIDs},
+				Payload: protocol.HeartbeatPayload{
+					ActiveJobRunIDs: activeIDs,
+					WorkerInfo:      cachedWorkerInfo,
+					Telemetry:       getTelemetry(),
+				},
 			})
 			activeConnMu.RLock()
 			c := activeConn
@@ -213,6 +251,7 @@ func runSession(serverURL, workerToken, hostname string, tags []string, sigChan 
 }
 
 func runThrottled(msgType protocol.MessageType, fn func()) {
+	atomic.AddInt64(&metricsQueuedTasks, 1)
 	select {
 	case taskSemaphore <- struct{}{}:
 		// Acquired immediately
@@ -220,6 +259,7 @@ func runThrottled(msgType protocol.MessageType, fn func()) {
 		log.Printf("[worker] task %s queued due to concurrency limits", msgType)
 		taskSemaphore <- struct{}{}
 	}
+	atomic.AddInt64(&metricsQueuedTasks, -1)
 	defer func() { <-taskSemaphore }()
 	fn()
 }
@@ -274,6 +314,10 @@ func readLoop(conn *websocket.Conn, disconnectCh chan<- disconnectReason) {
 			go handleRunJob(env.Payload)
 		case protocol.MsgKillJob:
 			go handleKillJob(env.Payload)
+		case protocol.MsgCancelCommand:
+			go handleCancelCommand(env.Payload)
+		case protocol.MsgGetMetrics:
+			go handleGetMetrics(env.Payload)
 
 		default:
 			log.Printf("[worker] unknown message type=%s", env.Type)
@@ -287,7 +331,24 @@ func handleDeploy(payload interface{}) {
 		log.Printf("[worker] invalid deploy payload error=%v", err)
 		return
 	}
-	result := executor.Deploy(context.Background(), cmd)
+	ctx, cancel := context.WithCancel(context.Background())
+	activeCommands.Store(cmd.CommandID, cancel)
+	defer func() {
+		cancel()
+		activeCommands.Delete(cmd.CommandID)
+	}()
+	start := time.Now()
+	result := executor.Deploy(ctx, cmd)
+	duration := time.Since(start)
+
+	atomic.AddUint64(&metricsTasksDeploy, 1)
+	atomic.AddUint64(&metricsTasksDurationSumNs, uint64(duration.Nanoseconds()))
+	if result.Error != "" {
+		atomic.AddUint64(&metricsTasksError, 1)
+	} else {
+		atomic.AddUint64(&metricsTasksSuccess, 1)
+	}
+
 	sendResult(result)
 }
 
@@ -297,7 +358,24 @@ func handleRedeploy(payload interface{}) {
 		log.Printf("[worker] invalid redeploy payload error=%v", err)
 		return
 	}
-	result := executor.Redeploy(context.Background(), cmd)
+	ctx, cancel := context.WithCancel(context.Background())
+	activeCommands.Store(cmd.DeployCommand.CommandID, cancel)
+	defer func() {
+		cancel()
+		activeCommands.Delete(cmd.DeployCommand.CommandID)
+	}()
+	start := time.Now()
+	result := executor.Redeploy(ctx, cmd)
+	duration := time.Since(start)
+
+	atomic.AddUint64(&metricsTasksRedeploy, 1)
+	atomic.AddUint64(&metricsTasksDurationSumNs, uint64(duration.Nanoseconds()))
+	if result.Error != "" {
+		atomic.AddUint64(&metricsTasksError, 1)
+	} else {
+		atomic.AddUint64(&metricsTasksSuccess, 1)
+	}
+
 	sendResult(result)
 }
 
@@ -307,7 +385,24 @@ func handleTeardown(payload interface{}) {
 		log.Printf("[worker] invalid teardown payload error=%v", err)
 		return
 	}
-	result := executor.Teardown(context.Background(), cmd)
+	ctx, cancel := context.WithCancel(context.Background())
+	activeCommands.Store(cmd.CommandID, cancel)
+	defer func() {
+		cancel()
+		activeCommands.Delete(cmd.CommandID)
+	}()
+	start := time.Now()
+	result := executor.Teardown(ctx, cmd)
+	duration := time.Since(start)
+
+	atomic.AddUint64(&metricsTasksTeardown, 1)
+	atomic.AddUint64(&metricsTasksDurationSumNs, uint64(duration.Nanoseconds()))
+	if result.Error != "" {
+		atomic.AddUint64(&metricsTasksError, 1)
+	} else {
+		atomic.AddUint64(&metricsTasksSuccess, 1)
+	}
+
 	sendResult(result)
 }
 
@@ -317,7 +412,18 @@ func handleProbe(payload interface{}) {
 		log.Printf("[worker] invalid probe payload error=%v", err)
 		return
 	}
+	start := time.Now()
 	result := executor.Probe(context.Background(), cmd)
+	duration := time.Since(start)
+
+	atomic.AddUint64(&metricsTasksProbe, 1)
+	atomic.AddUint64(&metricsTasksDurationSumNs, uint64(duration.Nanoseconds()))
+	if result.Error != "" {
+		atomic.AddUint64(&metricsTasksError, 1)
+	} else {
+		atomic.AddUint64(&metricsTasksSuccess, 1)
+	}
+
 	sendResult(result)
 }
 
@@ -327,7 +433,18 @@ func handleInspect(payload interface{}) {
 		log.Printf("[worker] invalid inspect payload error=%v", err)
 		return
 	}
+	start := time.Now()
 	result := executor.Inspect(context.Background(), cmd)
+	duration := time.Since(start)
+
+	atomic.AddUint64(&metricsTasksInspect, 1)
+	atomic.AddUint64(&metricsTasksDurationSumNs, uint64(duration.Nanoseconds()))
+	if result.Error != "" {
+		atomic.AddUint64(&metricsTasksError, 1)
+	} else {
+		atomic.AddUint64(&metricsTasksSuccess, 1)
+	}
+
 	sendResult(result)
 }
 
@@ -418,18 +535,29 @@ func handleRunJob(payload interface{}) {
 		return
 	}
 
-	activeJobs.Store(cmd.JobRunID, struct{}{})
 	receivedAt := time.Now()
 
-	// Immediate start acknowledgment to the server:
-	sendResult(protocol.CommandResult{CommandID: cmd.CommandID, Output: "started"})
+	// Immediate acknowledgment that the job is received and queued:
+	sendResult(protocol.CommandResult{CommandID: cmd.CommandID, Output: "queued"})
 
 	// Run the actual job execution throttled in a background goroutine!
 	go runThrottled(protocol.MsgRunJob, func() {
+		activeJobs.Store(cmd.JobRunID, struct{}{})
+		defer activeJobs.Delete(cmd.JobRunID)
+
 		startedAt := time.Now()
 		// Call executor.RunJob synchronously. It blocks until the container completes.
 		msg := executor.RunJob(cmd)
 		finishedAt := time.Now()
+		duration := time.Since(startedAt)
+
+		atomic.AddUint64(&metricsJobsTotal, 1)
+		atomic.AddUint64(&metricsJobsDurationSumNs, uint64(duration.Nanoseconds()))
+		if msg.Success {
+			atomic.AddUint64(&metricsJobsSuccess, 1)
+		} else {
+			atomic.AddUint64(&metricsJobsError, 1)
+		}
 
 		queueTime := startedAt.UnixMilli() - receivedAt.UnixMilli()
 		if queueTime < 0 {
@@ -451,6 +579,49 @@ func handleKillJob(payload interface{}) {
 	}
 	result := executor.KillJob(cmd)
 	sendResult(result)
+}
+
+func handleCancelCommand(payload interface{}) {
+	cmd, err := unmarshalPayload[protocol.CancelCommand](payload)
+	if err != nil {
+		log.Printf("[worker] invalid cancel payload error=%v", err)
+		return
+	}
+	if cancel, ok := activeCommands.Load(cmd.TargetCommandID); ok {
+		log.Printf("[worker] cancelling command: %s", cmd.TargetCommandID)
+		cancel.(context.CancelFunc)()
+	} else {
+		log.Printf("[worker] command %s not running or already finished", cmd.TargetCommandID)
+	}
+}
+
+func handleGetMetrics(payload interface{}) {
+	cmd, err := unmarshalPayload[protocol.GetMetricsCommand](payload)
+	if err != nil {
+		log.Printf("[worker] invalid get_metrics payload error=%v", err)
+		return
+	}
+	resPayload := protocol.GetMetricsResult{
+		CommandID: cmd.CommandID,
+		Metrics:   serializeMetrics(),
+	}
+	msg, err := json.Marshal(protocol.Envelope{
+		Type:    protocol.MsgGetMetricsResult,
+		Payload: resPayload,
+	})
+	if err != nil {
+		log.Printf("[worker] failed to marshal metrics result: %v", err)
+		return
+	}
+	activeConnMu.RLock()
+	c := activeConn
+	activeConnMu.RUnlock()
+	if c != nil {
+		connWriteMu.Lock()
+		_ = c.SetWriteDeadline(time.Now().Add(10 * time.Second))
+		_ = c.WriteMessage(websocket.TextMessage, msg)
+		connWriteMu.Unlock()
+	}
 }
 
 func sendResult(result protocol.CommandResult) {
@@ -530,7 +701,11 @@ func sendInitialHeartbeat() {
 	})
 	hb, _ := json.Marshal(protocol.Envelope{
 		Type:    protocol.MsgHeartbeat,
-		Payload: protocol.HeartbeatPayload{ActiveJobRunIDs: activeIDs},
+		Payload: protocol.HeartbeatPayload{
+			ActiveJobRunIDs: activeIDs,
+			WorkerInfo:      cachedWorkerInfo,
+			Telemetry:       getTelemetry(),
+		},
 	})
 	activeConnMu.RLock()
 	c := activeConn
@@ -577,35 +752,77 @@ func reportJobCompleted(msg protocol.JobCompletedMessage) {
 		completedJobs = append(completedJobs, msg)
 		completedJobsMu.Unlock()
 
-		// In reportJobCompleted, when a writeErr occurs and we append to completedJobs,
-		// we immediately trigger a retry via flushCompletedJobs asynchronously.
-		// To avoid deadlocks, completedJobsMu is unlocked before calling flushCompletedJobs.
-		// This retry is only triggered if the current activeConn is non-nil/healthy.
-		activeConnMu.RLock()
-		conn := activeConn
-		activeConnMu.RUnlock()
-		if conn != nil {
-			go flushCompletedJobs()
-		}
+		go triggerCompletedJobsFlush()
 	} else {
 		log.Printf("[worker] job completion sent successfully job_run=%s", msg.JobRunID)
 	}
 }
 
-func flushCompletedJobs() {
-	completedJobsMu.Lock()
-	queue := completedJobs
-	completedJobs = nil
-	completedJobsMu.Unlock()
-
-	if len(queue) == 0 {
+func triggerCompletedJobsFlush() {
+	isFlushingJobsMu.Lock()
+	if isFlushingJobs {
+		isFlushingJobsMu.Unlock()
 		return
 	}
+	isFlushingJobs = true
+	isFlushingJobsMu.Unlock()
 
-	log.Printf("[worker] flushing %d queued completed jobs...", len(queue))
-	for _, msg := range queue {
-		reportJobCompleted(msg)
+	defer func() {
+		isFlushingJobsMu.Lock()
+		isFlushingJobs = false
+		isFlushingJobsMu.Unlock()
+	}()
+
+	for {
+		completedJobsMu.Lock()
+		if len(completedJobs) == 0 {
+			completedJobsMu.Unlock()
+			break
+		}
+		queue := completedJobs
+		completedJobs = nil
+		completedJobsMu.Unlock()
+
+		var remaining []protocol.JobCompletedMessage
+		for _, msg := range queue {
+			activeConnMu.RLock()
+			c := activeConn
+			activeConnMu.RUnlock()
+
+			var writeErr error
+			if c != nil {
+				envelope := protocol.Envelope{
+					Type:    protocol.MsgJobCompleted,
+					Payload: msg,
+				}
+				envelopeBytes, _ := json.Marshal(envelope)
+				connWriteMu.Lock()
+				_ = c.SetWriteDeadline(time.Now().Add(10 * time.Second))
+				writeErr = c.WriteMessage(websocket.TextMessage, envelopeBytes)
+				connWriteMu.Unlock()
+			} else {
+				writeErr = errors.New("no active connection")
+			}
+
+			if writeErr != nil {
+				log.Printf("[worker] flush failed for job_run=%s: %v", msg.JobRunID, writeErr)
+				remaining = append(remaining, msg)
+			} else {
+				log.Printf("[worker] flushed completed job_run=%s", msg.JobRunID)
+			}
+		}
+
+		if len(remaining) > 0 {
+			completedJobsMu.Lock()
+			completedJobs = append(remaining, completedJobs...)
+			completedJobsMu.Unlock()
+			break // Connection dropped, stop flushing
+		}
 	}
+}
+
+func flushCompletedJobs() {
+	triggerCompletedJobsFlush()
 }
 
 func parseTags(raw string) []string {
@@ -628,4 +845,228 @@ func unmarshalPayload[T any](payload interface{}) (T, error) {
 		return zero, err
 	}
 	return zero, nil
+}
+
+func queryDockerVersion() string {
+	cmd := exec.Command("docker", "version", "--format", "{{.Server.Version}}")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func queryComposeVersion() string {
+	cmd := exec.Command("docker", "compose", "version", "--short")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func cleanupLeftoverWorkdirs() {
+	stackDirVar := strings.TrimSpace(os.Getenv("WORKER_STACK_DIR"))
+	if stackDirVar == "" {
+		stackDirVar = filepath.Join(os.TempDir(), "wireops")
+	}
+	stacksPath := filepath.Join(stackDirVar, "stacks")
+	if _, err := os.Stat(stacksPath); os.IsNotExist(err) {
+		return
+	}
+
+	log.Printf("[worker] using stack directory: %s (for security, ensure this path is backed by a tmpfs/in-memory filesystem)", stackDirVar)
+	log.Printf("[worker] checking for leftover work directories in %s...", stacksPath)
+
+	stackDirs, err := os.ReadDir(stacksPath)
+	if err != nil {
+		return
+	}
+	for _, sd := range stackDirs {
+		if !sd.IsDir() {
+			continue
+		}
+		sdPath := filepath.Join(stacksPath, sd.Name())
+		cmdDirs, err := os.ReadDir(sdPath)
+		if err != nil {
+			continue
+		}
+		for _, cd := range cmdDirs {
+			if !cd.IsDir() || !strings.HasPrefix(cd.Name(), "cmd-") {
+				continue
+			}
+			pathToDelete := filepath.Join(sdPath, cd.Name())
+			log.Printf("[worker] cleaning up leftover workdir: %s", pathToDelete)
+			_ = os.RemoveAll(pathToDelete)
+		}
+	}
+}
+
+func initWorkerInfo() {
+	cachedWorkerInfo = &protocol.WorkerInfo{
+		DockerVersion:  queryDockerVersion(),
+		ComposeVersion: queryComposeVersion(),
+		OS:             runtime.GOOS,
+		Arch:           runtime.GOARCH,
+	}
+	log.Printf("[worker] detected environment: os=%s arch=%s docker=%s compose=%s",
+		cachedWorkerInfo.OS, cachedWorkerInfo.Arch, cachedWorkerInfo.DockerVersion, cachedWorkerInfo.ComposeVersion)
+}
+
+func getTelemetry() *protocol.TelemetryInfo {
+	info := &protocol.TelemetryInfo{
+		DockerOnline: false,
+	}
+
+	// 1. Check Docker daemon connectivity
+	if cli, err := docker.NewClient(); err == nil {
+		info.DockerOnline = true
+		_ = cli.Close()
+	}
+
+	// 2. CPU Usage
+	if runtime.GOOS == "linux" {
+		if file, err := os.Open("/proc/stat"); err == nil {
+			scanner := bufio.NewScanner(file)
+			if scanner.Scan() {
+				line := scanner.Text()
+				fields := strings.Fields(line)
+				if len(fields) >= 5 && fields[0] == "cpu" {
+					var total, idle uint64
+					for i, field := range fields[1:] {
+						val, _ := strconv.ParseUint(field, 10, 64)
+						total += val
+						if i == 3 { // idle field
+							idle = val
+						}
+					}
+					if lastCPUTotal > 0 {
+						deltaTotal := total - lastCPUTotal
+						deltaIdle := idle - lastCPUIdle
+						if deltaTotal > 0 {
+							info.CPUUsagePercent = float64(deltaTotal-deltaIdle) / float64(deltaTotal) * 100.0
+						}
+					}
+					lastCPUTotal = total
+					lastCPUIdle = idle
+				}
+			}
+			_ = file.Close()
+		}
+	} else {
+		// Mock CPU for Darwin development
+		info.CPUUsagePercent = 5.0
+	}
+
+	// 3. Memory Usage
+	if runtime.GOOS == "linux" {
+		if file, err := os.Open("/proc/meminfo"); err == nil {
+			scanner := bufio.NewScanner(file)
+			var totalMem, availMem float64
+			for scanner.Scan() {
+				fields := strings.Fields(scanner.Text())
+				if len(fields) >= 2 {
+					if fields[0] == "MemTotal:" {
+						totalMem, _ = strconv.ParseFloat(fields[1], 64)
+					} else if fields[0] == "MemAvailable:" {
+						availMem, _ = strconv.ParseFloat(fields[1], 64)
+					}
+				}
+			}
+			_ = file.Close()
+			if totalMem > 0 {
+				usedMem := totalMem - availMem
+				info.MemoryUsagePercent = (usedMem / totalMem) * 100.0
+			}
+		}
+	} else {
+		// Mock Memory for Darwin development
+		info.MemoryUsagePercent = 45.0
+	}
+
+	// 4. Disk Usage
+	stackDirVar := strings.TrimSpace(os.Getenv("WORKER_STACK_DIR"))
+	if stackDirVar == "" {
+		stackDirVar = filepath.Join(os.TempDir(), "wireops")
+	}
+	_ = os.MkdirAll(stackDirVar, 0700)
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(stackDirVar, &stat); err == nil {
+		totalDisk := stat.Blocks * uint64(stat.Bsize)
+		freeDisk := stat.Bavail * uint64(stat.Bsize)
+		if totalDisk > 0 {
+			usedDisk := totalDisk - freeDisk
+			info.DiskUsagePercent = float64(usedDisk) / float64(totalDisk) * 100.0
+		}
+	}
+
+	return info
+}
+
+func serializeMetrics() string {
+	var sb strings.Builder
+
+	writeMetric := func(name, help, mType string, value interface{}, labels ...string) {
+		sb.WriteString("# HELP " + name + " " + help + "\n")
+		sb.WriteString("# TYPE " + name + " " + mType + "\n")
+		sb.WriteString(name)
+		if len(labels) > 0 {
+			sb.WriteString("{" + strings.Join(labels, ",") + "}")
+		}
+		sb.WriteString(" " + fmt.Sprintf("%v", value) + "\n")
+	}
+
+	// 1. Connection
+	writeMetric("wireops_worker_connected", "WebSocket connection status", "gauge", 1)
+	writeMetric("wireops_worker_connection_attempts_total", "Total registration/connection attempts", "counter", atomic.LoadUint64(&metricsConnAttempts))
+
+	// 2. Concurrency
+	activeTasksCount := 0
+	activeCommands.Range(func(_, _ any) bool {
+		activeTasksCount++
+		return true
+	})
+	writeMetric("wireops_worker_concurrency_limit", "Configured task concurrency limit", "gauge", concurrencyLimit)
+	writeMetric("wireops_worker_active_tasks", "Currently active task executions", "gauge", activeTasksCount)
+	writeMetric("wireops_worker_queued_tasks", "Tasks currently waiting in the semaphore queue", "gauge", atomic.LoadInt64(&metricsQueuedTasks))
+
+	// 3. Task Executions
+	writeMetric("wireops_worker_tasks_total", "Total stack tasks processed by type", "counter", atomic.LoadUint64(&metricsTasksDeploy), "type=\"deploy\"")
+	sb.WriteString(fmt.Sprintf("wireops_worker_tasks_total{type=\"redeploy\"} %d\n", atomic.LoadUint64(&metricsTasksRedeploy)))
+	sb.WriteString(fmt.Sprintf("wireops_worker_tasks_total{type=\"teardown\"} %d\n", atomic.LoadUint64(&metricsTasksTeardown)))
+	sb.WriteString(fmt.Sprintf("wireops_worker_tasks_total{type=\"probe\"} %d\n", atomic.LoadUint64(&metricsTasksProbe)))
+	sb.WriteString(fmt.Sprintf("wireops_worker_tasks_total{type=\"inspect\"} %d\n", atomic.LoadUint64(&metricsTasksInspect)))
+
+	writeMetric("wireops_worker_tasks_outcome_total", "Total stack tasks outcomes", "counter", atomic.LoadUint64(&metricsTasksSuccess), "status=\"success\"")
+	sb.WriteString(fmt.Sprintf("wireops_worker_tasks_outcome_total{status=\"error\"} %d\n", atomic.LoadUint64(&metricsTasksError)))
+
+	writeMetric("wireops_worker_task_duration_seconds_sum", "Total time spent processing tasks in seconds", "counter", float64(atomic.LoadUint64(&metricsTasksDurationSumNs))/1e9)
+	writeMetric("wireops_worker_task_duration_seconds_count", "Total number of tasks measured", "counter", atomic.LoadUint64(&metricsTasksSuccess)+atomic.LoadUint64(&metricsTasksError))
+
+	// 4. Job Executions
+	writeMetric("wireops_worker_jobs_total", "Total Docker jobs executed by outcome", "counter", atomic.LoadUint64(&metricsJobsSuccess), "status=\"success\"")
+	sb.WriteString(fmt.Sprintf("wireops_worker_jobs_total{status=\"error\"} %d\n", atomic.LoadUint64(&metricsJobsError)))
+
+	activeJobsCount := 0
+	activeJobs.Range(func(_, _ any) bool {
+		activeJobsCount++
+		return true
+	})
+	writeMetric("wireops_worker_active_jobs", "Currently active Docker job runs", "gauge", activeJobsCount)
+
+	writeMetric("wireops_worker_job_duration_seconds_sum", "Total time spent executing jobs in seconds", "counter", float64(atomic.LoadUint64(&metricsJobsDurationSumNs))/1e9)
+	writeMetric("wireops_worker_job_duration_seconds_count", "Total number of Docker jobs measured", "counter", atomic.LoadUint64(&metricsJobsSuccess)+atomic.LoadUint64(&metricsJobsError))
+
+	// 5. Queued Messages
+	queuedEnvelopesMu.Lock()
+	qEnvLen := len(queuedEnvelopes)
+	queuedEnvelopesMu.Unlock()
+	completedJobsMu.Lock()
+	qJobsLen := len(completedJobs)
+	completedJobsMu.Unlock()
+
+	writeMetric("wireops_worker_queued_messages", "Outbound messages buffered in memory", "gauge", qEnvLen, "queue=\"results\"")
+	sb.WriteString(fmt.Sprintf("wireops_worker_queued_messages{queue=\"completed_jobs\"} %d\n", qJobsLen))
+
+	return sb.String()
 }

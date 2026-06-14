@@ -300,6 +300,9 @@ func (s *WorkerServer) Dispatch(ctx context.Context, workerID string, cmd interf
 	case protocol.KillJobCommand:
 		msgType = protocol.MsgKillJob
 		commandID = v.CommandID
+	case protocol.GetMetricsCommand:
+		msgType = protocol.MsgGetMetrics
+		commandID = v.CommandID
 	default:
 		return protocol.CommandResult{}, fmt.Errorf("unknown command type %T", cmd)
 	}
@@ -359,6 +362,11 @@ func (s *WorkerServer) Dispatch(ctx context.Context, workerID string, cmd interf
 		} else if errors.Is(dispatchErr, context.DeadlineExceeded) || strings.Contains(dispatchErr.Error(), "timed out") {
 			status = "timed_out"
 		}
+		// Send CancelCommand to the worker so it can abort the command.
+		_ = s.SendMessage(workerID, protocol.MsgCancelCommand, protocol.CancelCommand{
+			CommandID:       "cancel-" + commandID,
+			TargetCommandID: commandID,
+		})
 		_ = s.workerSvc.LogCommandFinish(commandID, status, map[string]string{"error": dispatchErr.Error()}, durationMs)
 		return protocol.CommandResult{}, dispatchErr
 	}
@@ -557,6 +565,16 @@ func (s *WorkerServer) handleWebSocket(c *gin.Context) {
 				if len(hb.ActiveJobRunIDs) > 0 {
 					logger.SafeLogf("[worker] heartbeat worker=%s active_jobs=%d runs=%v", workerID, len(hb.ActiveJobRunIDs), hb.ActiveJobRunIDs)
 				}
+				if hb.WorkerInfo != nil {
+					if err := s.workerSvc.UpdateWorkerInfo(workerID, *hb.WorkerInfo); err != nil {
+						logger.SafeLogf("[WORKER] Failed to update worker info for %s: %v", workerID, err)
+					}
+				}
+				if hb.Telemetry != nil {
+					if err := s.workerSvc.UpdateWorkerTelemetry(workerID, *hb.Telemetry); err != nil {
+						logger.SafeLogf("[WORKER] Failed to update worker telemetry for %s: %v", workerID, err)
+					}
+				}
 				if s.onHeartbeat != nil {
 					go s.onHeartbeat(workerID, hb.ActiveJobRunIDs)
 				}
@@ -589,6 +607,21 @@ func (s *WorkerServer) handleWebSocket(c *gin.Context) {
 					}
 				} else {
 					logger.SafeLogf("[WORKER] Received result for unknown command %s from %s", result.CommandID, workerID)
+				}
+			}
+
+		case protocol.MsgGetMetricsResult:
+			payloadBytes, _ := json.Marshal(env.Payload)
+			var result protocol.GetMetricsResult
+			if jsonErr := json.Unmarshal(payloadBytes, &result); jsonErr == nil {
+				s.connMu.RLock()
+				pr, hasPending := s.pending[result.CommandID]
+				s.connMu.RUnlock()
+				if hasPending {
+					select {
+					case pr.ch <- protocol.CommandResult{CommandID: result.CommandID, Output: result.Metrics}:
+					default:
+					}
 				}
 			}
 

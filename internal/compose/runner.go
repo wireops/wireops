@@ -39,7 +39,7 @@ func RunUp(ctx context.Context, opts RunOptions) (string, error) {
 		"up", "-d", "--remove-orphans",
 	)
 	cmd.Dir = opts.WorkDir
-	cmd.Env = os.Environ()
+	cmd.Env = safeEnv()
 
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
@@ -75,7 +75,7 @@ func RunForceUp(ctx context.Context, opts ForceUpOptions) (string, error) {
 		composeFile = altFile
 	}
 
-	env := os.Environ()
+	env := safeEnv()
 
 	var allOutput strings.Builder
 
@@ -135,7 +135,7 @@ func RunDown(ctx context.Context, opts RunOptions) (string, error) {
 		"down",
 	)
 	cmd.Dir = opts.WorkDir
-	cmd.Env = os.Environ()
+	cmd.Env = safeEnv()
 
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
@@ -159,7 +159,7 @@ func RunDownPurge(ctx context.Context, opts RunOptions) (string, error) {
 		"down", "-v", "--remove-orphans",
 	)
 	cmd.Dir = opts.WorkDir
-	cmd.Env = os.Environ()
+	cmd.Env = safeEnv()
 
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
@@ -191,7 +191,7 @@ func RunPs(ctx context.Context, opts RunOptions) ([]string, error) {
 		"ps", "--format", "json", "--all",
 	)
 	cmd.Dir = opts.WorkDir
-	cmd.Env = os.Environ()
+	cmd.Env = safeEnv()
 
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
@@ -252,4 +252,21 @@ func RunPs(ctx context.Context, opts RunOptions) ([]string, error) {
 		}
 	}
 	return services, nil
+}
+
+func safeEnv() []string {
+	env := os.Environ()
+	safeDirs := []string{"/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/local/bin"}
+	safePath := "PATH=" + strings.Join(safeDirs, string(filepath.ListSeparator))
+	found := false
+	for i, kv := range env {
+		if strings.HasPrefix(strings.ToUpper(kv), "PATH=") {
+			env[i] = safePath
+			found = true
+		}
+	}
+	if !found {
+		env = append(env, safePath)
+	}
+	return env
 }

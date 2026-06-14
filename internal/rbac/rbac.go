@@ -8,9 +8,10 @@ import (
 )
 
 const (
-	RoleViewer   = "viewer"
-	RoleOperator = "operator"
-	RoleAdmin    = "admin"
+	RoleMonitoring = "monitoring"
+	RoleViewer     = "viewer"
+	RoleOperator   = "operator"
+	RoleAdmin      = "admin"
 )
 
 const (
@@ -21,6 +22,7 @@ const (
 type Capability string
 
 const (
+	CapViewMetrics    Capability = "view_metrics"
 	CapViewStacks     Capability = "view_stacks"
 	CapViewJobs       Capability = "view_jobs"
 	CapViewLogs       Capability = "view_logs"
@@ -35,6 +37,7 @@ const (
 )
 
 var minimumRoleByCapability = map[Capability]string{
+	CapViewMetrics:    RoleMonitoring,
 	CapViewStacks:     RoleViewer,
 	CapViewJobs:       RoleViewer,
 	CapViewLogs:       RoleViewer,
@@ -50,6 +53,8 @@ var minimumRoleByCapability = map[Capability]string{
 
 func NormalizeRole(role string) string {
 	switch strings.ToLower(strings.TrimSpace(role)) {
+	case RoleMonitoring:
+		return RoleMonitoring
 	case RoleViewer:
 		return RoleViewer
 	case RoleOperator:
@@ -70,12 +75,14 @@ func MustNormalizeRole(role string) string {
 
 func RoleRank(role string) int {
 	switch NormalizeRole(role) {
-	case RoleViewer:
+	case RoleMonitoring:
 		return 1
-	case RoleOperator:
+	case RoleViewer:
 		return 2
-	case RoleAdmin:
+	case RoleOperator:
 		return 3
+	case RoleAdmin:
+		return 4
 	default:
 		return 0
 	}
