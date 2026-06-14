@@ -1137,7 +1137,11 @@ func init() {
 		defaultStackDir = tempDir
 		return
 	}
-	defaultStackDir = filepath.Join(os.TempDir(), "wireops-fallback")
+	if cwd, err := os.Getwd(); err == nil {
+		defaultStackDir = filepath.Join(cwd, ".wireops")
+		return
+	}
+	defaultStackDir = "./.wireops"
 }
 
 func getSecureDefaultStackDir() string {
