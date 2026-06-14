@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	stdsync "sync"
+	"time"
 
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -149,6 +150,50 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		scheduler.TriggerSync(id, "webhook", 0, "webhook")
 		return e.JSON(http.StatusOK, map[string]string{"status": "triggered"})
 	})
+
+	// Create and download a PocketBase backup without requiring a PocketBase superuser.
+	r.POST("/api/custom/backups", func(e *core.RequestEvent) error {
+		var body struct {
+			Filename string `json:"filename"`
+		}
+		if err := json.NewDecoder(e.Request.Body).Decode(&body); err != nil && err.Error() != "EOF" {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		}
+
+		filename := strings.TrimSpace(body.Filename)
+		if filename == "" {
+			filename = fmt.Sprintf("wireops_backup_%d.zip", time.Now().Unix())
+		}
+		filename = filepath.Base(filename)
+		if !strings.HasSuffix(strings.ToLower(filename), ".zip") {
+			filename += ".zip"
+		}
+		if filename == "." || filename == "/" || filename == "" {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid filename"})
+		}
+
+		if err := app.CreateBackup(context.Background(), filename); err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to create backup"})
+		}
+
+		backupPath := filepath.Join(app.DataDir(), core.LocalBackupsDirName, filename)
+		file, err := os.Open(backupPath)
+		if err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to open backup"})
+		}
+		defer file.Close()
+		defer os.Remove(backupPath)
+
+		info, err := file.Stat()
+		if err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to stat backup"})
+		}
+
+		e.Response.Header().Set("Content-Type", "application/zip")
+		e.Response.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+		http.ServeContent(e.Response, e.Request, filename, info.ModTime(), file)
+		return nil
+	}).BindFunc(rbac.Require(rbac.CapManageSettings))
 
 	// SSE log stream for a stack
 	r.GET("/api/custom/stacks/{id}/stream", func(e *core.RequestEvent) error {

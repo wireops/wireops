@@ -288,6 +288,9 @@ func MatchCustomRoute(method, path string) (Event, bool) {
 			return custom("credential.keyscan", "credential", ""), true
 		}
 	}
+	if len(p) == 1 && p[0] == "backups" && method == http.MethodPost {
+		return custom("backup.create", "backup", "local"), true
+	}
 
 	if len(p) == 3 && p[0] == "jobs" && p[2] == "run" && method == http.MethodPost {
 		return custom("job.run", "scheduled_job", p[1]), true

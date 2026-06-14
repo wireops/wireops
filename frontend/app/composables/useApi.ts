@@ -3,11 +3,12 @@ export function useApi() {
 
   const baseUrl = () => $pb.baseURL
 
-  async function handleResponse<T>(res: Response): Promise<T> {
+  async function handleResponse<T>(res: Response, debugPath?: string): Promise<T> {
     const data = await res.json()
     if (!res.ok || data?.error) {
       const err = new Error(data?.error || `API Error: ${res.statusText}`) as any
       err.data = data
+      err.status = res.status
       throw err
     }
     return data
@@ -23,7 +24,7 @@ export function useApi() {
       },
       body: body ? JSON.stringify(body) : undefined,
     })
-    return handleResponse<T>(res)
+    return handleResponse<T>(res, path)
   }
 
   async function customGet<T = any>(path: string): Promise<T> {

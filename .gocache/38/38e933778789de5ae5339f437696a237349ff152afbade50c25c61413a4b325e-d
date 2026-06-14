@@ -1,0 +1,10 @@
+./attachments.go
+./mailyak.go
+./mime.go
+./package.go
+./sender.go
+./sender_explicit_tls.go
+./sender_starttls.go
+./setters.go
+./splitter.go
+./writer.go

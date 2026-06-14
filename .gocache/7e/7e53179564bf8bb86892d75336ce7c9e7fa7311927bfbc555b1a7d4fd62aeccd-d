@@ -1,0 +1,8 @@
+./copy_object.go
+./delete_object.go
+./error.go
+./get_object.go
+./head_object.go
+./list_objects.go
+./s3.go
+./uploader.go
