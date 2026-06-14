@@ -1,7 +1,0 @@
-./filter.go
-./identifier_macros.go
-./multi_match_subquery.go
-./provider.go
-./simple_field_resolver.go
-./sort.go
-./token_functions.go
