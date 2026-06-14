@@ -155,6 +155,16 @@ func writeAggregateHeaders(sb *strings.Builder) {
 	sb.WriteString("# TYPE wireops_worker_job_duration_seconds_count counter\n")
 	sb.WriteString("# HELP wireops_worker_queued_messages Outbound messages buffered in memory\n")
 	sb.WriteString("# TYPE wireops_worker_queued_messages gauge\n")
+	sb.WriteString("# HELP wireops_worker_dropped_messages_total Total outbound messages dropped due to buffer limits\n")
+	sb.WriteString("# TYPE wireops_worker_dropped_messages_total counter\n")
+	sb.WriteString("# HELP wireops_worker_flush_attempts_total Total spool flush send attempts\n")
+	sb.WriteString("# TYPE wireops_worker_flush_attempts_total counter\n")
+	sb.WriteString("# HELP wireops_worker_flush_acked_total Total spool messages acknowledged by the server\n")
+	sb.WriteString("# TYPE wireops_worker_flush_acked_total counter\n")
+	sb.WriteString("# HELP wireops_worker_flush_failed_total Total spool flush failures\n")
+	sb.WriteString("# TYPE wireops_worker_flush_failed_total counter\n")
+	sb.WriteString("# HELP wireops_worker_overload_rejections_total Total commands rejected because the worker was overloaded\n")
+	sb.WriteString("# TYPE wireops_worker_overload_rejections_total counter\n")
 }
 
 // InjectWorkerLabels adds worker and hostname labels to each metric sample line.

@@ -1,0 +1,48 @@
+# Version control
+.git
+.github
+
+# Local environments & credentials
+.env
+*.key
+*.pem
+
+# Databases & local state
+pb_data/
+data/
+repos/
+
+# Build artifacts & caches
+wireops
+wireops-worker
+worker_bin
+.tmpbin
+__debug_bin*
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.*
+*.coverprofile
+profile.cov
+.gocache
+.gomodcache
+
+# Go workspace files
+go.work
+go.work.sum
+
+# Frontend dependencies and build folders
+frontend/node_modules/
+frontend/.nuxt/
+frontend/.output/
+frontend/dist/
+pb_public/
+
+# Editor/OS settings
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

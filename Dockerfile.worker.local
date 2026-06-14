@@ -8,6 +8,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY worker/ ./worker/
 COPY internal/ ./internal/
+COPY pkg/ ./pkg/
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o wireops-worker ./worker/main.go
 
 # Stage 3: Runtime — minimal image with docker CLI
