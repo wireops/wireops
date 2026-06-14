@@ -72,3 +72,19 @@ func TestHandleRegisterActivatesStagingToken(t *testing.T) {
 		t.Fatal("expected token to be bound to a worker")
 	}
 }
+
+func TestIsDuplicateMessage(t *testing.T) {
+	app := newWorkerTestApp(t)
+	svc := NewService(app)
+	server := NewWorkerServer(app, svc)
+
+	if server.isDuplicateMessage("worker-1", "msg-1") {
+		t.Fatalf("first message should not be marked duplicate")
+	}
+	if !server.isDuplicateMessage("worker-1", "msg-1") {
+		t.Fatalf("second message should be marked duplicate")
+	}
+	if server.isDuplicateMessage("worker-2", "msg-1") {
+		t.Fatalf("same message ID on another worker should be accepted independently")
+	}
+}

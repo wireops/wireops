@@ -26,6 +26,7 @@ const (
 	MsgCancelCommand    MessageType = "cancel_command"
 	MsgGetMetrics       MessageType = "get_metrics"
 	MsgGetMetricsResult MessageType = "get_metrics_result"
+	MsgAck              MessageType = "ack"
 
 	// Server → Worker lifecycle
 	MsgRequestRenewal   MessageType = "request_renewal"
@@ -95,6 +96,7 @@ type TeardownCommand struct {
 
 // CommandResult is sent from the worker back to the server after executing a command.
 type CommandResult struct {
+	MessageID string `json:"message_id,omitempty"`
 	CommandID string `json:"command_id"`
 	Output    string `json:"output"`
 	// Error is non-empty if the command failed.
@@ -350,6 +352,7 @@ type KillJobCommand struct {
 // JobCompletedMessage is sent from the worker to the server when a job container
 // exits. It is an unsolicited push message, not a reply to a specific command.
 type JobCompletedMessage struct {
+	MessageID string `json:"message_id,omitempty"`
 	// JobRunID matches the job_run record on the server.
 	JobRunID string `json:"job_run_id"`
 
@@ -369,6 +372,10 @@ type JobCompletedMessage struct {
 	ExecutionTimeMs int64 `json:"execution_time_ms,omitempty"`
 }
 
+type AckMessage struct {
+	MessageID string `json:"message_id"`
+}
+
 // HeartbeatPayload is the optional body sent inside a MsgHeartbeat envelope.
 // ActiveJobRunIDs lists the job_run IDs whose containers are still running on
 // this worker — the server uses this as a liveness signal.
@@ -379,6 +386,7 @@ type HeartbeatPayload struct {
 }
 
 type WorkerInfo struct {
+	Version       string `json:"version,omitempty"`
 	DockerVersion  string `json:"docker_version"`
 	ComposeVersion string `json:"compose_version"`
 	OS             string `json:"os"`

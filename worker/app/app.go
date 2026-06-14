@@ -104,33 +104,6 @@ func parseTags(raw string) []string {
 	return tags
 }
 
-func countActiveWork() int {
-	return handlers.GetActiveCommandsCount() + handlers.GetActiveJobsCount()
-}
-
-func drainActiveWork(timeout, pollInterval time.Duration) bool {
-	drainCtx, drainCancel := context.WithTimeout(context.Background(), timeout)
-	defer drainCancel()
-
-	ticker := time.NewTicker(pollInterval)
-	defer ticker.Stop()
-
-	for {
-		activeCount := countActiveWork()
-		if activeCount == 0 {
-			return false
-		}
-
-		log.Printf("[worker] waiting for %d active tasks/jobs to finish...", activeCount)
-
-		select {
-		case <-drainCtx.Done():
-			return true
-		case <-ticker.C:
-		}
-	}
-}
-
 func Run() {
 	logger.InitLogger()
 	sanitizeProcessPATH()
@@ -209,32 +182,12 @@ func Run() {
 
 		switch reason {
 		case transport.ReasonRevoked:
+			if err := transport.PurgeSpool(); err != nil {
+				log.Printf("[worker] failed to purge spool after revocation: %v", err)
+			}
 			log.Fatal("[worker] token rejected by server. Issue a new token to continue.")
 
 		case transport.ReasonShutdown:
-			log.Println("[worker] draining active tasks and jobs...")
-
-			// 1. Close the active connection to prevent incoming commands
-			transport.CloseActiveConnection()
-
-			// 2. Wait for active tasks and jobs to drain
-			shutdownTimeout := 300 * time.Second
-			if envTimeout := os.Getenv("WORKER_SHUTDOWN_TIMEOUT"); envTimeout != "" {
-				if val, err := strconv.Atoi(envTimeout); err == nil && val > 0 {
-					shutdownTimeout = time.Duration(val) * time.Second
-				}
-			}
-
-			if drainActiveWork(shutdownTimeout, 500*time.Millisecond) {
-				log.Printf("[worker] shutdown timeout exceeded, forcing exit")
-			} else {
-				log.Println("[worker] all active commands and jobs finished gracefully")
-			}
-
-			// 3. Final flush of queues
-			transport.FlushCompletedJobs()
-			transport.FlushQueuedEnvelopes()
-
 			log.Println("[worker] shutdown complete")
 			return
 

@@ -1,84 +1,52 @@
 package transport
 
 import (
-	"os"
-	"strconv"
-	"sync/atomic"
 	"testing"
 
 	"github.com/wireops/wireops/internal/protocol"
-	"github.com/wireops/wireops/worker/metrics"
+	"github.com/wireops/wireops/worker/spool"
 )
 
-func TestQueueBounds(t *testing.T) {
-	// Setup env limit to 5
-	os.Setenv("WORKER_MAX_QUEUED_MESSAGES", "5")
-	defer os.Unsetenv("WORKER_MAX_QUEUED_MESSAGES")
+func TestPendingCounts(t *testing.T) {
+	tmpDir := t.TempDir()
+	store, err := spool.New(tmpDir, "token-123")
+	if err != nil {
+		t.Fatalf("spool.New failed: %v", err)
+	}
+	setOutboxStore(store)
+	t.Cleanup(func() { setOutboxStore(nil) })
 
-	// Clear queues
-	queuedEnvelopesMu.Lock()
-	queuedEnvelopes = nil
-	queuedEnvelopesMu.Unlock()
-
-	completedJobsMu.Lock()
-	completedJobs = nil
-	completedJobsMu.Unlock()
-
-	atomic.StoreUint64(&metrics.DroppedMessagesTotal, 0)
-
-	// Append 10 envelopes
-	for i := 1; i <= 10; i++ {
-		appendQueuedEnvelope([]byte("msg-" + strconv.Itoa(i)))
+	if err := store.Enqueue("msg-result", "command_result", protocol.Envelope{
+		Type:    protocol.MsgResult,
+		Payload: protocol.CommandResult{MessageID: "msg-result", CommandID: "cmd-1", Output: "ok"},
+	}); err != nil {
+		t.Fatalf("enqueue result failed: %v", err)
 	}
 
-	// Check that we only kept the last 5 (FIFO)
-	queuedEnvelopesMu.Lock()
-	qLen := len(queuedEnvelopes)
-	firstVal := string(queuedEnvelopes[0])
-	lastVal := string(queuedEnvelopes[qLen-1])
-	queuedEnvelopesMu.Unlock()
-
-	if qLen != 5 {
-		t.Errorf("expected queued envelopes length 5, got %d", qLen)
-	}
-	if firstVal != "msg-6" {
-		t.Errorf("expected oldest msg to be msg-6, got %q", firstVal)
-	}
-	if lastVal != "msg-10" {
-		t.Errorf("expected newest msg to be msg-10, got %q", lastVal)
+	if err := store.Enqueue("msg-job", "job_completed", protocol.Envelope{
+		Type: protocol.MsgJobCompleted,
+		Payload: protocol.JobCompletedMessage{
+			MessageID: "msg-job",
+			JobRunID:  "job-1",
+			Success:   true,
+		},
+	}); err != nil {
+		t.Fatalf("enqueue job failed: %v", err)
 	}
 
-	droppedCount := atomic.LoadUint64(&metrics.DroppedMessagesTotal)
-	if droppedCount != 5 {
-		t.Errorf("expected metrics.DroppedMessagesTotal to be 5, got %d", droppedCount)
+	results, jobs := pendingCounts()
+	if results != 1 || jobs != 1 {
+		t.Fatalf("pendingCounts() = (%d, %d), want (1, 1)", results, jobs)
 	}
+}
 
-	// Repeat for completedJobs queue
-	for i := 1; i <= 10; i++ {
-		appendCompletedJob(protocol.JobCompletedMessage{
-			JobRunID: "run-" + strconv.Itoa(i),
-		})
+func TestNewMessageID(t *testing.T) {
+	a := newMessageID()
+	b := newMessageID()
+	if a == "" || b == "" {
+		t.Fatalf("expected non-empty message IDs")
 	}
-
-	completedJobsMu.Lock()
-	jLen := len(completedJobs)
-	firstJob := completedJobs[0].JobRunID
-	lastJob := completedJobs[jLen-1].JobRunID
-	completedJobsMu.Unlock()
-
-	if jLen != 5 {
-		t.Errorf("expected completed jobs length 5, got %d", jLen)
-	}
-	if firstJob != "run-6" {
-		t.Errorf("expected oldest job to be run-6, got %q", firstJob)
-	}
-	if lastJob != "run-10" {
-		t.Errorf("expected newest job to be run-10, got %q", lastJob)
-	}
-
-	// Total drops should now be 10 (5 from envelopes + 5 from jobs)
-	droppedCount = atomic.LoadUint64(&metrics.DroppedMessagesTotal)
-	if droppedCount != 10 {
-		t.Errorf("expected total metrics.DroppedMessagesTotal to be 10, got %d", droppedCount)
+	if a == b {
+		t.Fatalf("expected distinct message IDs, got %q and %q", a, b)
 	}
 }

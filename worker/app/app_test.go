@@ -2,24 +2,14 @@ package app
 
 import (
 	"testing"
-	"time"
-
-	"github.com/wireops/wireops/worker/handlers"
 )
 
-func TestDrainActiveWorkReturnsOnTimeout(t *testing.T) {
-	cancel := func() {}
-	handlers.ActiveCommands.Store("cmd-timeout", cancel)
-	defer handlers.ActiveCommands.Delete("cmd-timeout")
-
-	start := time.Now()
-	timedOut := drainActiveWork(30*time.Millisecond, 5*time.Millisecond)
-	elapsed := time.Since(start)
-
-	if !timedOut {
-		t.Fatalf("expected drainActiveWork to report timeout")
+func TestParseTags(t *testing.T) {
+	got := parseTags(" edge, gpu ,,prod ")
+	if len(got) != 3 {
+		t.Fatalf("expected 3 tags, got %d (%v)", len(got), got)
 	}
-	if elapsed > 250*time.Millisecond {
-		t.Fatalf("expected drainActiveWork to return promptly after timeout, took %v", elapsed)
+	if got[0] != "edge" || got[1] != "gpu" || got[2] != "prod" {
+		t.Fatalf("unexpected tags: %v", got)
 	}
 }

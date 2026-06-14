@@ -38,6 +38,8 @@ type WorkerServer struct {
 	connWriteMu map[string]*sync.Mutex     // workerID → write mutex
 	pending     map[string]*pendingResult  // commandID → pending
 	workerTags  map[string][]string        // workerID → tags declared via WORKER_TAGS
+	seenMu      sync.Mutex
+	seenMessages map[string]time.Time
 
 	onConnect      func(workerID string)
 	onDisconnect   func(workerID string)
@@ -158,6 +160,7 @@ func NewWorkerServer(app core.App, workerSvc *Service) *WorkerServer {
 		connWriteMu: make(map[string]*sync.Mutex),
 		pending:     make(map[string]*pendingResult),
 		workerTags:  make(map[string][]string),
+		seenMessages: make(map[string]time.Time),
 	}
 
 	s.registerRoutes()
@@ -234,6 +237,37 @@ func (s *WorkerServer) SendMessage(workerID string, msgType protocol.MessageType
 	err = conn.WriteMessage(websocket.TextMessage, msg)
 	writeMu.Unlock()
 	return err
+}
+
+func (s *WorkerServer) SendAck(workerID, messageID string) error {
+	if strings.TrimSpace(messageID) == "" {
+		return nil
+	}
+	return s.SendMessage(workerID, protocol.MsgAck, protocol.AckMessage{MessageID: messageID})
+}
+
+func (s *WorkerServer) isDuplicateMessage(workerID, messageID string) bool {
+	if strings.TrimSpace(messageID) == "" {
+		return false
+	}
+
+	now := time.Now().UTC()
+	key := workerID + ":" + messageID
+
+	s.seenMu.Lock()
+	defer s.seenMu.Unlock()
+
+	for k, seenAt := range s.seenMessages {
+		if now.Sub(seenAt) > 24*time.Hour {
+			delete(s.seenMessages, k)
+		}
+	}
+
+	if _, ok := s.seenMessages[key]; ok {
+		return true
+	}
+	s.seenMessages[key] = now
+	return false
 }
 
 // Dispatch sends a command to the connected remote worker and
@@ -584,7 +618,13 @@ func (s *WorkerServer) handleWebSocket(c *gin.Context) {
 			payloadBytes, _ := json.Marshal(env.Payload)
 			var msg protocol.JobCompletedMessage
 			if jsonErr := json.Unmarshal(payloadBytes, &msg); jsonErr == nil {
+				if msg.MessageID != "" && s.isDuplicateMessage(workerID, msg.MessageID) {
+					_ = s.SendAck(workerID, msg.MessageID)
+					logger.SafeLogf("[WORKER] Ignoring duplicate job_completed message=%s worker=%s job_run=%s", msg.MessageID, workerID, msg.JobRunID)
+					continue
+				}
 				logger.SafeLogf("[WORKER] job_completed run=%s worker=%s success=%v elapsed=%dms", msg.JobRunID, workerID, msg.Success, msg.DurationMs)
+				_ = s.SendAck(workerID, msg.MessageID)
 				if s.onJobCompleted != nil {
 					go s.onJobCompleted(msg)
 				}
@@ -596,6 +636,11 @@ func (s *WorkerServer) handleWebSocket(c *gin.Context) {
 			payloadBytes, _ := json.Marshal(env.Payload)
 			var result protocol.CommandResult
 			if jsonErr := json.Unmarshal(payloadBytes, &result); jsonErr == nil {
+				if result.MessageID != "" && s.isDuplicateMessage(workerID, result.MessageID) {
+					_ = s.SendAck(workerID, result.MessageID)
+					logger.SafeLogf("[WORKER] Ignoring duplicate result message=%s worker=%s command=%s", result.MessageID, workerID, result.CommandID)
+					continue
+				}
 				s.connMu.RLock()
 				pr, hasPending := s.pending[result.CommandID]
 				s.connMu.RUnlock()
@@ -608,6 +653,7 @@ func (s *WorkerServer) handleWebSocket(c *gin.Context) {
 				} else {
 					logger.SafeLogf("[WORKER] Received result for unknown command %s from %s", result.CommandID, workerID)
 				}
+				_ = s.SendAck(workerID, result.MessageID)
 			}
 
 		case protocol.MsgGetMetricsResult:

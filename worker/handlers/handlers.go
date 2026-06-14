@@ -20,6 +20,7 @@ var (
 	LightSemaphore       chan struct{}
 	InteractiveSemaphore chan struct{}
 	MaxQueueDepth        int
+	acceptingWork        atomic.Bool
 )
 
 type Sender interface {
@@ -35,6 +36,15 @@ func InitSemaphores(heavy, light, interactive, queueDepth int) {
 	LightSemaphore = make(chan struct{}, light)
 	InteractiveSemaphore = make(chan struct{}, interactive)
 	MaxQueueDepth = queueDepth
+	acceptingWork.Store(true)
+}
+
+func SetAcceptingWork(accept bool) {
+	acceptingWork.Store(accept)
+}
+
+func IsAcceptingWork() bool {
+	return acceptingWork.Load()
 }
 
 func extractCommandID(payload interface{}) string {
@@ -330,6 +340,17 @@ func HandleReadFile(sender Sender, payload interface{}) {
 }
 
 func HandleRunJob(sender Sender, payload interface{}) {
+	if !IsAcceptingWork() {
+		cmdID := extractCommandID(payload)
+		if cmdID != "" {
+			sender.SendResult(protocol.CommandResult{
+				CommandID: cmdID,
+				Error:     "rejected: worker draining",
+			})
+		}
+		return
+	}
+
 	cmd, ok := unmarshalPayloadOrReply[protocol.RunJobCommand](sender, payload, "")
 	if !ok {
 		return
@@ -373,6 +394,7 @@ func HandleRunJob(sender Sender, payload interface{}) {
 		sender.ReportJobCompleted(msg)
 	})
 	if !accepted {
+		atomic.AddUint64(&metrics.OverloadRejectsTotal, 1)
 		sender.SendResult(protocol.CommandResult{
 			CommandID: cmd.CommandID,
 			Error:     "rejected: worker overloaded",
@@ -477,6 +499,18 @@ func TryScheduleThrottled(sem chan struct{}, msgType protocol.MessageType, fn fu
 }
 
 func DispatchThrottled(sender Sender, sem chan struct{}, msgType protocol.MessageType, payload interface{}, handler func(Sender, interface{})) {
+	if !IsAcceptingWork() {
+		cmdID := extractCommandID(payload)
+		if cmdID != "" {
+			log.Printf("[worker] rejecting command %s while draining", cmdID)
+			sender.SendResult(protocol.CommandResult{
+				CommandID: cmdID,
+				Error:     "rejected: worker draining",
+			})
+		}
+		return
+	}
+
 	if TryScheduleThrottled(sem, msgType, func() { handler(sender, payload) }) {
 		return
 	}
@@ -484,6 +518,7 @@ func DispatchThrottled(sender Sender, sem chan struct{}, msgType protocol.Messag
 	cmdID := extractCommandID(payload)
 	if cmdID != "" {
 		log.Printf("[worker] queue depth exceeded, rejecting command %s", cmdID)
+		atomic.AddUint64(&metrics.OverloadRejectsTotal, 1)
 		sender.SendResult(protocol.CommandResult{
 			CommandID: cmdID,
 			Error:     "rejected: worker overloaded",

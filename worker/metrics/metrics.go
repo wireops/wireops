@@ -8,6 +8,7 @@ import (
 
 var (
 	ConnAttempts         uint64
+	Connected            int64
 	QueuedTasks        int64
 	TasksDeploy        uint64
 	TasksRedeploy      uint64
@@ -22,6 +23,10 @@ var (
 	JobsError          uint64
 	JobsDurationSumNs  uint64
 	DroppedMessagesTotal uint64
+	FlushAttemptsTotal uint64
+	FlushAckedTotal    uint64
+	FlushFailedTotal   uint64
+	OverloadRejectsTotal uint64
 )
 
 func Serialize(concurrencyLimit, activeTasksCount, activeJobsCount, qEnvLen, qJobsLen int) string {
@@ -38,7 +43,7 @@ func Serialize(concurrencyLimit, activeTasksCount, activeJobsCount, qEnvLen, qJo
 	}
 
 	// 1. Connection
-	writeMetric("wireops_worker_connected", "WebSocket connection status", "gauge", 1)
+	writeMetric("wireops_worker_connected", "WebSocket connection status", "gauge", atomic.LoadInt64(&Connected))
 	writeMetric("wireops_worker_connection_attempts_total", "Total registration/connection attempts", "counter", atomic.LoadUint64(&ConnAttempts))
 
 	// 2. Concurrency
@@ -71,6 +76,10 @@ func Serialize(concurrencyLimit, activeTasksCount, activeJobsCount, qEnvLen, qJo
 	writeMetric("wireops_worker_queued_messages", "Outbound messages buffered in memory", "gauge", qEnvLen, "queue=\"results\"")
 	sb.WriteString(fmt.Sprintf("wireops_worker_queued_messages{queue=\"completed_jobs\"} %d\n", qJobsLen))
 	writeMetric("wireops_worker_dropped_messages_total", "Total outbound messages dropped due to buffer limits", "counter", atomic.LoadUint64(&DroppedMessagesTotal))
+	writeMetric("wireops_worker_flush_attempts_total", "Total spool flush send attempts", "counter", atomic.LoadUint64(&FlushAttemptsTotal))
+	writeMetric("wireops_worker_flush_acked_total", "Total spool messages acknowledged by the server", "counter", atomic.LoadUint64(&FlushAckedTotal))
+	writeMetric("wireops_worker_flush_failed_total", "Total spool flush failures", "counter", atomic.LoadUint64(&FlushFailedTotal))
+	writeMetric("wireops_worker_overload_rejections_total", "Total commands rejected because the worker was overloaded", "counter", atomic.LoadUint64(&OverloadRejectsTotal))
 
 	return sb.String()
 }

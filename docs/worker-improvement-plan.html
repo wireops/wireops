@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WireOps Worker Improvement Plan</title>
+  <style>
+    :root {
+      --bg: #f4efe6;
+      --panel: #fffaf2;
+      --panel-strong: #f8ecd7;
+      --text: #1f2933;
+      --muted: #52606d;
+      --line: #d9c9ab;
+      --accent: #0f766e;
+      --accent-soft: #d7f3ef;
+      --warn: #b45309;
+      --warn-soft: #fff1db;
+      --shadow: 0 18px 40px rgba(31, 41, 51, 0.08);
+      --radius: 18px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Avenir Next", "Segoe UI", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(15, 118, 110, 0.12), transparent 28%),
+        radial-gradient(circle at top right, rgba(180, 83, 9, 0.12), transparent 24%),
+        linear-gradient(180deg, #f8f3ea 0%, var(--bg) 100%);
+      line-height: 1.6;
+    }
+
+    .page {
+      width: min(1120px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 32px 0 56px;
+    }
+
+    .hero {
+      background: linear-gradient(135deg, rgba(15, 118, 110, 0.96), rgba(10, 87, 94, 0.92));
+      color: #f7fffd;
+      border-radius: 28px;
+      padding: 36px;
+      box-shadow: var(--shadow);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      inset: auto -40px -60px auto;
+      width: 220px;
+      height: 220px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    h1, h2, h3 {
+      margin: 0 0 12px;
+      line-height: 1.15;
+    }
+
+    h1 {
+      font-size: clamp(2rem, 5vw, 3.4rem);
+      letter-spacing: -0.04em;
+    }
+
+    h2 {
+      font-size: 1.5rem;
+      letter-spacing: -0.03em;
+    }
+
+    h3 {
+      font-size: 1.05rem;
+      letter-spacing: -0.02em;
+    }
+
+    p {
+      margin: 0 0 14px;
+    }
+
+    .lede {
+      font-size: 1.05rem;
+      max-width: 760px;
+      color: rgba(247, 255, 253, 0.92);
+    }
+
+    .hero-grid,
+    .grid {
+      display: grid;
+      gap: 18px;
+    }
+
+    .hero-grid {
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      margin-top: 26px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border-radius: 999px;
+      padding: 8px 14px;
+      background: rgba(255, 255, 255, 0.12);
+      color: #f7fffd;
+      font-size: 0.95rem;
+      margin-bottom: 18px;
+    }
+
+    .stat {
+      background: rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 18px;
+      padding: 18px;
+      backdrop-filter: blur(6px);
+    }
+
+    .stat strong {
+      display: block;
+      font-size: 1.7rem;
+      margin-bottom: 4px;
+    }
+
+    section {
+      margin-top: 26px;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid rgba(217, 201, 171, 0.7);
+      border-radius: var(--radius);
+      padding: 24px;
+      box-shadow: var(--shadow);
+    }
+
+    .grid.two {
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    }
+
+    .grid.three {
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    }
+
+    .section-kicker {
+      display: inline-block;
+      margin-bottom: 10px;
+      padding: 5px 10px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 0.82rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    ul {
+      margin: 0;
+      padding-left: 18px;
+    }
+
+    li + li {
+      margin-top: 8px;
+    }
+
+    .phase {
+      border-left: 6px solid var(--accent);
+      padding-left: 18px;
+    }
+
+    .phase + .phase {
+      margin-top: 20px;
+    }
+
+    .note {
+      background: var(--warn-soft);
+      border: 1px solid #f2c98b;
+      border-radius: 16px;
+      padding: 16px 18px;
+      color: #7c4a03;
+    }
+
+    .code {
+      font-family: "SFMono-Regular", "Menlo", monospace;
+      background: #f3ede2;
+      border: 1px solid #e2d2b4;
+      border-radius: 14px;
+      padding: 14px 16px;
+      white-space: pre-wrap;
+      overflow-x: auto;
+      font-size: 0.92rem;
+    }
+
+    .columns {
+      columns: 2 280px;
+      column-gap: 20px;
+    }
+
+    .columns ul {
+      break-inside: avoid;
+    }
+
+    .architecture {
+      display: grid;
+      gap: 14px;
+    }
+
+    .architecture-item {
+      background: var(--panel-strong);
+      border: 1px solid #ead7b8;
+      border-radius: 16px;
+      padding: 16px;
+    }
+
+    .footer {
+      margin-top: 28px;
+      color: var(--muted);
+      font-size: 0.95rem;
+      text-align: center;
+    }
+
+    @media (max-width: 720px) {
+      .page {
+        width: min(100% - 20px, 1120px);
+        padding-top: 20px;
+      }
+
+      .hero,
+      .card {
+        padding: 20px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="hero">
+      <div class="pill">WireOps Worker · Improvement Plan</div>
+      <h1>Plano de Evolução do Worker</h1>
+      <p class="lede">
+        Planejamento focado em confiabilidade de entrega, shutdown gracioso, semântica correta de erro,
+        observabilidade operacional e simplificação estrutural do worker, incluindo versionamento via build args
+        e entrega do binário único na pipeline de produção.
+      </p>
+      <div class="hero-grid">
+        <div class="stat">
+          <strong>5</strong>
+          frentes principais de melhoria
+        </div>
+        <div class="stat">
+          <strong>4</strong>
+          fases sugeridas de implementação
+        </div>
+        <div class="stat">
+          <strong>1</strong>
+          binário único do worker, sem frontend
+        </div>
+      </div>
+    </header>
+
+    <section class="grid two">
+      <article class="card">
+        <div class="section-kicker">Objetivo</div>
+        <h2>O que queremos resolver</h2>
+        <ul>
+          <li>Eliminar perda de resultados em reconnect, restart e shutdown.</li>
+          <li>Fazer o worker encerrar drenando trabalho sem aceitar novas execuções.</li>
+          <li>Diferenciar erro operacional de estado de negócio no protocolo.</li>
+          <li>Medir de forma real conexão, backlog, overload e tempo de execução.</li>
+          <li>Reduzir duplicação no transporte e formalizar a versão do worker no build.</li>
+        </ul>
+      </article>
+
+      <article class="card">
+        <div class="section-kicker">Ordem Recomendada</div>
+        <h2>Sequência de ataque</h2>
+        <ul>
+          <li>1. Entrega confiável de resultados</li>
+          <li>2. Shutdown gracioso real</li>
+          <li>3. Semântica correta de erro</li>
+          <li>4. Observabilidade operacional</li>
+          <li>5. Simplificação estrutural e release engineering</li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="card">
+      <div class="section-kicker">Frente 1</div>
+      <h2>Entrega confiável de resultados</h2>
+      <div class="phase">
+        <h3>Direção</h3>
+        <p>
+          Substituir as filas em memória por um spool local persistente em <strong>WORKER_STACK_DIR</strong>,
+          garantindo replay após reconnect e sem apagar a mensagem até o server confirmar recebimento.
+        </p>
+      </div>
+      <div class="grid two" style="margin-top: 18px;">
+        <div>
+          <h3>Estrutura sugerida</h3>
+          <div class="code">WORKER_STACK_DIR/
+  spool/
+    outbox/
+      pending/
+      sent/
+    meta/</div>
+        </div>
+        <div>
+          <h3>Formato do evento</h3>
+          <ul>
+            <li><strong>message_id</strong></li>
+            <li><strong>kind</strong>: <code>command_result</code> ou <code>job_completed</code></li>
+            <li><strong>command_id</strong> ou <strong>job_run_id</strong></li>
+            <li><strong>created_at</strong></li>
+            <li><strong>attempts</strong></li>
+            <li><strong>payload</strong> com envelope completo</li>
+          </ul>
+        </div>
+      </div>
+      <h3 style="margin-top: 18px;">Mudanças de protocolo</h3>
+      <ul>
+        <li>Adicionar <code>message_id</code> em <code>CommandResult</code> e <code>JobCompletedMessage</code>.</li>
+        <li>Adicionar uma mensagem de ACK do server para o worker, por exemplo <code>MsgAck</code>.</li>
+        <li>Fazer o replay por ordem temporal e deduplicação por <code>message_id</code>.</li>
+      </ul>
+      <h3 style="margin-top: 18px;">Regras operacionais</h3>
+      <ul>
+        <li>O worker grava no spool antes de tentar enviar.</li>
+        <li>O server processa de forma idempotente por <code>message_id</code>.</li>
+        <li>A mensagem só sai do spool após ACK explícito.</li>
+        <li>No reconnect, o worker reenvia tudo que estiver em <code>pending</code>.</li>
+        <li>O spool persiste apenas mensagens de saída, nunca comandos de entrada com <code>.env</code> ou <code>RunJobCommand.Env</code>.</li>
+      </ul>
+      <div class="note" style="margin-top: 18px;">
+        Primeira versão simples: manter só <strong>pending</strong> e remover o arquivo após ACK. Isso já elimina a perda de resultado em boa parte dos cenários sem exigir um estado mais complexo.
+      </div>
+      <h3 style="margin-top: 18px;">Proteção do spool</h3>
+      <ul>
+        <li>Sem nova chave operacional dedicada.</li>
+        <li>O worker deriva a chave local do spool a partir do <code>WORKER_TOKEN</code>.</li>
+        <li>Usar derivação determinística local, por exemplo via HKDF com contexto do spool.</li>
+        <li>Diretório com permissão <code>0700</code> e arquivos com <code>0600</code>.</li>
+        <li>Se o token mudar e um spool legado não puder ser lido, o worker deve mover para quarentena ou descartar com métrica e log administrativo.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <div class="section-kicker">Frente 2</div>
+      <h2>Shutdown gracioso real</h2>
+      <div class="phase">
+        <h3>Problema atual</h3>
+        <p>
+          O worker fecha a conexão cedo demais, drena depois e corre o risco de sair com resultados ainda não confirmados pelo server.
+        </p>
+      </div>
+      <div class="phase">
+        <h3>Novo comportamento</h3>
+        <ul>
+          <li>Marcar o worker como <code>draining</code>.</li>
+          <li>Parar de aceitar novos comandos executáveis.</li>
+          <li>Manter o websocket ativo.</li>
+          <li>Continuar heartbeats com estado <code>draining=true</code>.</li>
+          <li>Esperar jobs e comandos ativos terminarem.</li>
+          <li>Flush do spool pendente.</li>
+          <li>Aguardar ACKs até um timeout configurável.</li>
+          <li>Fechar o websocket só no final.</li>
+        </ul>
+      </div>
+      <div class="phase">
+        <h3>Revogação do worker</h3>
+        <ul>
+          <li>Ao receber revogação, o worker para definitivamente de aceitar trabalho.</li>
+          <li>Remove o diretório <code>WORKER_STACK_DIR/spool/</code> antes de encerrar.</li>
+          <li>Opcionalmente limpa também workdirs temporários remanescentes em <code>stacks/*/cmd-*</code>.</li>
+          <li>Se a revogação for percebida só no próximo boot ou reconnect, o cleanup roda antes do encerramento final.</li>
+        </ul>
+      </div>
+      <h3>Fallback</h3>
+      <p>
+        Se a conexão já tiver caído, o worker pode abrir uma sessão curta de reconnect apenas para publicar o que ficou no spool.
+      </p>
+      <h3>Política durante draining</h3>
+      <ul>
+        <li>Recusar novos deploys, jobs e operações interativas com erro claro: <code>worker draining</code>.</li>
+        <li>Permitir ACKs e mensagens de controle estritamente necessárias.</li>
+      </ul>
+    </section>
+
+    <section class="grid two">
+      <article class="card">
+        <div class="section-kicker">Frente 3</div>
+        <h2>Erro operacional vs estado de negócio</h2>
+        <p>
+          Endpoints e comandos como <code>probe</code>, <code>inspect</code>, <code>get_status</code> e
+          <code>get_resources</code> não devem mascarar falha de Docker ou Compose como se fosse ausência legítima de recurso.
+        </p>
+        <h3>Diretriz</h3>
+        <ul>
+          <li>Falha real de infraestrutura deve preencher <code>CommandResult.Error</code>.</li>
+          <li>Quando houver payload parcial útil, incluir <code>degraded=true</code> e <code>source_error</code>.</li>
+          <li>Não inferir “stack ausente” a partir de erro operacional.</li>
+        </ul>
+      </article>
+
+      <article class="card">
+        <div class="section-kicker">Frente 4</div>
+        <h2>Observabilidade operacional</h2>
+        <div class="columns">
+          <ul>
+            <li><code>wireops_worker_connected</code></li>
+            <li><code>wireops_worker_reconnects_total</code></li>
+            <li><code>wireops_worker_reconnect_duration_seconds</code></li>
+            <li><code>wireops_worker_last_successful_connect_unix</code></li>
+            <li><code>wireops_worker_spool_pending_messages</code></li>
+            <li><code>wireops_worker_spool_oldest_message_age_seconds</code></li>
+            <li><code>wireops_worker_flush_attempts_total</code></li>
+            <li><code>wireops_worker_flush_acked_total</code></li>
+            <li><code>wireops_worker_flush_failed_total</code></li>
+            <li><code>wireops_worker_dropped_messages_total</code></li>
+            <li><code>wireops_worker_overload_rejections_total{type=...}</code></li>
+            <li><code>wireops_worker_queue_depth{type=...}</code></li>
+            <li><code>wireops_worker_queue_wait_seconds</code></li>
+            <li><code>wireops_worker_command_duration_seconds{type=...}</code></li>
+            <li><code>wireops_worker_job_duration_seconds</code></li>
+            <li><code>wireops_worker_result_delivery_latency_seconds</code></li>
+          </ul>
+        </div>
+      </article>
+    </section>
+
+    <section class="card">
+      <div class="section-kicker">Frente 5</div>
+      <h2>Redução de acoplamento e duplicação</h2>
+      <div class="grid three">
+        <div class="architecture-item">
+          <h3>Transporte único</h3>
+          <p>Consolidar a implementação websocket em <code>worker/transport</code> e descontinuar duplicações.</p>
+        </div>
+        <div class="architecture-item">
+          <h3>Registry de handlers</h3>
+          <p>Trocar o <code>switch</code> crescente por um mapa de handlers com semáforo e policy de draining.</p>
+        </div>
+        <div class="architecture-item">
+          <h3>Interfaces menores</h3>
+          <p>Introduzir contratos claros para <code>Outbox</code>, <code>Connection</code>, <code>Dispatcher</code> e <code>SessionState</code>.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="section-kicker">Release Engineering</div>
+      <h2>Versão via build args e entrega do binário único</h2>
+      <h3>Build info</h3>
+      <p>
+        Criar um pacote de build info com valores default para desenvolvimento e substituição via <code>ldflags</code> na pipeline.
+      </p>
+      <div class="code">package buildinfo
+
+var Version = "dev"
+var Commit = "none"
+var BuildDate = "unknown"</div>
+      <h3 style="margin-top: 18px;">Exemplo de build</h3>
+      <div class="code">go build -ldflags="-X github.com/wireops/wireops/internal/buildinfo.Version=${GIT_TAG} \
+-X github.com/wireops/wireops/internal/buildinfo.Commit=${GIT_SHA} \
+-X github.com/wireops/wireops/internal/buildinfo.BuildDate=${BUILD_DATE}"</div>
+      <h3 style="margin-top: 18px;">Diretrizes da pipeline</h3>
+      <ul>
+        <li>Build do worker independente do frontend.</li>
+        <li>Release do worker disparada por tags de produção.</li>
+        <li>Não publicar binário standalone do worker como artifact.</li>
+        <li>Publicar apenas a imagem Docker do worker, separada da imagem do server.</li>
+        <li>Garantir que a imagem do worker contenha apenas o binário e dependências mínimas de runtime.</li>
+      </ul>
+      <div class="note" style="margin-top: 18px;">
+        O worker deve ser entregue apenas como imagem Docker isolada. Sem <strong>pb_public</strong>, sem assets de frontend e sem acoplamento ao bundle do server.
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="section-kicker">Fases</div>
+      <h2>Backlog de implementação</h2>
+      <div class="phase">
+        <h3>Fase 1 · Segurança operacional imediata</h3>
+        <ul>
+          <li>Spool persistente local</li>
+          <li><code>message_id</code> no protocolo</li>
+          <li>ACK idempotente</li>
+          <li>Shutdown com drain antes de fechar conexão</li>
+          <li>Métricas reais de conexão e spool</li>
+        </ul>
+      </div>
+      <div class="phase">
+        <h3>Fase 2 · Correção semântica</h3>
+        <ul>
+          <li>Revisar <code>probe</code>, <code>inspect</code>, <code>get_status</code> e <code>get_resources</code></li>
+          <li>Remover falso “vazio” em erro operacional</li>
+          <li>Adaptar server e UI para <code>degraded</code> e <code>source_error</code></li>
+        </ul>
+      </div>
+      <div class="phase">
+        <h3>Fase 3 · Simplificação</h3>
+        <ul>
+          <li>Consolidar transporte websocket</li>
+          <li>Introduzir registry de handlers</li>
+          <li>Limpar código duplicado ou legado</li>
+        </ul>
+      </div>
+      <div class="phase">
+        <h3>Fase 4 · Release do worker</h3>
+        <ul>
+          <li>Versionamento via <code>ldflags</code></li>
+          <li>Imagem Docker do worker por tag</li>
+          <li>Sem artifact binário do worker</li>
+          <li>Imagem minimalista do worker</li>
+          <li>Pipeline do worker independente do frontend</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="section-kicker">Arquitetura Alvo</div>
+      <h2>Estrutura sugerida do worker</h2>
+      <div class="architecture">
+        <div class="architecture-item"><strong>app</strong> · lifecycle, bootstrap e shutdown</div>
+        <div class="architecture-item"><strong>transport</strong> · sessão websocket, ACKs e heartbeats</div>
+        <div class="architecture-item"><strong>outbox</strong> · spool persistente e replay</div>
+        <div class="architecture-item"><strong>dispatch</strong> · registry de handlers, semáforos e policy de draining</div>
+        <div class="architecture-item"><strong>executor</strong> · operações Docker, Compose e jobs</div>
+        <div class="architecture-item"><strong>telemetry</strong> · métricas, build info e estado do worker</div>
+      </div>
+    </section>
+
+    <section class="grid two">
+      <article class="card">
+        <div class="section-kicker">Aceite</div>
+        <h2>Critérios de aceite principais</h2>
+        <ul>
+          <li>Reconnect não perde <code>CommandResult</code> nem <code>JobCompletedMessage</code>.</li>
+          <li>Restart do processo não apaga mensagens pendentes.</li>
+          <li>Replay não duplica atualização no server.</li>
+          <li><code>SIGTERM</code> durante deploy ou job preserva publicação do resultado.</li>
+          <li>UI distingue “não encontrado” de “erro de infraestrutura”.</li>
+          <li>Métricas refletem o estado real do worker.</li>
+        </ul>
+      </article>
+
+      <article class="card">
+        <div class="section-kicker">Resultado esperado</div>
+        <h2>Ganho prático</h2>
+        <ul>
+          <li>Menos divergência entre worker e control plane.</li>
+          <li>Menor risco de estado fantasma após reconnect ou shutdown.</li>
+          <li>Operação mais observável e auditável.</li>
+          <li>Pipeline mais previsível para distribuição do worker em produção.</li>
+          <li>Base de código mais sustentável para crescer novas capacidades.</li>
+        </ul>
+      </article>
+    </section>
+
+    <p class="footer">
+      Arquivo gerado para leitura local. Caminho: <code>/Users/jfxdev/Documents/workspace/apps/wireops/docs/worker-improvement-plan.html</code>
+    </p>
+  </main>
+</body>
+</html>

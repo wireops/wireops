@@ -2,6 +2,8 @@ package transport
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,11 +18,13 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/wireops/wireops/internal/buildinfo"
 	"github.com/wireops/wireops/internal/protocol"
 	wiretls "github.com/wireops/wireops/pkg/tls"
 	"github.com/wireops/wireops/worker/api"
 	"github.com/wireops/wireops/worker/handlers"
 	"github.com/wireops/wireops/worker/metrics"
+	"github.com/wireops/wireops/worker/spool"
 	"github.com/wireops/wireops/worker/telemetry"
 )
 
@@ -33,157 +37,122 @@ const (
 )
 
 var (
-	connWriteMu       sync.Mutex
-	activeConnMu      sync.RWMutex
-	activeConn        *websocket.Conn
-	completedJobsMu   sync.Mutex
-	completedJobs     []protocol.JobCompletedMessage
-	isFlushingJobs    bool
-	isFlushingJobsMu  sync.Mutex
-	queuedEnvelopesMu sync.Mutex
-	queuedEnvelopes   [][]byte
-	currentStackDir   string
+	connWriteMu     sync.Mutex
+	activeConnMu    sync.RWMutex
+	activeConn      *websocket.Conn
+	currentStackDir string
+	storeMu         sync.RWMutex
+	outboxStore     *spool.Store
 )
 
 type WorkerSender struct{}
 
 func (w WorkerSender) SendResult(result protocol.CommandResult) {
-	msg, err := json.Marshal(protocol.Envelope{Type: protocol.MsgResult, Payload: result})
-	if err != nil {
-		log.Printf("[worker] result marshal error=%v", err)
-		return
+	if result.MessageID == "" {
+		result.MessageID = newMessageID()
 	}
-	activeConnMu.RLock()
-	c := activeConn
-	activeConnMu.RUnlock()
-	if c == nil {
-		log.Printf("[worker] result send failed: no active connection (command %s). Enqueueing for retry.", result.CommandID)
-		appendQueuedEnvelope(msg)
-		return
-	}
-	connWriteMu.Lock()
-	_ = c.SetWriteDeadline(time.Now().Add(10 * time.Second))
-	err = c.WriteMessage(websocket.TextMessage, msg)
-	connWriteMu.Unlock()
-	if err != nil {
-		log.Printf("[worker] result send error=%v. Enqueueing for retry.", err)
-		appendQueuedEnvelope(msg)
+	env := protocol.Envelope{Type: protocol.MsgResult, Payload: result}
+	if err := persistAndSend(result.MessageID, "command_result", env); err != nil {
+		log.Printf("[worker] result send failed command=%s message=%s error=%v", result.CommandID, result.MessageID, err)
 	}
 }
 
 func (w WorkerSender) SendEnvelope(env protocol.Envelope) {
-	msg, err := json.Marshal(env)
-	if err != nil {
-		log.Printf("[worker] envelope marshal error=%v", err)
-		return
-	}
-	activeConnMu.RLock()
-	c := activeConn
-	activeConnMu.RUnlock()
-	if c == nil {
-		log.Printf("[worker] envelope send failed: no active connection. Enqueueing for retry.")
-		appendQueuedEnvelope(msg)
-		return
-	}
-	connWriteMu.Lock()
-	_ = c.SetWriteDeadline(time.Now().Add(10 * time.Second))
-	err = c.WriteMessage(websocket.TextMessage, msg)
-	connWriteMu.Unlock()
-	if err != nil {
-		log.Printf("[worker] envelope send error=%v. Enqueueing for retry.", err)
-		appendQueuedEnvelope(msg)
+	if err := sendEnvelope(env); err != nil {
+		log.Printf("[worker] envelope send failed type=%s error=%v", env.Type, err)
 	}
 }
 
 func (w WorkerSender) ReportJobCompleted(msg protocol.JobCompletedMessage) {
 	activeJobsDelete(msg.JobRunID)
 
-	envelope := protocol.Envelope{
+	if msg.MessageID == "" {
+		msg.MessageID = newMessageID()
+	}
+	env := protocol.Envelope{
 		Type:    protocol.MsgJobCompleted,
 		Payload: msg,
 	}
-	envelopeBytes, err := json.Marshal(envelope)
-	if err != nil {
-		log.Printf("[worker] job completion marshal error=%v", err)
-		return
-	}
-
-	activeConnMu.RLock()
-	c := activeConn
-	activeConnMu.RUnlock()
-
-	var writeErr error
-	if c != nil {
-		connWriteMu.Lock()
-		_ = c.SetWriteDeadline(time.Now().Add(10 * time.Second))
-		writeErr = c.WriteMessage(websocket.TextMessage, envelopeBytes)
-		connWriteMu.Unlock()
-	} else {
-		writeErr = errors.New("no active connection")
-	}
-
-	if writeErr != nil {
-		log.Printf("[worker] job completion send error job_run=%s error=%v. Queueing for retry.", msg.JobRunID, writeErr)
-		appendCompletedJob(msg)
-
-		go TriggerCompletedJobsFlush()
-	} else {
-		log.Printf("[worker] job completion sent successfully job_run=%s", msg.JobRunID)
+	if err := persistAndSend(msg.MessageID, "job_completed", env); err != nil {
+		log.Printf("[worker] job completion send failed job_run=%s message=%s error=%v", msg.JobRunID, msg.MessageID, err)
 	}
 }
 
 func (w WorkerSender) QueuedEnvelopesLen() int {
-	queuedEnvelopesMu.Lock()
-	defer queuedEnvelopesMu.Unlock()
-	return len(queuedEnvelopes)
+	results, _ := pendingCounts()
+	return results
 }
 
 func (w WorkerSender) QueuedJobsLen() int {
-	completedJobsMu.Lock()
-	defer completedJobsMu.Unlock()
-	return len(completedJobs)
+	_, jobs := pendingCounts()
+	return jobs
 }
 
 func activeJobsDelete(jobRunID string) {
 	handlers.ActiveJobs.Delete(jobRunID)
 }
 
-func appendQueuedEnvelope(msg []byte) {
-	limit := 1000
-	if limitStr := os.Getenv("WORKER_MAX_QUEUED_MESSAGES"); limitStr != "" {
-		if val, err := strconv.Atoi(limitStr); err == nil && val > 0 {
-			limit = val
-		}
-	}
-
-	queuedEnvelopesMu.Lock()
-	defer queuedEnvelopesMu.Unlock()
-
-	if len(queuedEnvelopes) >= limit {
-		log.Printf("[worker] queuedEnvelopes limit reached (%d), dropping oldest result message", limit)
-		queuedEnvelopes = queuedEnvelopes[1:]
-		atomic.AddUint64(&metrics.DroppedMessagesTotal, 1)
-	}
-	queuedEnvelopes = append(queuedEnvelopes, msg)
+func setOutboxStore(store *spool.Store) {
+	storeMu.Lock()
+	outboxStore = store
+	storeMu.Unlock()
 }
 
-func appendCompletedJob(msg protocol.JobCompletedMessage) {
-	limit := 1000
-	if limitStr := os.Getenv("WORKER_MAX_QUEUED_MESSAGES"); limitStr != "" {
-		if val, err := strconv.Atoi(limitStr); err == nil && val > 0 {
-			limit = val
+func getOutboxStore() *spool.Store {
+	storeMu.RLock()
+	defer storeMu.RUnlock()
+	return outboxStore
+}
+
+func persistAndSend(messageID, kind string, env protocol.Envelope) error {
+	store := getOutboxStore()
+	if store == nil {
+		return fmt.Errorf("outbox store is not initialized")
+	}
+	if err := store.Enqueue(messageID, kind, env); err != nil {
+		return err
+	}
+	return sendEnvelope(env)
+}
+
+func sendEnvelope(env protocol.Envelope) error {
+	msg, err := json.Marshal(env)
+	if err != nil {
+		return err
+	}
+
+	activeConnMu.RLock()
+	c := activeConn
+	activeConnMu.RUnlock()
+	if c == nil {
+		return errors.New("no active connection")
+	}
+
+	connWriteMu.Lock()
+	_ = c.SetWriteDeadline(time.Now().Add(10 * time.Second))
+	err = c.WriteMessage(websocket.TextMessage, msg)
+	connWriteMu.Unlock()
+	return err
+}
+
+func pendingCounts() (results int, jobs int) {
+	store := getOutboxStore()
+	if store == nil {
+		return 0, 0
+	}
+	pending, err := store.Pending()
+	if err != nil {
+		return 0, 0
+	}
+	for _, msg := range pending {
+		switch msg.Kind {
+		case "command_result":
+			results++
+		case "job_completed":
+			jobs++
 		}
 	}
-
-	completedJobsMu.Lock()
-	defer completedJobsMu.Unlock()
-
-	if len(completedJobs) >= limit {
-		log.Printf("[worker] completedJobs limit reached (%d), dropping oldest job completed message for job_run=%s", limit, completedJobs[0].JobRunID)
-		completedJobs = completedJobs[1:]
-		atomic.AddUint64(&metrics.DroppedMessagesTotal, 1)
-	}
-	completedJobs = append(completedJobs, msg)
+	return results, jobs
 }
 
 func Connect(serverURL, token string) (*websocket.Conn, error) {
@@ -224,15 +193,23 @@ func Connect(serverURL, token string) (*websocket.Conn, error) {
 
 func RunSession(serverURL, workerToken, hostname, stackDir string, tags []string, shutdownCtx context.Context) DisconnectReason {
 	currentStackDir = stackDir
+	store, err := spool.New(stackDir, workerToken)
+	if err != nil {
+		log.Printf("[worker] failed to initialize spool: %v", err)
+		return ReasonUnknown
+	}
+	setOutboxStore(store)
+
 	client := api.NewClient()
 
 	for i := 1; i <= 5; i++ {
 		atomic.AddUint64(&metrics.ConnAttempts, 1)
-		err := api.Register(client, serverURL, workerToken, hostname, "1.0.0", tags)
+		err := api.Register(client, serverURL, workerToken, hostname, buildinfo.Version, tags)
 		if err == nil {
 			break
 		}
 		if errors.Is(err, api.ErrRevoked) || errors.Is(err, api.ErrUnauthorized) {
+			_ = purgeOutbox()
 			return ReasonRevoked
 		}
 
@@ -272,59 +249,38 @@ func RunSession(serverURL, workerToken, hostname, stackDir string, tags []string
 	activeConnMu.Lock()
 	activeConn = conn
 	activeConnMu.Unlock()
+	atomic.StoreInt64(&metrics.Connected, 1)
+	defer atomic.StoreInt64(&metrics.Connected, 0)
 
+	handlers.SetAcceptingWork(true)
 	log.Println("[worker] connected")
 
 	sendInitialHeartbeat()
-	FlushCompletedJobs()
-	FlushQueuedEnvelopes()
+	FlushPersistentMessages()
 
 	disconnectCh := make(chan DisconnectReason, 1)
-
 	go readLoop(conn, disconnectCh)
 
-	intervalStr := os.Getenv("HEARTBEAT_INTERVAL")
-	if intervalStr == "" {
-		intervalStr = "30"
-	}
-	intervalSecs, parseErr := strconv.Atoi(intervalStr)
-	if parseErr != nil || intervalSecs <= 0 {
-		intervalSecs = 30
-	}
-
+	intervalSecs := heartbeatIntervalSecs()
 	ticker := time.NewTicker(time.Duration(intervalSecs) * time.Second)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-shutdownCtx.Done():
+			handlers.SetAcceptingWork(false)
+			drainAndFlush()
 			return ReasonShutdown
 
 		case reason := <-disconnectCh:
+			if reason == ReasonRevoked {
+				_ = purgeOutbox()
+			}
 			return reason
 
 		case <-ticker.C:
-			activeIDs := handlers.GetActiveJobsList()
-			heartbeat, _ := json.Marshal(protocol.Envelope{
-				Type: protocol.MsgHeartbeat,
-				Payload: protocol.HeartbeatPayload{
-					ActiveJobRunIDs: activeIDs,
-					WorkerInfo:      telemetry.CachedWorkerInfo,
-					Telemetry:       telemetry.GetTelemetry(currentStackDir),
-				},
-			})
-			activeConnMu.RLock()
-			c := activeConn
-			activeConnMu.RUnlock()
-			if c != nil {
-				connWriteMu.Lock()
-				_ = c.SetWriteDeadline(time.Now().Add(10 * time.Second))
-				writeErr := c.WriteMessage(websocket.TextMessage, heartbeat)
-				connWriteMu.Unlock()
-				if writeErr != nil {
-					log.Printf("[worker] heartbeat error=%v", writeErr)
-				}
-			}
+			sendHeartbeat()
+			FlushPersistentMessages()
 		}
 	}
 }
@@ -343,160 +299,102 @@ func CloseActiveConnection() {
 	}
 }
 
+func PurgeSpool() error {
+	return purgeOutbox()
+}
+
+func purgeOutbox() error {
+	store := getOutboxStore()
+	if store == nil {
+		return nil
+	}
+	return store.Purge()
+}
+
 func sendInitialHeartbeat() {
+	sendHeartbeat()
 	activeIDs := handlers.GetActiveJobsList()
-	hb, _ := json.Marshal(protocol.Envelope{
+	log.Printf("[worker] sent initial heartbeat: active_jobs=%d", len(activeIDs))
+}
+
+func sendHeartbeat() {
+	activeIDs := handlers.GetActiveJobsList()
+	hb := protocol.Envelope{
 		Type: protocol.MsgHeartbeat,
 		Payload: protocol.HeartbeatPayload{
 			ActiveJobRunIDs: activeIDs,
 			WorkerInfo:      telemetry.CachedWorkerInfo,
 			Telemetry:       telemetry.GetTelemetry(currentStackDir),
 		},
-	})
-	activeConnMu.RLock()
-	c := activeConn
-	activeConnMu.RUnlock()
-	if c != nil {
-		connWriteMu.Lock()
-		_ = c.SetWriteDeadline(time.Now().Add(10 * time.Second))
-		_ = c.WriteMessage(websocket.TextMessage, hb)
-		connWriteMu.Unlock()
-		log.Printf("[worker] sent initial heartbeat: active_jobs=%d", len(activeIDs))
+	}
+	if err := sendEnvelope(hb); err != nil {
+		log.Printf("[worker] heartbeat error=%v", err)
 	}
 }
 
-func FlushQueuedEnvelopes() {
-	queuedEnvelopesMu.Lock()
-	queue := queuedEnvelopes
-	queuedEnvelopes = nil
-	queuedEnvelopesMu.Unlock()
-
-	if len(queue) == 0 {
+func FlushPersistentMessages() {
+	store := getOutboxStore()
+	if store == nil {
+		return
+	}
+	pending, err := store.Pending()
+	if err != nil {
+		log.Printf("[worker] failed to list pending spool messages: %v", err)
+		return
+	}
+	if len(pending) == 0 {
 		return
 	}
 
-	log.Printf("[worker] flushing %d queued result/envelope messages...", len(queue))
-	var remaining [][]byte
-	for _, msg := range queue {
-		activeConnMu.RLock()
-		c := activeConn
-		activeConnMu.RUnlock()
-
-		if c == nil {
-			log.Printf("[worker] flush failed: no active connection. Re-queueing remaining messages.")
-			remaining = append(remaining, msg)
-			continue
+	for _, msg := range pending {
+		if err := store.MarkAttempt(msg.MessageID); err != nil {
+			log.Printf("[worker] failed to mark spool attempt message=%s error=%v", msg.MessageID, err)
 		}
-
-		connWriteMu.Lock()
-		_ = c.SetWriteDeadline(time.Now().Add(10 * time.Second))
-		err := c.WriteMessage(websocket.TextMessage, msg)
-		connWriteMu.Unlock()
-
-		if err != nil {
-			log.Printf("[worker] flush send error=%v. Re-queueing message.", err)
-			remaining = append(remaining, msg)
+		if err := sendEnvelope(msg.Envelope); err != nil {
+			atomic.AddUint64(&metrics.FlushFailedTotal, 1)
+			log.Printf("[worker] failed to flush spool message=%s kind=%s error=%v", msg.MessageID, msg.Kind, err)
+			return
 		}
-	}
-
-	if len(remaining) > 0 {
-		limit := 1000
-		if limitStr := os.Getenv("WORKER_MAX_QUEUED_MESSAGES"); limitStr != "" {
-			if val, err := strconv.Atoi(limitStr); err == nil && val > 0 {
-				limit = val
-			}
-		}
-		queuedEnvelopesMu.Lock()
-		combined := append(remaining, queuedEnvelopes...)
-		if len(combined) > limit {
-			droppedCount := len(combined) - limit
-			log.Printf("[worker] queuedEnvelopes limit reached (%d) during retry, dropping oldest %d messages", limit, droppedCount)
-			combined = combined[droppedCount:]
-			atomic.AddUint64(&metrics.DroppedMessagesTotal, uint64(droppedCount))
-		}
-		queuedEnvelopes = combined
-		queuedEnvelopesMu.Unlock()
+		atomic.AddUint64(&metrics.FlushAttemptsTotal, 1)
 	}
 }
 
-func TriggerCompletedJobsFlush() {
-	isFlushingJobsMu.Lock()
-	if isFlushingJobs {
-		isFlushingJobsMu.Unlock()
-		return
-	}
-	isFlushingJobs = true
-	isFlushingJobsMu.Unlock()
-
-	defer func() {
-		isFlushingJobsMu.Lock()
-		isFlushingJobs = false
-		isFlushingJobsMu.Unlock()
-	}()
+func drainAndFlush() {
+	timeout := shutdownTimeout()
+	deadline := time.Now().Add(timeout)
 
 	for {
-		completedJobsMu.Lock()
-		if len(completedJobs) == 0 {
-			completedJobsMu.Unlock()
+		activeCount := handlers.GetActiveCommandsCount() + handlers.GetActiveJobsCount()
+		if activeCount == 0 {
 			break
 		}
-		queue := completedJobs
-		completedJobs = nil
-		completedJobsMu.Unlock()
-
-		var remaining []protocol.JobCompletedMessage
-		for _, msg := range queue {
-			activeConnMu.RLock()
-			c := activeConn
-			activeConnMu.RUnlock()
-
-			var writeErr error
-			if c != nil {
-				envelope := protocol.Envelope{
-					Type:    protocol.MsgJobCompleted,
-					Payload: msg,
-				}
-				envelopeBytes, _ := json.Marshal(envelope)
-				connWriteMu.Lock()
-				_ = c.SetWriteDeadline(time.Now().Add(10 * time.Second))
-				writeErr = c.WriteMessage(websocket.TextMessage, envelopeBytes)
-				connWriteMu.Unlock()
-			} else {
-				writeErr = errors.New("no active connection")
-			}
-
-			if writeErr != nil {
-				log.Printf("[worker] flush failed for job_run=%s: %v", msg.JobRunID, writeErr)
-				remaining = append(remaining, msg)
-			} else {
-				log.Printf("[worker] flushed completed job_run=%s", msg.JobRunID)
-			}
+		if time.Now().After(deadline) {
+			log.Printf("[worker] shutdown timeout exceeded while draining active work")
+			break
 		}
+		log.Printf("[worker] draining %d active tasks/jobs before shutdown", activeCount)
+		time.Sleep(500 * time.Millisecond)
+	}
 
-		if len(remaining) > 0 {
-			limit := 1000
-			if limitStr := os.Getenv("WORKER_MAX_QUEUED_MESSAGES"); limitStr != "" {
-				if val, err := strconv.Atoi(limitStr); err == nil && val > 0 {
-					limit = val
-				}
-			}
-			completedJobsMu.Lock()
-			combined := append(remaining, completedJobs...)
-			if len(combined) > limit {
-				droppedCount := len(combined) - limit
-				log.Printf("[worker] completedJobs limit reached (%d) during retry, dropping oldest %d messages", limit, droppedCount)
-				combined = combined[droppedCount:]
-				atomic.AddUint64(&metrics.DroppedMessagesTotal, uint64(droppedCount))
-			}
-			completedJobs = combined
-			completedJobsMu.Unlock()
-			break // Connection dropped, stop flushing
+	for {
+		FlushPersistentMessages()
+		if pending, err := pendingTotal(); err == nil && pending == 0 {
+			return
 		}
+		if time.Now().After(deadline) {
+			log.Printf("[worker] shutdown timeout exceeded while waiting for spool ACKs")
+			return
+		}
+		time.Sleep(500 * time.Millisecond)
 	}
 }
 
-func FlushCompletedJobs() {
-	TriggerCompletedJobsFlush()
+func pendingTotal() (int, error) {
+	store := getOutboxStore()
+	if store == nil {
+		return 0, nil
+	}
+	return store.CountPending()
 }
 
 func readLoop(conn *websocket.Conn, disconnectCh chan<- DisconnectReason) {
@@ -521,6 +419,14 @@ func readLoop(conn *websocket.Conn, disconnectCh chan<- DisconnectReason) {
 		}
 
 		switch env.Type {
+		case protocol.MsgAck:
+			payloadBytes, _ := json.Marshal(env.Payload)
+			var ack protocol.AckMessage
+			if err := json.Unmarshal(payloadBytes, &ack); err == nil {
+				if err := ackPersistentMessage(ack.MessageID); err != nil {
+					log.Printf("[worker] ack handling failed message=%s error=%v", ack.MessageID, err)
+				}
+			}
 		case protocol.MsgDeploy:
 			handlers.DispatchThrottled(sender, handlers.HeavySemaphore, env.Type, env.Payload, handlers.HandleDeploy)
 		case protocol.MsgRedeploy:
@@ -555,9 +461,49 @@ func readLoop(conn *websocket.Conn, disconnectCh chan<- DisconnectReason) {
 			go handlers.HandleCancelCommand(sender, env.Payload)
 		case protocol.MsgGetMetrics:
 			handlers.DispatchThrottled(sender, handlers.InteractiveSemaphore, env.Type, env.Payload, handlers.HandleGetMetrics)
-
 		default:
 			log.Printf("[worker] unknown message type=%s", env.Type)
 		}
 	}
+}
+
+func ackPersistentMessage(messageID string) error {
+	store := getOutboxStore()
+	if store == nil {
+		return nil
+	}
+	if err := store.Ack(messageID); err != nil {
+		return err
+	}
+	atomic.AddUint64(&metrics.FlushAckedTotal, 1)
+	return nil
+}
+
+func heartbeatIntervalSecs() int {
+	intervalStr := os.Getenv("HEARTBEAT_INTERVAL")
+	if intervalStr == "" {
+		return 30
+	}
+	intervalSecs, err := strconv.Atoi(intervalStr)
+	if err != nil || intervalSecs <= 0 {
+		return 30
+	}
+	return intervalSecs
+}
+
+func shutdownTimeout() time.Duration {
+	if envTimeout := os.Getenv("WORKER_SHUTDOWN_TIMEOUT"); envTimeout != "" {
+		if val, err := strconv.Atoi(envTimeout); err == nil && val > 0 {
+			return time.Duration(val) * time.Second
+		}
+	}
+	return 300 * time.Second
+}
+
+func newMessageID() string {
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return fmt.Sprintf("msg-%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(buf)
 }

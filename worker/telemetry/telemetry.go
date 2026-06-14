@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/wireops/wireops/internal/buildinfo"
 	"github.com/wireops/wireops/internal/docker"
 	"github.com/wireops/wireops/internal/protocol"
 )
@@ -24,6 +25,7 @@ var (
 
 func InitWorkerInfo() {
 	CachedWorkerInfo = &protocol.WorkerInfo{
+		Version:        buildinfo.Version,
 		DockerVersion:  QueryDockerVersion(),
 		ComposeVersion: QueryComposeVersion(),
 		OS:             runtime.GOOS,
