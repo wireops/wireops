@@ -24,6 +24,7 @@ const isActive = computed(() => worker.value?.status === WORKER_STATUS.ACTIVE)
 const isOffline = computed(() => worker.value?.status === WORKER_STATUS.OFFLINE)
 const isRevoked = computed(() => worker.value?.status === WORKER_STATUS.REVOKED)
 const associatedJobs = computed(() => worker.value?.jobs ?? [])
+const redirectingAfterRevoke = ref(false)
 
 const statusDotClass = computed(() => {
   if (isActive.value) return 'bg-yellow-400 shadow-[0_0_8px_rgba(255,198,0,0.7)]'
@@ -31,10 +32,14 @@ const statusDotClass = computed(() => {
   return 'bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.6)]'
 })
 
-watch(worker, (currentWorker) => {
-  if (currentWorker?.status === WORKER_STATUS.REVOKED) {
-    navigateTo('/workers', { replace: true })
-  }
+watch(worker, async (currentWorker, previousWorker) => {
+  if (!previousWorker) return
+  if (redirectingAfterRevoke.value) return
+  if (currentWorker?.status !== WORKER_STATUS.REVOKED) return
+  if (previousWorker?.status === WORKER_STATUS.REVOKED) return
+
+  redirectingAfterRevoke.value = true
+  await navigateTo('/workers', { replace: true })
 }, { immediate: true })
 
 // --- Stacks assigned to this worker
@@ -103,10 +108,10 @@ async function confirmRevoke() {
   revoking.value = true
   try {
     await revokeWorker(workerId)
+    redirectingAfterRevoke.value = true
     toast.add({ title: 'Worker revoked', color: 'success' })
     showRevokeModal.value = false
-    await refreshWorkers()
-    navigateTo('/workers', { replace: true })
+    await navigateTo('/workers', { replace: true })
   } catch (e: any) {
     toast.add({ title: 'Failed to revoke worker', description: e?.message, color: 'error' })
   } finally {

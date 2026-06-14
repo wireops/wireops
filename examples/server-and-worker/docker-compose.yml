@@ -3,8 +3,10 @@ services:
     image: ghcr.io/wireops/wireops:latest
     restart: unless-stopped
     ports:
+      # PORT: UI, API, and GET /metrics (Prometheus scrape target)
       - "${PORT:-8090}:8090"
-      - "${MTLS_PORT:-8443}:8443"
+      # TLS_WORKER_PORT: remote workers only — not for metrics scrapers
+      - "${TLS_WORKER_PORT:-8443}:8443"
     volumes:
       - ./data:/data
       - /var/run/docker.sock:/var/run/docker.sock

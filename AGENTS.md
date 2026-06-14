@@ -209,6 +209,13 @@ All custom routes are prefixed `/api/custom/`. PocketBase also auto-exposes CRUD
 | `POST` | `/api/custom/worker/tokens` | Generate worker token |
 | `POST` | `/api/custom/workers/{id}/revoke` | Revoke worker or a pending token (using `pending:{tokenRecordId}`) |
 
+### Metrics (`monitoring` role or higher; API key on service account)
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/metrics` | Aggregated Prometheus metrics (canonical; same port as UI) |
+| `GET` | `/api/custom/metrics` | Alias of `/metrics` |
+| `GET` | `/api/custom/workers/{id}/metrics` | Metrics from a single connected worker |
+
 ### Scheduled Jobs
 | Method | Path | Description |
 |---|---|---|
@@ -226,7 +233,8 @@ All custom routes are prefixed `/api/custom/`. PocketBase also auto-exposes CRUD
 |---|---|
 | `SECRET_KEY` | **Required.** 32-byte AES key for encrypting secrets at rest |
 | `APP_URL` | Base URL for CORS, webhooks, and emails (default: `http://localhost:8090`) |
-| `PORT` | PocketBase HTTP port (default: `8090`) |
+| `PORT` | UI, REST API, and Prometheus `/metrics` (default: `8090`) |
+| `TLS_WORKER_PORT` | Worker WebSocket/register TLS port (default: `8443`) — not for Prometheus |
 | `PB_DATA_DIR` | SQLite data directory (default: `./pb_data`) |
 | `REPOS_WORKSPACE` | Git clone workspace (default: `./repos`) |
 ### Worker

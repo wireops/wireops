@@ -11,9 +11,19 @@ async function instanceNeedsSetup(pb: any): Promise<boolean> {
 
 export default defineNuxtRouteMiddleware(async (to) => {
   const { $pb } = useNuxtApp()
+  const isPublicPath = PUBLIC_PATHS.includes(to.path)
 
   // Unauthenticated user — decide between /setup and /login
   if (!$pb.authStore.isValid) {
+    if (isPublicPath && $pb.authStore.token && $pb.authStore.record) {
+      try {
+        await $pb.collection('users').authRefresh()
+        return navigateTo('/')
+      } catch {
+        $pb.authStore.clear()
+      }
+    }
+
     if (to.path === '/setup') return
 
     const needsSetup = await instanceNeedsSetup($pb)
@@ -22,19 +32,19 @@ export default defineNuxtRouteMiddleware(async (to) => {
       return
     }
 
-    if (PUBLIC_PATHS.includes(to.path)) return
+    if (isPublicPath) return
     return navigateTo('/login')
   }
 
   // Authenticated user — keep them out of auth-only pages
-  if (PUBLIC_PATHS.includes(to.path)) {
+  if (isPublicPath) {
     return navigateTo('/')
   }
 
   // Verify the session is still valid
   try {
     await $pb.collection('users').authRefresh()
-  } catch {
+  } catch (err: any) {
     $pb.authStore.clear()
     return navigateTo('/login')
   }

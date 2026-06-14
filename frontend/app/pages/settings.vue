@@ -133,13 +133,25 @@ async function exportDatabaseBackup() {
   const filename = `wireops_backup_${timestampForBackupName()}.zip`
 
   try {
-    await $pb.backups.create(filename)
-    const token = await $pb.files.getToken()
-    const url = $pb.backups.getDownloadURL(token, filename)
-    const res = await fetch(url)
+    const res = await fetch(`${$pb.baseURL}/api/custom/backups`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: $pb.authStore.token ? `Bearer ${$pb.authStore.token}` : '',
+        'X-Wireops-Origin': 'ui',
+      },
+      body: JSON.stringify({ filename }),
+    })
 
     if (!res.ok) {
-      throw new Error(`Download failed: ${res.statusText || res.status}`)
+      let message = `Download failed: ${res.statusText || res.status}`
+      try {
+        const data = await res.json()
+        if (data?.error) message = data.error
+      } catch {
+        // Keep the default message when the response is not JSON.
+      }
+      throw new Error(message)
     }
 
     const blob = await res.blob()

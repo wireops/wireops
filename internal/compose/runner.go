@@ -21,10 +21,14 @@ func RunUp(ctx context.Context, opts RunOptions) (string, error) {
 	if composeFile == "" {
 		composeFile = "docker-compose.yml"
 	}
+	dockerBin, err := trustedDockerBinary()
+	if err != nil {
+		return "", err
+	}
 
 	// Check existence using full path (relative to process CWD)
 	fullPath := filepath.Join(opts.WorkDir, composeFile)
-	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+	if _, err = os.Stat(fullPath); os.IsNotExist(err) {
 		altFile := "compose.yml"
 		altPath := filepath.Join(opts.WorkDir, altFile)
 		if _, err2 := os.Stat(altPath); os.IsNotExist(err2) {
@@ -34,12 +38,12 @@ func RunUp(ctx context.Context, opts RunOptions) (string, error) {
 	}
 
 	// Use just the filename for -f since cmd.Dir is set to WorkDir
-	cmd := exec.CommandContext(ctx, "docker", "compose",
+	cmd := exec.CommandContext(ctx, dockerBin, "compose",
 		"-f", composeFile,
 		"up", "-d", "--remove-orphans",
 	)
 	cmd.Dir = opts.WorkDir
-	cmd.Env = os.Environ()
+	cmd.Env = safeEnv()
 
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
@@ -64,9 +68,13 @@ func RunForceUp(ctx context.Context, opts ForceUpOptions) (string, error) {
 	if composeFile == "" {
 		composeFile = "docker-compose.yml"
 	}
+	dockerBin, err := trustedDockerBinary()
+	if err != nil {
+		return "", err
+	}
 
 	fullPath := filepath.Join(opts.WorkDir, composeFile)
-	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+	if _, err = os.Stat(fullPath); os.IsNotExist(err) {
 		altFile := "compose.yml"
 		altPath := filepath.Join(opts.WorkDir, altFile)
 		if _, err2 := os.Stat(altPath); os.IsNotExist(err2) {
@@ -75,7 +83,7 @@ func RunForceUp(ctx context.Context, opts ForceUpOptions) (string, error) {
 		composeFile = altFile
 	}
 
-	env := os.Environ()
+	env := safeEnv()
 
 	var allOutput strings.Builder
 
@@ -86,7 +94,7 @@ func RunForceUp(ctx context.Context, opts ForceUpOptions) (string, error) {
 			downArgs = append(downArgs, "-v")
 		}
 		downArgs = append(downArgs, "--remove-orphans")
-		downCmd := exec.CommandContext(ctx, "docker", downArgs...)
+		downCmd := exec.CommandContext(ctx, dockerBin, downArgs...)
 		downCmd.Dir = opts.WorkDir
 		downCmd.Env = env
 		var downBuf bytes.Buffer
@@ -107,7 +115,7 @@ func RunForceUp(ctx context.Context, opts ForceUpOptions) (string, error) {
 		upArgs = append(upArgs, "--renew-anon-volumes")
 	}
 
-	cmd := exec.CommandContext(ctx, "docker", upArgs...)
+	cmd := exec.CommandContext(ctx, dockerBin, upArgs...)
 	cmd.Dir = opts.WorkDir
 	cmd.Env = env
 
@@ -129,19 +137,23 @@ func RunDown(ctx context.Context, opts RunOptions) (string, error) {
 	if composeFile == "" {
 		composeFile = "docker-compose.yml"
 	}
+	dockerBin, err := trustedDockerBinary()
+	if err != nil {
+		return "", err
+	}
 
-	cmd := exec.CommandContext(ctx, "docker", "compose",
+	cmd := exec.CommandContext(ctx, dockerBin, "compose",
 		"-f", composeFile,
 		"down",
 	)
 	cmd.Dir = opts.WorkDir
-	cmd.Env = os.Environ()
+	cmd.Env = safeEnv()
 
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
 
-	if err := cmd.Run(); err != nil {
+	if err = cmd.Run(); err != nil {
 		return buf.String(), fmt.Errorf("docker compose down failed: %w", err)
 	}
 
@@ -153,19 +165,23 @@ func RunDownPurge(ctx context.Context, opts RunOptions) (string, error) {
 	if composeFile == "" {
 		composeFile = "docker-compose.yml"
 	}
+	dockerBin, err := trustedDockerBinary()
+	if err != nil {
+		return "", err
+	}
 
-	cmd := exec.CommandContext(ctx, "docker", "compose",
+	cmd := exec.CommandContext(ctx, dockerBin, "compose",
 		"-f", composeFile,
 		"down", "-v", "--remove-orphans",
 	)
 	cmd.Dir = opts.WorkDir
-	cmd.Env = os.Environ()
+	cmd.Env = safeEnv()
 
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
 
-	if err := cmd.Run(); err != nil {
+	if err = cmd.Run(); err != nil {
 		return buf.String(), fmt.Errorf("docker compose down --purge failed: %w", err)
 	}
 
@@ -185,13 +201,17 @@ func RunPs(ctx context.Context, opts RunOptions) ([]string, error) {
 	if composeFile == "" {
 		composeFile = "docker-compose.yml"
 	}
+	dockerBin, err := trustedDockerBinary()
+	if err != nil {
+		return nil, err
+	}
 
-	cmd := exec.CommandContext(ctx, "docker", "compose",
+	cmd := exec.CommandContext(ctx, dockerBin, "compose",
 		"-f", composeFile,
 		"ps", "--format", "json", "--all",
 	)
 	cmd.Dir = opts.WorkDir
-	cmd.Env = os.Environ()
+	cmd.Env = safeEnv()
 
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
@@ -252,4 +272,35 @@ func RunPs(ctx context.Context, opts RunOptions) ([]string, error) {
 		}
 	}
 	return services, nil
+}
+
+func safeEnv() []string {
+	env := os.Environ()
+	safeDirs := []string{"/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/local/bin"}
+	safePath := "PATH=" + strings.Join(safeDirs, string(filepath.ListSeparator))
+	found := false
+	for i, kv := range env {
+		if strings.HasPrefix(strings.ToUpper(kv), "PATH=") {
+			env[i] = safePath
+			found = true
+		}
+	}
+	if !found {
+		env = append(env, safePath)
+	}
+	return env
+}
+
+func trustedDockerBinary() (string, error) {
+	for _, dir := range []string{"/usr/bin", "/usr/local/bin", "/bin"} {
+		candidate := filepath.Join(dir, "docker")
+		info, err := os.Stat(candidate)
+		if err != nil {
+			continue
+		}
+		if info.Mode().IsRegular() && info.Mode()&0o111 != 0 {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("docker executable not found in allowlisted directories")
 }

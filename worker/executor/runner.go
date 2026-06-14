@@ -28,7 +28,7 @@ import (
 // The supplied path must be absolute and must not contain ".." segments;
 // invalid values are rejected with a warning and the default is used instead.
 var stackDir = func() string {
-	defaultDir := filepath.Join(os.TempDir(), "wireops")
+	defaultDir := getSecureDefaultStackDir()
 	d := strings.TrimSpace(os.Getenv("WORKER_STACK_DIR"))
 	if d == "" {
 		return defaultDir
@@ -408,21 +408,82 @@ func DiscoverProjects(ctx context.Context, cmd protocol.DiscoverProjectsCommand)
 func ReadFile(_ context.Context, cmd protocol.ReadFileCommand) protocol.CommandResult {
 	log.Printf("[executor] read_file command=%s path=%s", cmd.CommandID, cmd.Path)
 
-	if !filepath.IsAbs(cmd.Path) {
-		return protocol.CommandResult{CommandID: cmd.CommandID, Error: "path must be absolute"}
+	if err := safepath.ValidateHostPath(cmd.Path); err != nil {
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
 	}
-	ext := strings.ToLower(filepath.Ext(cmd.Path))
+	cleanedPath := filepath.Clean(cmd.Path)
+	ext := strings.ToLower(filepath.Ext(cleanedPath))
 	if ext != ".yml" && ext != ".yaml" {
 		return protocol.CommandResult{CommandID: cmd.CommandID, Error: "only .yml/.yaml files are allowed"}
 	}
 
-	data, err := os.ReadFile(cmd.Path)
+	resolvedPath, err := filepath.EvalSymlinks(cleanedPath)
+	if err != nil {
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
+	}
+
+	if !isAllowedPath(resolvedPath) {
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: "access to the requested path is denied by worker policy"}
+	}
+
+	data, err := os.ReadFile(resolvedPath)
 	if err != nil {
 		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
 	}
 
 	log.Printf("[executor] read_file done command=%s bytes=%d", cmd.CommandID, len(data))
 	return protocol.CommandResult{CommandID: cmd.CommandID, Output: base64.StdEncoding.EncodeToString(data)}
+}
+
+func isAllowedPath(path string) bool {
+	if err := safepath.ValidateHostPath(path); err != nil {
+		return false
+	}
+	cleaned := filepath.Clean(path)
+	if !filepath.IsAbs(cleaned) {
+		return false
+	}
+
+	// 1. Always allow inside stackDir
+	if strings.HasPrefix(cleaned, filepath.Clean(stackDir)+string(filepath.Separator)) || cleaned == filepath.Clean(stackDir) {
+		return true
+	}
+
+	// 2. Allow if inside WORKER_ALLOWED_IMPORT_DIRS if configured
+	if allowedEnv := os.Getenv("WORKER_ALLOWED_IMPORT_DIRS"); allowedEnv != "" {
+		dirs := strings.Split(allowedEnv, ",")
+		for _, dir := range dirs {
+			dir = strings.TrimSpace(dir)
+			if dir == "" {
+				continue
+			}
+			cleanedDir := filepath.Clean(dir)
+			if strings.HasPrefix(cleaned, cleanedDir+string(filepath.Separator)) || cleaned == cleanedDir {
+				return true
+			}
+		}
+		// If WORKER_ALLOWED_IMPORT_DIRS is set, we strictly enforce it
+		return false
+	}
+
+	// 3. Fallback blocklist: block known sensitive system directories
+	sensitiveRoots := []string{
+		"/etc",
+		"/root",
+		"/var/run",
+		"/run",
+		"/proc",
+		"/sys",
+		"/boot",
+		"/dev",
+	}
+	for _, root := range sensitiveRoots {
+		if strings.HasPrefix(cleaned, root+string(filepath.Separator)) || cleaned == root {
+			return false
+		}
+	}
+
+	return true
 }
 
 // RunJob starts a one-shot `docker run` container and blocks until it completes.
@@ -453,7 +514,16 @@ func RunJob(cmd protocol.RunJobCommand) protocol.JobCompletedMessage {
 
 	start := time.Now()
 	args := cmd.BuildDockerRunArgs()
-	runCmd := exec.CommandContext(ctx, "docker", args...)
+	dockerPath, err := lookPathSecure("docker")
+	if err != nil {
+		return protocol.JobCompletedMessage{
+			JobRunID:   cmd.JobRunID,
+			Success:    false,
+			Output:     "failed to find docker binary: " + err.Error(),
+			DurationMs: 0,
+		}
+	}
+	runCmd := exec.CommandContext(ctx, dockerPath, args...)
 	runCmd.Env = safeEnv()
 	out, runErr := runCmd.CombinedOutput()
 	output := string(out)
@@ -466,9 +536,11 @@ func RunJob(cmd protocol.RunJobCommand) protocol.JobCompletedMessage {
 			// Execution timed out. Explicitly kill the container to ensure it's not orphan.
 			log.Printf("[executor] run_job timeout exceeded for job_run=%s (took longer than %v) — stopping container", cmd.JobRunID, timeout)
 			stopCtx, stopCancel := context.WithTimeout(context.Background(), 15*time.Second)
-			stopCmd := exec.CommandContext(stopCtx, "docker", "stop", "wireops-job-"+cmd.JobRunID)
-			stopCmd.Env = safeEnv()
-			_ = stopCmd.Run()
+			if dockerPath, err := lookPathSecure("docker"); err == nil {
+				stopCmd := exec.CommandContext(stopCtx, dockerPath, "stop", "wireops-job-"+cmd.JobRunID)
+				stopCmd.Env = safeEnv()
+				_ = stopCmd.Run()
+			}
 			stopCancel()
 			output = fmt.Sprintf("failed to start job, timeout exceeded: execution took longer than %v", timeout)
 		} else {
@@ -499,7 +571,11 @@ func KillJob(cmd protocol.KillJobCommand) protocol.CommandResult {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	killCmd := exec.CommandContext(ctx, "docker", "stop", containerName)
+	dockerPath, err := lookPathSecure("docker")
+	if err != nil {
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: "failed to find docker binary: " + err.Error()}
+	}
+	killCmd := exec.CommandContext(ctx, dockerPath, "stop", containerName)
 	killCmd.Env = safeEnv()
 	out, err := killCmd.CombinedOutput()
 	if err != nil {
@@ -727,4 +803,37 @@ func GetContainerLogs(ctx context.Context, cmd protocol.GetContainerLogsCommand)
 	return protocol.CommandResult{CommandID: cmd.CommandID, Output: buf.String()}
 }
 
+func lookPathSecure(file string) (string, error) {
+	safeDirs := []string{"/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/local/bin"}
+	for _, dir := range safeDirs {
+		path := filepath.Join(dir, file)
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			return path, nil
+		}
+	}
+	return "", fmt.Errorf("executable %q not found in safe paths", file)
+}
 
+var defaultStackDir string
+
+func init() {
+	home, err := os.UserHomeDir()
+	if err == nil {
+		defaultStackDir = filepath.Join(home, ".wireops")
+		return
+	}
+	tempDir, err := os.MkdirTemp("", "wireops-*")
+	if err == nil {
+		defaultStackDir = tempDir
+		return
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		defaultStackDir = filepath.Join(cwd, ".wireops")
+		return
+	}
+	defaultStackDir = "./.wireops"
+}
+
+func getSecureDefaultStackDir() string {
+	return defaultStackDir
+}
