@@ -2,7 +2,7 @@
   "name": "wireops-frontend",
   "private": true,
   "type": "module",
-  "packageManager": "npm@10.9.2",
+  "packageManager": "npm@11.16.0",
   "scripts": {
     "build": "nuxt build",
     "dev": "nuxt dev",
