@@ -123,30 +123,7 @@ export function useApi() {
     workspace_path: string
   }>('/api/custom/system/info')
 
-  // Sync event webhook (global singleton)
-  type SyncEventsWebhookConfig = {
-    id?: string
-    provider: 'webhook' | 'ntfy'
-    url: string
-    secret: string
-    events: string[]
-    headers: string // JSON string "[{\"key\":\"...\",\"value\":\"...\"}]"
-    enabled: boolean
-    ntfy_user?: string
-    ntfy_topic?: string
-    ntfy_template?: string
-  }
-  type SyncEventsWebhookPayload = Omit<SyncEventsWebhookConfig, 'id' | 'enabled'>
-  const getSyncEventsWebhook = () =>
-    customGet<SyncEventsWebhookConfig | null>('/api/custom/sync-events-webhook')
-  const setSyncEventsWebhook = (body: SyncEventsWebhookPayload) =>
-    customPut('/api/custom/sync-events-webhook', body)
-  const setNotificationsEnabled = (enabled: boolean) =>
-    customPatch('/api/custom/sync-events-webhook/enabled', { enabled })
-  const deleteSyncEventsWebhook = () =>
-    customDelete('/api/custom/sync-events-webhook')
-  const testSyncEventsWebhook = (body?: Partial<SyncEventsWebhookConfig>) =>
-    customPost('/api/custom/sync-events-webhook/test', body)
+
 
   type DiscoveredProject = { project_name: string; compose_path: string; services: string[] }
   const discoverProjects = (workerId: string) =>
@@ -308,5 +285,5 @@ export function useApi() {
     return customGet<AuditLogResponse>(`/api/custom/audit-logs${query ? `?${query}` : ''}`)
   }
 
-  return { triggerSync, triggerRollback, forceRedeploy, getServices, getStackResources, stopContainer, restartContainer, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, getRepoFiles, getStackFiles, getJobFiles, getJobDefinitionFromFile, testCredentials, keyscan, listOrphans, purgeOrphan, getSystemInfo, customPost, customGet, customPut, customPatch, customDelete, getSyncEventsWebhook, setSyncEventsWebhook, setNotificationsEnabled, deleteSyncEventsWebhook, testSyncEventsWebhook, getWorkers, createWorkerToken, revokeWorker, transferStack, discoverProjects, importStack, listJobs, triggerJobRun, cancelJobRun, deleteJobRun, getJobDefinition, getJobRaw, getWorkerPolicy, saveWorkerPolicy, resetWorkerPolicy, getGlobalWorkerPolicy, saveGlobalWorkerPolicy, getAppSettings, saveAppSettings, listAuditLogs }
+  return { triggerSync, triggerRollback, forceRedeploy, getServices, getStackResources, stopContainer, restartContainer, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, getRepoFiles, getStackFiles, getJobFiles, getJobDefinitionFromFile, testCredentials, keyscan, listOrphans, purgeOrphan, getSystemInfo, customPost, customGet, customPut, customPatch, customDelete, getWorkers, createWorkerToken, revokeWorker, transferStack, discoverProjects, importStack, listJobs, triggerJobRun, cancelJobRun, deleteJobRun, getJobDefinition, getJobRaw, getWorkerPolicy, saveWorkerPolicy, resetWorkerPolicy, getGlobalWorkerPolicy, saveGlobalWorkerPolicy, getAppSettings, saveAppSettings, listAuditLogs }
 }

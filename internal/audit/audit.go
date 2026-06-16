@@ -344,21 +344,6 @@ func MatchCustomRoute(method, path string) (Event, bool) {
 		return custom("setup.create_admin", "setup", "initial"), true
 	}
 
-	if len(p) == 1 && p[0] == "sync-events-webhook" {
-		switch method {
-		case http.MethodPut:
-			return custom("notification.update", "stack_sync_events", "global"), true
-		case http.MethodDelete:
-			return custom("notification.delete", "stack_sync_events", "global"), true
-		}
-	}
-	if len(p) == 2 && p[0] == "sync-events-webhook" && p[1] == "enabled" && method == http.MethodPatch {
-		return custom("notification.toggle", "stack_sync_events", "global"), true
-	}
-	if len(p) == 2 && p[0] == "sync-events-webhook" && p[1] == "test" && method == http.MethodPost {
-		return custom("notification.test", "stack_sync_events", "global"), true
-	}
-
 	if len(p) == 2 && p[0] == "integrations" {
 		if method == http.MethodPut {
 			return custom("integration.update", "integration", p[1]), true
@@ -366,6 +351,9 @@ func MatchCustomRoute(method, path string) (Event, bool) {
 		if method == http.MethodDelete {
 			return custom("integration.delete", "integration", p[1]), true
 		}
+	}
+	if len(p) == 3 && p[0] == "integrations" && p[2] == "test" && method == http.MethodPost {
+		return custom("integration.test", "integration", p[1]), true
 	}
 	if len(p) == 1 && p[0] == "service-accounts" && method == http.MethodPost {
 		return custom("service_account.create", "service_account", ""), true

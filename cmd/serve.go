@@ -34,7 +34,9 @@ import (
 	wiretls "github.com/wireops/wireops/pkg/tls"
 
 	_ "github.com/wireops/wireops/internal/integrations/dozzle"
+	_ "github.com/wireops/wireops/internal/integrations/ntfy"
 	_ "github.com/wireops/wireops/internal/integrations/traefik"
+	_ "github.com/wireops/wireops/internal/integrations/webhook"
 
 	_ "github.com/wireops/wireops/pb_migrations"
 )
