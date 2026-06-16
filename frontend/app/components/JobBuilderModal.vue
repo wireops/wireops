@@ -259,7 +259,13 @@ function parseCommand(cmd: string): string[] {
     } else if (match[2] !== undefined) {
       args.push(match[2])
     } else {
-      const clean = match[0].replace(/^,+|,+$/g, '')
+      let clean = match[0]
+      while (clean.startsWith(',')) {
+        clean = clean.substring(1)
+      }
+      while (clean.endsWith(',')) {
+        clean = clean.substring(0, clean.length - 1)
+      }
       if (clean) {
         args.push(clean)
       }
@@ -603,10 +609,12 @@ function handleImportYaml() {
                     />
                   </div>
                   <input
+                    id="job-tags-input"
                     v-model="tagInput"
                     type="text"
                     class="flex-1 min-w-[120px] bg-transparent border-0 p-0 focus:ring-0 focus:outline-hidden text-sm h-6 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-wire-200/30"
                     placeholder="Add tag..."
+                    aria-label="Add tags"
                     @input="handleTagInput"
                     @blur="handleTagBlur"
                     @keydown.backspace="handleTagBackspace"
@@ -762,9 +770,11 @@ function handleImportYaml() {
                 <div v-if="isImportOpen" class="flex-1 flex flex-col p-3 gap-3">
                   <span class="text-xs font-semibold text-gray-500 dark:text-wire-200/60 uppercase tracking-wider">Paste your job.yaml content:</span>
                   <textarea
+                    id="job-yaml-import-textarea"
                     v-model="importContent"
                     class="flex-1 p-2.5 font-mono text-xs bg-gray-50 dark:bg-carbon-900 border border-gray-200 dark:border-carbon-800 rounded-md text-gray-900 dark:text-white focus:outline-hidden focus:ring-1 focus:ring-yellow-400/50 resize-none min-h-[250px]"
                     placeholder="name: my-job&#10;image: ubuntu:latest&#10;command: echo hello&#10;..."
+                    aria-label="Paste your job.yaml content"
                   />
                   <div class="flex justify-end gap-2 shrink-0">
                     <UButton

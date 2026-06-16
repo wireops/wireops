@@ -20,21 +20,10 @@ export function parseJobYaml(yamlContent: string): ParsedJobYaml {
     volumes: []
   }
 
-  // Pre-extract command block list if it exists
-  let commandBlockList: string[] | null = null
-  const commandMatch = yamlContent.match(/command:\s*[\r\n]+((\s*-\s*[^\r\n]+[\r\n]*)+)/)
-  if (commandMatch) {
-    const lines = commandMatch[1].split(/[\r\n]+/)
-    commandBlockList = lines
-      .map(line => line.trim())
-      .filter(line => line.startsWith('-'))
-      .map(line => line.replace(/^-\s*/, '').replace(/^["']|["']$/g, '').trim())
-      .filter(val => val !== '')
-  }
-
   const lines = yamlContent.split(/\r?\n/)
-  let currentArraySection: 'tags' | 'volumes' | null = null
+  let currentArraySection: 'tags' | 'volumes' | 'command' | null = null
   let inResourcesSection = false
+  const commandParts: string[] = []
 
   for (const line of lines) {
     const trimmed = line.trim()
@@ -50,7 +39,7 @@ export function parseJobYaml(yamlContent: string): ParsedJobYaml {
       inResourcesSection = false
     }
 
-    // If we were in tags or volumes, but the line doesn't start with '-' and indent is 0, we exited that section
+    // If we were in tags, volumes, or command, but the line doesn't start with '-' and indent is 0, we exited that section
     if (currentArraySection && indent === 0 && !trimmed.startsWith('-')) {
       currentArraySection = null
     }
@@ -86,6 +75,8 @@ export function parseJobYaml(yamlContent: string): ParsedJobYaml {
           } else {
             result.volumes?.push({ host: value, container: '' })
           }
+        } else if (currentArraySection === 'command') {
+          commandParts.push(value)
         }
       }
       continue
@@ -114,16 +105,9 @@ export function parseJobYaml(yamlContent: string): ParsedJobYaml {
       if (key === 'network') result.network = cleanValue
 
       if (key === 'command') {
-        const commandValue: string | string[] = (commandBlockList && commandBlockList.length > 0) ? commandBlockList : cleanValue
-        if (Array.isArray(commandValue)) {
+        if (cleanValue === '') {
+          currentArraySection = 'command'
           result.commandAsArray = true
-          result.command = commandValue.map(p => {
-            const str = String(p)
-            if (str.includes(' ')) {
-              return `"${str}"`
-            }
-            return str
-          }).join(' ')
         } else if (cleanValue.startsWith('[') && cleanValue.endsWith(']')) {
           result.commandAsArray = true
           try {
@@ -162,6 +146,16 @@ export function parseJobYaml(yamlContent: string): ParsedJobYaml {
         result.volumes = []
       }
     }
+  }
+
+  if (commandParts.length > 0) {
+    result.command = commandParts.map(p => {
+      const str = String(p)
+      if (str.includes(' ')) {
+        return `"${str}"`
+      }
+      return str
+    }).join(' ')
   }
 
   return result
