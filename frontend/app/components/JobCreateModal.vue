@@ -89,11 +89,18 @@ watch(() => form.value.repository, async (repoId) => {
 
   loadingFiles.value = true
   try {
-    repoFiles.value = (await getJobFiles(repoId)) || []
+    const files = (await getJobFiles(repoId)) || []
+    if (form.value.repository === repoId) {
+      repoFiles.value = files
+    }
   } catch {
-    toast.add({ title: 'Failed to fetch repository files', color: 'error' })
+    if (form.value.repository === repoId) {
+      toast.add({ title: 'Failed to fetch repository files', color: 'error' })
+    }
   } finally {
-    loadingFiles.value = false
+    if (form.value.repository === repoId) {
+      loadingFiles.value = false
+    }
   }
 })
 
@@ -102,14 +109,21 @@ watch(() => form.value.job_file, async (file) => {
   form.value.description = ''
   if (!file || !form.value.repository) return
 
+  const currentRepo = form.value.repository
+  const currentFile = file
+
   try {
-    const def = await getJobDefinitionFromFile(form.value.repository, file)
+    const def = await getJobDefinitionFromFile(currentRepo, currentFile)
     if (def) {
-      form.value.name = def.name || ''
-      form.value.description = def.description || ''
+      if (form.value.repository === currentRepo && form.value.job_file === currentFile) {
+        form.value.name = def.name || ''
+        form.value.description = def.description || ''
+      }
     }
   } catch {
-    toast.add({ title: 'Failed to parse job definition file', color: 'error' })
+    if (form.value.repository === currentRepo && form.value.job_file === currentFile) {
+      toast.add({ title: 'Failed to parse job definition file', color: 'error' })
+    }
   }
 })
 

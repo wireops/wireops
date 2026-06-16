@@ -27,19 +27,23 @@ async function loadIntegrations() {
   }
 }
 
-async function handleSaveIntegration(integration: any) {
+async function handleSaveIntegration(integration: any, isToggle = false) {
   try {
     const success = await saveIntegration(integration.slug, integration.enabled, integration.config)
     if (success) {
       toast.add({ title: 'Success', description: `${integration.slug} integration updated`, color: 'success' })
     } else {
       // Revert local state if save failed
-      integration.enabled = !integration.enabled
+      if (isToggle) {
+        integration.enabled = !integration.enabled
+      }
       toast.add({ title: 'Error', description: `Failed to update ${integration.slug}`, color: 'error' })
     }
   } catch (err: any) {
     // Revert local state on exception
-    integration.enabled = !integration.enabled
+    if (isToggle) {
+      integration.enabled = !integration.enabled
+    }
     toast.add({ title: 'Error', description: `An unexpected error occurred: ${err.message}`, color: 'error' })
   }
 }
@@ -63,7 +67,7 @@ onMounted(() => {
                 <img :src="`https://cdn.jsdelivr.net/gh/selfhst/icons/svg/${integration.slug}.svg`" class="w-5 h-5 object-contain" alt="">
                 <h3 class="font-semibold">{{ integration.name }}</h3>
               </div>
-              <USwitch v-model="integration.enabled" @update:model-value="handleSaveIntegration(integration)" />
+              <USwitch v-model="integration.enabled" @update:model-value="handleSaveIntegration(integration, true)" />
             </div>
           </template>
           
@@ -89,7 +93,7 @@ onMounted(() => {
             </template>
             
             <div class="flex justify-end pt-2">
-              <UButton label="Save Config" size="sm" @click="handleSaveIntegration(integration)" />
+              <UButton label="Save Config" size="sm" @click="handleSaveIntegration(integration, false)" />
             </div>
           </div>
           <div v-else>

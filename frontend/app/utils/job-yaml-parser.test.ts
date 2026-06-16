@@ -37,6 +37,14 @@ network: "custom-network"
     const yamlQuotedArr = 'command: ["echo", "hello from wireops"]'
     expect(parseJobYaml(yamlQuotedArr).command).toBe('echo "hello from wireops"')
     expect(parseJobYaml(yamlQuotedArr).commandAsArray).toBe(true)
+
+    const yamlBlockArr = `
+command:
+  - echo
+  - "hello from wireops"
+`
+    expect(parseJobYaml(yamlBlockArr).command).toBe('echo "hello from wireops"')
+    expect(parseJobYaml(yamlBlockArr).commandAsArray).toBe(true)
   })
 
   it('parses tags and volumes arrays correctly', () => {

@@ -704,8 +704,9 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 
 		def, err := job.ParseJobFile(repoWorkspace, repoID, jobFile)
 		if err != nil {
-			return e.JSON(http.StatusUnprocessableEntity, map[string]string{
-				"error": err.Error(),
+			return e.JSON(http.StatusUnprocessableEntity, map[string]any{
+				"error":  err.Error(),
+				"errors": validationErrors(err),
 			})
 		}
 

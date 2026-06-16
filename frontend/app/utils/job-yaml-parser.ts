@@ -20,6 +20,18 @@ export function parseJobYaml(yamlContent: string): ParsedJobYaml {
     volumes: []
   }
 
+  // Pre-extract command block list if it exists
+  let commandBlockList: string[] | null = null
+  const commandMatch = yamlContent.match(/command:\s*[\r\n]+((\s*-\s*[^\r\n]+[\r\n]*)+)/)
+  if (commandMatch) {
+    const lines = commandMatch[1].split(/[\r\n]+/)
+    commandBlockList = lines
+      .map(line => line.trim())
+      .filter(line => line.startsWith('-'))
+      .map(line => line.replace(/^-\s*/, '').replace(/^["']|["']$/g, '').trim())
+      .filter(val => val !== '')
+  }
+
   const lines = yamlContent.split(/\r?\n/)
   let currentArraySection: 'tags' | 'volumes' | null = null
   let inResourcesSection = false
@@ -102,8 +114,17 @@ export function parseJobYaml(yamlContent: string): ParsedJobYaml {
       if (key === 'network') result.network = cleanValue
 
       if (key === 'command') {
-        // Command can be a string ("echo hello") or array ([echo, hello])
-        if (cleanValue.startsWith('[') && cleanValue.endsWith(']')) {
+        const commandValue: string | string[] = (commandBlockList && commandBlockList.length > 0) ? commandBlockList : cleanValue
+        if (Array.isArray(commandValue)) {
+          result.commandAsArray = true
+          result.command = commandValue.map(p => {
+            const str = String(p)
+            if (str.includes(' ')) {
+              return `"${str}"`
+            }
+            return str
+          }).join(' ')
+        } else if (cleanValue.startsWith('[') && cleanValue.endsWith(']')) {
           result.commandAsArray = true
           try {
             let jsonStr = cleanValue

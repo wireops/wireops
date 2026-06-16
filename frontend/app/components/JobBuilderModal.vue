@@ -307,6 +307,25 @@ function handleImportYaml() {
   try {
     const parsed = parseJobYaml(content)
     
+    const hasMeaningfulContent = !!(
+      parsed.name ||
+      parsed.description ||
+      parsed.cron ||
+      parsed.mode ||
+      parsed.image ||
+      parsed.command ||
+      parsed.cpu ||
+      parsed.memory ||
+      parsed.timeout ||
+      (parsed.tags && parsed.tags.length > 0) ||
+      (parsed.volumes && parsed.volumes.length > 0)
+    )
+
+    if (!hasMeaningfulContent) {
+      toast.add({ title: 'Invalid or incomplete job.yaml', description: 'The pasted YAML does not contain any valid job definitions.', color: 'error' })
+      return
+    }
+
     if (parsed.name) form.value.name = parsed.name
     if (parsed.description) form.value.description = parsed.description
     if (parsed.cron) {

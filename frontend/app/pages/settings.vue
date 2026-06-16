@@ -5,7 +5,7 @@ const route = useRoute()
 
 watch(() => route.path, (newPath) => {
   if (newPath === '/settings' || newPath === '/settings/') {
-    navigateTo('/settings/general')
+    navigateTo('/settings/general', { replace: true })
   }
 }, { immediate: true })
 </script>

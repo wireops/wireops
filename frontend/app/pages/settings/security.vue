@@ -24,7 +24,15 @@ const tabs = computed(() => {
 })
 
 watch(activeTab, (newVal) => {
-  router.replace({ query: { ...route.query, tab: newVal } })
+  if (route.query.tab !== newVal) {
+    router.replace({ query: { ...route.query, tab: newVal } })
+  }
+})
+
+watch(() => route.query.tab, (newVal) => {
+  if (newVal && newVal !== activeTab.value) {
+    activeTab.value = newVal as string
+  }
 })
 
 const roleOptions = [
