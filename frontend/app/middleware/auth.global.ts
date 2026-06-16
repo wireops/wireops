@@ -9,7 +9,7 @@ async function instanceNeedsSetup(pb: any): Promise<boolean> {
   }
 }
 
-export default defineNuxtRouteMiddleware(async (to) => {
+export default defineNuxtRouteMiddleware(async (to, from) => {
   const { $pb } = useNuxtApp()
   const isPublicPath = PUBLIC_PATHS.includes(to.path)
 
@@ -19,7 +19,10 @@ export default defineNuxtRouteMiddleware(async (to) => {
       try {
         await $pb.collection('users').authRefresh()
         return navigateTo('/')
-      } catch {
+      } catch (err: any) {
+        if (err?.isAbort || err?.status === 0) {
+          return
+        }
         $pb.authStore.clear()
       }
     }
@@ -42,10 +45,16 @@ export default defineNuxtRouteMiddleware(async (to) => {
   }
 
   // Verify the session is still valid
-  try {
-    await $pb.collection('users').authRefresh()
-  } catch (err: any) {
-    $pb.authStore.clear()
-    return navigateTo('/login')
+  // Only refresh on actual path changes, ignoring query/hash parameter updates
+  if (to.path !== from?.path) {
+    try {
+      await $pb.collection('users').authRefresh()
+    } catch (err: any) {
+      if (err?.isAbort || err?.status === 0) {
+        return
+      }
+      $pb.authStore.clear()
+      return navigateTo('/login')
+    }
   }
 })
