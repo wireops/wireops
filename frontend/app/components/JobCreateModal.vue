@@ -4,17 +4,22 @@ import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 const route = useRoute()
 const router = useRouter()
 const { $pb } = useNuxtApp()
-const { getJobFiles } = useApi()
+const { getJobFiles, getJobDefinitionFromFile } = useApi()
 const toast = useToast()
 
-const props = defineProps<{
-  repos: any[]
-  open?: boolean // Adding open prop if we change it to a Modal, but wait, JobCreateModal might be used inside a UCard or UModal
-}>()
+const props = withDefaults(
+  defineProps<{
+    repos: any[]
+    open?: boolean
+  }>(),
+  {
+    open: false,
+  }
+)
 
 const emit = defineEmits<{
-  created: []
-  cancel: []
+  (e: 'update:open', value: boolean): void
+  (e: 'created'): void
 }>()
 
 const form = ref({
@@ -54,16 +59,27 @@ onMounted(() => {
   const resizeListener = () => { isMobile.value = window.innerWidth < 768 }
   window.addEventListener('resize', resizeListener)
   onUnmounted(() => window.removeEventListener('resize', resizeListener))
-  
-  if (!route.query.job_step) {
-    router.replace({ query: { ...route.query, job_step: '1' } })
-  }
 })
 
-onUnmounted(() => {
-  const q = { ...route.query }
-  delete q.job_step
-  router.replace({ query: q })
+watch(() => props.open, (val) => {
+  if (val) {
+    if (!route.query.job_step) {
+      router.replace({ query: { ...route.query, job_step: '1' } })
+    }
+  } else {
+    form.value = {
+      repository: '',
+      job_file: '',
+      enabled: true,
+      name: '',
+      description: '',
+    }
+    repoFiles.value = []
+    errorMsg.value = ''
+    const q = { ...route.query }
+    delete q.job_step
+    router.replace({ query: q })
+  }
 })
 
 watch(() => form.value.repository, async (repoId) => {
@@ -78,6 +94,22 @@ watch(() => form.value.repository, async (repoId) => {
     toast.add({ title: 'Failed to fetch repository files', color: 'error' })
   } finally {
     loadingFiles.value = false
+  }
+})
+
+watch(() => form.value.job_file, async (file) => {
+  form.value.name = ''
+  form.value.description = ''
+  if (!file || !form.value.repository) return
+
+  try {
+    const def = await getJobDefinitionFromFile(form.value.repository, file)
+    if (def) {
+      form.value.name = def.name || ''
+      form.value.description = def.description || ''
+    }
+  } catch {
+    toast.add({ title: 'Failed to parse job definition file', color: 'error' })
   }
 })
 
@@ -125,6 +157,7 @@ async function submit() {
     })
     toast.add({ title: 'Job created', color: 'success' })
     emit('created')
+    emit('update:open', false)
   } catch (e: any) {
     const serverMsg = e?.response?.data?.name?.message || e?.data?.data?.name?.message || e?.data?.data?.name
     if (serverMsg) {
@@ -139,84 +172,102 @@ async function submit() {
 </script>
 
 <template>
-  <UModal :open="props.open !== undefined ? props.open : true" :fullscreen="isMobile" @update:open="$emit('cancel')">
-    <UCard :ui="{ ring: '', divide: 'divide-y divide-gray-100 dark:divide-gray-800', base: 'h-full flex flex-col', body: { base: 'flex-1' } }">
-      <template #header>
-        <div class="flex items-center gap-2">
-          <UIcon name="i-lucide-calendar-clock" class="w-5 h-5 text-yellow-400" />
-          <h2 class="font-semibold text-lg">New Scheduled Job</h2>
-        </div>
-      </template>
-
-      <form class="space-y-4" @submit.prevent="submit">
-        <p class="text-sm text-gray-500 dark:text-wire-200/60 mb-2">
-          {{ currentStep === 1 ? 'Step 1: Select a repository' : 'Step 2: Configuration' }}
-        </p>
-
-        <div v-show="currentStep === 1">
-          <UFormField label="Repository" required>
-            <USelect
-              v-model="form.repository"
-              :items="repoItems"
-              placeholder="Select a repository"
-              class="w-full"
-            />
-          </UFormField>
-        </div>
-
-        <div v-show="currentStep === 2" class="space-y-4">
-          <p class="text-xs text-gray-500 dark:text-wire-200/60 mb-2">
-            Select a <code class="bg-gray-100 dark:bg-carbon-800 px-1 rounded text-xs">job.yaml</code> file. All configuration (cron, image, command) is read from it.
-          </p>
-          <UFormField label="Job file" :error="repoFiles.length === 0 && !!form.repository && !loadingFiles ? 'No job.yaml files found in this repository' : undefined" required>
-            <div class="flex items-center gap-2">
-              <USelect
-                v-model="form.job_file"
-                :items="fileItems"
-                :disabled="!form.repository || loadingFiles"
-                placeholder="Select a .yaml file"
-                class="flex-1"
-              />
-              <UIcon v-if="loadingFiles" name="i-lucide-loader-2" class="w-5 h-5 animate-spin text-gray-400 shrink-0" />
-            </div>
-          </UFormField>
-
-          <UFormField label="Job Name" required :error="form.name && nameError ? nameError : undefined">
-            <UInput v-model="form.name" placeholder="e.g. My Custom Job" class="w-full" />
-          </UFormField>
-
-          <UFormField label="Description">
-            <UInput v-model="form.description" placeholder="Optional description of what this job does" class="w-full" />
-          </UFormField>
-
-          <UFormField label="Enable immediately">
-            <USwitch v-model="form.enabled" />
-          </UFormField>
-        </div>
-
-        <div v-if="errorMsg" class="flex items-start gap-3 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 mt-4">
-          <UIcon name="i-lucide-circle-x" class="w-5 h-5 text-red-500 mt-0.5 shrink-0" />
-          <p class="text-sm text-red-500">{{ errorMsg }}</p>
-        </div>
-
-        <div class="flex justify-between pt-4 mt-6">
-          <UButton v-if="currentStep > 1" label="Back" variant="outline" icon="i-lucide-arrow-left" @click="prevStep" />
-          <div v-else/>
-
-          <div class="flex gap-2">
-            <UButton label="Cancel" variant="ghost" color="neutral" @click="emit('cancel')" />
-            <UButton v-if="currentStep === 1" type="button" label="Next" icon="i-lucide-arrow-right" trailing :disabled="!form.repository" @click="nextStep" />
-            <UButton
-              v-else
-              type="submit"
-              label="Create Job"
-              icon="i-lucide-check"
-              :loading="submitting"
-              :disabled="!form.repository || !form.job_file || !form.name || !!nameError"
-            />
+  <UModal
+    :open="props.open"
+    :fullscreen="isMobile"
+    title="New Scheduled Job"
+    description="Select a repository and configure your scheduled job"
+    @update:open="emit('update:open', $event)"
+  >
+    <template #content>
+      <UCard :ui="{ ring: '', divide: 'divide-y divide-gray-100 dark:divide-gray-800', base: 'h-full flex flex-col', body: { base: 'flex-1' } }">
+        <template #header>
+          <div class="flex items-center gap-2">
+            <UIcon name="i-lucide-calendar-clock" class="w-5 h-5 text-yellow-400" />
+            <h2 class="font-semibold text-lg">New Scheduled Job</h2>
           </div>
-        </div>
-      </form>
-    </UCard>
+        </template>
+
+        <form class="space-y-4" @submit.prevent="submit">
+          <p class="text-sm text-gray-500 dark:text-wire-200/60 mb-2">
+            {{ currentStep === 1 ? 'Step 1: Select a repository' : 'Step 2: Configuration' }}
+          </p>
+
+          <div v-show="currentStep === 1">
+            <UFormField label="Repository" required>
+              <USelect
+                v-model="form.repository"
+                :items="repoItems"
+                placeholder="Select a repository"
+                class="w-full"
+              />
+            </UFormField>
+          </div>
+
+          <div v-show="currentStep === 2" class="space-y-4">
+            <p class="text-xs text-gray-500 dark:text-wire-200/60 mb-2">
+              Select a <code class="bg-gray-100 dark:bg-carbon-800 px-1 rounded text-xs">job.yaml</code> file. All configuration (cron, image, command) is read from it.
+            </p>
+            <UFormField label="Job file" :error="repoFiles.length === 0 && !!form.repository && !loadingFiles ? 'No job.yaml files found in this repository' : undefined" required>
+              <div class="flex items-center gap-2">
+                <USelect
+                  v-model="form.job_file"
+                  :items="fileItems"
+                  :disabled="!form.repository || loadingFiles"
+                  placeholder="Select a .yaml file"
+                  class="flex-1"
+                />
+                <UIcon v-if="loadingFiles" name="i-lucide-loader-2" class="w-5 h-5 animate-spin text-gray-400 shrink-0" />
+              </div>
+            </UFormField>
+
+            <UFormField label="Name" required :error="form.name && nameError ? nameError : undefined">
+              <div v-if="form.job_file && form.name" class="text-sm text-gray-600 dark:text-wire-200 bg-gray-50 dark:bg-carbon-900/40 border border-gray-200 dark:border-carbon-800 rounded-lg px-3 py-2 w-full select-none">
+                {{ form.name }}
+              </div>
+              <div v-else class="text-sm text-gray-400 dark:text-wire-200/40 italic bg-gray-50/50 dark:bg-carbon-900/20 border border-dashed border-gray-200 dark:border-carbon-800 rounded-lg px-3 py-2 w-full select-none">
+                Pending job.yaml selection...
+              </div>
+            </UFormField>
+
+            <UFormField label="Description">
+              <div v-if="form.job_file" class="text-sm text-gray-600 dark:text-wire-200 bg-gray-50 dark:bg-carbon-900/40 border border-gray-200 dark:border-carbon-800 rounded-lg px-3 py-2 w-full select-none">
+                {{ form.description || 'No description specified in job.yaml' }}
+              </div>
+              <div v-else class="text-sm text-gray-400 dark:text-wire-200/40 italic bg-gray-50/50 dark:bg-carbon-900/20 border border-dashed border-gray-200 dark:border-carbon-800 rounded-lg px-3 py-2 w-full select-none">
+                Pending job.yaml selection...
+              </div>
+            </UFormField>
+
+            <UFormField label="Enable immediately">
+              <USwitch v-model="form.enabled" />
+            </UFormField>
+          </div>
+
+          <div v-if="errorMsg" class="flex items-start gap-3 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 mt-4">
+            <UIcon name="i-lucide-circle-x" class="w-5 h-5 text-red-500 mt-0.5 shrink-0" />
+            <p class="text-sm text-red-500">{{ errorMsg }}</p>
+          </div>
+
+          <div class="flex justify-between pt-4 mt-6">
+            <UButton v-if="currentStep > 1" label="Back" variant="outline" icon="i-lucide-arrow-left" @click="prevStep" />
+            <div v-else/>
+
+            <div class="flex gap-2">
+              <UButton label="Cancel" variant="ghost" color="neutral" @click="emit('update:open', false)" />
+              <UButton v-if="currentStep === 1" type="button" label="Next" icon="i-lucide-arrow-right" trailing :disabled="!form.repository" @click="nextStep" />
+              <UButton
+                v-else
+                type="submit"
+                label="Create Job"
+                icon="i-lucide-check"
+                :loading="submitting"
+                :disabled="!form.repository || !form.job_file || !form.name || !!nameError"
+              />
+            </div>
+          </div>
+        </form>
+      </UCard>
+    </template>
   </UModal>
 </template>

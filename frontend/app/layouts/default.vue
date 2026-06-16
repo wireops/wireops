@@ -31,7 +31,18 @@ const navItems = computed(() => {
     },
     { label: 'Repositories', icon: 'i-lucide-git-branch', to: '/repositories' },
     ...(isViewer.value ? [] : [{ label: 'Workers', icon: 'i-lucide-network', to: '/workers' }]),
-    ...(isViewer.value ? [] : [{ label: 'Settings', icon: 'i-lucide-settings', to: '/settings' }]),
+    ...(isViewer.value ? [] : [{
+      label: 'Settings',
+      icon: 'i-lucide-settings',
+      to: '/settings',
+      children: [
+        { label: 'General', icon: 'i-lucide-settings-2', to: '/settings/general' },
+        { label: 'Notifications', icon: 'i-lucide-bell', to: '/settings/notifications' },
+        { label: 'Security', icon: 'i-lucide-shield', to: '/settings/security' },
+        { label: 'Integrations', icon: 'i-lucide-puzzle', to: '/settings/integrations' },
+        { label: 'Users', icon: 'i-lucide-users', to: '/settings/users' },
+      ]
+    }]),
     { label: 'About', icon: 'i-lucide-info', to: '/about' },
   ]
 })

@@ -687,6 +687,31 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		return e.JSON(http.StatusOK, files)
 	}).BindFunc(rbac.Require(rbac.CapManageRepos))
 
+	// Get parsed job definition for a file in a repository
+	r.GET("/api/custom/repositories/{id}/job-definition", func(e *core.RequestEvent) error {
+		_, ok := repoFilesSetup(e)
+		if !ok {
+			return nil
+		}
+
+		jobFile := e.Request.URL.Query().Get("file")
+		if jobFile == "" {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "missing file parameter"})
+		}
+
+		repoWorkspace := filepath.Join(app.DataDir(), "repositories")
+		repoID := e.Request.PathValue("id")
+
+		def, err := job.ParseJobFile(repoWorkspace, repoID, jobFile)
+		if err != nil {
+			return e.JSON(http.StatusUnprocessableEntity, map[string]string{
+				"error": err.Error(),
+			})
+		}
+
+		return e.JSON(http.StatusOK, def)
+	}).BindFunc(rbac.Require(rbac.CapManageRepos))
+
 	// Manually trigger repository sync/clone
 	r.POST("/api/custom/repositories/{id}/sync", func(e *core.RequestEvent) error {
 		repoDir, ok := repoFilesSetup(e)

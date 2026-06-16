@@ -30,6 +30,7 @@ onMounted(() => {
 })
 
 const showCreate = ref(false)
+const showBuilder = ref(false)
 
 function onCreated() {
   showCreate.value = false
@@ -84,13 +85,23 @@ function formatRelative(dateStr: string) {
         </div>
         Scheduled Jobs
       </h1>
-      <UButton
-        v-if="!isViewer"
-        icon="i-lucide-plus"
-        label="New Job"
-        class="shadow-[0_0_16px_rgba(255,198,0,0.35)] hover:shadow-[0_0_24px_rgba(255,198,0,0.55)] transition-shadow"
-        @click="refreshRepos().then(() => { showCreate = true })"
-      />
+      <div class="flex items-center gap-3">
+        <UButton
+          v-if="!isViewer"
+          icon="i-lucide-wrench"
+          label="Job Builder"
+          color="neutral"
+          variant="outline"
+          @click="showBuilder = true"
+        />
+        <UButton
+          v-if="!isViewer"
+          icon="i-lucide-plus"
+          label="New Job"
+          class="shadow-[0_0_16px_rgba(255,198,0,0.35)] hover:shadow-[0_0_24px_rgba(255,198,0,0.55)] transition-shadow"
+          @click="refreshRepos().then(() => { showCreate = true })"
+        />
+      </div>
     </div>
 
     <UCard>
@@ -242,9 +253,12 @@ function formatRelative(dateStr: string) {
     </div>
 
     <JobCreateModal 
-      v-if="showCreate"
+      v-model:open="showCreate"
       :repos="repos || []" 
       @created="onCreated" 
-      @cancel="showCreate = false" 
+    />
+
+    <JobBuilderModal
+      v-model:open="showBuilder"
     />
   </template>
