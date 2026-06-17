@@ -17,7 +17,9 @@ import (
 	"github.com/wireops/wireops/internal/rbac"
 )
 
-func TestCreateServiceAccountRoleValidation(t *testing.T) {
+// setupTestSAApp initializes a setup test application, clears users,
+// creates an admin user, configures router with admin auth, and registers SA routes.
+func setupTestSAApp(t *testing.T) (core.App, http.Handler, *core.Record) {
 	app := newSetupTestApp(t)
 	clearAllUsers(t, app)
 	admin := createTestUser(t, app, "admin@example.com", "Password1!", rbac.RoleAdmin)
@@ -34,6 +36,28 @@ func TestCreateServiceAccountRoleValidation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build mux: %v", err)
 	}
+	return app, mux, admin
+}
+
+// createTestSA creates a service account record in pocketbase with given details.
+func createTestSA(t *testing.T, app core.App, name, desc, role string, enabled bool) *core.Record {
+	col, err := app.FindCollectionByNameOrId("service_accounts")
+	if err != nil {
+		t.Fatalf("find service_accounts collection: %v", err)
+	}
+	sa := core.NewRecord(col)
+	sa.Set("name", name)
+	sa.Set("description", desc)
+	sa.Set("role", role)
+	sa.Set("enabled", enabled)
+	if err := app.Save(sa); err != nil {
+		t.Fatalf("create test service account: %v", err)
+	}
+	return sa
+}
+
+func TestCreateServiceAccountRoleValidation(t *testing.T) {
+	_, mux, _ := setupTestSAApp(t)
 
 	// 1. Try role: admin (should fail)
 	body := map[string]any{
@@ -107,36 +131,8 @@ func TestCreateServiceAccountRoleValidation(t *testing.T) {
 }
 
 func TestUpdateServiceAccountRoleValidation(t *testing.T) {
-	app := newSetupTestApp(t)
-	clearAllUsers(t, app)
-	admin := createTestUser(t, app, "admin@example.com", "Password1!", rbac.RoleAdmin)
-
-	// Create a service account to update
-	col, err := app.FindCollectionByNameOrId("service_accounts")
-	if err != nil {
-		t.Fatalf("find service_accounts collection: %v", err)
-	}
-	sa := core.NewRecord(col)
-	sa.Set("name", "Initial SA")
-	sa.Set("description", "Initial SA description")
-	sa.Set("role", rbac.RoleViewer)
-	sa.Set("enabled", true)
-	if err := app.Save(sa); err != nil {
-		t.Fatalf("create test service account: %v", err)
-	}
-
-	r := router.NewRouter(func(w http.ResponseWriter, req *http.Request) (*core.RequestEvent, router.EventCleanupFunc) {
-		return &core.RequestEvent{
-			App:   app,
-			Event: router.Event{Response: w, Request: req},
-			Auth:  admin,
-		}, nil
-	})
-	RegisterServiceAccountRoutes(r, app)
-	mux, err := r.BuildMux()
-	if err != nil {
-		t.Fatalf("build mux: %v", err)
-	}
+	app, mux, _ := setupTestSAApp(t)
+	sa := createTestSA(t, app, "Initial SA", "Initial SA description", rbac.RoleViewer, true)
 
 	// 1. Try updating to admin role (should fail)
 	body := map[string]any{
@@ -168,36 +164,8 @@ func TestUpdateServiceAccountRoleValidation(t *testing.T) {
 }
 
 func TestIssueAndRevokeAPIKeyEmbedded(t *testing.T) {
-	app := newSetupTestApp(t)
-	clearAllUsers(t, app)
-	admin := createTestUser(t, app, "admin@example.com", "Password1!", rbac.RoleAdmin)
-
-	// Create a service account
-	col, err := app.FindCollectionByNameOrId("service_accounts")
-	if err != nil {
-		t.Fatalf("find service_accounts collection: %v", err)
-	}
-	sa := core.NewRecord(col)
-	sa.Set("name", "Test Auth SA")
-	sa.Set("description", "Test Auth SA description")
-	sa.Set("role", rbac.RoleViewer)
-	sa.Set("enabled", true)
-	if err := app.Save(sa); err != nil {
-		t.Fatalf("create test service account: %v", err)
-	}
-
-	r := router.NewRouter(func(w http.ResponseWriter, req *http.Request) (*core.RequestEvent, router.EventCleanupFunc) {
-		return &core.RequestEvent{
-			App:   app,
-			Event: router.Event{Response: w, Request: req},
-			Auth:  admin,
-		}, nil
-	})
-	RegisterServiceAccountRoutes(r, app)
-	mux, err := r.BuildMux()
-	if err != nil {
-		t.Fatalf("build mux: %v", err)
-	}
+	app, mux, _ := setupTestSAApp(t)
+	sa := createTestSA(t, app, "Test Auth SA", "Test Auth SA description", rbac.RoleViewer, true)
 
 	// 1. Issue key
 	req := httptest.NewRequest(http.MethodPost, "/api/custom/service-accounts/"+sa.Id+"/keys", nil)
@@ -263,6 +231,26 @@ func TestIssueAndRevokeAPIKeyEmbedded(t *testing.T) {
 		t.Fatalf("expected auth 200, got %d: %s", recAuth.Code, recAuth.Body.String())
 	}
 
+	// Verify last used is updated
+	reloadedUsed, _ := app.FindRecordById("service_accounts", sa.Id)
+	if reloadedUsed.GetString("key_last_used_at") == "" {
+		t.Fatal("expected key_last_used_at to be populated after auth")
+	}
+
+	// Rotate key to verify key_last_used_at is reset
+	reqRotate := httptest.NewRequest(http.MethodPost, "/api/custom/service-accounts/"+sa.Id+"/keys", nil)
+	recRotate := httptest.NewRecorder()
+	mux.ServeHTTP(recRotate, reqRotate)
+	if recRotate.Code != http.StatusCreated {
+		t.Fatalf("expected 201 for key rotation, got %d: %s", recRotate.Code, recRotate.Body.String())
+	}
+
+	// Reload and verify key_last_used_at is reset to nil/empty
+	reloadedRotated, _ := app.FindRecordById("service_accounts", sa.Id)
+	if reloadedRotated.GetString("key_last_used_at") != "" {
+		t.Fatal("expected key_last_used_at to be reset to nil/empty after key rotation")
+	}
+
 	// 2. Revoke key
 	reqRevoke := httptest.NewRequest(http.MethodDelete, "/api/custom/service-accounts/"+sa.Id+"/keys", nil)
 	recRevoke := httptest.NewRecorder()
@@ -290,36 +278,8 @@ func TestIssueAndRevokeAPIKeyEmbedded(t *testing.T) {
 }
 
 func TestDisableServiceAccountWipesKey(t *testing.T) {
-	app := newSetupTestApp(t)
-	clearAllUsers(t, app)
-	admin := createTestUser(t, app, "admin@example.com", "Password1!", rbac.RoleAdmin)
-
-	routesRouter := router.NewRouter(func(w http.ResponseWriter, req *http.Request) (*core.RequestEvent, router.EventCleanupFunc) {
-		return &core.RequestEvent{
-			App:   app,
-			Event: router.Event{Response: w, Request: req},
-			Auth:  admin,
-		}, nil
-	})
-	RegisterServiceAccountRoutes(routesRouter, app)
-	mux, err := routesRouter.BuildMux()
-	if err != nil {
-		t.Fatalf("build mux: %v", err)
-	}
-
-	// Create a service account
-	col, err := app.FindCollectionByNameOrId("service_accounts")
-	if err != nil {
-		t.Fatalf("find service_accounts collection: %v", err)
-	}
-	sa := core.NewRecord(col)
-	sa.Set("name", "Wipe Key SA")
-	sa.Set("description", "Wipe Key SA description")
-	sa.Set("role", rbac.RoleViewer)
-	sa.Set("enabled", true)
-	if err := app.Save(sa); err != nil {
-		t.Fatalf("create test service account: %v", err)
-	}
+	app, mux, _ := setupTestSAApp(t)
+	sa := createTestSA(t, app, "Wipe Key SA", "Wipe Key SA description", rbac.RoleViewer, true)
 
 	// 1. Issue a key by hitting the issue key endpoint
 	reqIssue := httptest.NewRequest(http.MethodPost, "/api/custom/service-accounts/"+sa.Id+"/keys", nil)
@@ -362,6 +322,12 @@ func TestDisableServiceAccountWipesKey(t *testing.T) {
 	if !reloadedWiped.GetBool("key_revoked") {
 		t.Fatal("expected key_revoked to be true")
 	}
+	if reloadedWiped.GetString("key_expires_at") != "" {
+		t.Fatalf("expected key_expires_at to be empty, got %s", reloadedWiped.GetString("key_expires_at"))
+	}
+	if reloadedWiped.GetString("key_last_used_at") != "" {
+		t.Fatalf("expected key_last_used_at to be empty, got %s", reloadedWiped.GetString("key_last_used_at"))
+	}
 
 	// 4. Try to re-enable the service account and expect 400 Bad Request
 	bodyEnable := map[string]any{
@@ -378,22 +344,7 @@ func TestDisableServiceAccountWipesKey(t *testing.T) {
 }
 
 func TestDuplicateServiceAccountNameConstraint(t *testing.T) {
-	app := newSetupTestApp(t)
-	clearAllUsers(t, app)
-	admin := createTestUser(t, app, "admin@example.com", "Password1!", rbac.RoleAdmin)
-
-	r := router.NewRouter(func(w http.ResponseWriter, req *http.Request) (*core.RequestEvent, router.EventCleanupFunc) {
-		return &core.RequestEvent{
-			App:   app,
-			Event: router.Event{Response: w, Request: req},
-			Auth:  admin,
-		}, nil
-	})
-	RegisterServiceAccountRoutes(r, app)
-	mux, err := r.BuildMux()
-	if err != nil {
-		t.Fatalf("build mux: %v", err)
-	}
+	_, mux, _ := setupTestSAApp(t)
 
 	// 1. Create first service account with name "duplicate-sa"
 	body1 := map[string]any{
@@ -428,35 +379,8 @@ func TestDuplicateServiceAccountNameConstraint(t *testing.T) {
 }
 
 func TestDeleteServiceAccountBlocked(t *testing.T) {
-	app := newSetupTestApp(t)
-	clearAllUsers(t, app)
-	admin := createTestUser(t, app, "admin@example.com", "Password1!", rbac.RoleAdmin)
-
-	col, err := app.FindCollectionByNameOrId("service_accounts")
-	if err != nil {
-		t.Fatalf("find service_accounts collection: %v", err)
-	}
-	sa := core.NewRecord(col)
-	sa.Set("name", "Deletable SA")
-	sa.Set("description", "Deletable SA description")
-	sa.Set("role", rbac.RoleViewer)
-	sa.Set("enabled", true)
-	if err := app.Save(sa); err != nil {
-		t.Fatalf("create test service account: %v", err)
-	}
-
-	r := router.NewRouter(func(w http.ResponseWriter, req *http.Request) (*core.RequestEvent, router.EventCleanupFunc) {
-		return &core.RequestEvent{
-			App:   app,
-			Event: router.Event{Response: w, Request: req},
-			Auth:  admin,
-		}, nil
-	})
-	RegisterServiceAccountRoutes(r, app)
-	mux, err := r.BuildMux()
-	if err != nil {
-		t.Fatalf("build mux: %v", err)
-	}
+	app, mux, _ := setupTestSAApp(t)
+	sa := createTestSA(t, app, "Deletable SA", "Deletable SA description", rbac.RoleViewer, true)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/custom/service-accounts/"+sa.Id, nil)
 	rec := httptest.NewRecorder()
@@ -474,5 +398,30 @@ func TestDeleteServiceAccountBlocked(t *testing.T) {
 	}
 }
 
+func TestCreateDisabledServiceAccountBlocked(t *testing.T) {
+	_, mux, _ := setupTestSAApp(t)
 
+	body := map[string]any{
+		"name":        "Test Disabled SA",
+		"description": "Disabled SA description",
+		"role":        rbac.RoleViewer,
+		"enabled":     false,
+	}
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/custom/service-accounts", bytes.NewBuffer(b))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 when creating disabled service account, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["error"] != "keys cannot be generated for disabled service accounts" {
+		t.Fatalf("expected error message about disabled service accounts, got: %s", resp["error"])
+	}
+}
 

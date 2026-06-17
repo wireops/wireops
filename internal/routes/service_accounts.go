@@ -84,6 +84,10 @@ func RegisterServiceAccountRoutes(r *router.Router[*core.RequestEvent], app core
 			enabled = *body.Enabled
 		}
 
+		if !enabled {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "keys cannot be generated for disabled service accounts"})
+		}
+
 		key, err := wireauth.GenerateAPIKey()
 		if err != nil {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to generate api key"})
@@ -101,6 +105,7 @@ func RegisterServiceAccountRoutes(r *router.Router[*core.RequestEvent], app core
 		rec.Set("key_hash", wireauth.HashAPIKey(key))
 		rec.Set("key_prefix", wireauth.APIKeyPrefix(key))
 		rec.Set("key_revoked", false)
+		rec.Set("key_last_used_at", nil)
 		if e.Auth != nil && e.Auth.Collection() != nil && e.Auth.Collection().Name == "users" {
 			rec.Set("created_by", e.Auth.Id)
 		}
@@ -171,6 +176,8 @@ func RegisterServiceAccountRoutes(r *router.Router[*core.RequestEvent], app core
 				rec.Set("key_hash", "")
 				rec.Set("key_prefix", "")
 				rec.Set("key_revoked", true)
+				rec.Set("key_expires_at", nil)
+				rec.Set("key_last_used_at", nil)
 			}
 		}
 		if err := app.Save(rec); err != nil {
@@ -203,6 +210,7 @@ func RegisterServiceAccountRoutes(r *router.Router[*core.RequestEvent], app core
 		account.Set("key_hash", wireauth.HashAPIKey(key))
 		account.Set("key_prefix", wireauth.APIKeyPrefix(key))
 		account.Set("key_revoked", false)
+		account.Set("key_last_used_at", nil)
 		if body.ExpiresAt != nil && strings.TrimSpace(*body.ExpiresAt) != "" {
 			parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(*body.ExpiresAt))
 			if err != nil {

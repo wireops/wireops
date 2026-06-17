@@ -17,11 +17,20 @@ const roleOptions = [
   { label: 'Operator', value: 'operator' },
 ]
 
-function handleSubmit() {
-  emit('submit', { ...form.value })
-  // reset form
+function reset() {
   form.value = { name: '', description: '', role: 'viewer' }
 }
+
+function handleSubmit() {
+  emit('submit', { ...form.value })
+}
+
+function handleCancel() {
+  emit('cancel')
+  reset()
+}
+
+defineExpose({ reset })
 </script>
 
 <template>
@@ -50,7 +59,7 @@ function handleSubmit() {
       </UFormField>
 
       <div class="flex justify-end gap-2 pt-2">
-        <UButton label="Cancel" variant="outline" color="neutral" @click="emit('cancel')" />
+        <UButton label="Cancel" variant="outline" color="neutral" @click="handleCancel" />
         <UButton type="submit" label="Create" icon="i-lucide-plus" />
       </div>
     </form>

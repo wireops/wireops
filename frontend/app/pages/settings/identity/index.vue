@@ -7,7 +7,19 @@ const { isAdmin } = usePermissions()
 
 const route = useRoute()
 const router = useRouter()
-const activeTab = ref((route.query.tab as string) || 'users')
+
+function getValidTab(tab: string | null | undefined): string {
+  const allowed = ['users']
+  if (isAdmin.value) {
+    allowed.push('service-accounts')
+  }
+  if (tab && allowed.includes(tab)) {
+    return tab
+  }
+  return 'users'
+}
+
+const activeTab = ref(getValidTab(route.query.tab as string))
 
 const tabs = computed(() => {
   const list = [
@@ -26,8 +38,16 @@ watch(activeTab, (newVal) => {
 })
 
 watch(() => route.query.tab, (newVal) => {
-  if (newVal && newVal !== activeTab.value) {
-    activeTab.value = newVal as string
+  const valid = getValidTab(newVal as string)
+  if (activeTab.value !== valid) {
+    activeTab.value = valid
+  }
+})
+
+watch(isAdmin, () => {
+  const valid = getValidTab(activeTab.value)
+  if (activeTab.value !== valid) {
+    activeTab.value = valid
   }
 })
 
@@ -129,6 +149,7 @@ async function updateUserRole(user: any, role: string) {
 const serviceAccounts = ref<any[]>([])
 const serviceAccountsLoading = ref(false)
 const showCreateServiceAccountModal = ref(false)
+const createSAModalRef = ref<any>(null)
 const createdApiKey = ref('')
 const showApiKeyModal = ref(false)
 const targetAccountName = ref('')
@@ -190,6 +211,7 @@ async function createServiceAccount(payload: { name: string; description: string
       body: JSON.stringify({ ...payload, enabled: true }),
     })
     showCreateServiceAccountModal.value = false
+    createSAModalRef.value?.reset()
     createdApiKey.value = data.api_key
     targetAccountName.value = data.name
     showApiKeyModal.value = true
@@ -515,6 +537,7 @@ onMounted(() => {
       <UModal v-model:open="showCreateServiceAccountModal">
         <template #content>
           <CreateServiceAccountModal
+            ref="createSAModalRef"
             @submit="createServiceAccount"
             @cancel="showCreateServiceAccountModal = false"
           />
