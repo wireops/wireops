@@ -155,6 +155,7 @@ onMounted(() => {
                         @click="configureIntegration(integration)" 
                       />
                       <UButton
+                        v-if="getIntegrationDocLink(integration.slug)"
                         icon="i-lucide-external-link"
                         size="xs"
                         variant="ghost"
@@ -185,25 +186,25 @@ onMounted(() => {
       </div>
     </template>
 
-    <NtfyConfigModal
+    <IntegrationsNtfyConfigModal
       v-model:open="showNtfyModal"
       :integration="ntfyIntegration"
       @saved="loadIntegrations"
     />
 
-    <WebhookConfigModal
+    <IntegrationsWebhookConfigModal
       v-model:open="showWebhookModal"
       :integration="webhookIntegration"
       @saved="loadIntegrations"
     />
 
-    <DozzleConfigModal
+    <IntegrationsDozzleConfigModal
       v-model:open="showDozzleModal"
       :integration="dozzleIntegration"
       @saved="loadIntegrations"
     />
 
-    <TraefikConfigModal
+    <IntegrationsTraefikConfigModal
       v-model:open="showTraefikModal"
       :integration="traefikIntegration"
       @saved="loadIntegrations"

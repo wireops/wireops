@@ -32,7 +32,7 @@ export function useIntegrations() {
         return customDelete<{ status: string }>(`/api/custom/integrations/${slug}`)
     }
 
-    async function testIntegration(slug: string, config: Record<string, any>) {
+    async function testIntegration(slug: 'webhook' | 'ntfy', config: Record<string, any>) {
         return customPost<{ status: string }>(`/api/custom/integrations/${slug}/test`, {
             enabled: true,
             config

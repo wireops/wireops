@@ -32,8 +32,8 @@ watch(() => props.integration, (newVal) => {
     const config = newVal.config || {}
     form.value.url = config.url || ''
     form.value.secret = config.secret || ''
-    form.value.headers = config.headers || []
-    form.value.events = config.events || ['sync.started', 'sync.done', 'sync.error']
+    form.value.headers = config.headers ? config.headers.map((h: any) => ({ ...h })) : []
+    form.value.events = config.events ? [...config.events] : ['sync.started', 'sync.done', 'sync.error']
     hasSecret.value = config.secret === '••••••••'
   }
 }, { immediate: true, deep: true })

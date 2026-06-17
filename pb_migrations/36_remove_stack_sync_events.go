@@ -1,6 +1,8 @@
 package pb_migrations
 
 import (
+	"database/sql"
+	"errors"
 	"log"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -11,8 +13,11 @@ func init() {
 	m.Register(func(app core.App) error {
 		col, err := app.FindCollectionByNameOrId("stack_sync_events")
 		if err != nil {
-			// Already deleted or doesn't exist
-			return nil
+			if errors.Is(err, sql.ErrNoRows) {
+				// Already deleted or doesn't exist
+				return nil
+			}
+			return err
 		}
 		if err := app.Delete(col); err != nil {
 			return err

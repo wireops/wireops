@@ -1485,14 +1485,24 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		if body.Config != nil {
 			if secretVal, ok := body.Config["secret"].(string); ok && secretVal == "••••••••" {
 				recs, err := app.FindAllRecords("integrations", dbx.HashExp{"slug": slug})
-				if err == nil && len(recs) > 0 {
-					var savedConfig map[string]interface{}
-					if err := recs[0].UnmarshalJSONField("config", &savedConfig); err == nil && savedConfig != nil {
-						if savedSecret, ok := savedConfig["secret"].(string); ok {
-							body.Config["secret"] = savedSecret
-						}
-					}
+				if err != nil {
+					return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to query existing integration record: " + err.Error()})
 				}
+				if len(recs) == 0 {
+					return e.JSON(http.StatusBadRequest, map[string]string{"error": "cannot resolve masked secret: no existing integration record found"})
+				}
+				var savedConfig map[string]interface{}
+				if err := recs[0].UnmarshalJSONField("config", &savedConfig); err != nil {
+					return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to unmarshal existing configuration: " + err.Error()})
+				}
+				if savedConfig == nil {
+					return e.JSON(http.StatusBadRequest, map[string]string{"error": "cannot resolve masked secret: existing configuration is empty"})
+				}
+				savedSecret, ok := savedConfig["secret"].(string)
+				if !ok || savedSecret == "" {
+					return e.JSON(http.StatusBadRequest, map[string]string{"error": "cannot resolve masked secret: no secret found in existing configuration"})
+				}
+				body.Config["secret"] = savedSecret
 			}
 		}
 
@@ -1519,7 +1529,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 
 		// Return masked config if it has secret
 		if body.Config != nil {
-			if _, ok := body.Config["secret"].(string); ok {
+			if secretVal, ok := body.Config["secret"].(string); ok && secretVal != "" {
 				body.Config["secret"] = "••••••••"
 			}
 		}
@@ -1655,14 +1665,24 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		// Handle secret masking: if user passes "••••••••", load the existing secret from the DB.
 		if secretVal, ok := body.Config["secret"].(string); ok && secretVal == "••••••••" {
 			recs, err := app.FindAllRecords("integrations", dbx.HashExp{"slug": slug})
-			if err == nil && len(recs) > 0 {
-				var savedConfig map[string]interface{}
-				if err := recs[0].UnmarshalJSONField("config", &savedConfig); err == nil && savedConfig != nil {
-					if savedSecret, ok := savedConfig["secret"].(string); ok {
-						body.Config["secret"] = savedSecret
-					}
-				}
+			if err != nil {
+				return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to query existing integration record: " + err.Error()})
 			}
+			if len(recs) == 0 {
+				return e.JSON(http.StatusBadRequest, map[string]string{"error": "cannot resolve masked secret: no existing integration record found"})
+			}
+			var savedConfig map[string]interface{}
+			if err := recs[0].UnmarshalJSONField("config", &savedConfig); err != nil {
+				return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to unmarshal existing configuration: " + err.Error()})
+			}
+			if savedConfig == nil {
+				return e.JSON(http.StatusBadRequest, map[string]string{"error": "cannot resolve masked secret: existing configuration is empty"})
+			}
+			savedSecret, ok := savedConfig["secret"].(string)
+			if !ok || savedSecret == "" {
+				return e.JSON(http.StatusBadRequest, map[string]string{"error": "cannot resolve masked secret: no secret found in existing configuration"})
+			}
+			body.Config["secret"] = savedSecret
 		}
 
 		notifier := notify.New(app)

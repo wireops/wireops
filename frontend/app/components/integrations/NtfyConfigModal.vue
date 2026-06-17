@@ -37,7 +37,7 @@ watch(() => props.integration, (newVal) => {
     form.value.user = config.user || ''
     form.value.secret = config.secret || ''
     form.value.template = config.template || ''
-    form.value.events = config.events || ['sync.started', 'sync.done', 'sync.error']
+    form.value.events = config.events ? [...config.events] : ['sync.started', 'sync.done', 'sync.error']
     hasSecret.value = config.secret === '••••••••'
   }
 }, { immediate: true, deep: true })
