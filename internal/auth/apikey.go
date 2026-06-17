@@ -42,11 +42,11 @@ func APIKeyMiddleware(app core.App) func(*core.RequestEvent) error {
 		e.Auth = accountRecord
 		e.Request.Header.Set("X-Wireops-Origin", APIKeyOrigin)
 
-		lastUsed := keyRecord.GetDateTime("last_used_at")
+		lastUsed := keyRecord.GetDateTime("key_last_used_at")
 		if lastUsed.IsZero() || time.Since(lastUsed.Time()) > lastUsedThrottle {
-			keyRecord.Set("last_used_at", types.NowDateTime())
+			keyRecord.Set("key_last_used_at", types.NowDateTime())
 			if err := app.Save(keyRecord); err != nil {
-				log.Printf("[auth] failed to update api key last_used_at for key %s: %v", keyRecord.Id, err)
+				log.Printf("[auth] failed to update api key last_used_at for service account %s: %v", keyRecord.Id, err)
 			}
 		}
 
@@ -90,23 +90,20 @@ func apiKeyFromRequest(r *http.Request) string {
 }
 
 func authenticateAPIKey(app core.App, raw string) (*core.Record, *core.Record, bool) {
-	records, err := app.FindAllRecords("api_keys", dbx.HashExp{"key_hash": HashAPIKey(raw)})
+	records, err := app.FindAllRecords("service_accounts", dbx.HashExp{"key_hash": HashAPIKey(raw)})
 	if err != nil || len(records) == 0 {
 		return nil, nil, false
 	}
-	keyRecord := records[0]
-	if keyRecord.GetBool("revoked") {
+	accountRecord := records[0]
+	if !accountRecord.GetBool("enabled") {
 		return nil, nil, false
 	}
-	expiresAt := keyRecord.GetDateTime("expires_at")
+	if accountRecord.GetBool("key_revoked") {
+		return nil, nil, false
+	}
+	expiresAt := accountRecord.GetDateTime("key_expires_at")
 	if !expiresAt.IsZero() && expiresAt.Time().Before(time.Now()) {
 		return nil, nil, false
 	}
-
-	accountID := keyRecord.GetString("service_account")
-	accountRecord, err := app.FindRecordById("service_accounts", accountID)
-	if err != nil || !accountRecord.GetBool("enabled") {
-		return nil, nil, false
-	}
-	return keyRecord, accountRecord, true
+	return accountRecord, accountRecord, true
 }

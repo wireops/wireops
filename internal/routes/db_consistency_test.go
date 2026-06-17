@@ -13,6 +13,14 @@ import (
 func TestDatabaseConsistencyTestOnlyRouteDoesNotRequireAuth(t *testing.T) {
 	app := newSetupTestApp(t)
 
+	// Delete a required collection to make the database inconsistent for this test
+	col, err := app.FindCollectionByNameOrId("invites")
+	if err == nil && col != nil {
+		if err := app.Delete(col); err != nil {
+			t.Fatalf("failed to delete invites collection: %v", err)
+		}
+	}
+
 	rec := callHandler(t, app, http.MethodGet, "/api/custom/db/consistency", nil, testOnlyDatabaseConsistencyHandler(app))
 
 	if rec.Code != http.StatusServiceUnavailable {

@@ -114,12 +114,7 @@ async function handleChangePassword() {
   }
 }
 
-// --- Service Accounts & SSO Group Roles ---
-const serviceAccounts = ref<any[]>([])
-const serviceAccountsLoading = ref(false)
-const serviceAccountForm = ref({ name: '', description: '', role: 'viewer' })
-const createdApiKey = ref('')
-const apiKeyNames = ref<Record<string, string>>({})
+// --- SSO Group Roles ---
 
 const ssoGroupRoles = ref<any[]>([])
 const ssoGroupRolesLoading = ref(false)
@@ -140,60 +135,7 @@ async function apiFetch(path: string, options: RequestInit = {}) {
   return data
 }
 
-async function loadServiceAccounts() {
-  if (!isAdmin.value) return
-  serviceAccountsLoading.value = true
-  try {
-    const accounts = await apiFetch('/api/custom/service-accounts')
-    accounts.forEach((acc: any) => {
-      if (!apiKeyNames.value[acc.id]) apiKeyNames.value[acc.id] = 'default'
-    })
-    serviceAccounts.value = accounts
-  } catch (e: any) {
-    toast.add({ title: 'Failed to load service accounts', description: e?.message, color: 'error' })
-  } finally {
-    serviceAccountsLoading.value = false
-  }
-}
 
-async function createServiceAccount() {
-  try {
-    await apiFetch('/api/custom/service-accounts', {
-      method: 'POST',
-      body: JSON.stringify({ ...serviceAccountForm.value, enabled: true }),
-    })
-    serviceAccountForm.value = { name: '', description: '', role: 'viewer' }
-    await loadServiceAccounts()
-    toast.add({ title: 'Service account created', color: 'success' })
-  } catch (e: any) {
-    toast.add({ title: 'Failed to create service account', description: e?.message, color: 'error' })
-  }
-}
-
-async function issueApiKey(account: any) {
-  try {
-    const data = await apiFetch(`/api/custom/service-accounts/${account.id}/keys`, {
-      method: 'POST',
-      body: JSON.stringify({ name: apiKeyNames.value[account.id] || 'default' }),
-    })
-    createdApiKey.value = data.api_key
-    apiKeyNames.value[account.id] = 'default'
-    await loadServiceAccounts()
-    toast.add({ title: 'API key issued', description: 'Copy it now. It will not be shown again.', color: 'success' })
-  } catch (e: any) {
-    toast.add({ title: 'Failed to issue API key', description: e?.message, color: 'error' })
-  }
-}
-
-async function revokeApiKey(account: any, key: any) {
-  try {
-    await apiFetch(`/api/custom/service-accounts/${account.id}/keys/${key.id}`, { method: 'DELETE' })
-    await loadServiceAccounts()
-    toast.add({ title: 'API key revoked', color: 'success' })
-  } catch (e: any) {
-    toast.add({ title: 'Failed to revoke API key', description: e?.message, color: 'error' })
-  }
-}
 
 async function loadSSOGroupRoles() {
   if (!isAdmin.value) return
@@ -485,7 +427,6 @@ onMounted(async () => {
   }
 
   loadSSOGroupRoles()
-  loadServiceAccounts()
   loadWorkerPolicy()
   loadAuditLogs()
 })
@@ -511,52 +452,6 @@ onMounted(async () => {
           </UFormField>
           <UButton type="submit" label="Update Password" icon="i-lucide-check" :loading="changePasswordLoading" />
         </form>
-      </UCard>
-
-      <UCard v-if="isAdmin">
-        <template #header>
-          <h3 class="font-semibold">Service Accounts & API Keys</h3>
-          <p class="text-xs text-gray-500 mt-0.5">Programmatic access for agents and external clients. API keys inherit the service account role.</p>
-        </template>
-        <div class="space-y-4">
-          <UAlert
-            v-if="createdApiKey"
-            color="warning"
-            title="Copy this API key now"
-            :description="createdApiKey"
-            icon="i-lucide-key-round"
-          />
-          <form class="grid gap-2 md:grid-cols-[1fr_1fr_160px_auto]" @submit.prevent="createServiceAccount">
-            <UInput v-model="serviceAccountForm.name" placeholder="automation-bot" required />
-            <UInput v-model="serviceAccountForm.description" placeholder="Description" />
-            <USelectMenu v-model="serviceAccountForm.role" :items="roleOptions" value-key="value" />
-            <UButton type="submit" label="Create" icon="i-lucide-plus" />
-          </form>
-          <div v-if="serviceAccountsLoading" class="text-sm text-gray-500">Loading service accounts...</div>
-          <div v-else-if="serviceAccounts.length === 0" class="text-sm text-gray-500">No service accounts yet.</div>
-          <div v-else class="space-y-3">
-            <div v-for="account in serviceAccounts" :key="account.id" class="rounded-lg border border-gray-200 p-3 dark:border-gray-800">
-              <div class="flex items-start justify-between gap-3">
-                <div>
-                  <p class="text-sm font-medium">{{ account.name }}</p>
-                  <p class="text-xs text-gray-500">{{ account.description || 'No description' }}</p>
-                  <p v-if="account.created_by_email" class="text-xs text-gray-400 mt-0.5">Created by {{ account.created_by_email }}</p>
-                  <UBadge :label="account.role" color="primary" variant="subtle" size="xs" class="mt-2" />
-                </div>
-                <div class="flex gap-2">
-                  <UInput v-model="apiKeyNames[account.id]" placeholder="key name" size="xs" class="w-32" />
-                  <UButton size="xs" label="Issue Key" icon="i-lucide-key-round" @click="issueApiKey(account)" />
-                </div>
-              </div>
-              <ul v-if="account.keys?.length" class="mt-3 divide-y divide-gray-100 text-xs dark:divide-gray-800">
-                <li v-for="key in account.keys" :key="key.id" class="flex items-center justify-between py-2">
-                  <span>{{ key.name }} · {{ key.key_prefix }} · {{ key.revoked ? 'revoked' : 'active' }}</span>
-                  <UButton v-if="!key.revoked" size="xs" variant="ghost" color="error" label="Revoke" @click="revokeApiKey(account, key)" />
-                </li>
-              </ul>
-            </div>
-          </div>
-        </div>
       </UCard>
     </div>
 

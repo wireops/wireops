@@ -39,7 +39,7 @@ const navItems = computed(() => {
         { label: 'General', icon: 'i-lucide-settings-2', to: '/settings/general' },
         { label: 'Security', icon: 'i-lucide-shield', to: '/settings/security' },
         { label: 'Integrations', icon: 'i-lucide-puzzle', to: '/settings/integrations' },
-        { label: 'Users', icon: 'i-lucide-users', to: '/settings/users' },
+        { label: 'Identity', icon: 'i-lucide-users', to: '/settings/identity' },
       ]
     }]),
     { label: 'About', icon: 'i-lucide-info', to: '/about' },

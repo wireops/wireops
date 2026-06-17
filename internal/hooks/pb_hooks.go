@@ -515,7 +515,6 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 func registerAuditHooks(app core.App) {
 	auditedCollections := map[string]string{
 		core.CollectionNameSuperusers: "user",
-		"api_keys":                    "api_key",
 		"app_settings":                "app_settings",
 		"invites":                     "invite",
 		"job_env_vars":                "job_env_var",
