@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/router"
 
@@ -14,7 +13,6 @@ import (
 	wireauth "github.com/wireops/wireops/internal/auth"
 	"github.com/wireops/wireops/internal/rbac"
 )
-
 
 func RegisterServiceAccountRoutes(r *router.Router[*core.RequestEvent], app core.App) {
 	r.GET("/api/custom/service-accounts", func(e *core.RequestEvent) error {
@@ -24,21 +22,15 @@ func RegisterServiceAccountRoutes(r *router.Router[*core.RequestEvent], app core
 		}
 		result := make([]map[string]any, 0, len(accounts))
 		for _, account := range accounts {
-			keys, err := app.FindAllRecords("api_keys", dbx.HashExp{"service_account": account.Id})
-			if err != nil {
-				return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to retrieve api keys"})
-			}
-			keySummaries := make([]map[string]any, 0, len(keys))
-			for _, key := range keys {
-				keySummaries = append(keySummaries, map[string]any{
-					"id":           key.Id,
-					"name":         key.GetString("name"),
-					"key_prefix":   key.GetString("key_prefix"),
-					"expires_at":   key.GetDateTime("expires_at").String(),
-					"last_used_at": key.GetDateTime("last_used_at").String(),
-					"revoked":      key.GetBool("revoked"),
-					"created":      key.GetDateTime("created").String(),
-				})
+			var keySummary map[string]any = nil
+			if account.GetString("key_prefix") != "" {
+				keySummary = map[string]any{
+					"key_prefix":   account.GetString("key_prefix"),
+					"expires_at":   account.GetDateTime("key_expires_at").String(),
+					"last_used_at": account.GetDateTime("key_last_used_at").String(),
+					"revoked":      account.GetBool("key_revoked"),
+					"created":      account.GetDateTime("updated").String(),
+				}
 			}
 
 			createdByID := account.GetString("created_by")
@@ -59,7 +51,7 @@ func RegisterServiceAccountRoutes(r *router.Router[*core.RequestEvent], app core
 				"created_by_email": createdByEmail,
 				"created":          account.GetDateTime("created").String(),
 				"updated":          account.GetDateTime("updated").String(),
-				"keys":             keySummaries,
+				"key":              keySummary,
 			})
 		}
 		return e.JSON(http.StatusOK, result)
@@ -76,13 +68,25 @@ func RegisterServiceAccountRoutes(r *router.Router[*core.RequestEvent], app core
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid body"})
 		}
 		body.Name = strings.TrimSpace(body.Name)
+		body.Description = strings.TrimSpace(body.Description)
 		role := rbac.NormalizeRole(body.Role)
-		if body.Name == "" || role == "" {
-			return e.JSON(http.StatusBadRequest, map[string]string{"error": "name and valid role are required"})
+		if body.Name == "" {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "name is required"})
+		}
+		if body.Description == "" {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "description is required"})
+		}
+		if role != rbac.RoleViewer && role != rbac.RoleOperator {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "service accounts can only be viewers or operators"})
 		}
 		enabled := true
 		if body.Enabled != nil {
 			enabled = *body.Enabled
+		}
+
+		key, err := wireauth.GenerateAPIKey()
+		if err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to generate api key"})
 		}
 
 		col, err := app.FindCollectionByNameOrId("service_accounts")
@@ -94,18 +98,32 @@ func RegisterServiceAccountRoutes(r *router.Router[*core.RequestEvent], app core
 		rec.Set("description", body.Description)
 		rec.Set("role", role)
 		rec.Set("enabled", enabled)
+		rec.Set("key_hash", wireauth.HashAPIKey(key))
+		rec.Set("key_prefix", wireauth.APIKeyPrefix(key))
+		rec.Set("key_revoked", false)
 		if e.Auth != nil && e.Auth.Collection() != nil && e.Auth.Collection().Name == "users" {
 			rec.Set("created_by", e.Auth.Id)
 		}
 		if err := app.Save(rec); err != nil {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
+		audit.RecordRequest(app, e, audit.Event{
+			Action:       "api_key.issue",
+			ResourceType: "api_key",
+			ResourceID:   rec.Id,
+			Metadata: map[string]any{
+				"service_account": rec.Id,
+				"key_prefix":      rec.GetString("key_prefix"),
+			},
+		})
 		return e.JSON(http.StatusCreated, map[string]any{
 			"id":          rec.Id,
 			"name":        rec.GetString("name"),
 			"description": rec.GetString("description"),
 			"role":        rec.GetString("role"),
 			"enabled":     rec.GetBool("enabled"),
+			"api_key":     key,
+			"key_prefix":  rec.GetString("key_prefix"),
 		})
 	}).BindFunc(rbac.Require(rbac.CapManageSecurity))
 
@@ -126,22 +144,34 @@ func RegisterServiceAccountRoutes(r *router.Router[*core.RequestEvent], app core
 		if body.Name != nil {
 			trimmed := strings.TrimSpace(*body.Name)
 			if trimmed == "" {
-				return e.JSON(http.StatusBadRequest, map[string]string{"error": "name and valid role are required"})
+				return e.JSON(http.StatusBadRequest, map[string]string{"error": "name is required"})
 			}
 			rec.Set("name", trimmed)
 		}
 		if body.Description != nil {
-			rec.Set("description", *body.Description)
+			trimmed := strings.TrimSpace(*body.Description)
+			if trimmed == "" {
+				return e.JSON(http.StatusBadRequest, map[string]string{"error": "description is required"})
+			}
+			rec.Set("description", trimmed)
 		}
 		if body.Role != nil {
 			role := rbac.NormalizeRole(*body.Role)
-			if role == "" {
-				return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid role"})
+			if role != rbac.RoleViewer && role != rbac.RoleOperator {
+				return e.JSON(http.StatusBadRequest, map[string]string{"error": "service accounts can only be viewers or operators"})
 			}
 			rec.Set("role", role)
 		}
 		if body.Enabled != nil {
+			if *body.Enabled && !rec.GetBool("enabled") {
+				return e.JSON(http.StatusBadRequest, map[string]string{"error": "disabled service accounts cannot be re-enabled"})
+			}
 			rec.Set("enabled", *body.Enabled)
+			if !*body.Enabled {
+				rec.Set("key_hash", "")
+				rec.Set("key_prefix", "")
+				rec.Set("key_revoked", true)
+			}
 		}
 		if err := app.Save(rec); err != nil {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -150,14 +180,7 @@ func RegisterServiceAccountRoutes(r *router.Router[*core.RequestEvent], app core
 	}).BindFunc(rbac.Require(rbac.CapManageSecurity))
 
 	r.DELETE("/api/custom/service-accounts/{id}", func(e *core.RequestEvent) error {
-		rec, err := app.FindRecordById("service_accounts", e.Request.PathValue("id"))
-		if err != nil {
-			return e.JSON(http.StatusNotFound, map[string]string{"error": "service account not found"})
-		}
-		if err := app.Delete(rec); err != nil {
-			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		}
-		return e.JSON(http.StatusOK, map[string]string{"status": "deleted"})
+		return e.JSON(http.StatusBadRequest, map[string]string{"error": "deleting service accounts is not allowed to preserve audit logs; please disable the account instead"})
 	}).BindFunc(rbac.Require(rbac.CapManageSecurity))
 
 	r.POST("/api/custom/service-accounts/{id}/keys", func(e *core.RequestEvent) error {
@@ -166,79 +189,66 @@ func RegisterServiceAccountRoutes(r *router.Router[*core.RequestEvent], app core
 			return e.JSON(http.StatusNotFound, map[string]string{"error": "service account not found"})
 		}
 		var body struct {
-			Name      string  `json:"name"`
 			ExpiresAt *string `json:"expires_at"`
 		}
-		if err := json.NewDecoder(e.Request.Body).Decode(&body); err != nil {
+		if err := json.NewDecoder(e.Request.Body).Decode(&body); err != nil && err.Error() != "EOF" {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid body"})
-		}
-		body.Name = strings.TrimSpace(body.Name)
-		if body.Name == "" {
-			return e.JSON(http.StatusBadRequest, map[string]string{"error": "name is required"})
 		}
 
 		key, err := wireauth.GenerateAPIKey()
 		if err != nil {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to generate api key"})
 		}
-		col, err := app.FindCollectionByNameOrId("api_keys")
-		if err != nil {
-			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "api_keys collection not found"})
-		}
-		rec := core.NewRecord(col)
-		rec.Set("service_account", account.Id)
-		rec.Set("name", body.Name)
-		rec.Set("key_hash", wireauth.HashAPIKey(key))
-		rec.Set("key_prefix", wireauth.APIKeyPrefix(key))
-		rec.Set("revoked", false)
-		if e.Auth != nil {
-			rec.Set("created_by", e.Auth.Id)
-		}
+
+		account.Set("key_hash", wireauth.HashAPIKey(key))
+		account.Set("key_prefix", wireauth.APIKeyPrefix(key))
+		account.Set("key_revoked", false)
 		if body.ExpiresAt != nil && strings.TrimSpace(*body.ExpiresAt) != "" {
 			parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(*body.ExpiresAt))
 			if err != nil {
 				return e.JSON(http.StatusBadRequest, map[string]string{"error": "expires_at must be RFC3339"})
 			}
-			rec.Set("expires_at", parsed)
+			account.Set("key_expires_at", parsed)
+		} else {
+			account.Set("key_expires_at", nil)
 		}
-		if err := app.Save(rec); err != nil {
+		if err := app.Save(account); err != nil {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
 		audit.RecordRequest(app, e, audit.Event{
 			Action:       "api_key.issue",
 			ResourceType: "api_key",
-			ResourceID:   rec.Id,
+			ResourceID:   account.Id,
 			Metadata: map[string]any{
 				"service_account": account.Id,
-				"key_prefix":      rec.GetString("key_prefix"),
+				"key_prefix":      account.GetString("key_prefix"),
 			},
 		})
 		return e.JSON(http.StatusCreated, map[string]any{
-			"id":         rec.Id,
+			"id":         account.Id,
 			"api_key":    key,
-			"key_prefix": rec.GetString("key_prefix"),
+			"key_prefix": account.GetString("key_prefix"),
 		})
 	}).BindFunc(rbac.Require(rbac.CapManageSecurity))
 
-	r.DELETE("/api/custom/service-accounts/{id}/keys/{keyId}", func(e *core.RequestEvent) error {
-		rec, err := app.FindRecordById("api_keys", e.Request.PathValue("keyId"))
-		if err != nil || rec.GetString("service_account") != e.Request.PathValue("id") {
-			return e.JSON(http.StatusNotFound, map[string]string{"error": "api key not found"})
+	r.DELETE("/api/custom/service-accounts/{id}/keys", func(e *core.RequestEvent) error {
+		account, err := app.FindRecordById("service_accounts", e.Request.PathValue("id"))
+		if err != nil {
+			return e.JSON(http.StatusNotFound, map[string]string{"error": "service account not found"})
 		}
-		rec.Set("revoked", true)
-		if err := app.Save(rec); err != nil {
+		account.Set("key_revoked", true)
+		if err := app.Save(account); err != nil {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
 		audit.RecordRequest(app, e, audit.Event{
 			Action:       "api_key.revoke",
 			ResourceType: "api_key",
-			ResourceID:   rec.Id,
+			ResourceID:   account.Id,
 			Metadata: map[string]any{
-				"service_account": e.Request.PathValue("id"),
-				"key_prefix":      rec.GetString("key_prefix"),
+				"service_account": account.Id,
+				"key_prefix":      account.GetString("key_prefix"),
 			},
 		})
 		return e.JSON(http.StatusOK, map[string]string{"status": "revoked"})
 	}).BindFunc(rbac.Require(rbac.CapManageSecurity))
 }
-

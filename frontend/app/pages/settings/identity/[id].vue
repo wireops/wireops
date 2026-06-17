@@ -48,9 +48,9 @@ async function toggleDisabled() {
     <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
       <div>
         <UButton
-          to="/settings/users"
+          to="/settings/identity"
           icon="i-lucide-arrow-left"
-          label="Back to Users"
+          label="Back to Identity"
           variant="ghost"
           color="neutral"
           class="-ml-2 mb-2"

@@ -27,9 +27,6 @@ func init() {
 		if err := createServiceAccounts(app); err != nil {
 			return err
 		}
-		if err := createAPIKeys(app); err != nil {
-			return err
-		}
 		if err := addRoleToSSOUsers(app); err != nil {
 			return err
 		}
@@ -52,10 +49,10 @@ func init() {
 			return err
 		}
 
-		log.Println("[MIGRATE] Added RBAC users, service accounts, API keys and SSO group role mappings")
+		log.Println("[MIGRATE] Added RBAC users, service accounts and SSO group role mappings")
 		return nil
 	}, func(app core.App) error {
-		for _, name := range []string{"api_keys", "service_accounts", "sso_group_roles", "users"} {
+		for _, name := range []string{"service_accounts", "sso_group_roles", "users"} {
 			if col, err := app.FindCollectionByNameOrId(name); err == nil {
 				if err := app.Delete(col); err != nil {
 					return err
@@ -115,6 +112,15 @@ func createRBACUsers(app core.App) error {
 	return app.Save(col)
 }
 
+func serviceAccountRoleSelectField() *core.SelectField {
+	return &core.SelectField{
+		Name:      "role",
+		Required:  false,
+		MaxSelect: 1,
+		Values:    []string{"viewer", "operator"},
+	}
+}
+
 func createServiceAccounts(app core.App) error {
 	if _, err := app.FindCollectionByNameOrId("service_accounts"); err == nil {
 		return nil
@@ -127,48 +133,27 @@ func createServiceAccounts(app core.App) error {
 
 	col := core.NewBaseCollection("service_accounts")
 	col.Fields.Add(&core.TextField{Name: "name", Required: true})
-	col.Fields.Add(&core.TextField{Name: "description"})
-	col.Fields.Add(roleSelectField())
+	col.Fields.Add(&core.TextField{Name: "description", Required: true})
+	col.Fields.Add(serviceAccountRoleSelectField())
 	col.Fields.Add(&core.BoolField{Name: "enabled"})
 	col.Fields.Add(&core.RelationField{Name: "created_by", CollectionId: users.Id, MaxSelect: 1})
+	
+	// Embedded API Key fields
+	col.Fields.Add(&core.TextField{Name: "key_hash", Hidden: true})
+	col.Fields.Add(&core.TextField{Name: "key_prefix"})
+	col.Fields.Add(&core.DateField{Name: "key_expires_at"})
+	col.Fields.Add(&core.DateField{Name: "key_last_used_at"})
+	col.Fields.Add(&core.BoolField{Name: "key_revoked"})
+
 	addAutoDateFields(col)
+
+	col.AddIndex("idx_service_accounts_key_hash_unique", true, "key_hash", "key_hash != ''")
+	col.AddIndex("idx_service_accounts_name_unique", true, "name", "")
 
 	col.ListRule = strPtr(rbacAdminRule)
 	col.ViewRule = strPtr(rbacAdminRule)
 	col.CreateRule = strPtr(rbacAdminRule)
 	col.UpdateRule = strPtr(rbacAdminRule)
-	col.DeleteRule = strPtr(rbacAdminRule)
-
-	return app.Save(col)
-}
-
-func createAPIKeys(app core.App) error {
-	if _, err := app.FindCollectionByNameOrId("api_keys"); err == nil {
-		return nil
-	}
-
-	accounts, err := app.FindCollectionByNameOrId("service_accounts")
-	if err != nil {
-		return err
-	}
-
-	col := core.NewBaseCollection("api_keys")
-	col.Fields.Add(&core.RelationField{Name: "service_account", CollectionId: accounts.Id, Required: true, MaxSelect: 1})
-	col.Fields.Add(&core.TextField{Name: "name", Required: true})
-	col.Fields.Add(&core.TextField{Name: "key_hash", Required: true, Hidden: true})
-	col.Fields.Add(&core.TextField{Name: "key_prefix", Required: true})
-	col.Fields.Add(&core.DateField{Name: "expires_at"})
-	col.Fields.Add(&core.DateField{Name: "last_used_at"})
-	col.Fields.Add(&core.BoolField{Name: "revoked"})
-	col.Fields.Add(&core.TextField{Name: "created_by"})
-	addAutoDateFields(col)
-	col.AddIndex("idx_api_keys_hash_unique", true, "key_hash", "")
-	col.AddIndex("idx_api_keys_service_account_created", false, "service_account, created", "")
-
-	col.ListRule = nil
-	col.ViewRule = nil
-	col.CreateRule = nil
-	col.UpdateRule = nil
 	col.DeleteRule = nil
 
 	return app.Save(col)
