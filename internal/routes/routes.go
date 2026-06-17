@@ -1313,117 +1313,6 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		return e.JSON(http.StatusOK, map[string]string{"status": "purged"})
 	}).BindFunc(rbac.Require(rbac.CapManageSettings))
 
-	// --- Sync event webhook (global singleton) ---
-
-	// GET: return current config (secret masked)
-	r.GET("/api/custom/sync-events-webhook", func(e *core.RequestEvent) error {
-		records, err := app.FindAllRecords("stack_sync_events")
-		if err != nil || len(records) == 0 {
-			return e.JSON(http.StatusOK, nil)
-		}
-		rec := records[0]
-		return e.JSON(http.StatusOK, map[string]interface{}{
-			"id":            rec.Id,
-			"provider":      rec.GetString("provider"),
-			"url":           rec.GetString("url"),
-			"secret":        notify.MaskSecret(rec.GetString("secret")),
-			"events":        rec.GetStringSlice("events"),
-			"headers":       rec.GetString("headers"),
-			"enabled":       rec.GetBool("enabled"),
-			"ntfy_user":     rec.GetString("ntfy_user"),
-			"ntfy_topic":    rec.GetString("ntfy_topic"),
-			"ntfy_template": rec.GetString("ntfy_template"),
-		})
-	}).BindFunc(rbac.Require(rbac.CapManageSettings))
-
-	// PUT: upsert provider config (enabled flag is managed separately via PATCH)
-	r.PUT("/api/custom/sync-events-webhook", func(e *core.RequestEvent) error {
-		var body struct {
-			Provider     string   `json:"provider"`
-			URL          string   `json:"url"`
-			Secret       string   `json:"secret"`
-			Events       []string `json:"events"`
-			Headers      string   `json:"headers"`
-			NtfyUser     string   `json:"ntfy_user"`
-			NtfyTopic    string   `json:"ntfy_topic"`
-			NtfyTemplate string   `json:"ntfy_template"`
-		}
-		if err := json.NewDecoder(e.Request.Body).Decode(&body); err != nil {
-			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid body"})
-		}
-
-		records, _ := app.FindAllRecords("stack_sync_events")
-		var rec *core.Record
-		if len(records) > 0 {
-			rec = records[0]
-		} else {
-			col, err := app.FindCollectionByNameOrId("stack_sync_events")
-			if err != nil {
-				return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
-			}
-			rec = core.NewRecord(col)
-		}
-
-		rec.Set("provider", body.Provider)
-		rec.Set("url", body.URL)
-		rec.Set("events", body.Events)
-		rec.Set("ntfy_user", body.NtfyUser)
-		rec.Set("ntfy_topic", body.NtfyTopic)
-		rec.Set("ntfy_template", body.NtfyTemplate)
-		if body.Headers == "" {
-			body.Headers = "[]"
-		}
-		rec.Set("headers", body.Headers)
-		// Only update secret if a non-masked value is provided.
-		if body.Secret != "" && body.Secret != notify.MaskSecret(body.Secret) {
-			rec.Set("secret", body.Secret)
-		}
-
-		if err := app.Save(rec); err != nil {
-			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		}
-		return e.JSON(http.StatusOK, map[string]string{"status": "saved"})
-	}).BindFunc(rbac.Require(rbac.CapManageSettings))
-
-	// PATCH: toggle notifications enabled at the settings level
-	r.PATCH("/api/custom/sync-events-webhook/enabled", func(e *core.RequestEvent) error {
-		var body struct {
-			Enabled bool `json:"enabled"`
-		}
-		if err := json.NewDecoder(e.Request.Body).Decode(&body); err != nil {
-			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid body"})
-		}
-
-		records, _ := app.FindAllRecords("stack_sync_events")
-		var rec *core.Record
-		if len(records) > 0 {
-			rec = records[0]
-		} else {
-			col, err := app.FindCollectionByNameOrId("stack_sync_events")
-			if err != nil {
-				return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
-			}
-			rec = core.NewRecord(col)
-		}
-
-		rec.Set("enabled", body.Enabled)
-		if err := app.Save(rec); err != nil {
-			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		}
-		return e.JSON(http.StatusOK, map[string]string{"status": "saved"})
-	}).BindFunc(rbac.Require(rbac.CapManageSettings))
-
-	// DELETE: remove config
-	r.DELETE("/api/custom/sync-events-webhook", func(e *core.RequestEvent) error {
-		records, err := app.FindAllRecords("stack_sync_events")
-		if err != nil || len(records) == 0 {
-			return e.JSON(http.StatusOK, map[string]string{"status": "not_found"})
-		}
-		if err := app.Delete(records[0]); err != nil {
-			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		}
-		return e.JSON(http.StatusOK, map[string]string{"status": "deleted"})
-	}).BindFunc(rbac.Require(rbac.CapManageSettings))
 
 	// Discover unmanaged Docker Compose projects on a given worker host
 	r.GET("/api/custom/stacks/import/discover", func(e *core.RequestEvent) error {
@@ -1563,6 +1452,11 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 
 				var cfg map[string]interface{}
 				if err := rec.UnmarshalJSONField("config", &cfg); err == nil && cfg != nil {
+					if slug == "webhook" || slug == "ntfy" {
+						if secretVal, ok := cfg["secret"].(string); ok && secretVal != "" {
+							cfg["secret"] = notify.MaskSecret(secretVal)
+						}
+					}
 					item.Config = cfg
 				}
 			}
@@ -1587,6 +1481,31 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid body"})
 		}
 
+		// Handle secret masking: if secret is "••••••••", load the existing record and preserve the secret
+		if body.Config != nil {
+			if secretVal, ok := body.Config["secret"].(string); ok && secretVal == "••••••••" {
+				recs, err := app.FindAllRecords("integrations", dbx.HashExp{"slug": slug})
+				if err != nil {
+					return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to query existing integration record: " + err.Error()})
+				}
+				if len(recs) == 0 {
+					return e.JSON(http.StatusBadRequest, map[string]string{"error": "cannot resolve masked secret: no existing integration record found"})
+				}
+				var savedConfig map[string]interface{}
+				if err := recs[0].UnmarshalJSONField("config", &savedConfig); err != nil {
+					return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to unmarshal existing configuration: " + err.Error()})
+				}
+				if savedConfig == nil {
+					return e.JSON(http.StatusBadRequest, map[string]string{"error": "cannot resolve masked secret: existing configuration is empty"})
+				}
+				savedSecret, ok := savedConfig["secret"].(string)
+				if !ok || savedSecret == "" {
+					return e.JSON(http.StatusBadRequest, map[string]string{"error": "cannot resolve masked secret: no secret found in existing configuration"})
+				}
+				body.Config["secret"] = savedSecret
+			}
+		}
+
 		col, err := app.FindCollectionByNameOrId("integrations")
 		if err != nil {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -1606,6 +1525,13 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 
 		if err := app.Save(rec); err != nil {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+
+		// Return masked config if it has secret
+		if body.Config != nil {
+			if secretVal, ok := body.Config["secret"].(string); ok && secretVal != "" {
+				body.Config["secret"] = "••••••••"
+			}
 		}
 
 		return e.JSON(http.StatusOK, map[string]interface{}{
@@ -1721,53 +1647,47 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 
 	RegisterUserRoutes(r, app)
 
-	// POST /test: send a sync.test event to the configured URL
-	r.POST("/api/custom/sync-events-webhook/test", func(e *core.RequestEvent) error {
-		notifier := notify.New(app)
-
-		// 1. Load existing config (if any)
-		cfg, err := notifier.LoadConfig()
-		if err != nil {
-			// No saved config, start fresh
-			cfg = &notify.Config{}
+	// POST /api/custom/integrations/{slug}/test: send a sync.test event using the provided config
+	r.POST("/api/custom/integrations/{slug}/test", func(e *core.RequestEvent) error {
+		slug := e.Request.PathValue("slug")
+		if slug != "webhook" && slug != "ntfy" {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "only webhook and ntfy integrations can be tested"})
 		}
 
-		// 2. Parse request body for overrides
 		var body struct {
-			Provider     string `json:"provider"`
-			URL          string `json:"url"`
-			Secret       string `json:"secret"`
-			Headers      string `json:"headers"`
-			NtfyUser     string `json:"ntfy_user"`
-			NtfyTopic    string `json:"ntfy_topic"`
-			NtfyTemplate string `json:"ntfy_template"`
+			Enabled bool                   `json:"enabled"`
+			Config  map[string]interface{} `json:"config"`
 		}
-		if err := json.NewDecoder(e.Request.Body).Decode(&body); err == nil {
-			if body.Provider != "" {
-				cfg.Provider = body.Provider
-			}
-			if body.URL != "" {
-				cfg.URL = body.URL
-			}
-			if body.Secret != "" && body.Secret != notify.MaskSecret(body.Secret) {
-				cfg.Secret = body.Secret
-			}
-			if body.Headers != "" {
-				cfg.Headers = notify.UnmarshalHeaders(body.Headers)
-			}
-			if body.NtfyUser != "" {
-				cfg.NtfyUser = body.NtfyUser
-			}
-			if body.NtfyTopic != "" {
-				cfg.NtfyTopic = body.NtfyTopic
-			}
-			if body.NtfyTemplate != "" {
-				cfg.NtfyTemplate = body.NtfyTemplate
-			}
+		if err := json.NewDecoder(e.Request.Body).Decode(&body); err != nil {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid body"})
 		}
 
-		// Force enable for test
-		cfg.Enabled = true
+		// Handle secret masking: if user passes "••••••••", load the existing secret from the DB.
+		if secretVal, ok := body.Config["secret"].(string); ok && secretVal == "••••••••" {
+			recs, err := app.FindAllRecords("integrations", dbx.HashExp{"slug": slug})
+			if err != nil {
+				return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to query existing integration record: " + err.Error()})
+			}
+			if len(recs) == 0 {
+				return e.JSON(http.StatusBadRequest, map[string]string{"error": "cannot resolve masked secret: no existing integration record found"})
+			}
+			var savedConfig map[string]interface{}
+			if err := recs[0].UnmarshalJSONField("config", &savedConfig); err != nil {
+				return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to unmarshal existing configuration: " + err.Error()})
+			}
+			if savedConfig == nil {
+				return e.JSON(http.StatusBadRequest, map[string]string{"error": "cannot resolve masked secret: existing configuration is empty"})
+			}
+			savedSecret, ok := savedConfig["secret"].(string)
+			if !ok || savedSecret == "" {
+				return e.JSON(http.StatusBadRequest, map[string]string{"error": "cannot resolve masked secret: no secret found in existing configuration"})
+			}
+			body.Config["secret"] = savedSecret
+		}
+
+		notifier := notify.New(app)
+		cfg := notifier.BuildConfig(slug, body.Config)
+		cfg.Enabled = true // Force enable for test
 
 		payload := notify.Payload{
 			Event:     notify.SyncTest,

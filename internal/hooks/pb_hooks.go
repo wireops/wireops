@@ -523,7 +523,7 @@ func registerAuditHooks(app core.App) {
 		"repository_keys":             "repository_key",
 		"scheduled_jobs":              "scheduled_job",
 		"stack_env_vars":              "stack_env_var",
-		"stack_sync_events":           "stack_sync_events",
+		"integrations":                 "integration",
 		"stacks":                      "stack",
 		"service_accounts":            "service_account",
 		"sso_group_roles":             "sso_group_role",

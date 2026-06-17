@@ -15,7 +15,7 @@ export interface Integration {
 }
 
 export function useIntegrations() {
-    const { customGet, customPut, customDelete } = useApi()
+    const { customGet, customPut, customDelete, customPost } = useApi()
 
     async function getIntegrations() {
         return customGet<Integration[]>('/api/custom/integrations')
@@ -32,6 +32,13 @@ export function useIntegrations() {
         return customDelete<{ status: string }>(`/api/custom/integrations/${slug}`)
     }
 
+    async function testIntegration(slug: 'webhook' | 'ntfy', config: Record<string, any>) {
+        return customPost<{ status: string }>(`/api/custom/integrations/${slug}/test`, {
+            enabled: true,
+            config
+        })
+    }
+
     async function getStackIntegrationActions(stackId: string) {
         return customGet<Record<string, IntegrationAction[]>>(
             `/api/custom/stacks/${stackId}/integration-actions`
@@ -42,6 +49,7 @@ export function useIntegrations() {
         getIntegrations,
         saveIntegration,
         deleteIntegration,
+        testIntegration,
         getStackIntegrationActions,
     }
 }

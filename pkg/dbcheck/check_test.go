@@ -126,7 +126,6 @@ func createConsistentFixture(t *testing.T, app core.App) dbCheckFixture {
 	mustCreateDBCheckRecord(t, app, "stack_revisions", map[string]any{"stack": stack.Id, "version": 1, "commit_sha": "abc", "checksum": "def", "compose_path": "deploy"})
 	mustCreateDBCheckRecord(t, app, "stack_pending_reconciles", map[string]any{"stack": stack.Id, "trigger": "manual"})
 	mustCreateDBCheckRecord(t, app, "sync_logs", map[string]any{"stack": stack.Id, "trigger": "manual", "status": "success"})
-	mustCreateDBCheckRecord(t, app, "stack_sync_events", map[string]any{"provider": "webhook", "enabled": false})
 	mustCreateDBCheckRecord(t, app, "job_env_vars", map[string]any{"job": job.Id, "key": "BACKUP_PATH", "value": "/backup"})
 	mustCreateDBCheckRecord(t, app, "job_runs", map[string]any{"job": job.Id, "worker": worker.Id, "trigger": "manual", "status": "success"})
 	mustCreateDBCheckRecord(t, app, "worker_policies", map[string]any{"enabled": true})
@@ -201,10 +200,6 @@ func createDBCheckCollections(t *testing.T, app core.App) {
 		mustSaveDBCheckCollection(t, app, collection)
 	}
 
-	collection = core.NewBaseCollection("stack_sync_events")
-	collection.Fields.Add(&core.TextField{Name: "provider"})
-	collection.Fields.Add(&core.BoolField{Name: "enabled"})
-	mustSaveDBCheckCollection(t, app, collection)
 
 	collection = core.NewBaseCollection("job_env_vars")
 	collection.Fields.Add(&core.RelationField{Name: "job", CollectionId: jobs.Id, MaxSelect: 1})

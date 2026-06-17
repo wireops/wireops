@@ -58,7 +58,6 @@ var expectedCollections = []string{
 	"stack_revisions",
 	"stack_pending_reconciles",
 	"sync_logs",
-	"stack_sync_events",
 	"scheduled_jobs",
 	"job_env_vars",
 	"job_runs",
@@ -250,7 +249,7 @@ func (r *Result) checkSafePaths(snapshots map[string]collectionSnapshot) {
 }
 
 func (r *Result) checkSingletons(snapshots map[string]collectionSnapshot) {
-	for _, collection := range []string{"stack_sync_events", "worker_policies"} {
+	for _, collection := range []string{"worker_policies"} {
 		snapshot, ok := snapshots[collection]
 		if !ok {
 			continue

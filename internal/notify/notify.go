@@ -2,13 +2,12 @@ package notify
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 )
 
@@ -34,13 +33,7 @@ type Payload struct {
 	Error      string `json:"error,omitempty"`
 }
 
-// header is a key/value pair stored in the `headers` JSON field of stack_sync_events.
-type header struct {
-	Key   string `json:"key"`
-	Value string `json:"value"`
-}
-
-// Notifier dispatches outgoing webhook notifications for sync job events.
+// Notifier dispatches outgoing notifications for sync job events.
 type Notifier struct {
 	app    core.App
 	client *http.Client
@@ -56,8 +49,7 @@ func New(app core.App) *Notifier {
 	}
 }
 
-// Dispatch sends a notification for the given event if the global
-// stack_sync_events config is enabled and the event is subscribed.
+// Dispatch sends a notification for the given event to all enabled notification integrations.
 // It is fire-and-forget: failures are only logged, never returned.
 func (n *Notifier) Dispatch(ctx context.Context, p Payload) {
 	go func() {
@@ -82,54 +74,89 @@ func (n *Notifier) DispatchWithConfig(ctx context.Context, cfg *Config, p Payloa
 }
 
 func (n *Notifier) dispatch(ctx context.Context, p Payload) error {
-	cfg, err := n.LoadConfig()
+	recs, err := n.app.FindAllRecords("integrations", dbx.HashExp{"enabled": true})
 	if err != nil {
-		// No config — silently skip.
-		return nil
-	}
-	if !cfg.Enabled {
-		return nil
+		return err
 	}
 
-	provider := NewProvider(n.client, cfg.Provider)
-	return provider.Send(cfg, p)
-}
+	for _, rec := range recs {
+		slug := rec.GetString("slug")
+		if slug != "webhook" && slug != "ntfy" {
+			continue
+		}
 
-func (n *Notifier) LoadConfig() (*Config, error) {
-	records, err := n.app.FindAllRecords("stack_sync_events")
-	if err != nil || len(records) == 0 {
-		return nil, fmt.Errorf("no config")
-	}
-	rec := records[0]
+		var configMap map[string]interface{}
+		if err := rec.UnmarshalJSONField("config", &configMap); err != nil {
+			log.Printf("[notify] failed to unmarshal integration %s config: %v", slug, err)
+			continue
+		}
 
-	cfg := &Config{
-		Provider:     rec.GetString("provider"),
-		URL:          rec.GetString("url"),
-		Secret:       rec.GetString("secret"),
-		Enabled:      rec.GetBool("enabled"),
-		NtfyUser:     rec.GetString("ntfy_user"),
-		NtfyTopic:    rec.GetString("ntfy_topic"),
-		NtfyTemplate: rec.GetString("ntfy_template"),
-	}
+		cfg := n.BuildConfig(slug, configMap)
+		if cfg == nil {
+			continue
+		}
 
-	// Default to webhook if provider is empty
-	if cfg.Provider == "" {
-		cfg.Provider = "webhook"
-	}
+		if !cfg.Subscribes(p.Event) {
+			continue
+		}
 
-	// Parse events multiselect.
-	cfg.Events = rec.GetStringSlice("events")
-
-	// Parse headers JSON field.
-	rawHeaders := rec.GetString("headers")
-	if rawHeaders != "" && rawHeaders != "null" {
-		var headers []Header
-		if err := json.Unmarshal([]byte(rawHeaders), &headers); err == nil {
-			cfg.Headers = headers
+		provider := NewProvider(n.client, cfg.Provider)
+		if err := provider.Send(cfg, p); err != nil {
+			log.Printf("[notify] dispatch to %s failed: %v", slug, err)
 		}
 	}
 
-	return cfg, nil
+	return nil
+}
+
+// BuildConfig maps database JSON config map to the local Config struct.
+func (n *Notifier) BuildConfig(slug string, configMap map[string]interface{}) *Config {
+	cfg := &Config{
+		Provider: slug,
+		Enabled:  true,
+	}
+
+	if eventsRaw, ok := configMap["events"].([]interface{}); ok {
+		for _, e := range eventsRaw {
+			if eStr, ok := e.(string); ok {
+				cfg.Events = append(cfg.Events, eStr)
+			}
+		}
+	}
+
+	if urlVal, ok := configMap["url"].(string); ok {
+		cfg.URL = urlVal
+	}
+
+	if secretVal, ok := configMap["secret"].(string); ok {
+		cfg.Secret = secretVal
+	}
+
+	if slug == "webhook" {
+		if headersRaw, ok := configMap["headers"].([]interface{}); ok {
+			for _, h := range headersRaw {
+				if hMap, ok := h.(map[string]interface{}); ok {
+					key, _ := hMap["key"].(string)
+					val, _ := hMap["value"].(string)
+					if key != "" {
+						cfg.Headers = append(cfg.Headers, Header{Key: key, Value: val})
+					}
+				}
+			}
+		}
+	} else if slug == "ntfy" {
+		if userVal, ok := configMap["user"].(string); ok {
+			cfg.NtfyUser = userVal
+		}
+		if topicVal, ok := configMap["topic"].(string); ok {
+			cfg.NtfyTopic = topicVal
+		}
+		if templateVal, ok := configMap["template"].(string); ok {
+			cfg.NtfyTemplate = templateVal
+		}
+	}
+
+	return cfg
 }
 
 // MaskSecret returns a masked representation of the secret for API responses.
