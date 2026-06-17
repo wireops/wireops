@@ -1,6 +1,6 @@
 services:
   wireops:
-    image: ghcr.io/wireops/wireops:latest
+    image: ghcr.io/wireops/server:latest
     restart: unless-stopped
     ports:
       - "${PORT:-8090}:8090"

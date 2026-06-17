@@ -95,7 +95,7 @@ const workerBootstrapCommand = computed(() =>
   `docker run -d \\
   -e WIREOPS_SERVER=https://your-wireops-server.local \\
   -e WIREOPS_WORKER_TOKEN=${issuedToken.value} \\
-  ghcr.io/wireops/wireops-worker:latest`
+  ghcr.io/wireops/worker:latest`
 )
 
 

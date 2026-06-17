@@ -1,7 +1,7 @@
 # wireops Worker — docker-compose deployment
 services:
   wireops-worker:
-    image: ghcr.io/wireops/wireops-worker:latest
+    image: ghcr.io/wireops/worker:latest
     restart: unless-stopped
     environment:
       # Address of the wireops server
