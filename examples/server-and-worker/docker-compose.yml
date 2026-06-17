@@ -1,6 +1,6 @@
 services:
   wireops:
-    image: ghcr.io/wireops/wireops:latest
+    image: ghcr.io/wireops/server:latest
     restart: unless-stopped
     ports:
       # PORT: UI, API, and GET /metrics (Prometheus scrape target)
@@ -19,7 +19,7 @@ services:
       - .env
 
   wireops-worker:
-    image: ghcr.io/wireops/wireops-worker:latest
+    image: ghcr.io/wireops/worker:latest
     restart: unless-stopped
     depends_on:
       - wireops
