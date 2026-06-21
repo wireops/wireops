@@ -27,13 +27,15 @@ async function instanceNeedsSetup(): Promise<boolean | null> {
     return cachedNeedsSetup
   }
 
-  if (inflightNeedsSetupCheck) {
+  if (inflightNeedsSetupCheck !== null) {
     return inflightNeedsSetupCheck
   }
 
   inflightNeedsSetupCheck = fetchInstanceNeedsSetup().then((result) => {
     cachedNeedsSetup = result
-    cachedNeedsSetupAt = Date.now()
+    if (result !== null) {
+      cachedNeedsSetupAt = Date.now()
+    }
     return result
   }).finally(() => {
     inflightNeedsSetupCheck = null
