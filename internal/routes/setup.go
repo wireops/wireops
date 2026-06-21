@@ -1,11 +1,12 @@
 package routes
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
-	"net"
 	"net/http"
 	"net/mail"
+	"os"
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
@@ -14,53 +15,77 @@ import (
 
 func RegisterSetupRoutes(r *router.Router[*core.RequestEvent], app core.App) {
 	r.GET("/api/custom/setup/status", handleSetupStatus(app))
-	r.POST("/api/custom/setup", localhostOnly(handleSetupCreate(app)))
+	r.POST("/api/custom/setup", handleSetupCreate(app))
 }
 
-// localhostOnly is a middleware that restricts a handler to requests originating
-// from the loopback interface. This protects the setup endpoint from being
-// triggered by a remote client before the legitimate admin has a chance to act.
-//
-// When wireops is deployed inside Docker with published ports, requests from a
-// host browser arrive via the Docker bridge network (not 127.0.0.1). In that
-// case bind the port to the host loopback instead: -p 127.0.0.1:8090:8090.
-func localhostOnly(next func(*core.RequestEvent) error) func(*core.RequestEvent) error {
-	return func(e *core.RequestEvent) error {
-		host, _, err := net.SplitHostPort(e.Request.RemoteAddr)
-		if err != nil {
-			host = e.Request.RemoteAddr
-		}
-		ip := net.ParseIP(host)
-		if ip == nil || !ip.IsLoopback() {
-			return e.JSON(http.StatusForbidden, map[string]string{"error": "setup endpoint is only accessible from localhost"})
-		}
-		return next(e)
+type setupStatus struct {
+	NeedsSetup             bool   `json:"needsSetup"`
+	SetupAllowed           bool   `json:"setupAllowed"`
+	Reason                 string `json:"reason"`
+	RequiresBootstrapToken bool   `json:"requiresBootstrapToken"`
+}
+
+func currentSetupStatus(app core.App) (setupStatus, error) {
+	count, err := countRealUsers(app)
+	if err != nil {
+		return setupStatus{
+			NeedsSetup:             false,
+			SetupAllowed:           false,
+			Reason:                 "unknown",
+			RequiresBootstrapToken: false,
+		}, err
 	}
+
+	if count > 0 {
+		return setupStatus{
+			NeedsSetup:             false,
+			SetupAllowed:           false,
+			Reason:                 "already_configured",
+			RequiresBootstrapToken: false,
+		}, nil
+	}
+
+	token := os.Getenv("BOOTSTRAP_TOKEN")
+	if token == "" {
+		return setupStatus{
+			NeedsSetup:             true,
+			SetupAllowed:           false,
+			Reason:                 "missing_bootstrap_token",
+			RequiresBootstrapToken: true,
+		}, nil
+	}
+
+	return setupStatus{
+		NeedsSetup:             true,
+		SetupAllowed:           true,
+		Reason:                 "",
+		RequiresBootstrapToken: true,
+	}, nil
 }
 
 func handleSetupStatus(app core.App) func(*core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
-		count, err := countRealUsers(app)
+		status, err := currentSetupStatus(app)
 		if err != nil {
-			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to check setup status"})
+			return e.JSON(http.StatusInternalServerError, status)
 		}
-		return e.JSON(http.StatusOK, map[string]bool{"needsSetup": count == 0})
+		return e.JSON(http.StatusOK, status)
 	}
 }
 
 func handleSetupCreate(app core.App) func(*core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
 		var body struct {
-			Email           string `json:"email"`
-			Password        string `json:"password"`
-			PasswordConfirm string `json:"passwordConfirm"`
+			Email          string `json:"email"`
+			Password       string `json:"password"`
+			BootstrapToken string `json:"bootstrapToken"`
 		}
 		if err := json.NewDecoder(e.Request.Body).Decode(&body); err != nil {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		}
 
-		if body.Email == "" || body.Password == "" || body.PasswordConfirm == "" {
-			return e.JSON(http.StatusBadRequest, map[string]string{"error": "email, password and passwordConfirm are required"})
+		if body.Email == "" || body.Password == "" || body.BootstrapToken == "" {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "email, password and bootstrapToken are required"})
 		}
 		if _, err := mail.ParseAddress(body.Email); err != nil {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid email address"})
@@ -68,8 +93,19 @@ func handleSetupCreate(app core.App) func(*core.RequestEvent) error {
 		if len(body.Password) < 8 {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "password must be at least 8 characters"})
 		}
-		if body.Password != body.PasswordConfirm {
-			return e.JSON(http.StatusBadRequest, map[string]string{"error": "passwords do not match"})
+
+		status, err := currentSetupStatus(app)
+		if err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		}
+		if !status.NeedsSetup {
+			return e.JSON(http.StatusForbidden, map[string]string{"error": "setup has already been completed"})
+		}
+		if status.Reason == "missing_bootstrap_token" {
+			return e.JSON(http.StatusForbidden, map[string]string{"error": "bootstrap token is not configured"})
+		}
+		if subtle.ConstantTimeCompare([]byte(body.BootstrapToken), []byte(os.Getenv("BOOTSTRAP_TOKEN"))) != 1 {
+			return e.JSON(http.StatusForbidden, map[string]string{"error": "invalid bootstrap token"})
 		}
 
 		// Run the guard-check and record creation in a single transaction to
