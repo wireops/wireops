@@ -24,15 +24,42 @@ dev:
 		echo "  wireops Worker:    Enabled"; \
 	fi
 	@echo "========================================"
-	@trap 'kill 0' SIGINT; \
-	go run . serve --http=0.0.0.0:8090 & \
-	sleep 2 && cd $(FRONTEND_DIR) && npm run dev & \
+	@backend_pid=""; \
+	frontend_pid=""; \
+	worker_pid=""; \
+	stop_pid() { \
+		pid="$$1"; \
+		sig="$$2"; \
+		if [ -n "$$pid" ] && kill -0 "$$pid" 2>/dev/null; then \
+			kill -s "$$sig" "$$pid" 2>/dev/null || true; \
+		fi; \
+	}; \
+	cleanup() { \
+		trap - INT TERM EXIT; \
+		stop_pid "$$worker_pid" INT; \
+		stop_pid "$$frontend_pid" INT; \
+		stop_pid "$$backend_pid" INT; \
+		sleep 1; \
+		stop_pid "$$worker_pid" TERM; \
+		stop_pid "$$frontend_pid" TERM; \
+		stop_pid "$$backend_pid" TERM; \
+		wait $$worker_pid $$frontend_pid $$backend_pid 2>/dev/null || true; \
+	}; \
+	trap 'cleanup; exit 130' INT TERM; \
+	trap 'cleanup' EXIT; \
+	go run . serve --http=0.0.0.0:8090 >/dev/stdout 2>/dev/stderr & \
+	backend_pid=$$!; \
+	sleep 2; \
+	sh -c 'cd $(FRONTEND_DIR) && exec npm run dev' >/dev/stdout 2>/dev/stderr & \
+	frontend_pid=$$!; \
 	if [ "$$START_WORKER" = "true" ] || [ -n "$$WORKER_TOKEN" ] || [ -n "$$BOOTSTRAP_TOKEN" ]; then \
 		export SERVER_URL="$${SERVER_URL:-http://localhost:8443}"; \
 		echo "[Dev] Waiting 4s for server to start before launching worker..."; \
-		sleep 4 && go run ./worker/main.go & \
+		sleep 4; \
+		go run ./worker/main.go >/dev/stdout 2>/dev/stderr & \
+		worker_pid=$$!; \
 	fi; \
-	wait
+	wait $$backend_pid $$frontend_pid $$worker_pid
 
 dev-backend:
 	go run . serve --http=0.0.0.0:8090

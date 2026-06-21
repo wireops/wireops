@@ -111,7 +111,9 @@ func Execute() error {
 		dataDir = "./pb_data"
 	}
 
-	app := pocketbase.New()
+	app := pocketbase.NewWithConfig(pocketbase.Config{
+		HideStartBanner: true,
+	})
 	app.RootCmd.Use = "wireops"
 
 	migratecmd.MustRegister(app, app.RootCmd, migratecmd.Config{
@@ -184,6 +186,13 @@ func Execute() error {
 		}
 
 		return nil
+	})
+
+	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
+		// Wireops handles first-run setup in the frontend, so skip the
+		// PocketBase installer URL/banner and keep the user on /setup.
+		e.InstallerFunc = nil
+		return e.Next()
 	})
 
 	dockerClient, err := docker.NewClient()

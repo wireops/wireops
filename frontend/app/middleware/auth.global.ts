@@ -1,24 +1,64 @@
 const PUBLIC_PATHS = ['/login', '/forgot-password', '/reset-password', '/invite', '/setup']
+const SETUP_STATUS_CACHE_MS = 5000
+const SETUP_STATUS_TIMEOUT_MS = 3000
 
-async function instanceNeedsSetup(pb: any): Promise<boolean> {
+let cachedNeedsSetup: boolean | null = null
+let cachedNeedsSetupAt = 0
+let inflightNeedsSetupCheck: Promise<boolean | null> | null = null
+
+async function fetchInstanceNeedsSetup(): Promise<boolean | null> {
   try {
-    const data = await pb.send('/api/custom/setup/status', { method: 'GET' })
+    const config = useRuntimeConfig()
+    const baseURL = (config.public.pocketbaseUrl as string).replace(/\/$/, '')
+    const data = await $fetch<{ needsSetup?: boolean }>(`${baseURL}/api/custom/setup/status`, {
+      method: 'GET',
+      headers: { 'X-Wireops-Origin': 'ui' },
+      timeout: SETUP_STATUS_TIMEOUT_MS,
+    })
     return data?.needsSetup === true
   } catch {
-    return false
+    return null
   }
+}
+
+async function instanceNeedsSetup(): Promise<boolean | null> {
+  const now = Date.now()
+  if (cachedNeedsSetupAt > 0 && now-cachedNeedsSetupAt < SETUP_STATUS_CACHE_MS) {
+    return cachedNeedsSetup
+  }
+
+  if (inflightNeedsSetupCheck) {
+    return inflightNeedsSetupCheck
+  }
+
+  inflightNeedsSetupCheck = fetchInstanceNeedsSetup().then((result) => {
+    cachedNeedsSetup = result
+    cachedNeedsSetupAt = Date.now()
+    return result
+  }).finally(() => {
+    inflightNeedsSetupCheck = null
+  })
+
+  return inflightNeedsSetupCheck
 }
 
 export default defineNuxtRouteMiddleware(async (to, from) => {
   const { $pb } = useNuxtApp()
   const isPublicPath = PUBLIC_PATHS.includes(to.path)
 
+  if (to.path === '/setup') {
+    const needsSetup = await instanceNeedsSetup()
+    if (needsSetup === false) {
+      return navigateTo($pb.authStore.isValid ? '/' : '/login', { replace: true })
+    }
+  }
+
   // Unauthenticated user — decide between /setup and /login
   if (!$pb.authStore.isValid) {
     if (isPublicPath && $pb.authStore.token && $pb.authStore.record) {
       try {
         await $pb.collection('users').authRefresh()
-        return navigateTo('/')
+        return navigateTo('/', { replace: true })
       } catch (err: any) {
         if (err?.isAbort || err?.status === 0) {
           return
@@ -29,19 +69,18 @@ export default defineNuxtRouteMiddleware(async (to, from) => {
 
     if (to.path === '/setup') return
 
-    const needsSetup = await instanceNeedsSetup($pb)
-    if (needsSetup) {
-      if (to.path !== '/setup') return navigateTo('/setup')
-      return
+    const needsSetup = await instanceNeedsSetup()
+    if (needsSetup === true) {
+      return navigateTo('/setup', { replace: true })
     }
 
     if (isPublicPath) return
-    return navigateTo('/login')
+    return navigateTo('/login', { replace: true })
   }
 
   // Authenticated user — keep them out of auth-only pages
   if (isPublicPath) {
-    return navigateTo('/')
+    return navigateTo('/', { replace: true })
   }
 
   // Verify the session is still valid
@@ -54,7 +93,7 @@ export default defineNuxtRouteMiddleware(async (to, from) => {
         return
       }
       $pb.authStore.clear()
-      return navigateTo('/login')
+      return navigateTo('/login', { replace: true })
     }
   }
 })
