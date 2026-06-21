@@ -20,7 +20,7 @@ dev:
 	@echo "  PocketBase API:  http://localhost:8090"
 	@echo "  PB Admin Panel:  http://localhost:8090/_/"
 	@echo "  Nuxt Frontend:   http://localhost:3000"
-	@if [ "$$START_WORKER" = "true" ] || [ -n "$$WORKER_TOKEN" ] || [ -n "$$BOOTSTRAP_TOKEN" ]; then \
+	@if [ "$$START_WORKER" = "true" ] || [ -n "$$WORKER_TOKEN" ]; then \
 		echo "  wireops Worker:    Enabled"; \
 	fi
 	@echo "========================================"
@@ -52,7 +52,7 @@ dev:
 	sleep 2; \
 	sh -c 'cd $(FRONTEND_DIR) && exec npm run dev' >/dev/stdout 2>/dev/stderr & \
 	frontend_pid=$$!; \
-	if [ "$$START_WORKER" = "true" ] || [ -n "$$WORKER_TOKEN" ] || [ -n "$$BOOTSTRAP_TOKEN" ]; then \
+	if [ "$$START_WORKER" = "true" ] || [ -n "$$WORKER_TOKEN" ]; then \
 		export SERVER_URL="$${SERVER_URL:-http://localhost:8443}"; \
 		echo "[Dev] Waiting 4s for server to start before launching worker..."; \
 		sleep 4; \
