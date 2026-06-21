@@ -154,7 +154,7 @@ func handleSetupCreate(app core.App) func(*core.RequestEvent) error {
 		}
 		if txErr != nil {
 			log.Printf("[setup] failed to create initial admin for %q: %v", body.Email, txErr)
-			return e.JSON(http.StatusInternalServerError, map[string]string{"error": txErr.Error()})
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		}
 
 		return e.JSON(http.StatusCreated, map[string]string{"status": "created"})
