@@ -27,6 +27,7 @@ GitOps controller for Docker Compose stacks. Automatically sync and deploy your 
 cp .env.example .env
 
 # Edit .env and set your SECRET_KEY (generate with: openssl rand -hex 32)
+# Set a BOOTSTRAP_TOKEN for the first administrator setup
 # Optionally configure APP_URL for production deployments
 
 # Run with Docker Compose
@@ -38,9 +39,28 @@ go run main.go serve
 
 Access the UI at `http://localhost:8090`
 
-Default credentials:
-- Email: `admin@example.com`
-- Password: `admin123456`
+There are no default credentials. On a fresh instance, open `/setup` and create the first administrator account using the `BOOTSTRAP_TOKEN` you configured.
+
+### Initial Setup
+
+Wireops requires a bootstrap token for the first web-based setup.
+
+1. Set `BOOTSTRAP_TOKEN` before starting the server.
+2. Open `http://localhost:8090/setup` or `http://<server-ip>:8090/setup`.
+3. Enter the bootstrap token and create the first administrator account.
+4. After the first admin is created, the setup route is automatically closed.
+
+Example:
+
+```bash
+SECRET_KEY=replace-with-32-byte-key
+BOOTSTRAP_TOKEN=replace-with-a-strong-one-time-token
+```
+
+Notes:
+- `BOOTSTRAP_TOKEN` is only used while no administrator exists yet.
+- If `BOOTSTRAP_TOKEN` is missing on a fresh instance, the setup page will stay blocked until it is configured.
+- After setup is complete, keeping or removing `BOOTSTRAP_TOKEN` does not reopen setup, but removing it is recommended.
 
 ## Architecture
 
@@ -124,6 +144,7 @@ resources:
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `SECRET_KEY` | **Yes** | — | 32-byte AES key for encrypting credentials and secrets at rest. Generate with `openssl rand -hex 32` |
+| `BOOTSTRAP_TOKEN` | **Yes** for first-time setup | — | One-time bootstrap secret required to create the first administrator account from the `/setup` page |
 | `APP_URL` | No | `http://localhost:8090` | Base URL used for CORS, webhook URLs, and emails |
 | `PORT` | No | `8090` | HTTP port for the UI, REST API, and Prometheus metrics (`/metrics`) |
 | `PB_DATA_DIR` | No | `./pb_data` | PocketBase data directory (SQLite database, uploads) |

@@ -88,8 +88,14 @@ func callHandler(t *testing.T, app core.App, method, target string, body any, ha
 	return rec
 }
 
+func withBootstrapToken(t *testing.T, token string) {
+	t.Helper()
+	t.Setenv("BOOTSTRAP_TOKEN", token)
+}
+
 func TestSetupStatusWhenEmpty(t *testing.T) {
 	app := newEmptySetupTestApp(t)
+	withBootstrapToken(t, "bootstrap-secret")
 
 	rec := callHandler(t, app, http.MethodGet, "/api/custom/setup/status", nil, handleSetupStatus(app))
 
@@ -97,17 +103,52 @@ func TestSetupStatusWhenEmpty(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 
-	var resp map[string]bool
+	var resp setupStatus
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
-	if !resp["needsSetup"] {
+	if !resp.NeedsSetup {
 		t.Error("expected needsSetup to be true when no users exist")
+	}
+	if !resp.SetupAllowed {
+		t.Error("expected setupAllowed to be true when bootstrap token is configured")
+	}
+	if resp.Reason != "" {
+		t.Errorf("expected empty reason, got %q", resp.Reason)
+	}
+	if !resp.RequiresBootstrapToken {
+		t.Error("expected requiresBootstrapToken to be true")
+	}
+}
+
+func TestSetupStatusWhenEmptyWithoutBootstrapToken(t *testing.T) {
+	app := newEmptySetupTestApp(t)
+	withBootstrapToken(t, "")
+
+	rec := callHandler(t, app, http.MethodGet, "/api/custom/setup/status", nil, handleSetupStatus(app))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var resp setupStatus
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if !resp.NeedsSetup {
+		t.Error("expected needsSetup to be true when no users exist")
+	}
+	if resp.SetupAllowed {
+		t.Error("expected setupAllowed to be false when bootstrap token is missing")
+	}
+	if resp.Reason != "missing_bootstrap_token" {
+		t.Errorf("expected missing_bootstrap_token reason, got %q", resp.Reason)
 	}
 }
 
 func TestSetupStatusWhenAdminExists(t *testing.T) {
 	app := newSetupTestApp(t)
+	withBootstrapToken(t, "bootstrap-secret")
 	createTestUser(t, app, "admin@example.com", "password123", "admin")
 
 	rec := callHandler(t, app, http.MethodGet, "/api/custom/setup/status", nil, handleSetupStatus(app))
@@ -116,22 +157,52 @@ func TestSetupStatusWhenAdminExists(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 
-	var resp map[string]bool
+	var resp setupStatus
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
-	if resp["needsSetup"] {
+	if resp.NeedsSetup {
 		t.Error("expected needsSetup to be false when an admin user exists")
+	}
+	if resp.SetupAllowed {
+		t.Error("expected setupAllowed to be false when setup has already completed")
+	}
+	if resp.Reason != "already_configured" {
+		t.Errorf("expected already_configured reason, got %q", resp.Reason)
+	}
+}
+
+func TestSetupStatusFailurePath(t *testing.T) {
+	app := newEmptySetupTestApp(t)
+	withBootstrapToken(t, "bootstrap-secret")
+
+	if _, err := app.DB().NewQuery("DROP TABLE users").Execute(); err != nil {
+		t.Fatalf("failed to drop users table: %v", err)
+	}
+
+	rec := callHandler(t, app, http.MethodGet, "/api/custom/setup/status", nil, handleSetupStatus(app))
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", rec.Code)
+	}
+
+	var resp setupStatus
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp.Reason != "unknown" {
+		t.Errorf("expected unknown reason, got %q", resp.Reason)
 	}
 }
 
 func TestSetupCreateFirstAdmin(t *testing.T) {
 	app := newEmptySetupTestApp(t)
+	withBootstrapToken(t, "bootstrap-secret")
 
 	body := map[string]string{
-		"email":           "first@example.com",
-		"password":        "securepassword",
-		"passwordConfirm": "securepassword",
+		"email":          "first@example.com",
+		"password":       "securepassword",
+		"bootstrapToken": "bootstrap-secret",
 	}
 	rec := callHandler(t, app, http.MethodPost, "/api/custom/setup", body, handleSetupCreate(app))
 
@@ -153,12 +224,13 @@ func TestSetupCreateFirstAdmin(t *testing.T) {
 
 func TestSetupBlockedAfterAdminExists(t *testing.T) {
 	app := newSetupTestApp(t)
+	withBootstrapToken(t, "bootstrap-secret")
 	createTestUser(t, app, "existing@example.com", "password123", "admin")
 
 	body := map[string]string{
-		"email":           "attacker@example.com",
-		"password":        "hackpassword",
-		"passwordConfirm": "hackpassword",
+		"email":          "attacker@example.com",
+		"password":       "hackpassword",
+		"bootstrapToken": "bootstrap-secret",
 	}
 	rec := callHandler(t, app, http.MethodPost, "/api/custom/setup", body, handleSetupCreate(app))
 
@@ -169,6 +241,7 @@ func TestSetupBlockedAfterAdminExists(t *testing.T) {
 
 func TestSetupValidationMissingFields(t *testing.T) {
 	app := newEmptySetupTestApp(t)
+	withBootstrapToken(t, "bootstrap-secret")
 
 	rec := callHandler(t, app, http.MethodPost, "/api/custom/setup", map[string]string{
 		"email": "missing@example.com",
@@ -181,11 +254,12 @@ func TestSetupValidationMissingFields(t *testing.T) {
 
 func TestSetupValidationInvalidEmail(t *testing.T) {
 	app := newEmptySetupTestApp(t)
+	withBootstrapToken(t, "bootstrap-secret")
 
 	body := map[string]string{
-		"email":           "not-an-email",
-		"password":        "password123",
-		"passwordConfirm": "password123",
+		"email":          "not-an-email",
+		"password":       "password123",
+		"bootstrapToken": "bootstrap-secret",
 	}
 	rec := callHandler(t, app, http.MethodPost, "/api/custom/setup", body, handleSetupCreate(app))
 
@@ -196,11 +270,12 @@ func TestSetupValidationInvalidEmail(t *testing.T) {
 
 func TestSetupValidationShortPassword(t *testing.T) {
 	app := newEmptySetupTestApp(t)
+	withBootstrapToken(t, "bootstrap-secret")
 
 	body := map[string]string{
-		"email":           "user@example.com",
-		"password":        "short",
-		"passwordConfirm": "short",
+		"email":          "user@example.com",
+		"password":       "short",
+		"bootstrapToken": "bootstrap-secret",
 	}
 	rec := callHandler(t, app, http.MethodPost, "/api/custom/setup", body, handleSetupCreate(app))
 
@@ -209,18 +284,35 @@ func TestSetupValidationShortPassword(t *testing.T) {
 	}
 }
 
-func TestSetupValidationPasswordMismatch(t *testing.T) {
+func TestSetupValidationInvalidBootstrapToken(t *testing.T) {
 	app := newEmptySetupTestApp(t)
+	withBootstrapToken(t, "bootstrap-secret")
 
 	body := map[string]string{
-		"email":           "user@example.com",
-		"password":        "password123",
-		"passwordConfirm": "different123",
+		"email":          "user@example.com",
+		"password":       "password123",
+		"bootstrapToken": "wrong-secret",
 	}
 	rec := callHandler(t, app, http.MethodPost, "/api/custom/setup", body, handleSetupCreate(app))
 
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", rec.Code)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", rec.Code)
+	}
+}
+
+func TestSetupValidationMissingBootstrapTokenConfiguration(t *testing.T) {
+	app := newEmptySetupTestApp(t)
+	withBootstrapToken(t, "")
+
+	body := map[string]string{
+		"email":          "user@example.com",
+		"password":       "password123",
+		"bootstrapToken": "bootstrap-secret",
+	}
+	rec := callHandler(t, app, http.MethodPost, "/api/custom/setup", body, handleSetupCreate(app))
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", rec.Code)
 	}
 }
 

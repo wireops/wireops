@@ -1,20 +1,79 @@
 <script setup lang="ts">
+import type { SetupStatus } from '~/types/setup'
 definePageMeta({ layout: false })
 
-const { customPost } = useApi()
+
+const { customGet, customPost } = useApi()
 const { login } = useAuth()
 const { announce } = useA11yAnnouncer()
 
 const email = ref('')
 const password = ref('')
 const passwordConfirm = ref('')
+const bootstrapToken = ref('')
 const loading = ref(false)
+const statusLoading = ref(true)
 const error = ref('')
+const info = ref('')
+const setupStatus = ref<SetupStatus | null>(null)
+
+const blockedMessage = computed(() => {
+  if (setupStatus.value?.reason === 'missing_bootstrap_token') {
+    return 'Initial setup is blocked because BOOTSTRAP_TOKEN is not configured on the server.'
+  }
+  if (setupStatus.value?.reason === 'already_configured') {
+    return 'Setup has already been completed for this Wireops instance.'
+  }
+  return ''
+})
+
+const setupBlocked = computed(() => {
+  return statusLoading.value || !setupStatus.value || setupStatus.value.setupAllowed === false
+})
+
+function mapSetupError(message?: string) {
+  switch (message) {
+    case 'invalid email address':
+      return 'Enter a valid email address.'
+    case 'password must be at least 8 characters':
+      return 'Password must be at least 8 characters long.'
+    case 'invalid bootstrap token':
+      return 'The bootstrap token is invalid. Check the server configuration and try again.'
+    case 'bootstrap token is not configured':
+      return 'BOOTSTRAP_TOKEN is not configured on the server.'
+    case 'setup has already been completed':
+      return 'Setup has already been completed. Sign in with the existing administrator account.'
+    default:
+      return message || 'Setup failed'
+  }
+}
+
+async function loadSetupStatus() {
+  statusLoading.value = true
+  error.value = ''
+  try {
+    setupStatus.value = await customGet<SetupStatus>('/api/custom/setup/status')
+  } catch (e: any) {
+    setupStatus.value = null
+    error.value = 'Unable to check setup status right now. Refresh and try again.'
+    announce(error.value, 'assertive')
+  } finally {
+    statusLoading.value = false
+  }
+}
+
+await loadSetupStatus()
 
 async function handleSetup() {
   error.value = ''
+  info.value = ''
   if (password.value !== passwordConfirm.value) {
     error.value = 'Passwords do not match'
+    announce(error.value, 'assertive')
+    return
+  }
+  if (setupBlocked.value) {
+    error.value = blockedMessage.value || 'Setup is not available right now.'
     announce(error.value, 'assertive')
     return
   }
@@ -23,22 +82,23 @@ async function handleSetup() {
     await customPost('/api/custom/setup', {
       email: email.value,
       password: password.value,
-      passwordConfirm: passwordConfirm.value,
+      bootstrapToken: bootstrapToken.value,
     })
   } catch (e: any) {
-    error.value = e?.message || 'Setup failed'
+    error.value = mapSetupError(e?.message)
     announce(error.value, 'assertive')
     loading.value = false
+    await loadSetupStatus()
     return
   }
 
   try {
     await login(email.value, password.value)
     announce('Administrator account created')
-    navigateTo('/')
+    await navigateTo('/')
   } catch (e: any) {
-    error.value = e?.message || 'Login failed after setup — please sign in manually'
-    announce(error.value, 'assertive')
+    info.value = 'Administrator created successfully. Automatic sign-in failed, so please sign in manually.'
+    announce(info.value, 'assertive')
   } finally {
     loading.value = false
   }
@@ -82,7 +142,22 @@ async function handleSetup() {
         </p>
 
         <form class="flex flex-col gap-4" @submit.prevent="handleSetup">
+          <UAlert v-if="blockedMessage" color="warning" :title="blockedMessage" icon="i-lucide-shield-alert" />
           <UAlert v-if="error" color="error" :title="error" icon="i-lucide-alert-circle" role="alert" aria-live="assertive" />
+          <UAlert v-if="info" color="info" :title="info" icon="i-lucide-info" />
+
+          <UFormField v-if="setupStatus?.requiresBootstrapToken" label="Bootstrap Token">
+            <UInput
+              v-model="bootstrapToken"
+              type="password"
+              placeholder="Enter the bootstrap token"
+              icon="i-lucide-key-round"
+              required
+              class="w-full"
+              aria-label="Bootstrap token"
+              :disabled="setupBlocked || loading"
+            />
+          </UFormField>
 
           <UFormField label="Email">
             <UInput
@@ -93,6 +168,7 @@ async function handleSetup() {
               required
               class="w-full"
               aria-label="Email"
+              :disabled="setupBlocked || loading"
             />
           </UFormField>
 
@@ -105,8 +181,13 @@ async function handleSetup() {
               required
               class="w-full"
               aria-label="Password"
+              :disabled="setupBlocked || loading"
             />
           </UFormField>
+
+          <p class="text-xs text-gray-500 -mt-2">
+            Use at least 8 characters for the administrator password.
+          </p>
 
           <UFormField label="Confirm Password">
             <UInput
@@ -117,16 +198,18 @@ async function handleSetup() {
               required
               class="w-full"
               aria-label="Confirm password"
+              :disabled="setupBlocked || loading"
             />
           </UFormField>
 
           <UButton
             type="submit"
             block
-            :loading="loading"
+            :loading="loading || statusLoading"
             icon="i-lucide-shield-check"
             label="Create Administrator"
             class="mt-2"
+            :disabled="setupBlocked || loading"
           />
         </form>
       </div>
