@@ -13,6 +13,8 @@ This plan focuses on:
 - the `/setup` frontend experience
 - bootstrap maintainability and observability
 
+Note: during PR 1, Wireops introduced `BOOTSTRAP_TOKEN` as an explicit first-run requirement. The plan below reflects that decision and treats the bootstrap token as the primary setup gate instead of localhost-only access.
+
 This plan does not include broader authentication redesign, installer wizard expansion, or worker onboarding flows.
 
 ## Recommended Delivery
@@ -36,16 +38,17 @@ Expand `GET /api/custom/setup/status` in `/Users/jfxdev/Documents/workspace/apps
 - `needsSetup`
 - `setupAllowed`
 - `reason`
+- `requiresBootstrapToken`
 
 Suggested `reason` values:
 
 - `already_configured`
-- `localhost_only`
+- `missing_bootstrap_token`
 - `unknown`
 
 ### Notes
 
-- Reuse the existing loopback access logic already used by `POST /api/custom/setup`.
+- Reuse the same bootstrap-token-aware decision path used by `POST /api/custom/setup`.
 - Keep the endpoint lightweight and safe to call often.
 - Preserve backward compatibility only if needed during rollout; otherwise update the frontend in the same PR.
 
@@ -53,8 +56,8 @@ Suggested `reason` values:
 
 Add or update tests for:
 
-- empty instance accessed from localhost
-- empty instance accessed remotely
+- empty instance with bootstrap token configured
+- empty instance without bootstrap token configured
 - already configured instance
 - transient failure path if status cannot be determined
 
@@ -70,12 +73,15 @@ Add or update tests for:
 
 Make the first-run experience clearer and more self-explanatory without changing the core auth model.
 
+With `BOOTSTRAP_TOKEN` now required, the UX should help operators understand why setup may be blocked and what value is required to finish first-run bootstrap.
+
 ### Frontend
 
 Update `/Users/jfxdev/Documents/workspace/apps/wireops/frontend/app/pages/setup.vue` to:
 
 - load and react to the expanded setup status
-- show a clear message when setup is blocked from the current client
+- show a clear message when setup is blocked because `BOOTSTRAP_TOKEN` is missing or setup is already complete
+- explain what the bootstrap token is for before submit
 - explain password requirements before submit
 - map known backend errors to friendly UI messages
 - show an explicit fallback if automatic login fails after account creation
@@ -83,7 +89,8 @@ Update `/Users/jfxdev/Documents/workspace/apps/wireops/frontend/app/pages/setup.
 Possible messages to support:
 
 - setup already completed
-- setup only available from localhost
+- bootstrap token missing on the server
+- invalid bootstrap token
 - invalid email
 - password too short
 - password mismatch
@@ -96,11 +103,12 @@ Keep `/Users/jfxdev/Documents/workspace/apps/wireops/frontend/app/middleware/aut
 - use setup status for routing
 - avoid broad redirect logic during initial route resolution
 - prefer explicit state handling over implicit assumptions
+- route fresh unauthenticated instances toward `/setup`, while leaving blocked-state explanation to the setup page itself
 
 ### Expected Outcome
 
 - clearer onboarding
-- fewer support questions for Docker and reverse-proxy setups
+- fewer support questions around bootstrap-token-based setup
 - less confusion after setup submission failures
 
 ## PR 3: Bootstrap Maintainability And Observability
@@ -157,12 +165,12 @@ Add coverage for:
 - redirect regressions in global middleware
 - setup status requests delaying route resolution
 - inconsistent state between `users` and `_superusers`
-- confusing behavior when setup is attempted behind Docker networking
+- confusing behavior when operators do not realize `BOOTSTRAP_TOKEN` must be configured and shared out-of-band
 
 ## Success Criteria
 
 - a fresh instance consistently lands on `/setup`
 - a configured instance never exposes setup as the primary path
-- blocked setup attempts explain why
+- blocked setup attempts explain whether setup is already complete or waiting on `BOOTSTRAP_TOKEN`
 - first-admin creation remains atomic
 - setup-related failures are diagnosable from logs and tests
