@@ -55,9 +55,9 @@ async function instanceSetupStatus(): Promise<SetupStatus | null> {
 export default defineNuxtRouteMiddleware(async (to, from) => {
   const { $pb } = useNuxtApp()
   const isPublicPath = PUBLIC_PATHS.includes(to.path)
+  const status = !$pb.authStore.isValid ? await instanceSetupStatus() : null
 
   if (to.path === '/setup') {
-    const status = await instanceSetupStatus()
     if (status?.needsSetup === false) {
       return navigateTo($pb.authStore.isValid ? '/' : '/login', { replace: true })
     }
@@ -79,7 +79,6 @@ export default defineNuxtRouteMiddleware(async (to, from) => {
 
     if (to.path === '/setup') return
 
-    const status = await instanceSetupStatus()
     if (status?.needsSetup === true) {
       return navigateTo('/setup', { replace: true })
     }

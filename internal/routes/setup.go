@@ -4,6 +4,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"net/mail"
 	"os"
@@ -67,6 +68,7 @@ func handleSetupStatus(app core.App) func(*core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
 		status, err := currentSetupStatus(app)
 		if err != nil {
+			log.Printf("[setup] failed to determine setup status: %v", err)
 			return e.JSON(http.StatusInternalServerError, status)
 		}
 		return e.JSON(http.StatusOK, status)
@@ -96,6 +98,7 @@ func handleSetupCreate(app core.App) func(*core.RequestEvent) error {
 
 		status, err := currentSetupStatus(app)
 		if err != nil {
+			log.Printf("[setup] failed to determine setup status before bootstrap for %q: %v", body.Email, err)
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		}
 		if !status.NeedsSetup {
@@ -150,6 +153,7 @@ func handleSetupCreate(app core.App) func(*core.RequestEvent) error {
 			return e.JSON(http.StatusForbidden, map[string]string{"error": "setup has already been completed"})
 		}
 		if txErr != nil {
+			log.Printf("[setup] failed to create initial admin for %q: %v", body.Email, txErr)
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		}
 
