@@ -1,13 +1,9 @@
+import type { SetupStatus } from '~/types/setup'
+
 const PUBLIC_PATHS = ['/login', '/forgot-password', '/reset-password', '/invite', '/setup']
 const SETUP_STATUS_CACHE_MS = 5000
 const SETUP_STATUS_TIMEOUT_MS = 3000
 
-type SetupStatus = {
-  needsSetup: boolean
-  setupAllowed: boolean
-  reason: string
-  requiresBootstrapToken: boolean
-}
 
 let cachedSetupStatus: SetupStatus | null = null
 let cachedSetupStatusAt = 0

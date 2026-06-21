@@ -1,12 +1,7 @@
 <script setup lang="ts">
+import type { SetupStatus } from '~/types/setup'
 definePageMeta({ layout: false })
 
-type SetupStatus = {
-  needsSetup: boolean
-  setupAllowed: boolean
-  reason: string
-  requiresBootstrapToken: boolean
-}
 
 const { customGet, customPost } = useApi()
 const { login } = useAuth()
@@ -214,7 +209,7 @@ async function handleSetup() {
             icon="i-lucide-shield-check"
             label="Create Administrator"
             class="mt-2"
-            :disabled="setupBlocked"
+            :disabled="setupBlocked || loading"
           />
         </form>
       </div>
