@@ -11,6 +11,8 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
 	"github.com/pocketbase/pocketbase/tools/router"
+
+	"github.com/wireops/wireops/internal/audit"
 )
 
 func newSetupTestApp(t *testing.T) *tests.TestApp {
@@ -214,12 +216,24 @@ func TestSetupCreateFirstAdmin(t *testing.T) {
 	if err != nil || created == nil {
 		t.Fatal("expected user to exist after setup")
 	}
+	superuser, err := app.FindAuthRecordByEmail(core.CollectionNameSuperusers, "first@example.com")
+	if err != nil || superuser == nil {
+		t.Fatal("expected superuser to exist after setup")
+	}
 	if created.GetString("role") != "admin" {
 		t.Fatalf("expected first user to be admin, got %q", created.GetString("role"))
 	}
 	if !created.GetBool("protected") {
 		t.Fatal("expected first admin to be protected")
 	}
+	if created.GetString("passwordHash") != superuser.GetString("passwordHash") {
+		t.Fatal("expected user and superuser password hashes to match")
+	}
+	if created.GetString("tokenKey") != superuser.GetString("tokenKey") {
+		t.Fatal("expected user and superuser token keys to match")
+	}
+	assertRouteAuditEvent(t, app, "setup.bootstrap_started", "success", "", "f***@example.com")
+	assertRouteAuditEvent(t, app, "setup.bootstrap_completed", "success", "", "f***@example.com")
 }
 
 func TestSetupBlockedAfterAdminExists(t *testing.T) {
@@ -237,6 +251,7 @@ func TestSetupBlockedAfterAdminExists(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d", rec.Code)
 	}
+	assertRouteAuditEvent(t, app, "setup.bootstrap_rejected", "error", "already_configured", "a***@example.com")
 }
 
 func TestSetupValidationMissingFields(t *testing.T) {
@@ -246,6 +261,31 @@ func TestSetupValidationMissingFields(t *testing.T) {
 	rec := callHandler(t, app, http.MethodPost, "/api/custom/setup", map[string]string{
 		"email": "missing@example.com",
 	}, handleSetupCreate(app))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestSetupValidationInvalidRequestBody(t *testing.T) {
+	app := newEmptySetupTestApp(t)
+	withBootstrapToken(t, "bootstrap-secret")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/custom/setup", bytes.NewBufferString("{"))
+	req.RemoteAddr = "127.0.0.1:1234"
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	e := &core.RequestEvent{
+		App: app,
+		Event: router.Event{
+			Response: rec,
+			Request:  req,
+		},
+	}
+
+	if err := handleSetupCreate(app)(e); err != nil {
+		t.Fatalf("handler returned error: %v", err)
+	}
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", rec.Code)
@@ -314,6 +354,46 @@ func TestSetupValidationMissingBootstrapTokenConfiguration(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d", rec.Code)
 	}
+	assertRouteAuditEvent(t, app, "setup.bootstrap_rejected", "error", "missing_bootstrap_token", "u***@example.com")
+}
+
+func TestSetupCreateReturnsInternalErrorWhenBootstrapFails(t *testing.T) {
+	app := newEmptySetupTestApp(t)
+	withBootstrapToken(t, "bootstrap-secret")
+
+	if _, err := app.DB().NewQuery("DROP TABLE _superusers").Execute(); err != nil {
+		t.Fatalf("failed to drop superusers table: %v", err)
+	}
+
+	body := map[string]string{
+		"email":          "broken@example.com",
+		"password":       "securepassword",
+		"bootstrapToken": "bootstrap-secret",
+	}
+	rec := callHandler(t, app, http.MethodPost, "/api/custom/setup", body, handleSetupCreate(app))
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+	assertRouteAuditEvent(t, app, "setup.bootstrap_started", "success", "", "b***@example.com")
+	assertRouteAuditEvent(t, app, "setup.bootstrap_failed", "error", "bootstrap_failed", "b***@example.com")
+}
+
+func TestSetupValidationInvalidBootstrapTokenAuditsRejection(t *testing.T) {
+	app := newEmptySetupTestApp(t)
+	withBootstrapToken(t, "bootstrap-secret")
+
+	body := map[string]string{
+		"email":          "user@example.com",
+		"password":       "password123",
+		"bootstrapToken": "wrong-secret",
+	}
+	rec := callHandler(t, app, http.MethodPost, "/api/custom/setup", body, handleSetupCreate(app))
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", rec.Code)
+	}
+	assertRouteAuditEvent(t, app, "setup.bootstrap_rejected", "error", "invalid_bootstrap_token", "u***@example.com")
 }
 
 func createTestSuperuser(t *testing.T, app core.App, email, password string) *core.Record {
@@ -377,4 +457,38 @@ func ensureTestUsersRoleField(t *testing.T, app core.App) {
 			t.Fatalf("failed to add fields to users fixture: %v", err)
 		}
 	}
+}
+
+func assertRouteAuditEvent(t *testing.T, app core.App, action, status, errorCode, maskedEmail string) {
+	t.Helper()
+
+	records, err := app.FindAllRecords("audit_logs", dbx.HashExp{"action": action})
+	if err != nil {
+		t.Fatalf("failed to query audit logs for %s: %v", action, err)
+	}
+	if len(records) == 0 {
+		t.Fatalf("expected audit event %s to exist", action)
+	}
+
+	for _, rec := range records {
+		if rec.GetString("status") != status {
+			continue
+		}
+		if rec.GetString("error_code") != errorCode {
+			continue
+		}
+		if rec.GetString("origin") != audit.OriginSetup {
+			continue
+		}
+
+		meta := audit.MetadataJSON(rec.Get("metadata_json"))
+		if len(meta) == 0 {
+			meta = audit.MetadataJSON(rec.GetString("metadata_json"))
+		}
+		if meta["email_masked"] == maskedEmail {
+			return
+		}
+	}
+
+	t.Fatalf("expected audit event %s with status=%q error_code=%q maskedEmail=%q", action, status, errorCode, maskedEmail)
 }
