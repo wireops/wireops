@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sync"
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
@@ -14,6 +15,8 @@ import (
 var (
 	ErrSetupAlreadyDone = errors.New("setup already done")
 	ErrBootstrapFailed  = errors.New("setup bootstrap failed")
+
+	bootstrapMu sync.Mutex
 )
 
 type Service struct {
@@ -26,9 +29,12 @@ func NewService(app core.App) *Service {
 }
 
 func (s *Service) CreateInitialAdmin(email, password string) error {
-	maskedEmail := maskEmail(email)
+	maskedEmail := MaskEmail(email)
 	log.Printf("[setup] bootstrap started for %s", maskedEmail)
 	recordSetupAudit(s.app, "setup.bootstrap_started", audit.StatusSuccess, "", maskedEmail)
+
+	bootstrapMu.Lock()
+	defer bootstrapMu.Unlock()
 
 	txErr := s.app.RunInTransaction(func(txApp core.App) error {
 		count, err := CountRealUsers(txApp)
@@ -115,7 +121,7 @@ func recordSetupAudit(app core.App, action, status, errorCode, maskedEmail strin
 	})
 }
 
-func maskEmail(email string) string {
+func MaskEmail(email string) string {
 	if email == "" {
 		return "[empty]"
 	}

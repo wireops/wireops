@@ -377,6 +377,7 @@ func TestSetupCreateReturnsInternalErrorWhenBootstrapFails(t *testing.T) {
 	}
 	assertRouteAuditEvent(t, app, "setup.bootstrap_started", "success", "", "b***@example.com")
 	assertRouteAuditEvent(t, app, "setup.bootstrap_failed", "error", "bootstrap_failed", "b***@example.com")
+	assertRouteAuditEvent(t, app, "setup.bootstrap_failed", "error", "internal_error", "b***@example.com")
 }
 
 func TestSetupValidationInvalidBootstrapTokenAuditsRejection(t *testing.T) {

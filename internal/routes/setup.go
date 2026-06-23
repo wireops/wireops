@@ -99,9 +99,11 @@ func handleSetupCreate(app core.App) func(*core.RequestEvent) error {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "password must be at least 8 characters"})
 		}
 
+		maskedEmail := setupsvc.MaskEmail(body.Email)
+
 		status, err := currentSetupStatus(app)
 		if err != nil {
-			log.Printf("[setup] failed to determine setup status before bootstrap for %q: %v", body.Email, err)
+			log.Printf("[setup] failed to determine setup status before bootstrap for %q: %v", maskedEmail, err)
 			recordSetupRouteAudit(app, "setup.bootstrap_failed", audit.StatusError, "status_unknown", body.Email)
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		}
@@ -122,7 +124,7 @@ func handleSetupCreate(app core.App) func(*core.RequestEvent) error {
 			if err == setupsvc.ErrSetupAlreadyDone {
 				return e.JSON(http.StatusForbidden, map[string]string{"error": "setup has already been completed"})
 			}
-			log.Printf("[setup] failed to create initial admin for %q: %v", body.Email, err)
+			log.Printf("[setup] failed to create initial admin for %q: %v", maskedEmail, err)
 			recordSetupRouteAudit(app, "setup.bootstrap_failed", audit.StatusError, "internal_error", body.Email)
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		}
@@ -141,24 +143,7 @@ func recordSetupRouteAudit(app core.App, action, status, errorCode, email string
 		Status:       status,
 		ErrorCode:    errorCode,
 		Metadata: map[string]any{
-			"email_masked": maskSetupEmail(email),
+			"email_masked": setupsvc.MaskEmail(email),
 		},
 	})
-}
-
-func maskSetupEmail(email string) string {
-	if email == "" {
-		return "[empty]"
-	}
-
-	for i := 0; i < len(email); i++ {
-		if email[i] == '@' {
-			if i == 0 || i == len(email)-1 {
-				return "[invalid]"
-			}
-			return email[:1] + "***" + email[i:]
-		}
-	}
-
-	return "[invalid]"
 }

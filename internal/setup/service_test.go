@@ -140,12 +140,13 @@ func TestCreateInitialAdminConcurrentAttempts(t *testing.T) {
 	start := make(chan struct{})
 	var wg sync.WaitGroup
 	for i := 0; i < 2; i++ {
+		email := "race" + string(rune('0'+i)) + "@example.com"
 		wg.Add(1)
-		go func() {
+		go func(email string) {
 			defer wg.Done()
 			<-start
 
-			err := service.CreateInitialAdmin("race@example.com", "securepassword")
+			err := service.CreateInitialAdmin(email, "securepassword")
 			switch {
 			case err == nil:
 				atomic.AddInt32(&successCount, 1)
@@ -154,7 +155,7 @@ func TestCreateInitialAdminConcurrentAttempts(t *testing.T) {
 			default:
 				unexpectedErr.Store(err)
 			}
-		}()
+		}(email)
 	}
 
 	close(start)
