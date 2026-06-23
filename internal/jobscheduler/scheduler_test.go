@@ -61,7 +61,7 @@ func TestExecuteJobPersistsDefinitionError(t *testing.T) {
 	app := newJobSchedulerTestApp(t)
 	repo := createJobRepoRecord(t, app)
 	jobRec := createScheduledJobRecord(t, app, repo.Id, "missing.yml")
-	s := NewScheduler(app, fakeJobDispatcher{workers: []string{"worker-1"}}, app.DataDir())
+	s := NewScheduler(app, fakeJobDispatcher{workers: []string{"worker-1"}}, filepath.Join(app.DataDir(), "repositories"))
 
 	s.executeJob(jobRec.Id, "manual", "test-user")
 
@@ -93,7 +93,7 @@ func TestExecuteJobWithoutWorkersPersistsStalledRun(t *testing.T) {
 	repo := createJobRepoRecord(t, app)
 	writeJobFile(t, app.DataDir(), repo.Id, "job.yaml")
 	jobRec := createScheduledJobRecord(t, app, repo.Id, "job.yaml")
-	s := NewScheduler(app, fakeJobDispatcher{}, app.DataDir())
+	s := NewScheduler(app, fakeJobDispatcher{}, filepath.Join(app.DataDir(), "repositories"))
 
 	s.executeJob(jobRec.Id, "cron", "system")
 
@@ -127,7 +127,7 @@ func TestExecuteJobWithoutWorkersBackfillsLegacyName(t *testing.T) {
 		Execute(); err != nil {
 		t.Fatalf("failed to create legacy scheduled job fixture: %v", err)
 	}
-	s := NewScheduler(app, fakeJobDispatcher{}, app.DataDir())
+	s := NewScheduler(app, fakeJobDispatcher{}, filepath.Join(app.DataDir(), "repositories"))
 
 	s.executeJob(jobRec.Id, "cron", "system")
 
@@ -333,7 +333,7 @@ func TestReconcileActiveJobs(t *testing.T) {
 		"trigger": "manual",
 	})
 
-	s := NewScheduler(app, fakeJobDispatcher{workers: []string{worker.Id}}, app.DataDir())
+	s := NewScheduler(app, fakeJobDispatcher{workers: []string{worker.Id}}, filepath.Join(app.DataDir(), "repositories"))
 
 	// Reconcile with activeIDs containing only run1.Id
 	if err := s.ReconcileActiveJobs(worker.Id, []string{run1.Id}); err != nil {
@@ -397,7 +397,7 @@ func TestMarkForgottenRunsStuckPending(t *testing.T) {
 		"trigger": "manual",
 	})
 
-	s := NewScheduler(app, fakeJobDispatcher{workers: []string{worker.Id}}, app.DataDir())
+	s := NewScheduler(app, fakeJobDispatcher{workers: []string{worker.Id}}, filepath.Join(app.DataDir(), "repositories"))
 
 	if err := s.MarkForgottenRuns(); err != nil {
 		t.Fatalf("MarkForgottenRuns failed: %v", err)
@@ -444,7 +444,7 @@ func TestExecuteJobConvertsResources(t *testing.T) {
 		},
 	}
 
-	s := NewScheduler(app, dispatcher, app.DataDir())
+	s := NewScheduler(app, dispatcher, filepath.Join(app.DataDir(), "repositories"))
 	s.executeJob(jobRec.Id, "manual", "test-user")
 
 	var capturedCmd protocol.RunJobCommand
@@ -484,7 +484,7 @@ func TestUpdateJobRunTruncatesOutput(t *testing.T) {
 	app := newJobSchedulerTestApp(t)
 	repo := createJobRepoRecord(t, app)
 	jobRec := createScheduledJobRecord(t, app, repo.Id, "job.yaml")
-	s := NewScheduler(app, fakeJobDispatcher{}, app.DataDir())
+	s := NewScheduler(app, fakeJobDispatcher{}, filepath.Join(app.DataDir(), "repositories"))
 
 	// Increase the output validation limit in the database schema for this test
 	col, err := app.FindCollectionByNameOrId("job_runs")

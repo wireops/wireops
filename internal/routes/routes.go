@@ -28,7 +28,6 @@ import (
 	"github.com/wireops/wireops/internal/compose"
 	"github.com/wireops/wireops/internal/config"
 	"github.com/wireops/wireops/internal/crypto"
-	"github.com/wireops/wireops/internal/docker"
 	"github.com/wireops/wireops/internal/git"
 	"github.com/wireops/wireops/internal/integrations"
 	"github.com/wireops/wireops/internal/job"
@@ -41,7 +40,7 @@ import (
 
 const OfflineWorkerMsg = "worker '%s' is offline"
 
-func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *sync.Scheduler, dockerClient *docker.Client, workerSvc sync.WorkerDispatcher) {
+func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *sync.Scheduler, workerSvc sync.WorkerDispatcher) {
 	resolveWorker := func(workerID string) (*core.Record, error) {
 		if workerID == "" {
 			return nil, fmt.Errorf("stack has no worker assigned")
@@ -447,7 +446,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid repository id"})
 		}
 
-		workspace := filepath.Join(app.DataDir(), "repositories")
+		workspace := config.GetReposWorkspace()
 		repoDir := filepath.Join(workspace, cleaned)
 
 		gitRepo, err := gogit.PlainOpen(repoDir)
@@ -513,7 +512,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			return e.JSON(http.StatusNotFound, map[string]string{"error": "repository not found"})
 		}
 
-		workspace := filepath.Join(app.DataDir(), "repositories")
+		workspace := config.GetReposWorkspace()
 
 		// Ensure we have the latest files by cloning or fetching
 		var auth transport.AuthMethod
@@ -639,7 +638,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			_ = e.JSON(http.StatusNotFound, map[string]string{"error": "repository not found"})
 			return "", false
 		}
-		workspace := filepath.Join(app.DataDir(), "repositories")
+		workspace := config.GetReposWorkspace()
 		var auth transport.AuthMethod
 		if cred, err := loadRepositoryCredential(app, repoID); err == nil && cred != nil {
 			resolvedAuth, err := git.ResolveTransportAuth(*cred)
@@ -704,7 +703,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "missing file parameter"})
 		}
 
-		repoWorkspace := filepath.Join(app.DataDir(), "repositories")
+		repoWorkspace := config.GetReposWorkspace()
 		repoID := e.Request.PathValue("id")
 
 		def, err := job.ParseJobFile(repoWorkspace, repoID, jobFile)
@@ -937,7 +936,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		}
 
 		repoID := stack.GetString("repository")
-		workspace := filepath.Join(app.DataDir(), "repositories")
+		workspace := config.GetReposWorkspace()
 		workDir := filepath.Join(workspace, repoID)
 		if composePath != "" && composePath != "." {
 			workDir = filepath.Join(workDir, composePath)
@@ -1211,7 +1210,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 
 	// List orphan directories in repos workspace
 	r.GET("/api/custom/orphans", func(e *core.RequestEvent) error {
-		workspace := filepath.Join(app.DataDir(), "repositories")
+		workspace := config.GetReposWorkspace()
 
 		entries, err := os.ReadDir(workspace)
 		if err != nil {
@@ -1265,7 +1264,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 	// Get system info
 	r.GET("/api/custom/system/info", func(e *core.RequestEvent) error {
 		// Get workspace disk usage
-		workspace := filepath.Join(app.DataDir(), "repositories")
+		workspace := config.GetReposWorkspace()
 		var diskUsage int64
 		filepath.Walk(workspace, func(path string, info os.FileInfo, err error) error {
 			if err == nil && !info.IsDir() {
@@ -1288,7 +1287,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid directory name"})
 		}
 
-		workspace := filepath.Join(app.DataDir(), "repositories")
+		workspace := config.GetReposWorkspace()
 
 		dirPath := filepath.Join(workspace, dirName)
 		if _, err := os.Stat(dirPath); os.IsNotExist(err) {

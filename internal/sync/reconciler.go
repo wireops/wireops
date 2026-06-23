@@ -18,9 +18,8 @@ import (
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 
-	"github.com/wireops/wireops/internal/compose"
+	"github.com/wireops/wireops/internal/config"
 	"github.com/wireops/wireops/internal/crypto"
-	"github.com/wireops/wireops/internal/docker"
 	gitpkg "github.com/wireops/wireops/internal/git"
 	"github.com/wireops/wireops/internal/notify"
 	"github.com/wireops/wireops/internal/protocol"
@@ -38,7 +37,6 @@ type WorkerDispatcher interface {
 
 type Reconciler struct {
 	app             core.App
-	dockerClient    *docker.Client
 	mu              sync.Map
 	secretKey       []byte
 	notifier        *notify.Notifier
@@ -47,7 +45,7 @@ type Reconciler struct {
 	secretsRegistry *secrets.Registry
 }
 
-func NewReconciler(app core.App, dockerClient *docker.Client, notifier *notify.Notifier, dispatcher WorkerDispatcher) *Reconciler {
+func NewReconciler(app core.App, notifier *notify.Notifier, dispatcher WorkerDispatcher) *Reconciler {
 	key := []byte(os.Getenv("SECRET_KEY"))
 
 	// Build the secret provider registry with all supported providers.
@@ -58,7 +56,6 @@ func NewReconciler(app core.App, dockerClient *docker.Client, notifier *notify.N
 
 	return &Reconciler{
 		app:             app,
-		dockerClient:    dockerClient,
 		secretKey:       key,
 		notifier:        notifier,
 		renderer:        NewRenderer(app),
@@ -826,7 +823,7 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 	composeContent = data
 
 	// Store a local copy so compose.Config can run on the server side.
-	sourceDir := filepath.Join(r.app.DataDir(), "stacks", stackID)
+	sourceDir := filepath.Join(config.GetStacksStoragePath(), stackID)
 	if mkErr := os.MkdirAll(sourceDir, 0755); mkErr != nil {
 		errMsg := fmt.Sprintf("failed to create source dir: %v", mkErr)
 		r.logFailure(stackID, trigger, "", errMsg)
@@ -1024,7 +1021,7 @@ func (r *Reconciler) inspectStackCommit(ctx context.Context, workerID, stackID s
 }
 
 func (r *Reconciler) reposWorkspace() string {
-	return filepath.Join(r.app.DataDir(), "repositories")
+	return config.GetReposWorkspace()
 }
 
 func (r *Reconciler) resolveGitAuth(repoID string) (transport.AuthMethod, error) {
@@ -1270,50 +1267,6 @@ func (r *Reconciler) resolveComposeFile(stack *core.Record, workDir, stackID, tr
 		return "", fmt.Errorf("%s", errMsg)
 	}
 	return composeFile, nil
-}
-
-func (r *Reconciler) refreshServiceStatus(_ context.Context, stackID, workDir string) {
-	if r.dockerClient == nil {
-		log.Printf("[reconciler] refreshServiceStatus: docker client is nil")
-		return
-	}
-	projectName := compose.ProjectName(workDir)
-	log.Printf("[reconciler] refreshServiceStatus: stack=%s project=%s workDir=%s", stackID, projectName, workDir)
-	statuses, err := compose.GetStackStatus(context.Background(), r.dockerClient.Raw(), projectName)
-	if err != nil {
-		log.Printf("[reconciler] failed to get service status: %v", err)
-		return
-	}
-
-	collection, err := r.app.FindCollectionByNameOrId("stack_services")
-	if err != nil {
-		return
-	}
-
-	existing, _ := r.app.FindAllRecords("stack_services",
-		dbx.HashExp{"stack": stackID},
-	)
-	existingMap := make(map[string]*core.Record)
-	for _, rec := range existing {
-		existingMap[rec.GetString("service_name")] = rec
-	}
-
-	now := time.Now().UTC().Format(time.RFC3339)
-	for _, s := range statuses {
-		var record *core.Record
-		if rec, ok := existingMap[s.ServiceName]; ok {
-			record = rec
-		} else {
-			record = core.NewRecord(collection)
-			record.Set("stack", stackID)
-			record.Set("service_name", s.ServiceName)
-		}
-		record.Set("container_name", s.ContainerName)
-		record.Set("status", s.Status)
-		record.Set("container_id", s.ContainerID)
-		record.Set("last_checked_at", now)
-		_ = r.app.Save(record)
-	}
 }
 
 // TransferStack provisions the stack on targetWorkerID, then tears it down on the

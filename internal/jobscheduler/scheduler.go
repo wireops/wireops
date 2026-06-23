@@ -50,10 +50,10 @@ type jobRunParams struct {
 
 // Scheduler manages cron entries for scheduled jobs and dispatches them to workers.
 type Scheduler struct {
-	app        core.App
-	dispatcher WorkerDispatcher
-	dataDir    string
-	secretKey  []byte
+	app           core.App
+	dispatcher    WorkerDispatcher
+	repoWorkspace string
+	secretKey     []byte
 
 	cron    *cron.Cron
 	mu      gosync.Mutex            // protects entries map
@@ -64,18 +64,18 @@ type Scheduler struct {
 	rootCancel context.CancelFunc
 }
 
-// NewScheduler creates a Scheduler. dataDir is the PocketBase data directory
-// (used to locate the cloned repositories workspace).
-func NewScheduler(app core.App, dispatcher WorkerDispatcher, dataDir string) *Scheduler {
+// NewScheduler creates a Scheduler. repoWorkspace is the base path used to
+// locate cloned repositories and job definitions.
+func NewScheduler(app core.App, dispatcher WorkerDispatcher, repoWorkspace string) *Scheduler {
 	rootCtx, rootCancel := context.WithCancel(context.Background())
 	return &Scheduler{
-		app:        app,
-		dispatcher: dispatcher,
-		dataDir:    dataDir,
-		secretKey:  []byte(os.Getenv("SECRET_KEY")),
-		entries:    make(map[string]cron.EntryID),
-		rootCtx:    rootCtx,
-		rootCancel: rootCancel,
+		app:           app,
+		dispatcher:    dispatcher,
+		repoWorkspace: repoWorkspace,
+		secretKey:     []byte(os.Getenv("SECRET_KEY")),
+		entries:       make(map[string]cron.EntryID),
+		rootCtx:       rootCtx,
+		rootCancel:    rootCancel,
 	}
 }
 
@@ -140,11 +140,10 @@ func (s *Scheduler) RegisterJob(jobID string) {
 		return
 	}
 
-	repoWorkspace := filepath.Join(s.dataDir, "repositories")
 	repoID := rec.GetString("repository")
 	jobFile := rec.GetString("job_file")
 
-	def, err := job.ParseJobFile(repoWorkspace, repoID, jobFile)
+	def, err := job.ParseJobFile(s.repoWorkspace, repoID, jobFile)
 	if err != nil {
 		log.Printf("[jobscheduler] RegisterJob: cannot parse job.yaml for job %s: %v", jobID, err)
 		return
@@ -240,11 +239,10 @@ func (s *Scheduler) executeJob(jobID, trigger string, userID string) {
 		return
 	}
 
-	repoWorkspace := filepath.Join(s.dataDir, "repositories")
 	repoID := rec.GetString("repository")
 	jobFile := rec.GetString("job_file")
 
-	def, err := job.ParseJobFile(repoWorkspace, repoID, jobFile)
+	def, err := job.ParseJobFile(s.repoWorkspace, repoID, jobFile)
 	if err != nil {
 		msg := fmt.Sprintf("cannot parse job.yaml %s for job %s: %v", jobFile, jobID, err)
 		log.Printf("[jobscheduler] executeJob: %s", msg)
@@ -888,7 +886,7 @@ func (s *Scheduler) repoHeadSHA(repoID string) string {
 	if repoID == "" {
 		return ""
 	}
-	repoPath := filepath.Join(s.dataDir, "repositories", repoID)
+	repoPath := filepath.Join(s.repoWorkspace, repoID)
 	repo, err := gogit.PlainOpen(repoPath)
 	if err != nil {
 		return ""
@@ -973,9 +971,7 @@ func (s *Scheduler) getJobTimeoutMs(rec *core.Record) int64 {
 	}
 	repoID := jobRec.GetString("repository")
 	jobFile := jobRec.GetString("job_file")
-	repoWorkspace := filepath.Join(s.dataDir, "repositories")
-
-	def, err := job.ParseJobFile(repoWorkspace, repoID, jobFile)
+	def, err := job.ParseJobFile(s.repoWorkspace, repoID, jobFile)
 	if err != nil {
 		return 600000
 	}

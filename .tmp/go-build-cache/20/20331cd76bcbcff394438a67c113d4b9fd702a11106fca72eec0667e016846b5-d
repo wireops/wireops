@@ -1,0 +1,3 @@
+./commands.go
+./server.go
+./service.go

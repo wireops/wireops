@@ -1,0 +1,8 @@
+# test log
+getenv GOTMPDIR
+getenv TMPDIR
+open /var/folders/0v/n0271wbd10q7b5gt4tk_2hyr0000gn/T/TestParseJobFile3041488556/001/valid.yaml
+open /var/folders/0v/n0271wbd10q7b5gt4tk_2hyr0000gn/T/TestParseJobFile3041488556/001/multiple.yaml
+open /var/folders/0v/n0271wbd10q7b5gt4tk_2hyr0000gn/T/TestParseJobFile3041488556/001/valid.yaml
+open /var/folders/0v/n0271wbd10q7b5gt4tk_2hyr0000gn/T/TestParseJobFile3041488556/001/multiple.yaml
+open /var/folders/0v/n0271wbd10q7b5gt4tk_2hyr0000gn/T

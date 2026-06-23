@@ -5,7 +5,6 @@ import (
 	"errors"
 	"log"
 	"net/http"
-	"path/filepath"
 	"time"
 
 	"github.com/pocketbase/dbx"
@@ -13,6 +12,7 @@ import (
 	"github.com/pocketbase/pocketbase/tools/router"
 
 	"github.com/wireops/wireops/internal/audit"
+	"github.com/wireops/wireops/internal/config"
 	"github.com/wireops/wireops/internal/job"
 	"github.com/wireops/wireops/internal/policy"
 	"github.com/wireops/wireops/internal/rbac"
@@ -447,7 +447,7 @@ func buildWorkerJobCatalog(app core.App) ([]workerJobSummary, error) {
 		return nil, err
 	}
 
-	repoWorkspace := filepath.Join(app.DataDir(), "repositories")
+	repoWorkspace := config.GetReposWorkspace()
 	items := make([]workerJobSummary, 0, len(records))
 
 	for _, rec := range records {

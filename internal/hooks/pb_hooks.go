@@ -129,7 +129,7 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 			branch = "main"
 		}
 
-		workspace := filepath.Join(app.DataDir(), "repositories")
+		workspace := config.GetReposWorkspace()
 
 		go func() {
 			// Small delay to allow nested records (like credentials) to be saved if created in a transaction
@@ -234,7 +234,7 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 	})
 
 	app.OnRecordAfterDeleteSuccess("repositories").BindFunc(func(e *core.RecordEvent) error {
-		repoDir := filepath.Join(app.DataDir(), "repositories", e.Record.Id)
+		repoDir := filepath.Join(config.GetReposWorkspace(), e.Record.Id)
 		if err := os.RemoveAll(repoDir); err != nil {
 			log.Printf("[hooks] failed to remove repo directory %s: %v", repoDir, err)
 		}
@@ -242,7 +242,7 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 	})
 
 	app.OnRecordEnrich("repositories").BindFunc(func(e *core.RecordEnrichEvent) error {
-		repoDir := filepath.Join(app.DataDir(), "repositories", e.Record.Id)
+		repoDir := filepath.Join(config.GetReposWorkspace(), e.Record.Id)
 		_, err := os.Stat(filepath.Join(repoDir, ".git"))
 		e.Record.Set("is_cloned", err == nil)
 		e.Record.WithCustomData(true)
@@ -281,7 +281,7 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 				}
 			} else {
 				repoID := e.Record.GetString("repository")
-				base := filepath.Join(app.DataDir(), "repositories", repoID)
+				base := filepath.Join(config.GetReposWorkspace(), repoID)
 
 				composePath := e.Record.GetString("compose_path")
 				composeFileName := e.Record.GetString("compose_file")

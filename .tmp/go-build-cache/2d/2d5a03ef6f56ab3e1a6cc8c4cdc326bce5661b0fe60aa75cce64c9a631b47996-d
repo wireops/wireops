@@ -1,0 +1,5 @@
+./oidc_client_secret.go
+./pb_hooks.go
+./oidc_client_secret_test.go
+./pb_audit_test.go
+./pb_hooks_test.go

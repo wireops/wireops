@@ -13,6 +13,7 @@ import (
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 
+	"github.com/wireops/wireops/internal/config"
 	"github.com/wireops/wireops/internal/crypto"
 	"github.com/wireops/wireops/internal/git"
 )
@@ -27,7 +28,7 @@ func stackWorkDir(app core.App, stack *core.Record) string {
 		}
 	}
 	repoID := stack.GetString("repository")
-	workspace := filepath.Join(app.DataDir(), "repositories")
+	workspace := config.GetReposWorkspace()
 	base := filepath.Join(workspace, repoID)
 	composePath := stack.GetString("compose_path")
 	if composePath != "" && composePath != "." {

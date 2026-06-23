@@ -1,0 +1,4 @@
+./auth.go
+./clone.go
+./connection.go
+./poll.go

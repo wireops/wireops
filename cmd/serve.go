@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,7 +21,6 @@ import (
 	"github.com/wireops/wireops/internal/audit"
 	wireauth "github.com/wireops/wireops/internal/auth"
 	"github.com/wireops/wireops/internal/config"
-	"github.com/wireops/wireops/internal/docker"
 	"github.com/wireops/wireops/internal/hooks"
 	"github.com/wireops/wireops/internal/jobscheduler"
 	"github.com/wireops/wireops/internal/oidc"
@@ -120,13 +118,13 @@ func Execute() error {
 		log.Println("[config] loaded environment from .env")
 	}
 
-	dataDir := os.Getenv("PB_DATA_DIR")
-	if dataDir == "" {
-		dataDir = "./pb_data"
-	}
+	dataDir := config.GetPocketBaseDataDir()
+	reposWorkspace := config.GetReposWorkspace()
+	stacksStorage := config.GetStacksStoragePath()
 
 	app := pocketbase.NewWithConfig(pocketbase.Config{
 		HideStartBanner: true,
+		DefaultDataDir:  dataDir,
 	})
 	app.RootCmd.Use = "wireops"
 
@@ -209,15 +207,10 @@ func Execute() error {
 		return e.Next()
 	})
 
-	dockerClient, err := docker.NewClient()
-	if err != nil {
-		log.Printf("Warning: could not initialize Docker client: %v", err)
-	}
-
 	workerSvc := worker.NewService(app)
 	workerServer := worker.NewWorkerServer(app, workerSvc)
-	scheduler := wiresync.NewScheduler(app, dockerClient, workerServer)
-	jobSched := jobscheduler.NewScheduler(app, workerServer, dataDir)
+	scheduler := wiresync.NewScheduler(app, workerServer)
+	jobSched := jobscheduler.NewScheduler(app, workerServer, reposWorkspace)
 
 	var disconnectTimers sync.Map
 
@@ -324,7 +317,7 @@ func Execute() error {
 
 		routes.RegisterSetupRoutes(se.Router, app)
 		routes.RegisterMetricsRoutes(se.Router, app, workerServer)
-		routes.Register(se.Router, app, scheduler, dockerClient, workerServer)
+		routes.Register(se.Router, app, scheduler, workerServer)
 		routes.RegisterWorkerRoutes(se.Router, app, workerSvc, workerServer, workerServer)
 		routes.RegisterJobRoutes(se.Router, app, jobSched)
 		routes.RegisterAuditRoutes(se.Router, app)
@@ -384,14 +377,9 @@ func Execute() error {
 		return e.Next()
 	})
 
-	pbDataAbs, _ := filepath.Abs(dataDir)
-	_ = os.MkdirAll(pbDataAbs, 0755)
-
-	reposWorkspace := os.Getenv("REPOS_WORKSPACE")
-	if reposWorkspace == "" {
-		reposWorkspace = "./repos"
-	}
+	_ = os.MkdirAll(dataDir, 0755)
 	_ = os.MkdirAll(reposWorkspace, 0755)
+	_ = os.MkdirAll(stacksStorage, 0755)
 
 	return app.Start()
 }
