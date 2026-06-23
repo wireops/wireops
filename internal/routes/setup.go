@@ -3,15 +3,16 @@ package routes
 import (
 	"crypto/subtle"
 	"encoding/json"
-	"errors"
 	"log"
 	"net/http"
 	"net/mail"
 	"os"
 
-	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/router"
+
+	"github.com/wireops/wireops/internal/audit"
+	setupsvc "github.com/wireops/wireops/internal/setup"
 )
 
 func RegisterSetupRoutes(r *router.Router[*core.RequestEvent], app core.App) {
@@ -27,7 +28,7 @@ type setupStatus struct {
 }
 
 func currentSetupStatus(app core.App) (setupStatus, error) {
-	count, err := countRealUsers(app)
+	count, err := setupsvc.CountRealUsers(app)
 	if err != nil {
 		return setupStatus{
 			NeedsSetup:             false,
@@ -76,6 +77,8 @@ func handleSetupStatus(app core.App) func(*core.RequestEvent) error {
 }
 
 func handleSetupCreate(app core.App) func(*core.RequestEvent) error {
+	bootstrapService := setupsvc.NewService(app)
+
 	return func(e *core.RequestEvent) error {
 		var body struct {
 			Email          string `json:"email"`
@@ -96,64 +99,33 @@ func handleSetupCreate(app core.App) func(*core.RequestEvent) error {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "password must be at least 8 characters"})
 		}
 
+		maskedEmail := setupsvc.MaskEmail(body.Email)
+
 		status, err := currentSetupStatus(app)
 		if err != nil {
-			log.Printf("[setup] failed to determine setup status before bootstrap for %q: %v", body.Email, err)
+			log.Printf("[setup] failed to determine setup status before bootstrap for %q: %v", maskedEmail, err)
+			recordSetupRouteAudit(app, "setup.bootstrap_failed", audit.StatusError, "status_unknown", body.Email)
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		}
 		if !status.NeedsSetup {
+			recordSetupRouteAudit(app, "setup.bootstrap_rejected", audit.StatusError, "already_configured", body.Email)
 			return e.JSON(http.StatusForbidden, map[string]string{"error": "setup has already been completed"})
 		}
 		if status.Reason == "missing_bootstrap_token" {
+			recordSetupRouteAudit(app, "setup.bootstrap_rejected", audit.StatusError, "missing_bootstrap_token", body.Email)
 			return e.JSON(http.StatusForbidden, map[string]string{"error": "bootstrap token is not configured"})
 		}
 		if subtle.ConstantTimeCompare([]byte(body.BootstrapToken), []byte(os.Getenv("BOOTSTRAP_TOKEN"))) != 1 {
+			recordSetupRouteAudit(app, "setup.bootstrap_rejected", audit.StatusError, "invalid_bootstrap_token", body.Email)
 			return e.JSON(http.StatusForbidden, map[string]string{"error": "invalid bootstrap token"})
 		}
 
-		// Run the guard-check and record creation in a single transaction to
-		// prevent concurrent requests from creating multiple admin accounts.
-		txErr := app.RunInTransaction(func(txApp core.App) error {
-			count, err := countRealUsers(txApp)
-			if err != nil {
-				// Propagate DB errors unchanged so the outer handler maps them
-				// to a 500 rather than a misleading 403.
-				return err
+		if err := bootstrapService.CreateInitialAdmin(body.Email, body.Password); err != nil {
+			if err == setupsvc.ErrSetupAlreadyDone {
+				return e.JSON(http.StatusForbidden, map[string]string{"error": "setup has already been completed"})
 			}
-			if count > 0 {
-				return errSetupAlreadyDone
-			}
-
-			users, err := txApp.FindCollectionByNameOrId("users")
-			if err != nil {
-				return err
-			}
-
-			record := core.NewRecord(users)
-			record.Set("email", body.Email)
-			record.Set("password", body.Password)
-			record.Set("role", "admin")
-			record.Set("verified", true)
-			record.Set("protected", true)
-			if err := txApp.Save(record); err != nil {
-				return err
-			}
-
-			superusers, err := txApp.FindCollectionByNameOrId(core.CollectionNameSuperusers)
-			if err != nil {
-				return err
-			}
-			superRecord := core.NewRecord(superusers)
-			superRecord.Set("email", body.Email)
-			superRecord.Set("password", body.Password)
-			return txApp.Save(superRecord)
-		})
-
-		if txErr == errSetupAlreadyDone {
-			return e.JSON(http.StatusForbidden, map[string]string{"error": "setup has already been completed"})
-		}
-		if txErr != nil {
-			log.Printf("[setup] failed to create initial admin for %q: %v", body.Email, txErr)
+			log.Printf("[setup] failed to create initial admin for %q: %v", maskedEmail, err)
+			recordSetupRouteAudit(app, "setup.bootstrap_failed", audit.StatusError, "internal_error", body.Email)
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		}
 
@@ -161,16 +133,17 @@ func handleSetupCreate(app core.App) func(*core.RequestEvent) error {
 	}
 }
 
-// errSetupAlreadyDone is a sentinel returned inside the transaction to signal
-// that a real superuser already exists so we can map it to a 403 response.
-var errSetupAlreadyDone = errors.New("setup already done")
-
-// countRealUsers returns the number of RBAC users excluding the
-// temporary installer account that PocketBase auto-creates on first boot
-// (email: __pbinstaller@example.com).
-func countRealUsers(app core.App) (int64, error) {
-	if _, err := app.FindCollectionByNameOrId("users"); err == nil {
-		return app.CountRecords("users", dbx.Not(dbx.HashExp{"email": core.DefaultInstallerEmail}))
-	}
-	return app.CountRecords(core.CollectionNameSuperusers, dbx.Not(dbx.HashExp{"email": core.DefaultInstallerEmail}))
+func recordSetupRouteAudit(app core.App, action, status, errorCode, email string) {
+	audit.Record(app, audit.Event{
+		ActorType:    audit.ActorAnonymous,
+		Action:       action,
+		ResourceType: "setup",
+		ResourceID:   "initial",
+		Origin:       audit.OriginSetup,
+		Status:       status,
+		ErrorCode:    errorCode,
+		Metadata: map[string]any{
+			"email_masked": setupsvc.MaskEmail(email),
+		},
+	})
 }
