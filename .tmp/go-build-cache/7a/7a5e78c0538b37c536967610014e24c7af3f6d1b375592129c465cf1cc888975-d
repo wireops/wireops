@@ -1,5 +1,0 @@
-./notify.go
-./ntfy.go
-./provider.go
-./webhook.go
-./notify_test.go
