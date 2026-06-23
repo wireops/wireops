@@ -1,4 +1,5 @@
 import type { RecordModel } from 'pocketbase'
+import { resolveBackendBaseUrl } from '~/composables/useBaseUrl'
 
 export function useAuth() {
   const { $pb } = useNuxtApp()
@@ -50,7 +51,7 @@ export function useAuth() {
     $pb.authStore.clear()
 
     const config = useRuntimeConfig()
-    const baseURL = (config.public.pocketbaseUrl as string).replace(/\/$/, '')
+    const baseURL = resolveBackendBaseUrl(config.public.pocketbaseUrl as string)
 
     try {
       const elevated = await $fetch<{ token: string; record: RecordModel }>(
