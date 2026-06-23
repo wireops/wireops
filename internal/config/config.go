@@ -10,7 +10,11 @@ func GetAppURL() string {
 	appURL := strings.TrimSpace(os.Getenv("APP_URL"))
 	if appURL != "" {
 		// Remove trailing slash if present
-		return strings.TrimRight(appURL, "/")
+		appURL = strings.TrimRight(appURL, "/")
+		if !strings.Contains(appURL, "://") {
+			appURL = "http://" + appURL
+		}
+		return appURL
 	}
 
 	// Default to localhost with default PocketBase port

@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/go-git/go-git/v5/plumbing/transport"
 	gogithttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	gogitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
 	"golang.org/x/crypto/ssh"
@@ -21,12 +22,12 @@ const (
 )
 
 type Credential struct {
-	AuthType       AuthType
-	SSHPrivateKey  []byte
-	SSHPassphrase  []byte
-	SSHKnownHost   string
-	GitUsername    string
-	GitPassword    string
+	AuthType      AuthType
+	SSHPrivateKey []byte
+	SSHPassphrase []byte
+	SSHKnownHost  string
+	GitUsername   string
+	GitPassword   string
 }
 
 func ResolveAuth(cred Credential) (interface{}, error) {
@@ -37,6 +38,25 @@ func ResolveAuth(cred Credential) (interface{}, error) {
 		return resolveBasicAuth(cred)
 	default:
 		return nil, nil
+	}
+}
+
+func ResolveTransportAuth(cred Credential) (transport.AuthMethod, error) {
+	auth, err := ResolveAuth(cred)
+	if err != nil {
+		return nil, err
+	}
+	if auth == nil {
+		return nil, nil
+	}
+
+	switch v := auth.(type) {
+	case *gogitssh.PublicKeys:
+		return v, nil
+	case *gogithttp.BasicAuth:
+		return v, nil
+	default:
+		return nil, fmt.Errorf("unsupported transport auth type %T", auth)
 	}
 }
 

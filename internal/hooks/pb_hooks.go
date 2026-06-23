@@ -14,8 +14,6 @@ import (
 	"time"
 
 	"github.com/go-git/go-git/v5/plumbing/transport"
-	gogithttp "github.com/go-git/go-git/v5/plumbing/transport/http"
-	gogitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
 	validation "github.com/go-ozzo/ozzo-validation/v4"
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/apis"
@@ -186,14 +184,12 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 						}
 					}
 				}
-				if resolvedAuth, err := git.ResolveAuth(*cred); err == nil {
-					switch v := resolvedAuth.(type) {
-					case *gogitssh.PublicKeys:
-						auth = v
-					case *gogithttp.BasicAuth:
-						auth = v
-					}
+				resolvedAuth, err := git.ResolveTransportAuth(*cred)
+				if err != nil {
+					log.Printf("[hooks] failed to resolve git auth for repo %s: %v", repoID, err)
+					return
 				}
+				auth = resolvedAuth
 			}
 
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -522,7 +518,7 @@ func registerAuditHooks(app core.App) {
 		"repository_keys":             "repository_key",
 		"scheduled_jobs":              "scheduled_job",
 		"stack_env_vars":              "stack_env_var",
-		"integrations":                 "integration",
+		"integrations":                "integration",
 		"stacks":                      "stack",
 		"service_accounts":            "service_account",
 		"sso_group_roles":             "sso_group_role",

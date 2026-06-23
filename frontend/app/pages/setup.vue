@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { SetupStatus } from '~/types/setup'
+import { invalidateInstanceSetupStatus } from '~/composables/useSetupStatus'
 import { getSetupBlockedMessage, mapSetupError, validateSetupPassword } from '~/utils/setup'
 definePageMeta({ layout: false })
 
@@ -87,6 +88,7 @@ async function handleSetup() {
       password: password.value,
       bootstrapToken: bootstrapToken.value,
     })
+    invalidateInstanceSetupStatus()
   } catch (e: any) {
     error.value = mapSetupError(e?.message)
     announce(error.value, 'assertive')

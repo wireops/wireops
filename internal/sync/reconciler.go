@@ -1032,11 +1032,7 @@ func (r *Reconciler) resolveGitAuth(repoID string) (transport.AuthMethod, error)
 	if err != nil {
 		return nil, err
 	}
-	auth, err := gitpkg.ResolveAuth(*cred)
-	if err != nil {
-		return nil, err
-	}
-	return toTransportAuth(auth), nil
+	return gitpkg.ResolveTransportAuth(*cred)
 }
 
 func (r *Reconciler) loadCredential(repoID string) (*gitpkg.Credential, error) {

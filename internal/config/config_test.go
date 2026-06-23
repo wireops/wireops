@@ -41,6 +41,16 @@ func TestGetAppURL(t *testing.T) {
 			envValue: "  https://wireops.example.com  ",
 			expected: "https://wireops.example.com",
 		},
+		{
+			name:     "NoSchemeHostAndPort",
+			envValue: "10.0.0.100:8090",
+			expected: "http://10.0.0.100:8090",
+		},
+		{
+			name:     "NoSchemeHostOnly",
+			envValue: "wireops.example.com",
+			expected: "http://wireops.example.com",
+		},
 	}
 
 	for _, tt := range tests {
