@@ -44,14 +44,19 @@ export async function getInstanceSetupStatus(): Promise<SetupStatus | null> {
     return inflightSetupStatusCheck
   }
 
-  inflightSetupStatusCheck = fetchInstanceSetupStatus().then((result) => {
-    cachedSetupStatus = result
-    if (result !== null) {
-      cachedSetupStatusAt = Date.now()
+  const inflight = fetchInstanceSetupStatus()
+  inflightSetupStatusCheck = inflight.then((result) => {
+    if (inflightSetupStatusCheck === inflight) {
+      cachedSetupStatus = result
+      if (result !== null) {
+        cachedSetupStatusAt = Date.now()
+      }
     }
     return result
   }).finally(() => {
-    inflightSetupStatusCheck = null
+    if (inflightSetupStatusCheck === inflight) {
+      inflightSetupStatusCheck = null
+    }
   })
 
   return inflightSetupStatusCheck

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"testing"
 
 	gogithttp "github.com/go-git/go-git/v5/plumbing/transport/http"
@@ -51,6 +52,22 @@ func TestResolveTransportAuthInvalidSSHKey(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error for invalid SSH private key")
+	}
+	if !errors.Is(err, ErrInvalidSSHPrivateKey) {
+		t.Fatalf("expected ErrInvalidSSHPrivateKey, got %v", err)
+	}
+}
+
+func TestResolveTransportAuthMissingBasicUsername(t *testing.T) {
+	_, err := ResolveTransportAuth(Credential{
+		AuthType:    AuthTypeBasic,
+		GitPassword: "secret",
+	})
+	if err == nil {
+		t.Fatal("expected error for missing basic auth username")
+	}
+	if !errors.Is(err, ErrMissingGitUsername) {
+		t.Fatalf("expected ErrMissingGitUsername, got %v", err)
 	}
 }
 

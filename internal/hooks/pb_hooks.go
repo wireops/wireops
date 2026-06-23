@@ -186,7 +186,7 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 				}
 				resolvedAuth, err := git.ResolveTransportAuth(*cred)
 				if err != nil {
-					log.Printf("[hooks] failed to resolve git auth for repo %s: %v", repoID, err)
+					log.Printf("[hooks] failed to resolve git auth for repo %s (auth_type=%s)", repoID, authType)
 					return
 				}
 				auth = resolvedAuth

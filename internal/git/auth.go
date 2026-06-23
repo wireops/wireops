@@ -1,6 +1,7 @@
 package git
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -29,6 +30,13 @@ type Credential struct {
 	GitUsername   string
 	GitPassword   string
 }
+
+var (
+	ErrInvalidSSHPrivateKey = errors.New("invalid SSH private key")
+	ErrInvalidKnownHost     = errors.New("invalid known host entry")
+	ErrMissingGitUsername   = errors.New("git username is required for basic auth")
+	errHostKeyCollected     = errors.New("host key collected")
+)
 
 func ResolveAuth(cred Credential) (interface{}, error) {
 	switch cred.AuthType {
@@ -70,14 +78,14 @@ func resolveSSHAuth(cred Credential) (*gogitssh.PublicKeys, error) {
 		signer, err = ssh.ParsePrivateKey(cred.SSHPrivateKey)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse SSH private key: %w", err)
+		return nil, ErrInvalidSSHPrivateKey
 	}
 
 	var hostKeyCallback ssh.HostKeyCallback
 	if cred.SSHKnownHost != "" {
 		hostKeyCallback, err = buildKnownHostCallback(cred.SSHKnownHost)
 		if err != nil {
-			return nil, fmt.Errorf("failed to build known host callback: %w", err)
+			return nil, ErrInvalidKnownHost
 		}
 	} else {
 		hostKeyCallback = ssh.InsecureIgnoreHostKey()
@@ -94,7 +102,7 @@ func resolveSSHAuth(cred Credential) (*gogitssh.PublicKeys, error) {
 
 func resolveBasicAuth(cred Credential) (*gogithttp.BasicAuth, error) {
 	if cred.GitUsername == "" {
-		return nil, fmt.Errorf("git username is required for basic auth")
+		return nil, ErrMissingGitUsername
 	}
 	return &gogithttp.BasicAuth{
 		Username: cred.GitUsername,
@@ -152,7 +160,10 @@ func ScanHostKey(host string, port int) (string, error) {
 		Auth: []ssh.AuthMethod{},
 		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 			hostKey = key
-			return nil
+			// Stop the handshake once we have the host key. ScanHostKey only needs
+			// the presented key/fingerprint and should not proceed with an
+			// unauthenticated session using an accept-all callback.
+			return errHostKeyCollected
 		},
 	}
 
