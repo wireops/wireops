@@ -2,24 +2,24 @@ services:
   wireops:
     image: ghcr.io/wireops/server:latest
     restart: unless-stopped
+    container_name: wireops
     ports:
-      # PORT: UI, API, and GET /metrics (Prometheus scrape target)
+      # PORT: UI, API, and Prometheus /metrics
       - "${PORT:-8090}:8090"
-      # TLS_WORKER_PORT: remote workers only — not for metrics scrapers
+      # TLS_WORKER_PORT: Remote workers only
       - "${TLS_WORKER_PORT:-8443}:8443"
     volumes:
       - ./data:/data
-      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - SECRET_KEY=${SECRET_KEY}
       - APP_URL=${APP_URL:-http://localhost:8090}
       - PB_DATA_DIR=${PB_DATA_DIR:-/data/pb_data}
       - REPOS_WORKSPACE=${REPOS_WORKSPACE:-/data/repos}
-    env_file:
-      - .env
+      - BOOTSTRAP_TOKEN=${BOOTSTRAP_TOKEN}
 
   wireops-worker:
     image: ghcr.io/wireops/worker:latest
+    container_name: wireops-worker
     restart: unless-stopped
     depends_on:
       - wireops
@@ -30,5 +30,3 @@ services:
       - HOSTNAME=${WORKER_HOSTNAME:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-    env_file:
-      - .env

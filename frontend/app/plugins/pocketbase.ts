@@ -1,8 +1,12 @@
 import PocketBase, { LocalAuthStore } from 'pocketbase'
+import { resolveBackendBaseUrl } from '~/composables/useBaseUrl'
 
 export default defineNuxtPlugin(() => {
   const config = useRuntimeConfig()
-  const pb = new PocketBase(config.public.pocketbaseUrl as string, new LocalAuthStore('wireops_auth'))
+  const pb = new PocketBase(
+    resolveBackendBaseUrl(config.public.pocketbaseUrl as string),
+    new LocalAuthStore('wireops_auth')
+  )
 
   pb.beforeSend = async (url, options) => {
     const headers = Object.fromEntries(new Headers(options.headers || {}).entries())

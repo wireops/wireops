@@ -1,4 +1,5 @@
 import type { SetupStatus } from '~/types/setup'
+import { resolveBackendBaseUrl } from '~/composables/useBaseUrl'
 
 const PUBLIC_PATHS = ['/login', '/forgot-password', '/reset-password', '/invite', '/setup']
 const SETUP_STATUS_CACHE_MS = 5000
@@ -12,7 +13,7 @@ let inflightSetupStatusCheck: Promise<SetupStatus | null> | null = null
 async function fetchInstanceSetupStatus(): Promise<SetupStatus | null> {
   try {
     const config = useRuntimeConfig()
-    const baseURL = (config.public.pocketbaseUrl as string).replace(/\/$/, '')
+    const baseURL = resolveBackendBaseUrl(config.public.pocketbaseUrl as string)
     const data = await $fetch<Partial<SetupStatus>>(`${baseURL}/api/custom/setup/status`, {
       method: 'GET',
       headers: { 'X-Wireops-Origin': 'ui' },
