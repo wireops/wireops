@@ -518,9 +518,11 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		// Ensure we have the latest files by cloning or fetching
 		var auth transport.AuthMethod
 		if cred, err := loadRepositoryCredential(app, repoID); err == nil && cred != nil {
-			if resolvedAuth, err := git.ResolveAuth(*cred); err == nil {
-				auth = toTransportAuth(resolvedAuth)
+			resolvedAuth, err := git.ResolveTransportAuth(*cred)
+			if err != nil {
+				return e.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid repository credential: %v", err)})
 			}
+			auth = resolvedAuth
 		}
 
 		branch := repo.GetString("branch")
@@ -640,9 +642,12 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 		workspace := filepath.Join(app.DataDir(), "repositories")
 		var auth transport.AuthMethod
 		if cred, err := loadRepositoryCredential(app, repoID); err == nil && cred != nil {
-			if resolved, err := git.ResolveAuth(*cred); err == nil {
-				auth = toTransportAuth(resolved)
+			resolvedAuth, err := git.ResolveTransportAuth(*cred)
+			if err != nil {
+				_ = e.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid repository credential: %v", err)})
+				return "", false
 			}
+			auth = resolvedAuth
 		}
 		branch := repo.GetString("branch")
 		if branch == "" {
@@ -788,13 +793,12 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 			}
 		}
 
-		auth, err := git.ResolveAuth(cred)
+		auth, err := git.ResolveTransportAuth(cred)
 		if err != nil {
 			return e.JSON(http.StatusOK, map[string]string{"success": "false", "error": err.Error()})
 		}
 
-		transportAuth := toTransportAuth(auth)
-		if err := git.TestConnection(body.GitURL, transportAuth); err != nil {
+		if err := git.TestConnection(body.GitURL, auth); err != nil {
 			return e.JSON(http.StatusOK, map[string]string{"success": "false", "error": err.Error()})
 		}
 
@@ -1312,7 +1316,6 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 
 		return e.JSON(http.StatusOK, map[string]string{"status": "purged"})
 	}).BindFunc(rbac.Require(rbac.CapManageSettings))
-
 
 	// Discover unmanaged Docker Compose projects on a given worker host
 	r.GET("/api/custom/stacks/import/discover", func(e *core.RequestEvent) error {

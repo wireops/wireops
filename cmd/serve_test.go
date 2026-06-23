@@ -2,9 +2,39 @@ package cmd
 
 import (
 	"os"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 )
+
+func TestGetAllowedOriginsIncludesLoopbackDevOrigins(t *testing.T) {
+	originalOrigins := allowedOrigins
+	originalOnce := allowedOriginsOnce
+	allowedOrigins = nil
+	allowedOriginsOnce = sync.Once{}
+	t.Cleanup(func() {
+		allowedOrigins = originalOrigins
+		allowedOriginsOnce = originalOnce
+	})
+
+	os.Setenv("APP_URL", "http://127.0.0.1:8090")
+	defer os.Unsetenv("APP_URL")
+
+	origins := getAllowedOrigins()
+
+	for _, expected := range []string{
+		"http://127.0.0.1:8090",
+		"http://localhost:3000",
+		"http://localhost:5173",
+		"http://127.0.0.1:3000",
+		"http://127.0.0.1:5173",
+	} {
+		if !slices.Contains(origins, expected) {
+			t.Fatalf("expected allowed origins to contain %q, got %v", expected, origins)
+		}
+	}
+}
 
 func TestValidateOIDCURL(t *testing.T) {
 	tests := []struct {

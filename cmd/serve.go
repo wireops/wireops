@@ -41,27 +41,41 @@ import (
 	_ "github.com/wireops/wireops/pb_migrations"
 )
 
+var (
+	allowedOrigins     []string
+	allowedOriginsOnce sync.Once
+)
+
 // getAllowedOrigins returns the list of allowed CORS origins based on APP_URL
 func getAllowedOrigins() []string {
-	appURL := config.GetAppURL()
-	allowedOrigins := []string{}
+	allowedOriginsOnce.Do(func() {
+		appURL := config.GetAppURL()
+		allowedOrigins = []string{}
 
-	// Parse APP_URL and extract origin
-	if u, err := url.Parse(appURL); err == nil {
-		origin := u.Scheme + "://" + u.Host
-		allowedOrigins = append(allowedOrigins, origin)
+		// Parse APP_URL and extract origin
+		if u, err := url.Parse(appURL); err == nil {
+			origin := u.Scheme + "://" + u.Host
+			allowedOrigins = append(allowedOrigins, origin)
 
-		// For localhost, also allow common development ports
-		host := u.Hostname()
-		if host == "localhost" || host == "127.0.0.1" {
-			allowedOrigins = append(allowedOrigins, "http://localhost:3000", "http://localhost:5173")
+			// For localhost, also allow common development ports
+			host := u.Hostname()
+			if host == "localhost" || host == "127.0.0.1" {
+				allowedOrigins = append(
+					allowedOrigins,
+					"http://localhost:3000",
+					"http://localhost:5173",
+					"http://127.0.0.1:3000",
+					"http://127.0.0.1:5173",
+				)
+			}
+		} else {
+			log.Printf("Warning: failed to parse APP_URL '%s': %v", appURL, err)
+			allowedOrigins = append(allowedOrigins, appURL)
 		}
-	} else {
-		log.Printf("Warning: failed to parse APP_URL '%s': %v", appURL, err)
-		allowedOrigins = append(allowedOrigins, appURL)
-	}
 
-	log.Printf("[CORS] Configured allowed origins: %v", allowedOrigins)
+		log.Printf("[CORS] Configured allowed origins: %v", allowedOrigins)
+	})
+
 	return allowedOrigins
 }
 
