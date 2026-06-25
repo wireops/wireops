@@ -10,6 +10,29 @@ import (
 	"github.com/pocketbase/pocketbase/tools/types"
 )
 
+func TestIsSSHGitURL(t *testing.T) {
+	tests := []struct {
+		name   string
+		gitURL string
+		want   bool
+	}{
+		{name: "scp style ssh", gitURL: "git@github.com:wireops/wireops.git", want: true},
+		{name: "ssh scheme", gitURL: "ssh://git@github.com/wireops/wireops.git", want: true},
+		{name: "https scheme", gitURL: "https://github.com/wireops/wireops.git", want: false},
+		{name: "http scheme", gitURL: "http://example.com/repo.git", want: false},
+		{name: "local path", gitURL: "/tmp/repo.git", want: false},
+		{name: "blank", gitURL: "   ", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isSSHGitURL(tt.gitURL); got != tt.want {
+				t.Fatalf("isSSHGitURL(%q) = %v, want %v", tt.gitURL, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestMaskEmailForLog(t *testing.T) {
 	tests := []struct {
 		name     string
