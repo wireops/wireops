@@ -10,6 +10,56 @@ import (
 	"github.com/pocketbase/pocketbase/tools/types"
 )
 
+func TestEnsureSingleRepositoryKeyRecordRejectsDuplicates(t *testing.T) {
+	app, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatalf("new test app: %v", err)
+	}
+	t.Cleanup(func() { app.Cleanup() })
+
+	col := core.NewBaseCollection("repository_keys")
+	col.Fields.Add(&core.TextField{Name: "repository"})
+	if err := app.Save(col); err != nil {
+		t.Fatalf("save collection: %v", err)
+	}
+
+	rec := core.NewRecord(col)
+	rec.Set("repository", "repo-1")
+	if err := app.Save(rec); err != nil {
+		t.Fatalf("save record: %v", err)
+	}
+
+	if err := ensureSingleRepositoryKeyRecord(app, "repo-1", ""); err == nil {
+		t.Fatal("expected duplicate repository_keys error")
+	}
+	if err := ensureSingleRepositoryKeyRecord(app, "repo-1", rec.Id); err != nil {
+		t.Fatalf("expected current record to be ignored, got %v", err)
+	}
+}
+
+func TestIsSSHGitURL(t *testing.T) {
+	tests := []struct {
+		name   string
+		gitURL string
+		want   bool
+	}{
+		{name: "scp style ssh", gitURL: "git@github.com:wireops/wireops.git", want: true},
+		{name: "ssh scheme", gitURL: "ssh://git@github.com/wireops/wireops.git", want: true},
+		{name: "https scheme", gitURL: "https://github.com/wireops/wireops.git", want: false},
+		{name: "http scheme", gitURL: "http://example.com/repo.git", want: false},
+		{name: "local path", gitURL: "/tmp/repo.git", want: false},
+		{name: "blank", gitURL: "   ", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isSSHGitURL(tt.gitURL); got != tt.want {
+				t.Fatalf("isSSHGitURL(%q) = %v, want %v", tt.gitURL, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestMaskEmailForLog(t *testing.T) {
 	tests := []struct {
 		name     string

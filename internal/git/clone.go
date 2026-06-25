@@ -1,6 +1,7 @@
 package git
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +13,14 @@ import (
 )
 
 func CloneOrFetch(repoID, gitURL, branch string, auth transport.AuthMethod, workspace string) (*gogit.Repository, error) {
+	return CloneOrFetchContext(context.Background(), repoID, gitURL, branch, auth, workspace)
+}
+
+func CloneOrFetchContext(ctx context.Context, repoID, gitURL, branch string, auth transport.AuthMethod, workspace string) (*gogit.Repository, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	cleaned := filepath.Clean(repoID)
 	if filepath.IsAbs(cleaned) || strings.Contains(repoID, "..") || strings.Contains(repoID, string(os.PathSeparator)) {
 		return nil, fmt.Errorf("invalid repository ID: %s", repoID)
@@ -23,13 +32,13 @@ func CloneOrFetch(repoID, gitURL, branch string, auth transport.AuthMethod, work
 	}
 
 	if _, err := os.Stat(filepath.Join(repoDir, ".git")); os.IsNotExist(err) {
-		return cloneRepo(repoDir, gitURL, branch, auth)
+		return cloneRepo(ctx, repoDir, gitURL, branch, auth)
 	}
 
-	return fetchRepo(repoDir, branch, auth)
+	return fetchRepo(ctx, repoDir, branch, auth)
 }
 
-func cloneRepo(dir, gitURL, branch string, auth transport.AuthMethod) (*gogit.Repository, error) {
+func cloneRepo(ctx context.Context, dir, gitURL, branch string, auth transport.AuthMethod) (*gogit.Repository, error) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create repo dir: %w", err)
 	}
@@ -42,7 +51,7 @@ func cloneRepo(dir, gitURL, branch string, auth transport.AuthMethod) (*gogit.Re
 		Auth:          auth,
 	}
 
-	repo, err := gogit.PlainClone(dir, false, opts)
+	repo, err := gogit.PlainCloneContext(ctx, dir, false, opts)
 	if err != nil {
 		return nil, fmt.Errorf("git clone failed: %w", err)
 	}
@@ -50,7 +59,11 @@ func cloneRepo(dir, gitURL, branch string, auth transport.AuthMethod) (*gogit.Re
 	return repo, nil
 }
 
-func fetchRepo(dir, branch string, auth transport.AuthMethod) (*gogit.Repository, error) {
+func fetchRepo(ctx context.Context, dir, branch string, auth transport.AuthMethod) (*gogit.Repository, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	repo, err := gogit.PlainOpen(dir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open repo: %w", err)
@@ -61,9 +74,12 @@ func fetchRepo(dir, branch string, auth transport.AuthMethod) (*gogit.Repository
 		Force: true,
 	}
 
-	err = repo.Fetch(fetchOpts)
+	err = repo.FetchContext(ctx, fetchOpts)
 	if err != nil && err != gogit.NoErrAlreadyUpToDate {
 		return nil, fmt.Errorf("git fetch failed: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 
 	wt, err := repo.Worktree()
@@ -81,6 +97,9 @@ func fetchRepo(dir, branch string, auth transport.AuthMethod) (*gogit.Repository
 		return nil, fmt.Errorf("failed to get remote ref: %w", err)
 	}
 	resetOpts.Commit = remoteRef.Hash()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	if err := wt.Reset(resetOpts); err != nil {
 		return nil, fmt.Errorf("git reset failed: %w", err)

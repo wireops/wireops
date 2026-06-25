@@ -57,6 +57,9 @@ func loadRepositoryCredential(app core.App, repoID string) (*git.Credential, err
 	if err != nil || len(records) == 0 {
 		return nil, fmt.Errorf("no credential found")
 	}
+	if len(records) > 1 {
+		return nil, fmt.Errorf("multiple repository_keys records found for repository %s", repoID)
+	}
 
 	rec := records[0]
 	authType := git.AuthType(rec.GetString("auth_type"))

@@ -2,6 +2,7 @@ package hooks
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"html"
 	"log"
@@ -32,6 +33,150 @@ import (
 	"github.com/wireops/wireops/internal/sync"
 )
 
+func isSSHGitURL(gitURL string) bool {
+	gitURL = strings.TrimSpace(gitURL)
+	if gitURL == "" {
+		return false
+	}
+	if strings.HasPrefix(gitURL, "ssh://") {
+		return true
+	}
+	if strings.Contains(gitURL, "://") {
+		return false
+	}
+	at := strings.Index(gitURL, "@")
+	colon := strings.Index(gitURL, ":")
+	return at > 0 && colon > at
+}
+
+func ensureSingleRepositoryKeyRecord(app core.App, repoID, currentRecordID string) error {
+	if strings.TrimSpace(repoID) == "" {
+		return fmt.Errorf("repository is required")
+	}
+
+	records, err := app.FindAllRecords("repository_keys", dbx.HashExp{"repository": repoID})
+	if err != nil {
+		return err
+	}
+
+	count := 0
+	for _, rec := range records {
+		if rec.Id == currentRecordID {
+			continue
+		}
+		count++
+	}
+	if count > 0 {
+		return fmt.Errorf("repository_keys already exists for repository %s", repoID)
+	}
+
+	return nil
+}
+
+func loadRepositoryTransportAuth(app core.App, repoID string, secretKey []byte) (transport.AuthMethod, bool, error) {
+	records, err := app.FindAllRecords("repository_keys", dbx.HashExp{"repository": repoID})
+	if err != nil {
+		return nil, false, err
+	}
+	if len(records) == 0 {
+		return nil, false, nil
+	}
+	if len(records) > 1 {
+		return nil, false, fmt.Errorf("multiple repository_keys records found for repository %s", repoID)
+	}
+
+	rec := records[0]
+	authType := git.AuthType(rec.GetString("auth_type"))
+	cred := &git.Credential{AuthType: authType}
+	switch authType {
+	case git.AuthTypeSSH:
+		if enc := rec.GetString("ssh_private_key"); enc != "" {
+			if dec, err := crypto.Decrypt(enc, secretKey); err == nil {
+				cred.SSHPrivateKey = dec
+			} else {
+				return nil, true, fmt.Errorf("decrypt ssh_private_key: %w", err)
+			}
+		}
+		if enc := rec.GetString("ssh_passphrase"); enc != "" {
+			if dec, err := crypto.Decrypt(enc, secretKey); err == nil {
+				cred.SSHPassphrase = dec
+			} else {
+				return nil, true, fmt.Errorf("decrypt ssh_passphrase: %w", err)
+			}
+		}
+		cred.SSHKnownHost = rec.GetString("ssh_known_host")
+	case git.AuthTypeBasic:
+		cred.GitUsername = rec.GetString("git_username")
+		if enc := rec.GetString("git_password"); enc != "" {
+			if dec, err := crypto.Decrypt(enc, secretKey); err == nil {
+				cred.GitPassword = string(dec)
+			} else {
+				return nil, true, fmt.Errorf("decrypt git_password: %w", err)
+			}
+		}
+	}
+
+	auth, err := git.ResolveTransportAuth(*cred)
+	if err != nil {
+		return nil, true, err
+	}
+	return auth, true, nil
+}
+
+func triggerRepositoryBackgroundClone(app core.App, secretKey []byte, repoID, gitURL, branch string, waitForCredentials bool) {
+	if branch == "" {
+		branch = "main"
+	}
+
+	go func() {
+		var (
+			auth    transport.AuthMethod
+			hasCred bool
+			err     error
+		)
+
+		if waitForCredentials {
+			time.Sleep(1 * time.Second)
+			for i := 0; i < 10; i++ {
+				auth, hasCred, err = loadRepositoryTransportAuth(app, repoID, secretKey)
+				if err != nil {
+					log.Printf("[hooks] failed to resolve git auth for repo %s", repoID)
+					return
+				}
+				if hasCred {
+					break
+				}
+				time.Sleep(1 * time.Second)
+			}
+		} else {
+			auth, hasCred, err = loadRepositoryTransportAuth(app, repoID, secretKey)
+			if err != nil {
+				log.Printf("[hooks] failed to resolve git auth for repo %s", repoID)
+				return
+			}
+		}
+
+		if !hasCred && isSSHGitURL(gitURL) {
+			log.Printf("[hooks] background clone deferred for repo %s: waiting for SSH credentials", repoID)
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+
+		_, err = git.CloneOrFetchContext(ctx, repoID, gitURL, branch, auth, config.GetReposWorkspace())
+		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				log.Printf("[hooks] background clone timed out for repo %s", repoID)
+			} else {
+				log.Printf("[hooks] background clone failed for repo %s: %v", repoID, err)
+			}
+		} else {
+			log.Printf("[hooks] background clone success for repo %s", repoID)
+		}
+	}()
+}
+
 func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Scheduler) {
 	secretKey := []byte(os.Getenv("SECRET_KEY"))
 	registerAuditHooks(app)
@@ -56,16 +201,48 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 
 	// Encrypt credential fields on create/update
 	app.OnRecordCreate("repository_keys").BindFunc(func(e *core.RecordEvent) error {
+		if err := ensureSingleRepositoryKeyRecord(app, e.Record.GetString("repository"), ""); err != nil {
+			return err
+		}
 		if err := encryptSensitiveFields(e.Record, secretKey); err != nil {
 			return err
 		}
 		return e.Next()
 	})
 
+	app.OnRecordAfterCreateSuccess("repository_keys").BindFunc(func(e *core.RecordEvent) error {
+		repoID := e.Record.GetString("repository")
+		if repoID == "" {
+			return e.Next()
+		}
+		repo, err := app.FindRecordById("repositories", repoID)
+		if err != nil {
+			return e.Next()
+		}
+		triggerRepositoryBackgroundClone(app, secretKey, repoID, repo.GetString("git_url"), repo.GetString("branch"), false)
+		return e.Next()
+	})
+
 	app.OnRecordUpdate("repository_keys").BindFunc(func(e *core.RecordEvent) error {
+		if err := ensureSingleRepositoryKeyRecord(app, e.Record.GetString("repository"), e.Record.Id); err != nil {
+			return err
+		}
 		if err := encryptSensitiveFields(e.Record, secretKey); err != nil {
 			return err
 		}
+		return e.Next()
+	})
+
+	app.OnRecordAfterUpdateSuccess("repository_keys").BindFunc(func(e *core.RecordEvent) error {
+		repoID := e.Record.GetString("repository")
+		if repoID == "" {
+			return e.Next()
+		}
+		repo, err := app.FindRecordById("repositories", repoID)
+		if err != nil {
+			return e.Next()
+		}
+		triggerRepositoryBackgroundClone(app, secretKey, repoID, repo.GetString("git_url"), repo.GetString("branch"), false)
 		return e.Next()
 	})
 
@@ -125,94 +302,7 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 		repoID := e.Record.Id
 		gitURL := e.Record.GetString("git_url")
 		branch := e.Record.GetString("branch")
-		if branch == "" {
-			branch = "main"
-		}
-
-		workspace := config.GetReposWorkspace()
-
-		go func() {
-			// Small delay to allow nested records (like credentials) to be saved if created in a transaction
-			time.Sleep(1 * time.Second)
-
-			// Try to load auth with retries to handle the race condition
-			// where the frontend creates the repository and then takes a moment
-			// to create the associated repository_keys.
-			var auth transport.AuthMethod
-			var records []*core.Record
-			for i := 0; i < 10; i++ {
-				var err error
-				records, err = app.FindAllRecords("repository_keys", dbx.HashExp{"repository": repoID})
-				if err != nil {
-					log.Printf("[hooks] database error finding repository keys for repo %s: %v", repoID, err)
-					return
-				}
-				if len(records) > 0 {
-					break
-				}
-				time.Sleep(1 * time.Second)
-			}
-
-			if len(records) > 0 {
-				rec := records[0]
-				authType := git.AuthType(rec.GetString("auth_type"))
-				cred := &git.Credential{AuthType: authType}
-				switch authType {
-				case git.AuthTypeSSH:
-					if enc := rec.GetString("ssh_private_key"); enc != "" {
-						if dec, err := crypto.Decrypt(enc, secretKey); err == nil {
-							cred.SSHPrivateKey = dec
-						} else {
-							log.Printf("failed to decrypt ssh_private_key: %v", err)
-						}
-					}
-					if enc := rec.GetString("ssh_passphrase"); enc != "" {
-						if dec, err := crypto.Decrypt(enc, secretKey); err == nil {
-							cred.SSHPassphrase = dec
-						} else {
-							log.Printf("failed to decrypt ssh_passphrase: %v", err)
-						}
-					}
-					cred.SSHKnownHost = rec.GetString("ssh_known_host")
-				case git.AuthTypeBasic:
-					cred.GitUsername = rec.GetString("git_username")
-					if enc := rec.GetString("git_password"); enc != "" {
-						if dec, err := crypto.Decrypt(enc, secretKey); err == nil {
-							cred.GitPassword = string(dec)
-						} else {
-							log.Printf("failed to decrypt git_password: %v", err)
-						}
-					}
-				}
-				resolvedAuth, err := git.ResolveTransportAuth(*cred)
-				if err != nil {
-					log.Printf("[hooks] failed to resolve git auth for repo %s (auth_type=%s)", repoID, authType)
-					return
-				}
-				auth = resolvedAuth
-			}
-
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-			defer cancel()
-
-			done := make(chan error, 1)
-			go func() {
-				_, err := git.CloneOrFetch(repoID, gitURL, branch, auth, workspace)
-				done <- err
-			}()
-
-			select {
-			case <-ctx.Done():
-				log.Printf("[hooks] background clone timed out for repo %s", repoID)
-			case err := <-done:
-				if err != nil {
-					log.Printf("[hooks] background clone failed for repo %s: %v", repoID, err)
-				} else {
-					log.Printf("[hooks] background clone success for repo %s", repoID)
-				}
-			}
-		}()
-
+		triggerRepositoryBackgroundClone(app, secretKey, repoID, gitURL, branch, true)
 		return e.Next()
 	})
 
