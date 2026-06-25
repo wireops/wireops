@@ -763,7 +763,7 @@ func (r *Reconciler) stackWorkDir(stack *core.Record, repoID string) (string, er
 
 // reconcileLocalStack handles the reconcile loop for stacks imported from a local
 // filesystem path (source_type=local), bypassing the git fetch flow.
-func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, stack *core.Record, trigger string) error {
+func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, stack *core.Record, trigger string) (retErr error) {
 	importPath := stack.GetString("import_path")
 	if importPath == "" {
 		errMsg := "import_path is required for local stacks"
@@ -831,7 +831,16 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 		r.markError(stack, "stacks")
 		return fmt.Errorf("%s", errMsg)
 	}
-	defer os.RemoveAll(workDir)
+	defer func() {
+		if cleanupErr := os.RemoveAll(workDir); cleanupErr != nil {
+			errMsg := fmt.Sprintf("failed to clean temp work dir for local stack %s (trigger=%s): %v", stackID, trigger, cleanupErr)
+			log.Printf("[reconciler] %s", errMsg)
+			_ = r.logFailure(stackID, trigger, "", errMsg)
+			if retErr == nil {
+				retErr = fmt.Errorf("%s", errMsg)
+			}
+		}
+	}()
 
 	sourceFile := filepath.Join(workDir, "source.yml")
 	if writeErr := os.WriteFile(sourceFile, composeContent, 0644); writeErr != nil {
