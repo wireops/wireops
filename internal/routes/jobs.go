@@ -10,6 +10,7 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/router"
 
+	"github.com/wireops/wireops/internal/config"
 	"github.com/wireops/wireops/internal/job"
 	"github.com/wireops/wireops/internal/jobscheduler"
 	"github.com/wireops/wireops/internal/rbac"
@@ -70,7 +71,7 @@ func resolveJobParams(app core.App, e *core.RequestEvent) (*core.Record, string,
 		return nil, "", "", "", e.JSON(http.StatusNotFound, map[string]string{"error": "job not found"})
 	}
 
-	repoWorkspace := filepath.Join(app.DataDir(), "repositories")
+	repoWorkspace := config.GetReposWorkspace()
 	repoID := rec.GetString("repository")
 	jobFile := rec.GetString("job_file")
 	return rec, repoWorkspace, repoID, jobFile, nil
@@ -85,7 +86,7 @@ func RegisterJobRoutes(r *router.Router[*core.RequestEvent], app core.App, sched
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
 
-		repoWorkspace := filepath.Join(app.DataDir(), "repositories")
+		repoWorkspace := config.GetReposWorkspace()
 		items := make([]jobListItem, 0, len(records))
 
 		for _, rec := range records {

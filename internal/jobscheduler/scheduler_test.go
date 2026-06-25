@@ -13,6 +13,7 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
 
+	"github.com/wireops/wireops/internal/config"
 	"github.com/wireops/wireops/internal/protocol"
 )
 
@@ -61,7 +62,7 @@ func TestExecuteJobPersistsDefinitionError(t *testing.T) {
 	app := newJobSchedulerTestApp(t)
 	repo := createJobRepoRecord(t, app)
 	jobRec := createScheduledJobRecord(t, app, repo.Id, "missing.yml")
-	s := NewScheduler(app, fakeJobDispatcher{workers: []string{"worker-1"}}, app.DataDir())
+	s := NewScheduler(app, fakeJobDispatcher{workers: []string{"worker-1"}}, config.GetReposWorkspace())
 
 	s.executeJob(jobRec.Id, "manual", "test-user")
 
@@ -91,9 +92,9 @@ func TestExecuteJobPersistsDefinitionError(t *testing.T) {
 func TestExecuteJobWithoutWorkersPersistsStalledRun(t *testing.T) {
 	app := newJobSchedulerTestApp(t)
 	repo := createJobRepoRecord(t, app)
-	writeJobFile(t, app.DataDir(), repo.Id, "job.yaml")
+	writeJobFile(t, repo.Id, "job.yaml")
 	jobRec := createScheduledJobRecord(t, app, repo.Id, "job.yaml")
-	s := NewScheduler(app, fakeJobDispatcher{}, app.DataDir())
+	s := NewScheduler(app, fakeJobDispatcher{}, config.GetReposWorkspace())
 
 	s.executeJob(jobRec.Id, "cron", "system")
 
@@ -120,14 +121,14 @@ func TestExecuteJobWithoutWorkersPersistsStalledRun(t *testing.T) {
 func TestExecuteJobWithoutWorkersBackfillsLegacyName(t *testing.T) {
 	app := newJobSchedulerTestApp(t)
 	repo := createJobRepoRecord(t, app)
-	writeJobFile(t, app.DataDir(), repo.Id, "job.yaml")
+	writeJobFile(t, repo.Id, "job.yaml")
 	jobRec := createScheduledJobRecord(t, app, repo.Id, "job.yaml")
 	if _, err := app.DB().NewQuery("UPDATE scheduled_jobs SET name = '' WHERE id = {:id}").
 		Bind(dbx.Params{"id": jobRec.Id}).
 		Execute(); err != nil {
 		t.Fatalf("failed to create legacy scheduled job fixture: %v", err)
 	}
-	s := NewScheduler(app, fakeJobDispatcher{}, app.DataDir())
+	s := NewScheduler(app, fakeJobDispatcher{}, config.GetReposWorkspace())
 
 	s.executeJob(jobRec.Id, "cron", "system")
 
@@ -160,6 +161,7 @@ func newJobSchedulerTestApp(t *testing.T) *tests.TestApp {
 	if err != nil {
 		t.Fatalf("failed to create test app: %v", err)
 	}
+	t.Setenv("REPOS_WORKSPACE", filepath.Join(app.DataDir(), "repos"))
 	ensureJobSchedulerCollections(t, app)
 	t.Cleanup(func() { app.Cleanup() })
 	return app
@@ -272,9 +274,9 @@ func createScheduledJobRecord(t *testing.T, app core.App, repoID, jobFile string
 	})
 }
 
-func writeJobFile(t *testing.T, dataDir, repoID, name string) {
+func writeJobFile(t *testing.T, repoID, name string) {
 	t.Helper()
-	dir := filepath.Join(dataDir, "repositories", repoID)
+	dir := filepath.Join(config.GetReposWorkspace(), repoID)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		t.Fatalf("failed to create repo dir: %v", err)
 	}
@@ -333,7 +335,7 @@ func TestReconcileActiveJobs(t *testing.T) {
 		"trigger": "manual",
 	})
 
-	s := NewScheduler(app, fakeJobDispatcher{workers: []string{worker.Id}}, app.DataDir())
+	s := NewScheduler(app, fakeJobDispatcher{workers: []string{worker.Id}}, config.GetReposWorkspace())
 
 	// Reconcile with activeIDs containing only run1.Id
 	if err := s.ReconcileActiveJobs(worker.Id, []string{run1.Id}); err != nil {
@@ -397,7 +399,7 @@ func TestMarkForgottenRunsStuckPending(t *testing.T) {
 		"trigger": "manual",
 	})
 
-	s := NewScheduler(app, fakeJobDispatcher{workers: []string{worker.Id}}, app.DataDir())
+	s := NewScheduler(app, fakeJobDispatcher{workers: []string{worker.Id}}, config.GetReposWorkspace())
 
 	if err := s.MarkForgottenRuns(); err != nil {
 		t.Fatalf("MarkForgottenRuns failed: %v", err)
@@ -425,7 +427,7 @@ func TestMarkForgottenRunsStuckPending(t *testing.T) {
 func TestExecuteJobConvertsResources(t *testing.T) {
 	app := newJobSchedulerTestApp(t)
 	repo := createJobRepoRecord(t, app)
-	writeJobFile(t, app.DataDir(), repo.Id, "job.yaml")
+	writeJobFile(t, repo.Id, "job.yaml")
 	jobRec := createScheduledJobRecord(t, app, repo.Id, "job.yaml")
 
 	worker := mustCreateRecord(t, app, "workers", map[string]any{
@@ -444,7 +446,7 @@ func TestExecuteJobConvertsResources(t *testing.T) {
 		},
 	}
 
-	s := NewScheduler(app, dispatcher, app.DataDir())
+	s := NewScheduler(app, dispatcher, config.GetReposWorkspace())
 	s.executeJob(jobRec.Id, "manual", "test-user")
 
 	var capturedCmd protocol.RunJobCommand
@@ -484,7 +486,7 @@ func TestUpdateJobRunTruncatesOutput(t *testing.T) {
 	app := newJobSchedulerTestApp(t)
 	repo := createJobRepoRecord(t, app)
 	jobRec := createScheduledJobRecord(t, app, repo.Id, "job.yaml")
-	s := NewScheduler(app, fakeJobDispatcher{}, app.DataDir())
+	s := NewScheduler(app, fakeJobDispatcher{}, config.GetReposWorkspace())
 
 	// Increase the output validation limit in the database schema for this test
 	col, err := app.FindCollectionByNameOrId("job_runs")

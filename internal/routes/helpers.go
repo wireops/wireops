@@ -5,7 +5,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	gogithttp "github.com/go-git/go-git/v5/plumbing/transport/http"
@@ -13,8 +12,10 @@ import (
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 
+	"github.com/wireops/wireops/internal/config"
 	"github.com/wireops/wireops/internal/crypto"
 	"github.com/wireops/wireops/internal/git"
+	"github.com/wireops/wireops/internal/safepath"
 )
 
 // stackWorkDir returns the working directory for docker compose operations.
@@ -27,17 +28,11 @@ func stackWorkDir(app core.App, stack *core.Record) string {
 		}
 	}
 	repoID := stack.GetString("repository")
-	workspace := filepath.Join(app.DataDir(), "repositories")
+	workspace := config.GetReposWorkspace()
 	base := filepath.Join(workspace, repoID)
 	composePath := stack.GetString("compose_path")
-	if composePath != "" && composePath != "." {
-		cleaned := filepath.Clean(composePath)
-		if !filepath.IsAbs(cleaned) && !strings.HasPrefix(cleaned, "/") {
-			finalPath := filepath.Join(base, cleaned)
-			if rel, err := filepath.Rel(base, finalPath); err == nil && !strings.HasPrefix(rel, "..") {
-				return finalPath
-			}
-		}
+	if err := safepath.ValidateComposePath(composePath); err == nil && composePath != "" && composePath != "." {
+		return filepath.Join(base, filepath.Clean(composePath))
 	}
 	return base
 }

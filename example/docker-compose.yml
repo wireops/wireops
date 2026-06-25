@@ -13,8 +13,7 @@ services:
     environment:
       - SECRET_KEY=${SECRET_KEY}
       - APP_URL=${APP_URL:-http://localhost:8090}
-      - PB_DATA_DIR=${PB_DATA_DIR:-/data/pb_data}
-      - REPOS_WORKSPACE=${REPOS_WORKSPACE:-/data/repos}
+      - DATA_DIR=/data
       - BOOTSTRAP_TOKEN=${BOOTSTRAP_TOKEN}
 
   wireops-worker:

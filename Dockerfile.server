@@ -48,9 +48,11 @@ WORKDIR /app
 COPY --from=backend-builder /out/wireops ./wireops
 COPY --from=frontend-builder /frontend/.output/public ./pb_public
 
-RUN mkdir -p /app/pb_data \
-    && chown -R appuser:appgroup /app \
-    && chmod -R ug+rwX /app
+ENV DATA_DIR=/data
+
+RUN mkdir -p /data/pb_data /data/repos /data/stacks \
+    && chown -R appuser:appgroup /app /data \
+    && chmod -R ug+rwX /app /data
 
 USER appuser
 

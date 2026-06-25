@@ -147,7 +147,7 @@ repositories ─── 1:N ──→ scheduled_jobs ─── 1:N ──→ job_
 ### GitOps Sync
 1. `sync/scheduler.go` polls each stack on its `poll_interval` (default 60s).
 2. `sync/reconciler.go` runs `git.CloneOrFetch` and compares the latest commit SHA with the stored one.
-3. `sync/renderer.go` reads the compose YAML, injects `dev.wireops.*` labels, and writes a versioned revision file to `pb_data/stacks/<id>/v<n>.yml`.
+3. `sync/renderer.go` reads the compose YAML, injects `dev.wireops.*` labels, and writes a versioned revision file to `DATA_DIR/stacks/<id>/v<n>.yml`.
 4. The server base64-encodes the compose file, sends a `DeployCommand` over WebSocket to the worker assigned to the stack, and waits up to 5 minutes for `CommandResult`.
 5. The worker decodes the compose file and executes `docker compose up`.
 6. Persists a `sync_logs` entry, updates stack status, fires webhook/ntfy notification.
@@ -235,8 +235,10 @@ All custom routes are prefixed `/api/custom/`. PocketBase also auto-exposes CRUD
 | `APP_URL` | Base URL for CORS, webhooks, and emails (default: `http://localhost:8090`) |
 | `PORT` | UI, REST API, and Prometheus `/metrics` (default: `8090`) |
 | `TLS_WORKER_PORT` | Worker WebSocket/register TLS port (default: `8443`) — not for Prometheus |
-| `PB_DATA_DIR` | SQLite data directory (default: `./pb_data`) |
-| `REPOS_WORKSPACE` | Git clone workspace (default: `./repos`) |
+| `DATA_DIR` | Root runtime data directory (default: `./data`) |
+| `PB_DATA_DIR` | Optional override for PocketBase SQLite data directory (default: `DATA_DIR/pb_data`) |
+| `REPOS_WORKSPACE` | Optional override for Git clone workspace (default: `DATA_DIR/repos`) |
+
 ### Worker
 | Variable | Description |
 |---|---|

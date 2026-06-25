@@ -15,6 +15,7 @@ import (
 
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/wireops/wireops/internal/compose"
+	"github.com/wireops/wireops/internal/config"
 	"github.com/wireops/wireops/internal/policy"
 )
 
@@ -26,10 +27,10 @@ type RenderResult struct {
 }
 
 const (
-	labelManaged    = "dev.wireops.managed"
-	labelStackID    = "dev.wireops.stack_id"
-	labelCommitSHA  = "dev.wireops.repository.commit_sha"
-	labelChecksum   = "dev.wireops.checksum"
+	labelManaged     = "dev.wireops.managed"
+	labelStackID     = "dev.wireops.stack_id"
+	labelCommitSHA   = "dev.wireops.repository.commit_sha"
+	labelChecksum    = "dev.wireops.checksum"
 	labelGeneratedAt = "dev.wireops.generated_at"
 )
 
@@ -41,11 +42,8 @@ type Renderer struct {
 
 func NewRenderer(app core.App) *Renderer {
 	// The storage layout for rendered compose files
-	// e.g., /pb_data/stacks/<stack_id>/v1.yml
-	storagePath := os.Getenv("STACKS_STORAGE_PATH")
-	if storagePath == "" {
-		storagePath = filepath.Join(app.DataDir(), "stacks")
-	}
+	// e.g., /data/stacks/<stack_id>/v1.yml
+	storagePath := config.GetStacksStoragePath()
 
 	return &Renderer{
 		app:          app,
@@ -203,12 +201,12 @@ func (r *Renderer) GenerateRevision(
 		// to maintain perfect reproducibility if requested.
 		expectedFilePath := r.GetRevisionFilePath(stackID, currentVersion)
 		if _, err := os.Stat(expectedFilePath); err != nil {
-			// Self-heal: If the file is missing from disk (e.g. user deleted pb_data/stacks),
+			// Self-heal: If the file is missing from disk (e.g. user deleted DATA_DIR/stacks),
 			// re-serialize and write the yaml without bumping the database version.
 			if finalYAML, err := yaml.Marshal(configMap); err == nil {
-			stackDir := filepath.Join(r.stackStorage, stackID)
-			os.MkdirAll(stackDir, 0700)
-			os.WriteFile(expectedFilePath, finalYAML, 0600)
+				stackDir := filepath.Join(r.stackStorage, stackID)
+				os.MkdirAll(stackDir, 0700)
+				os.WriteFile(expectedFilePath, finalYAML, 0600)
 			}
 		}
 

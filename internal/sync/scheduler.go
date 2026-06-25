@@ -12,25 +12,24 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 
 	"github.com/wireops/wireops/internal/contextutil"
-	"github.com/wireops/wireops/internal/docker"
 	"github.com/wireops/wireops/internal/notify"
 )
 
 type Scheduler struct {
-	mu            sync.Mutex
-	jobs          map[string]context.CancelFunc // keyed by stack ID
-	reconciler    *Reconciler
-	app           core.App
+	mu         sync.Mutex
+	jobs       map[string]context.CancelFunc // keyed by stack ID
+	reconciler *Reconciler
+	app        core.App
 
 	// rootCtx / rootCancel are used for a global graceful shutdown.
 	// Shutdown() cancels rootCtx, causing all goroutines to stop.
-	rootCtx       context.Context
-	rootCancel    context.CancelFunc
+	rootCtx    context.Context
+	rootCancel context.CancelFunc
 
 	syncSemaphore chan struct{} // global limit for concurrent reconciles/syncs
 }
 
-func NewScheduler(app core.App, dockerClient *docker.Client, dispatcher WorkerDispatcher) *Scheduler {
+func NewScheduler(app core.App, dispatcher WorkerDispatcher) *Scheduler {
 	notifier := notify.New(app)
 	rootCtx, rootCancel := context.WithCancel(context.Background())
 
@@ -43,7 +42,7 @@ func NewScheduler(app core.App, dockerClient *docker.Client, dispatcher WorkerDi
 
 	return &Scheduler{
 		jobs:          make(map[string]context.CancelFunc),
-		reconciler:    NewReconciler(app, dockerClient, notifier, dispatcher),
+		reconciler:    NewReconciler(app, notifier, dispatcher),
 		app:           app,
 		rootCtx:       rootCtx,
 		rootCancel:    rootCancel,
