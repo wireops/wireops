@@ -822,22 +822,24 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 	}
 	composeContent = data
 
-	// Store a local copy so compose.Config can run on the server side.
-	sourceDir := filepath.Join(config.GetStacksStoragePath(), stackID)
-	if mkErr := os.MkdirAll(sourceDir, 0755); mkErr != nil {
-		errMsg := fmt.Sprintf("failed to create source dir: %v", mkErr)
+	// Store a local working copy in a temporary directory so the generated .env
+	// used for interpolation never lands in persistent stack storage.
+	workDir, err = os.MkdirTemp("", "wireops-local-stack-*")
+	if err != nil {
+		errMsg := fmt.Sprintf("failed to create temp work dir: %v", err)
 		r.logFailure(stackID, trigger, "", errMsg)
 		r.markError(stack, "stacks")
 		return fmt.Errorf("%s", errMsg)
 	}
-	sourceFile := filepath.Join(sourceDir, "source.yml")
+	defer os.RemoveAll(workDir)
+
+	sourceFile := filepath.Join(workDir, "source.yml")
 	if writeErr := os.WriteFile(sourceFile, composeContent, 0644); writeErr != nil {
 		errMsg := fmt.Sprintf("failed to write source file: %v", writeErr)
 		r.logFailure(stackID, trigger, "", errMsg)
 		r.markError(stack, "stacks")
 		return fmt.Errorf("%s", errMsg)
 	}
-	workDir = sourceDir
 	composeFile = "source.yml"
 
 	// Change detection: compare SHA256 of raw file content with stored checksum.

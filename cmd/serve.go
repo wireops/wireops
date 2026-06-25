@@ -377,9 +377,15 @@ func Execute() error {
 		return e.Next()
 	})
 
-	_ = os.MkdirAll(dataDir, 0755)
-	_ = os.MkdirAll(reposWorkspace, 0755)
-	_ = os.MkdirAll(stacksStorage, 0755)
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		return fmt.Errorf("create data dir %s: %w", dataDir, err)
+	}
+	if err := os.MkdirAll(reposWorkspace, 0755); err != nil {
+		return fmt.Errorf("create repos workspace %s: %w", reposWorkspace, err)
+	}
+	if err := os.MkdirAll(stacksStorage, 0755); err != nil {
+		return fmt.Errorf("create stacks storage %s: %w", stacksStorage, err)
+	}
 
 	return app.Start()
 }

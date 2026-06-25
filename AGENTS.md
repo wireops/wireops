@@ -238,6 +238,7 @@ All custom routes are prefixed `/api/custom/`. PocketBase also auto-exposes CRUD
 | `DATA_DIR` | Root runtime data directory (default: `./data`) |
 | `PB_DATA_DIR` | Optional override for PocketBase SQLite data directory (default: `DATA_DIR/pb_data`) |
 | `REPOS_WORKSPACE` | Optional override for Git clone workspace (default: `DATA_DIR/repos`) |
+
 ### Worker
 | Variable | Description |
 |---|---|
