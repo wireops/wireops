@@ -20,12 +20,12 @@ func TestToTransportAuthWithBasicAuth(t *testing.T) {
 		Username: "testuser",
 		Password: "testpass",
 	}
-	
+
 	result := toTransportAuth(basicAuth)
 	if result == nil {
 		t.Error("Expected non-nil result for BasicAuth")
 	}
-	
+
 	if _, ok := result.(*gogithttp.BasicAuth); !ok {
 		t.Error("Expected result to be *gogithttp.BasicAuth")
 	}
@@ -38,7 +38,7 @@ b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
 QyNTUxOQAAACBTj3T7LoGPxqskQJLXqQqJqHqJqHqJqHqJqHqJqHqJqHqJqHqJqHqJqHqJ
 qHqJqHqJqHqJqHqJqHqJqHqJqHqJqHqJqHqJqHqJqHqJqHqJqHqJqHqJqHqJqHqJqHqJ
 -----END OPENSSH PRIVATE KEY-----`)
-	
+
 	// Try to parse it (this will likely fail with test key, but we're testing the type conversion)
 	signer, err := ssh.ParsePrivateKey(privateKey)
 	if err != nil {
@@ -46,17 +46,17 @@ qHqJqHqJqHqJqHqJqHqJqHqJqHqJqHqJqHqJqHqJqHqJqHqJqHqJqHqJqHqJqHqJqHqJ
 		t.Skip("Cannot parse test SSH key, skipping SSH auth test")
 		return
 	}
-	
+
 	sshAuth := &gogitssh.PublicKeys{
 		User:   "git",
 		Signer: signer,
 	}
-	
+
 	result := toTransportAuth(sshAuth)
 	if result == nil {
 		t.Error("Expected non-nil result for SSH PublicKeys")
 	}
-	
+
 	if _, ok := result.(*gogitssh.PublicKeys); !ok {
 		t.Error("Expected result to be *gogitssh.PublicKeys")
 	}
@@ -65,7 +65,7 @@ qHqJqHqJqHqJqHqJqHqJqHqJqHqJqHqJqHqJqHqJqHqJqHqJqHqJqHqJqHqJqHqJqHqJ
 func TestToTransportAuthWithUnsupportedType(t *testing.T) {
 	// Test with an unsupported type
 	unsupported := "not a valid auth type"
-	
+
 	result := toTransportAuth(unsupported)
 	if result != nil {
 		t.Errorf("Expected nil for unsupported type, got %v", result)

@@ -132,7 +132,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		log.Printf("[reconciler] repo dir missing for %s, will clone fresh", repoID)
 	}
 
-	gitRepo, err := gitpkg.CloneOrFetch(repoID, gitURL, branch, gitAuth, workspace)
+	gitRepo, err := gitpkg.CloneOrFetchContext(ctx, repoID, gitURL, branch, gitAuth, workspace)
 	if err != nil {
 		errMsg := fmt.Sprintf("git operation failed for repo %s (%s): %v", repo.GetString("name"), gitURL, err)
 		r.logFailure(stackID, trigger, "", errMsg)
@@ -1049,6 +1049,9 @@ func (r *Reconciler) loadCredential(repoID string) (*gitpkg.Credential, error) {
 	)
 	if err != nil || len(records) == 0 {
 		return nil, fmt.Errorf("no credential found")
+	}
+	if len(records) > 1 {
+		return nil, fmt.Errorf("multiple repository_keys records found for repository %s", repoID)
 	}
 
 	rec := records[0]
