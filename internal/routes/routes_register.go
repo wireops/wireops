@@ -697,14 +697,15 @@ func (rr routeRegistrar) registerRepositoryRoutes() {
 func (rr routeRegistrar) registerCredentialRoutes() {
 	rr.r.POST("/api/custom/credentials/test", func(e *core.RequestEvent) error {
 		var body struct {
-			RepositoryID string `json:"repository_id"`
-			GitURL       string `json:"git_url"`
-			AuthType     string `json:"auth_type"`
-			SSHKey       string `json:"ssh_private_key"`
-			Passphrase   string `json:"ssh_passphrase"`
-			KnownHost    string `json:"ssh_known_host"`
-			GitUsername  string `json:"git_username"`
-			GitPassword  string `json:"git_password"`
+			RepositoryID  string `json:"repository_id"`
+			RepositoryKey string `json:"repository_key_id"`
+			GitURL        string `json:"git_url"`
+			AuthType      string `json:"auth_type"`
+			SSHKey        string `json:"ssh_private_key"`
+			Passphrase    string `json:"ssh_passphrase"`
+			KnownHost     string `json:"ssh_known_host"`
+			GitUsername   string `json:"git_username"`
+			GitPassword   string `json:"git_password"`
 		}
 		if err := json.NewDecoder(e.Request.Body).Decode(&body); err != nil {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid body"})
@@ -719,8 +720,14 @@ func (rr routeRegistrar) registerCredentialRoutes() {
 			GitPassword:   body.GitPassword,
 		}
 
-		if body.RepositoryID != "" {
-			savedCred, err := loadRepositoryCredential(rr.app, body.RepositoryID)
+		if body.RepositoryID != "" || body.RepositoryKey != "" {
+			var savedCred *git.Credential
+			var err error
+			if body.RepositoryKey != "" {
+				savedCred, err = git.LoadCredentialByID(rr.app, body.RepositoryKey)
+			} else {
+				savedCred, err = loadRepositoryCredential(rr.app, body.RepositoryID)
+			}
 			if err != nil {
 				log.Printf("TestConnection: failed to load credentials: %v", err)
 			}
@@ -1006,7 +1013,7 @@ func (rr routeRegistrar) registerStackDeleteRoute() {
 		if len(composeContent) > 0 && agentIsOnline {
 			var teardownEnvFileB64 string
 			if envRecords, envLoadErr := rr.app.FindAllRecords("stack_env_vars", dbx.HashExp{"stack": stackID}); envLoadErr == nil {
-				secretKey := []byte(os.Getenv("SECRET_KEY"))
+				secretKey := crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))
 				var envVars []string
 				for _, rec := range envRecords {
 					key := rec.GetString("key")

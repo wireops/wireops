@@ -92,9 +92,11 @@ func createConsistentFixture(t *testing.T, app core.App) dbCheckFixture {
 		return fixture
 	}
 
+	key := mustCreateDBCheckRecord(t, app, "repository_keys", map[string]any{"name": "GitHub", "auth_type": "basic"})
 	repo := mustCreateDBCheckRecord(t, app, "repositories", map[string]any{
-		"name":    "repo",
-		"git_url": "https://example.com/repo.git",
+		"name":           "repo",
+		"git_url":        "https://example.com/repo.git",
+		"repository_key": key.Id,
 	})
 	worker := mustCreateDBCheckRecord(t, app, "workers", map[string]any{
 		"hostname":    "worker-1",
@@ -118,7 +120,6 @@ func createConsistentFixture(t *testing.T, app core.App) dbCheckFixture {
 		"status":      "active",
 	})
 
-	mustCreateDBCheckRecord(t, app, "repository_keys", map[string]any{"repository": repo.Id, "auth_type": "none"})
 	mustCreateDBCheckRecord(t, app, "worker_tokens", map[string]any{"token_hash": "hash-1", "status": "ACTIVE", "worker": worker.Id})
 	mustCreateDBCheckRecord(t, app, "worker_commands", map[string]any{"worker": worker.Id, "command_id": "cmd-1", "command_type": "deploy", "status": "success"})
 	mustCreateDBCheckRecord(t, app, "stack_env_vars", map[string]any{"stack": stack.Id, "key": "APP_ENV", "value": "prod"})
@@ -138,9 +139,15 @@ func createConsistentFixture(t *testing.T, app core.App) dbCheckFixture {
 func createDBCheckCollections(t *testing.T, app core.App) {
 	t.Helper()
 
+	keys := core.NewBaseCollection("repository_keys")
+	keys.Fields.Add(&core.TextField{Name: "name"})
+	keys.Fields.Add(&core.TextField{Name: "auth_type"})
+	mustSaveDBCheckCollection(t, app, keys)
+
 	repos := core.NewBaseCollection("repositories")
 	repos.Fields.Add(&core.TextField{Name: "name"})
 	repos.Fields.Add(&core.TextField{Name: "git_url"})
+	repos.Fields.Add(&core.RelationField{Name: "repository_key", CollectionId: keys.Id, MaxSelect: 1})
 	mustSaveDBCheckCollection(t, app, repos)
 
 	workers := core.NewBaseCollection("workers")
@@ -167,12 +174,7 @@ func createDBCheckCollections(t *testing.T, app core.App) {
 	jobs.Fields.Add(&core.TextField{Name: "status"})
 	mustSaveDBCheckCollection(t, app, jobs)
 
-	collection := core.NewBaseCollection("repository_keys")
-	collection.Fields.Add(&core.RelationField{Name: "repository", CollectionId: repos.Id, MaxSelect: 1})
-	collection.Fields.Add(&core.TextField{Name: "auth_type"})
-	mustSaveDBCheckCollection(t, app, collection)
-
-	collection = core.NewBaseCollection("worker_tokens")
+	collection := core.NewBaseCollection("worker_tokens")
 	collection.Fields.Add(&core.TextField{Name: "token_hash"})
 	collection.Fields.Add(&core.TextField{Name: "status"})
 	collection.Fields.Add(&core.RelationField{Name: "worker", CollectionId: workers.Id, MaxSelect: 1})
@@ -199,7 +201,6 @@ func createDBCheckCollections(t *testing.T, app core.App) {
 		collection.Fields.Add(&core.TextField{Name: "status"})
 		mustSaveDBCheckCollection(t, app, collection)
 	}
-
 
 	collection = core.NewBaseCollection("job_env_vars")
 	collection.Fields.Add(&core.RelationField{Name: "job", CollectionId: jobs.Id, MaxSelect: 1})

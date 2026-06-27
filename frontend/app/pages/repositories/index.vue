@@ -2,6 +2,24 @@
 const { $pb } = useNuxtApp()
 const { platformIconUrl } = useRepositoryPlatform()
 const { canManageRepos } = usePermissions()
+const route = useRoute()
+const router = useRouter()
+
+const activeTab = ref(route.query.tab === 'keys' ? 'keys' : 'repositories')
+const repositorySearchInput = ref<any>()
+const keysPanel = ref<any>()
+const tabs = [
+  { label: 'Repositories', value: 'repositories', icon: 'i-lucide-git-branch' },
+  { label: 'Keys', value: 'keys', icon: 'i-lucide-key-round' },
+]
+
+watch(activeTab, (tab) => {
+  if (route.query.tab !== tab) router.replace({ query: { ...route.query, tab } })
+  if (tab === 'keys') refreshNuxtData('repository_keys_panel')
+})
+watch(() => route.query.tab, (tab) => {
+  activeTab.value = tab === 'keys' ? 'keys' : 'repositories'
+})
 
 const { data: repos, refresh } = useAsyncData('repos_list', () =>
   $pb.collection('repositories').getFullList({ sort: '-updated' })
@@ -53,6 +71,126 @@ const showCreate = ref(false)
 const showDelete = ref(false)
 const deleteRepoId = ref('')
 const deleteRepoName = ref('')
+let goPrefixTimer: ReturnType<typeof setTimeout> | undefined
+let goPrefixPending = false
+
+async function refreshRepositories() {
+  await refresh()
+  await refreshNuxtData('repository_keys_panel')
+}
+
+async function refreshActiveTab() {
+  if (activeTab.value === 'keys') {
+    await keysPanel.value?.refresh?.()
+    return
+  }
+  await refreshRepositories()
+}
+
+function focusRepositorySearch() {
+  nextTick(() => {
+    const input = repositorySearchInput.value?.$el?.querySelector?.('input')
+    input?.focus()
+  })
+}
+
+function focusActiveSearch() {
+  if (activeTab.value === 'keys') {
+    keysPanel.value?.focusSearch?.()
+    return
+  }
+  focusRepositorySearch()
+}
+
+function clearActiveSearch(): boolean {
+  if (activeTab.value === 'keys') {
+    keysPanel.value?.clearSearch?.()
+    return true
+  }
+  if (!searchQuery.value) return false
+  searchQuery.value = ''
+  return true
+}
+
+function openCreateForActiveTab() {
+  if (!canManageRepos.value) return
+  if (activeTab.value === 'keys') {
+    keysPanel.value?.addKey?.()
+    return
+  }
+  showCreate.value = true
+}
+
+function isKeyboardShortcutIgnored(event: KeyboardEvent): boolean {
+  const target = event.target as HTMLElement | null
+  const tagName = target?.tagName?.toUpperCase()
+  const role = target?.getAttribute('role')
+  const isInput = tagName === 'INPUT'
+    || tagName === 'TEXTAREA'
+    || tagName === 'SELECT'
+    || target?.isContentEditable
+    || role === 'textbox'
+    || role === 'combobox'
+    || role === 'listbox'
+    || role === 'menu'
+    || !!target?.closest('[contenteditable="true"]')
+  const hasModal = !!document.querySelector('[aria-modal="true"], [role="dialog"]')
+  return event.defaultPrevented || isInput || hasModal || event.metaKey || event.ctrlKey || event.altKey
+}
+
+function handleRepositoryShortcuts(event: KeyboardEvent) {
+  if (isKeyboardShortcutIgnored(event)) return
+
+  const key = event.key.toLowerCase()
+  if (key === 'g') {
+    goPrefixPending = true
+    clearTimeout(goPrefixTimer)
+    goPrefixTimer = setTimeout(() => {
+      goPrefixPending = false
+    }, 1000)
+    return
+  }
+  if (goPrefixPending) {
+    goPrefixPending = false
+    clearTimeout(goPrefixTimer)
+    return
+  }
+
+  switch (key) {
+    case '1':
+      event.preventDefault()
+      activeTab.value = 'repositories'
+      break
+    case '2':
+      event.preventDefault()
+      activeTab.value = 'keys'
+      break
+    case '/':
+      event.preventDefault()
+      focusActiveSearch()
+      break
+    case 'r':
+      event.preventDefault()
+      refreshActiveTab()
+      break
+    case 'n':
+      event.preventDefault()
+      openCreateForActiveTab()
+      break
+    case 'escape':
+      if (clearActiveSearch()) event.preventDefault()
+      break
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', handleRepositoryShortcuts)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', handleRepositoryShortcuts)
+  clearTimeout(goPrefixTimer)
+})
 
 function openDeleteModal(repo: any) {
   deleteRepoId.value = repo.id
@@ -78,10 +216,12 @@ const statusColor = (s: string) => {
         </div>
         Repositories
       </h1>
-      <UButton v-if="canManageRepos" icon="i-lucide-plus" label="Add Repository" class="shadow-[0_0_16px_rgba(255,198,0,0.35)] hover:shadow-[0_0_24px_rgba(255,198,0,0.55)] transition-shadow" @click="showCreate = true" />
+      <UButton v-if="canManageRepos && activeTab === 'repositories'" icon="i-lucide-plus" label="Add Repository" class="shadow-[0_0_16px_rgba(255,198,0,0.35)] hover:shadow-[0_0_24px_rgba(255,198,0,0.55)] transition-shadow" @click="showCreate = true" />
     </div>
 
-    <UCard>
+    <UTabs v-model="activeTab" :items="tabs" />
+
+    <UCard v-if="activeTab === 'repositories'">
       <template #header>
         <div class="flex items-center justify-between">
           <h3 class="font-semibold text-gray-900 dark:text-wire-200">
@@ -97,6 +237,7 @@ const statusColor = (s: string) => {
       <div v-if="repos?.length" class="space-y-4">
         <div class="flex flex-col sm:flex-row gap-3">
           <UInput
+            ref="repositorySearchInput"
             v-model="searchQuery"
             icon="i-lucide-search"
             placeholder="Search repositories..."
@@ -186,7 +327,9 @@ const statusColor = (s: string) => {
       </div>
     </UCard>
 
-    <RepositoryCreateModal v-model:open="showCreate" @created="refresh" />
-    <RepositoryDeleteModal v-model:open="showDelete" :repository-id="deleteRepoId" :repository-name="deleteRepoName" @deleted="refresh" />
+    <RepositoryKeysPanel v-else ref="keysPanel" />
+
+    <RepositoryCreateModal v-model:open="showCreate" @created="refreshRepositories" />
+    <RepositoryDeleteModal v-model:open="showDelete" :repository-id="deleteRepoId" :repository-name="deleteRepoName" @deleted="refreshRepositories" />
   </div>
 </template>

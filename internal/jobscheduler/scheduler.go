@@ -72,7 +72,7 @@ func NewScheduler(app core.App, dispatcher WorkerDispatcher, repoWorkspace strin
 		app:           app,
 		dispatcher:    dispatcher,
 		repoWorkspace: repoWorkspace,
-		secretKey:     []byte(os.Getenv("SECRET_KEY")),
+		secretKey:     crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY")),
 		entries:       make(map[string]cron.EntryID),
 		rootCtx:       rootCtx,
 		rootCancel:    rootCancel,

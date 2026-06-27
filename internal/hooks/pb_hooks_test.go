@@ -2,6 +2,7 @@ package hooks
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -10,30 +11,110 @@ import (
 	"github.com/pocketbase/pocketbase/tools/types"
 )
 
-func TestEnsureSingleRepositoryKeyRecordRejectsDuplicates(t *testing.T) {
+func TestValidateRepositoryKeyAssignment(t *testing.T) {
 	app, err := tests.NewTestApp()
 	if err != nil {
 		t.Fatalf("new test app: %v", err)
 	}
 	t.Cleanup(func() { app.Cleanup() })
 
-	col := core.NewBaseCollection("repository_keys")
-	col.Fields.Add(&core.TextField{Name: "repository"})
-	if err := app.Save(col); err != nil {
-		t.Fatalf("save collection: %v", err)
+	keys := core.NewBaseCollection("repository_keys")
+	keys.Fields.Add(&core.TextField{Name: "auth_type"})
+	if err := app.Save(keys); err != nil {
+		t.Fatalf("save keys collection: %v", err)
+	}
+	repositories := core.NewBaseCollection("repositories")
+	repositories.Fields.Add(&core.TextField{Name: "git_url"})
+	repositories.Fields.Add(&core.RelationField{Name: "repository_key", CollectionId: keys.Id, MaxSelect: 1})
+	if err := app.Save(repositories); err != nil {
+		t.Fatalf("save repositories collection: %v", err)
 	}
 
-	rec := core.NewRecord(col)
-	rec.Set("repository", "repo-1")
-	if err := app.Save(rec); err != nil {
-		t.Fatalf("save record: %v", err)
+	basicKey := core.NewRecord(keys)
+	basicKey.Set("auth_type", "basic")
+	if err := app.Save(basicKey); err != nil {
+		t.Fatalf("save basic key: %v", err)
+	}
+	sshKey := core.NewRecord(keys)
+	sshKey.Set("auth_type", "ssh_key")
+	if err := app.Save(sshKey); err != nil {
+		t.Fatalf("save ssh key: %v", err)
 	}
 
-	if err := ensureSingleRepositoryKeyRecord(app, "repo-1", ""); err == nil {
-		t.Fatal("expected duplicate repository_keys error")
+	tests := []struct {
+		name    string
+		gitURL  string
+		keyID   string
+		wantErr bool
+	}{
+		{name: "public HTTP", gitURL: "https://example.com/repo.git"},
+		{name: "private HTTP", gitURL: "https://example.com/repo.git", keyID: basicKey.Id},
+		{name: "HTTP rejects SSH key", gitURL: "https://example.com/repo.git", keyID: sshKey.Id, wantErr: true},
+		{name: "SSH requires key", gitURL: "git@example.com:repo.git", wantErr: true},
+		{name: "SSH accepts SSH key", gitURL: "git@example.com:repo.git", keyID: sshKey.Id},
+		{name: "SSH rejects basic key", gitURL: "git@example.com:repo.git", keyID: basicKey.Id, wantErr: true},
 	}
-	if err := ensureSingleRepositoryKeyRecord(app, "repo-1", rec.Id); err != nil {
-		t.Fatalf("expected current record to be ignored, got %v", err)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repository := core.NewRecord(repositories)
+			repository.Set("git_url", tt.gitURL)
+			repository.Set("repository_key", tt.keyID)
+			err := validateRepositoryKeyAssignment(app, repository)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("validateRepositoryKeyAssignment() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestRepositoryKeyTypeCannotChangeAfterCreate(t *testing.T) {
+	t.Setenv("SECRET_KEY", "12345678901234567890123456789012")
+
+	app, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatalf("new test app: %v", err)
+	}
+	t.Cleanup(func() { app.Cleanup() })
+
+	keys := core.NewBaseCollection("repository_keys")
+	keys.Fields.Add(&core.TextField{Name: "name"})
+	keys.Fields.Add(&core.TextField{Name: "auth_type"})
+	keys.Fields.Add(&core.TextField{Name: "ssh_private_key"})
+	keys.Fields.Add(&core.TextField{Name: "ssh_passphrase"})
+	keys.Fields.Add(&core.TextField{Name: "ssh_known_host"})
+	keys.Fields.Add(&core.TextField{Name: "git_username"})
+	keys.Fields.Add(&core.TextField{Name: "git_password"})
+	if err := app.Save(keys); err != nil {
+		t.Fatalf("save keys collection: %v", err)
+	}
+	repositories := core.NewBaseCollection("repositories")
+	repositories.Fields.Add(&core.RelationField{Name: "repository_key", CollectionId: keys.Id, MaxSelect: 1})
+	if err := app.Save(repositories); err != nil {
+		t.Fatalf("save repositories collection: %v", err)
+	}
+
+	Register(app, nil, nil)
+
+	key := core.NewRecord(keys)
+	key.Set("name", "Production")
+	key.Set("auth_type", "basic")
+	if err := app.Save(key); err != nil {
+		t.Fatalf("save key: %v", err)
+	}
+
+	key.Set("name", "Production API")
+	if err := app.Save(key); err != nil {
+		t.Fatalf("rename key: %v", err)
+	}
+
+	key.Set("auth_type", "ssh_key")
+	err = app.Save(key)
+	if err == nil {
+		t.Fatal("expected auth_type change to be rejected")
+	}
+	if !strings.Contains(err.Error(), "Repository key type cannot be changed after creation") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

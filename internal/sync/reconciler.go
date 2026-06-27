@@ -46,7 +46,7 @@ type Reconciler struct {
 }
 
 func NewReconciler(app core.App, notifier *notify.Notifier, dispatcher WorkerDispatcher) *Reconciler {
-	key := []byte(os.Getenv("SECRET_KEY"))
+	key := crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))
 
 	// Build the secret provider registry with all supported providers.
 	reg := secrets.NewRegistry()
@@ -1044,47 +1044,7 @@ func (r *Reconciler) resolveGitAuth(repoID string) (transport.AuthMethod, error)
 }
 
 func (r *Reconciler) loadCredential(repoID string) (*gitpkg.Credential, error) {
-	records, err := r.app.FindAllRecords("repository_keys",
-		dbx.HashExp{"repository": repoID},
-	)
-	if err != nil || len(records) == 0 {
-		return nil, fmt.Errorf("no credential found")
-	}
-	if len(records) > 1 {
-		return nil, fmt.Errorf("multiple repository_keys records found for repository %s", repoID)
-	}
-
-	rec := records[0]
-	authType := gitpkg.AuthType(rec.GetString("auth_type"))
-	cred := &gitpkg.Credential{AuthType: authType}
-
-	switch authType {
-	case gitpkg.AuthTypeSSH:
-		keyEnc := rec.GetString("ssh_private_key")
-		if keyEnc != "" && len(r.secretKey) == 32 {
-			if keyBytes, err := crypto.Decrypt(keyEnc, r.secretKey); err == nil {
-				cred.SSHPrivateKey = keyBytes
-			}
-		}
-		ppEnc := rec.GetString("ssh_passphrase")
-		if ppEnc != "" && len(r.secretKey) == 32 {
-			if ppBytes, err := crypto.Decrypt(ppEnc, r.secretKey); err == nil {
-				cred.SSHPassphrase = ppBytes
-			}
-		}
-		cred.SSHKnownHost = rec.GetString("ssh_known_host")
-
-	case gitpkg.AuthTypeBasic:
-		cred.GitUsername = rec.GetString("git_username")
-		pwdEnc := rec.GetString("git_password")
-		if pwdEnc != "" && len(r.secretKey) == 32 {
-			if pwdBytes, err := crypto.Decrypt(pwdEnc, r.secretKey); err == nil {
-				cred.GitPassword = string(pwdBytes)
-			}
-		}
-	}
-
-	return cred, nil
+	return gitpkg.LoadRepositoryCredential(r.app, repoID)
 }
 
 func (r *Reconciler) loadEnvVars(ctx context.Context, stackID string) ([]string, error) {
