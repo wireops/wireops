@@ -1,19 +1,14 @@
 package routes
 
 import (
-	"fmt"
-	"log"
-	"os"
 	"path/filepath"
 
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	gogithttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	gogitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
-	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 
 	"github.com/wireops/wireops/internal/config"
-	"github.com/wireops/wireops/internal/crypto"
 	"github.com/wireops/wireops/internal/git"
 	"github.com/wireops/wireops/internal/safepath"
 )
@@ -51,53 +46,5 @@ func toTransportAuth(auth interface{}) transport.AuthMethod {
 }
 
 func loadRepositoryCredential(app core.App, repoID string) (*git.Credential, error) {
-	records, err := app.FindAllRecords("repository_keys",
-		dbx.HashExp{"repository": repoID},
-	)
-	if err != nil || len(records) == 0 {
-		return nil, fmt.Errorf("no credential found")
-	}
-	if len(records) > 1 {
-		return nil, fmt.Errorf("multiple repository_keys records found for repository %s", repoID)
-	}
-
-	rec := records[0]
-	authType := git.AuthType(rec.GetString("auth_type"))
-	cred := &git.Credential{AuthType: authType}
-
-	secretKey := []byte(os.Getenv("SECRET_KEY"))
-
-	switch authType {
-	case git.AuthTypeSSH:
-		keyEnc := rec.GetString("ssh_private_key")
-		if keyEnc != "" && len(secretKey) == 32 {
-			if keyBytes, err := crypto.Decrypt(keyEnc, secretKey); err == nil {
-				cred.SSHPrivateKey = keyBytes
-			} else {
-				log.Printf("Warning: failed to decrypt ssh_private_key for auth_type %s: %v", authType, err)
-			}
-		}
-		ppEnc := rec.GetString("ssh_passphrase")
-		if ppEnc != "" && len(secretKey) == 32 {
-			if ppBytes, err := crypto.Decrypt(ppEnc, secretKey); err == nil {
-				cred.SSHPassphrase = ppBytes
-			} else {
-				log.Printf("Warning: failed to decrypt ssh_passphrase for auth_type %s: %v", authType, err)
-			}
-		}
-		cred.SSHKnownHost = rec.GetString("ssh_known_host")
-
-	case git.AuthTypeBasic:
-		cred.GitUsername = rec.GetString("git_username")
-		pwdEnc := rec.GetString("git_password")
-		if pwdEnc != "" && len(secretKey) == 32 {
-			if pwdBytes, err := crypto.Decrypt(pwdEnc, secretKey); err == nil {
-				cred.GitPassword = string(pwdBytes)
-			} else {
-				log.Printf("ERROR: DECRYPT FAILED: %v", err)
-			}
-		}
-	}
-
-	return cred, nil
+	return git.LoadRepositoryCredential(app, repoID)
 }

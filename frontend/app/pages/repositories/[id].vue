@@ -13,7 +13,7 @@ function platformLabel(value: string): string {
 const repoId = route.params.id as string
 
 const { data: repo, refresh: refreshRepo } = useAsyncData(`repo_${repoId}`, () =>
-  $pb.collection('repositories').getOne(repoId)
+  $pb.collection('repositories').getOne(repoId, { expand: 'repository_key' })
 )
 
 // Edit repo — delegated to RepositoryCreateModal
@@ -89,6 +89,7 @@ async function syncRepo() {
         </div>
         <div><span class="text-gray-500">Git URL:</span> <span class="font-mono">{{ repo?.git_url }}</span></div>
         <div><span class="text-gray-500">Branch:</span> {{ repo?.branch || 'main' }}</div>
+        <div><span class="text-gray-500">Repository Key:</span> {{ repo?.expand?.repository_key?.name || 'None (public)' }}</div>
         <div><span class="text-gray-500">Last SHA:</span> <span class="font-mono">{{ repo?.last_commit_sha?.slice(0, 7) || '-' }}</span></div>
         <div><span class="text-gray-500">Last Fetched:</span> {{ repo?.last_fetched_at ? new Date(repo.last_fetched_at).toLocaleString() : 'Never' }}</div>
       </div>

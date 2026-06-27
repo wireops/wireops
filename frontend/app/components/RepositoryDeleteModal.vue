@@ -9,9 +9,21 @@ const emit = defineEmits<{
 }>()
 
 const { $pb } = useNuxtApp()
+const toast = useToast()
 const isOpen = defineModel<boolean>('open', { default: false })
 const isDeleting = ref(false)
 const errorMessage = ref('')
+
+function describePocketBaseError(error: any): string {
+  const data = error?.response?.data
+  if (data && typeof data === 'object') {
+    for (const value of Object.values(data)) {
+      const message = (value as any)?.message
+      if (typeof message === 'string' && message.trim()) return message
+    }
+  }
+  return error?.response?.message || error?.message || 'Failed to delete repository'
+}
 
 async function confirmDelete() {
   isDeleting.value = true
@@ -20,15 +32,11 @@ async function confirmDelete() {
   try {
     await $pb.collection('repositories').delete(props.repositoryId)
     isOpen.value = false
+    toast.add({ title: 'Repository deleted', color: 'success' })
     emit('deleted')
   } catch (err: any) {
-    if (err.data && err.data.message) {
-      errorMessage.value = err.data.message
-    } else if (err.message) {
-      errorMessage.value = err.message
-    } else {
-      errorMessage.value = 'Failed to delete repository'
-    }
+    errorMessage.value = describePocketBaseError(err)
+    toast.add({ title: 'Repository was not deleted', description: errorMessage.value, color: 'error' })
   } finally {
     isDeleting.value = false
   }
@@ -68,7 +76,7 @@ watch(isOpen, (val) => {
             :title="errorMessage"
           />
           <p class="text-sm text-gray-400">
-            Note: You cannot delete a repository if there are stacks associated with it.
+            Note: You cannot delete a repository if there are stacks or scheduled jobs associated with it.
           </p>
         </div>
 

@@ -1,231 +1,183 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-const { PLATFORM_OPTIONS, platformIconUrl } = useRepositoryPlatform()
 
+const { PLATFORM_OPTIONS, platformIconUrl } = useRepositoryPlatform()
 const { $pb } = useNuxtApp()
 const { testCredentials } = useApi()
 const toast = useToast()
 const { announce } = useA11yAnnouncer()
 
 const isOpen = defineModel<boolean>('open', { default: false })
-
-const props = defineProps<{
-  repository?: Record<string, any>
-}>()
-
+const props = defineProps<{ repository?: Record<string, any> }>()
 const emit = defineEmits<{
   (e: 'created' | 'updated'): void
 }>()
 
 const isEditMode = computed(() => !!props.repository)
-
-// ── Form ────────────────────────────────────────────────────────────────────
-const form = ref({ name: '', git_url: '', branch: 'main', platform: 'github' })
+const form = ref({ name: '', git_url: '', branch: 'main', platform: 'github', repository_key: '' })
+const keys = ref<Record<string, any>[]>([])
 const urlScheme = ref<'http' | 'ssh'>('http')
 const gitUrlError = ref('')
 const isPrivate = ref(false)
-const credForm = ref({
-  auth_type: 'basic',
-  ssh_private_key: '',
-  ssh_passphrase: '',
-  ssh_known_host: '',
-  git_username: '',
-  git_password: '',
-})
-
-const existingCredId = ref<string | null>(null)
 const saving = ref(false)
 const testingConnection = ref(false)
+const showCreateKey = ref(false)
+const initializing = ref(false)
 
 const urlPlaceholder = computed(() =>
   urlScheme.value === 'ssh' ? 'git@github.com:user/repo.git' : 'https://github.com/user/repo.git'
 )
+const requiredKeyType = computed(() => urlScheme.value === 'ssh' ? 'ssh_key' : 'basic')
+const compatibleKeys = computed(() => keys.value.filter(key => key.auth_type === requiredKeyType.value))
+const keyOptions = computed(() => compatibleKeys.value.map(key => ({
+  label: key.name,
+  value: key.id,
+  description: key.auth_type === 'ssh_key' ? 'SSH key' : key.git_username || 'Username / password',
+})))
 
-// ── Open / reset ─────────────────────────────────────────────────────────────
-watch(isOpen, async (val) => {
-  if (!val) return
+async function loadKeys(selectID?: string) {
+  keys.value = await $pb.collection('repository_keys').getFullList({ sort: 'name' })
+  if (selectID) form.value.repository_key = selectID
+}
 
+watch(isOpen, async (open) => {
+  if (!open) return
+  initializing.value = true
   gitUrlError.value = ''
-
-  if (isEditMode.value && props.repository) {
-    const r = props.repository
+  await loadKeys()
+  const repository = props.repository
+  if (repository) {
     form.value = {
-      name: r.name ?? '',
-      git_url: r.git_url ?? '',
-      branch: r.branch ?? 'main',
-      platform: r.platform ?? 'github',
+      name: repository.name || '',
+      git_url: repository.git_url || '',
+      branch: repository.branch || 'main',
+      platform: repository.platform || 'github',
+      repository_key: repository.repository_key || '',
     }
-    urlScheme.value = r.git_url?.startsWith('git@') ? 'ssh' : 'http'
-
-    try {
-      const creds = await $pb.collection('repository_keys').getFullList({
-        filter: `repository = "${r.id}"`,
-      })
-      if (creds.length) {
-        const c = creds[0] as any
-        existingCredId.value = c.id
-        credForm.value = {
-          auth_type: c.auth_type || 'basic',
-          ssh_private_key: '',
-          ssh_passphrase: '',
-          ssh_known_host: c.ssh_known_host || '',
-          git_username: c.git_username || '',
-          git_password: '',
-        }
-        isPrivate.value = c.auth_type !== 'none'
-      } else {
-        existingCredId.value = null
-        isPrivate.value = urlScheme.value === 'ssh'
-        credForm.value = { auth_type: urlScheme.value === 'ssh' ? 'ssh_key' : 'basic', ssh_private_key: '', ssh_passphrase: '', ssh_known_host: '', git_username: '', git_password: '' }
-      }
-    } catch {
-      existingCredId.value = null
-      isPrivate.value = false
-    }
+    urlScheme.value = repository.git_url?.startsWith('git@') || repository.git_url?.startsWith('ssh://') ? 'ssh' : 'http'
+    isPrivate.value = urlScheme.value === 'ssh' || !!repository.repository_key
   } else {
-    form.value = { name: '', git_url: '', branch: 'main', platform: 'github' }
+    form.value = { name: '', git_url: '', branch: 'main', platform: 'github', repository_key: '' }
     urlScheme.value = 'http'
     isPrivate.value = false
-    existingCredId.value = null
-    credForm.value = { auth_type: 'basic', ssh_private_key: '', ssh_passphrase: '', ssh_known_host: '', git_username: '', git_password: '' }
   }
+  await nextTick()
+  initializing.value = false
 })
 
-// Sync auth_type and isPrivate when scheme changes
 watch(urlScheme, (scheme) => {
+  if (initializing.value) return
   gitUrlError.value = ''
-  if (scheme === 'ssh') {
-    credForm.value.auth_type = 'ssh_key'
-    isPrivate.value = true
-  } else {
-    credForm.value.auth_type = 'basic'
-  }
+  form.value.repository_key = ''
+  isPrivate.value = scheme === 'ssh'
 })
-
-// Clear URL error as user types
+watch(isPrivate, (enabled) => {
+  if (!enabled && urlScheme.value === 'http') form.value.repository_key = ''
+})
 watch(() => form.value.git_url, () => { gitUrlError.value = '' })
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+function describePocketBaseError(error: any): string {
+  const data = error?.response?.data
+  if (data && typeof data === 'object') {
+    for (const value of Object.values(data)) {
+      const message = (value as any)?.message
+      if (typeof message === 'string' && message.trim()) return message
+    }
+  }
+  return error?.response?.message || error?.message || 'Unknown error'
+}
+
 function validateGitUrl(): string {
   const url = form.value.git_url.trim()
   if (!url) return 'Git URL is required'
   if (urlScheme.value === 'http' && !/^https?:\/\//.test(url))
     return 'URL must start with http:// or https://'
-  if (urlScheme.value === 'ssh' && !url.startsWith('git@'))
-    return 'URL must start with git@'
+  if (urlScheme.value === 'ssh' && !url.startsWith('git@') && !url.startsWith('ssh://'))
+    return 'URL must start with git@ or ssh://'
   return ''
 }
 
-// ── Actions ──────────────────────────────────────────────────────────────────
+function validateForm(): string {
+  const urlError = validateGitUrl()
+  if (urlError) return urlError
+  if (!form.value.name.trim()) return 'Name is required'
+  if ((urlScheme.value === 'ssh' || isPrivate.value) && !form.value.repository_key)
+    return 'Select a repository key'
+  return ''
+}
+
 async function testConnection() {
-  const err = validateGitUrl()
-  if (err) {
-    gitUrlError.value = err
+  const error = validateForm()
+  if (error) {
+    gitUrlError.value = validateGitUrl()
+    toast.add({ title: 'Cannot test connection', description: error, color: 'error' })
     return
   }
   testingConnection.value = true
   try {
     const result = await testCredentials({
-      ...(isEditMode.value && props.repository ? { repository_id: props.repository.id } : {}),
       git_url: form.value.git_url,
-      auth_type: isPrivate.value ? credForm.value.auth_type : 'none',
-      ssh_private_key: isPrivate.value ? credForm.value.ssh_private_key : '',
-      ssh_passphrase: isPrivate.value ? credForm.value.ssh_passphrase : '',
-      ssh_known_host: isPrivate.value ? credForm.value.ssh_known_host : '',
-      git_username: isPrivate.value ? credForm.value.git_username : '',
-      git_password: isPrivate.value ? credForm.value.git_password : '',
+      repository_key_id: form.value.repository_key || '',
+      auth_type: form.value.repository_key ? requiredKeyType.value : 'none',
     })
     if (result.success === 'true') {
       toast.add({ title: 'Connection successful!', color: 'success' })
       announce('Repository connection test succeeded')
     } else {
       toast.add({ title: 'Connection failed', description: result.error, color: 'error' })
-      announce('Repository connection test failed', 'assertive')
     }
   } catch (error: any) {
-    toast.add({ title: 'Test failed', description: error.message, color: 'error' })
-    announce('Repository connection test failed', 'assertive')
+    toast.add({ title: 'Test failed', description: describePocketBaseError(error), color: 'error' })
   } finally {
     testingConnection.value = false
   }
 }
 
-async function saveCredentials(repositoryId: string) {
-  if (!isPrivate.value && !existingCredId.value) {
-    return
-  }
-
-  const payload: any = {
-    ...credForm.value,
-    auth_type: isPrivate.value ? credForm.value.auth_type : 'none',
-    repository: repositoryId,
-  }
-  if (!payload.ssh_private_key) delete payload.ssh_private_key
-  if (!payload.ssh_passphrase) delete payload.ssh_passphrase
-  if (!payload.git_password) delete payload.git_password
-
-  if (existingCredId.value) {
-    await $pb.collection('repository_keys').update(existingCredId.value, payload)
-  } else if (isPrivate.value) {
-    await $pb.collection('repository_keys').create(payload)
-  }
-}
-
 async function submit() {
-  const urlErr = validateGitUrl()
-  if (urlErr) {
-    gitUrlError.value = urlErr
+  const error = validateForm()
+  if (error) {
+    gitUrlError.value = validateGitUrl()
+    toast.add({ title: 'Invalid repository', description: error, color: 'error' })
     return
   }
-
   saving.value = true
   try {
-    if (isEditMode.value && props.repository) {
-      await $pb.collection('repositories').update(props.repository.id, {
-        name: form.value.name,
-        git_url: form.value.git_url,
-        branch: form.value.branch,
-        platform: form.value.platform,
-      })
-      await saveCredentials(props.repository.id)
+    const payload = {
+      name: form.value.name.trim(),
+      git_url: form.value.git_url.trim(),
+      branch: form.value.branch || 'main',
+      platform: form.value.platform,
+      repository_key: form.value.repository_key || '',
+    }
+    if (props.repository) {
+      await $pb.collection('repositories').update(props.repository.id, payload)
       toast.add({ title: 'Repository updated', color: 'success' })
-      announce(`Repository ${form.value.name} updated`)
-      isOpen.value = false
       emit('updated')
     } else {
-      const repoRecord = await $pb.collection('repositories').create({
-        ...form.value,
-        status: 'connected',
-      })
-      await saveCredentials(repoRecord.id)
+      await $pb.collection('repositories').create({ ...payload, status: 'connected' })
       toast.add({ title: 'Repository created', color: 'success' })
-      announce(`Repository ${form.value.name} created`)
-      isOpen.value = false
       emit('created')
     }
-  } catch (err: any) {
+    isOpen.value = false
+  } catch (error: any) {
     toast.add({
-      title: isEditMode.value ? 'Failed to update repository' : 'Failed to create repository',
-      description: err.message,
+      title: props.repository ? 'Failed to update repository' : 'Failed to create repository',
+      description: describePocketBaseError(error),
       color: 'error',
     })
-    announce(isEditMode.value ? 'Failed to update repository' : 'Failed to create repository', 'assertive')
   } finally {
     saving.value = false
   }
 }
 
-function cancel() {
-  isOpen.value = false
+async function handleKeySaved(key: Record<string, any>) {
+  await loadKeys(key.id)
+  isPrivate.value = true
 }
 </script>
 
 <template>
-  <UModal
-    v-model:open="isOpen"
-    scrollable
-    :ui="{ content: 'sm:max-w-2xl w-full' }"
-  >
+  <UModal v-model:open="isOpen" scrollable :ui="{ content: 'sm:max-w-2xl w-full' }">
     <template #content>
       <UCard class="sm:min-w-[640px] w-full">
         <template #header>
@@ -236,40 +188,21 @@ function cancel() {
         </template>
 
         <form class="space-y-4" @submit.prevent="submit">
-          <!-- Name -->
-          <UFormField label="Name" required class="w-full">
-            <UInput v-model="form.name" placeholder="my-app" class="w-full" aria-label="Repository name" />
+          <UFormField label="Name" required>
+            <UInput v-model="form.name" placeholder="my-app" class="w-full" />
           </UFormField>
 
-          <!-- Platform + URL scheme -->
-          <div class="flex items-end gap-3 w-full">
+          <div class="flex items-end gap-3">
             <UFormField label="Platform" required class="flex-1">
-              <USelectMenu
-                v-model="form.platform"
-                :items="PLATFORM_OPTIONS"
-                value-key="value"
-                class="w-full"
-                :search-input="false"
-              >
+              <USelectMenu v-model="form.platform" :items="PLATFORM_OPTIONS" value-key="value" class="w-full" :search-input="false">
                 <template #leading>
-                  <img
-                    v-if="platformIconUrl(form.platform)"
-                    :src="platformIconUrl(form.platform)!"
-                    class="w-4 h-4 object-contain"
-                    :alt="`${form.platform} icon`"
-                  >
+                  <img v-if="platformIconUrl(form.platform)" :src="platformIconUrl(form.platform)!" class="w-4 h-4 object-contain" alt="">
                 </template>
                 <template #item-leading="{ item }">
-                  <img
-                    v-if="platformIconUrl(item.value)"
-                    :src="platformIconUrl(item.value)!"
-                    class="w-4 h-4 object-contain"
-                    :alt="`${item.value} icon`"
-                  >
+                  <img v-if="platformIconUrl(item.value)" :src="platformIconUrl(item.value)!" class="w-4 h-4 object-contain" alt="">
                 </template>
               </USelectMenu>
             </UFormField>
-
             <UFormField label="Protocol">
               <URadioGroup
                 v-model="urlScheme"
@@ -279,87 +212,64 @@ function cancel() {
             </UFormField>
           </div>
 
-          <!-- Git URL -->
-          <UFormField label="Git URL" required class="w-full" :error="gitUrlError">
-            <UInput v-model="form.git_url" :placeholder="urlPlaceholder" class="w-full" aria-describedby="repository-git-url-help" aria-label="Git URL" />
-            <template #help>
-              <span id="repository-git-url-help">Enter the full Git repository URL using the selected protocol.</span>
-            </template>
+          <UFormField label="Git URL" required :error="gitUrlError">
+            <UInput v-model="form.git_url" :placeholder="urlPlaceholder" class="w-full" />
           </UFormField>
 
-          <!-- Branch -->
-          <UFormField label="Branch" class="w-full">
-            <UInput v-model="form.branch" placeholder="main" class="w-full" aria-label="Repository branch" />
+          <UFormField label="Branch">
+            <UInput v-model="form.branch" placeholder="main" class="w-full" />
           </UFormField>
 
-          <!-- Private Repository (hidden for SSH — always private) -->
           <div v-if="urlScheme === 'http'" class="flex items-center gap-2">
             <UCheckbox v-model="isPrivate" label="Private Repository" />
-            <UTooltip text="Enable this if your repository requires authentication.">
-              <UIcon name="i-lucide-circle-help" class="w-4 h-4 text-gray-400 cursor-help" />
-            </UTooltip>
+            <span class="text-xs text-gray-500">Public repositories do not need a key.</span>
           </div>
 
-          <!-- HTTP credentials: username + password -->
-          <div v-if="urlScheme === 'http' && isPrivate" class="space-y-4">
-            <UFormField label="Username" required class="w-full">
-              <UInput v-model="credForm.git_username" class="w-full" aria-label="Git username" />
-            </UFormField>
-            <UFormField label="Password / Token" class="w-full">
-              <UInput
-                v-model="credForm.git_password"
-                type="password"
-                :placeholder="isEditMode && existingCredId ? 'Leave empty to keep current' : ''"
+          <div v-if="urlScheme === 'ssh' || isPrivate" class="flex items-end gap-2">
+            <UFormField label="Repository Key" required class="flex-1">
+              <USelectMenu
+                v-model="form.repository_key"
+                :items="keyOptions"
+                value-key="value"
+                placeholder="Select a reusable key"
                 class="w-full"
-                aria-label="Git password or token"
               />
             </UFormField>
+            <UButton
+              label="New Key"
+              icon="i-lucide-plus"
+              variant="outline"
+              color="neutral"
+              @click="showCreateKey = true"
+            />
           </div>
+          <p v-if="(urlScheme === 'ssh' || isPrivate) && compatibleKeys.length === 0" class="text-xs text-amber-600 dark:text-amber-400">
+            No compatible keys yet. Create one to continue.
+          </p>
 
-          <!-- SSH credentials: private key + passphrase -->
-          <div v-if="urlScheme === 'ssh'" class="space-y-4">
-            <UFormField label="SSH Private Key" class="w-full">
-              <UTextarea
-                v-model="credForm.ssh_private_key"
-                :placeholder="isEditMode && existingCredId ? 'Leave empty to keep current key' : 'Paste your private key here'"
-                :rows="8"
-                class="font-mono text-xs w-full"
-                aria-label="SSH private key"
-              />
-            </UFormField>
-            <UFormField label="Passphrase" class="w-full">
-              <UInput
-                v-model="credForm.ssh_passphrase"
-                type="password"
-                :placeholder="isEditMode && existingCredId ? 'Leave empty to keep current' : 'Optional passphrase for encrypted keys'"
-                class="w-full"
-                aria-label="SSH key passphrase"
-              />
-            </UFormField>
-          </div>
-
-          <!-- Actions -->
-          <div class="flex justify-between items-center pt-4 mt-2 border-t border-gray-100 dark:border-gray-800">
+          <div class="flex justify-between items-center pt-4 border-t border-gray-100 dark:border-gray-800">
             <UButton
               label="Test Connection"
               icon="i-lucide-plug"
               variant="outline"
               color="neutral"
               :loading="testingConnection"
-              :disabled="!!validateGitUrl()"
               @click="testConnection"
             />
-            <div class="flex justify-end gap-2">
-              <UButton label="Cancel" variant="outline" @click="cancel" />
-              <UButton
-                type="submit"
-                :label="isEditMode ? 'Save' : 'Create'"
-                :loading="saving"
-              />
+            <div class="flex gap-2">
+              <UButton label="Cancel" variant="outline" @click="isOpen = false" />
+              <UButton type="submit" :label="isEditMode ? 'Save' : 'Create'" :loading="saving" />
             </div>
           </div>
         </form>
       </UCard>
     </template>
   </UModal>
+
+  <RepositoryKeyModal
+    v-model:open="showCreateKey"
+    :default-auth-type="requiredKeyType"
+    :git-url="form.git_url"
+    @saved="handleKeySaved"
+  />
 </template>

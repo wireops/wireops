@@ -67,7 +67,7 @@ var expectedCollections = []string{
 }
 
 var relationChecks = []relationCheck{
-	{collection: "repository_keys", field: "repository", target: "repositories", required: true},
+	{collection: "repositories", field: "repository_key", target: "repository_keys"},
 	{collection: "stacks", field: "repository", target: "repositories"},
 	{collection: "stacks", field: "worker", target: "workers"},
 	{collection: "stack_env_vars", field: "stack", target: "stacks", required: true},
@@ -288,7 +288,6 @@ func (r *Result) checkDuplicates(snapshots map[string]collectionSnapshot) {
 	checkDuplicateField("integrations", "slug", SeverityError)
 	checkDuplicateField("worker_tokens", "token_hash", SeverityError)
 	checkDuplicateField("worker_commands", "command_id", SeverityError)
-	checkDuplicateField("repository_keys", "repository", SeverityWarning)
 }
 
 func (r *Result) addIssue(severity Severity, code, collection, field string, count int, message string) {
