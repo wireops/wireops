@@ -12,7 +12,7 @@ const deleting = ref(false)
 const deleteKey = ref<Record<string, any> | undefined>()
 const searchInput = ref<any>()
 
-const { data, refresh } = useAsyncData('repository_keys_panel', async (_ctx) => {
+const { data, refresh } = useAsyncData('repository_keys_panel', async () => {
   const [keys, repositories] = await Promise.all([
     $pb.collection('repository_keys').getFullList({ sort: 'name' }),
     $pb.collection('repositories').getFullList({ fields: 'id,repository_key' }),
