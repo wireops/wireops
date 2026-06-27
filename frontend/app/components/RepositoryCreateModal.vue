@@ -35,6 +35,22 @@ const keyOptions = computed(() => compatibleKeys.value.map(key => ({
   description: key.auth_type === 'ssh_key' ? 'SSH key' : key.git_username || 'Username / password',
 })))
 
+function inferUrlScheme(url: string): 'http' | 'ssh' | '' {
+  const trimmed = url.trim()
+  if (trimmed.startsWith('git@') || trimmed.startsWith('ssh://')) return 'ssh'
+  if (/^https?:\/\//.test(trimmed)) return 'http'
+  return ''
+}
+
+function applyInferredUrlScheme() {
+  const inferred = inferUrlScheme(form.value.git_url)
+  if (!inferred || inferred === urlScheme.value) return
+  urlScheme.value = inferred
+  gitUrlError.value = ''
+  form.value.repository_key = ''
+  isPrivate.value = inferred === 'ssh'
+}
+
 async function loadKeys(selectID?: string) {
   keys.value = await $pb.collection('repository_keys').getFullList({ sort: 'name' })
   if (selectID) form.value.repository_key = selectID
@@ -54,7 +70,7 @@ watch(isOpen, async (open) => {
       platform: repository.platform || 'github',
       repository_key: repository.repository_key || '',
     }
-    urlScheme.value = repository.git_url?.startsWith('git@') || repository.git_url?.startsWith('ssh://') ? 'ssh' : 'http'
+    urlScheme.value = inferUrlScheme(repository.git_url || '') || 'http'
     isPrivate.value = urlScheme.value === 'ssh' || !!repository.repository_key
   } else {
     form.value = { name: '', git_url: '', branch: 'main', platform: 'github', repository_key: '' }
@@ -74,7 +90,10 @@ watch(urlScheme, (scheme) => {
 watch(isPrivate, (enabled) => {
   if (!enabled && urlScheme.value === 'http') form.value.repository_key = ''
 })
-watch(() => form.value.git_url, () => { gitUrlError.value = '' })
+watch(() => form.value.git_url, () => {
+  gitUrlError.value = ''
+  if (!initializing.value) applyInferredUrlScheme()
+})
 
 function describePocketBaseError(error: any): string {
   const data = error?.response?.data
@@ -88,6 +107,7 @@ function describePocketBaseError(error: any): string {
 }
 
 function validateGitUrl(): string {
+  applyInferredUrlScheme()
   const url = form.value.git_url.trim()
   if (!url) return 'Git URL is required'
   if (urlScheme.value === 'http' && !/^https?:\/\//.test(url))
