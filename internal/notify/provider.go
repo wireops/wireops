@@ -6,17 +6,23 @@ import (
 )
 
 // Config represents the unified notification configuration.
-// It supports both Webhook and Ntfy providers.
+// It supports Webhook, Ntfy, Discord, and Slack providers.
 type Config struct {
-	Provider     string   // "webhook" | "ntfy"
-	URL          string
-	Secret       string   // webhook: HMAC secret; ntfy: password
-	Events       []string
-	Headers      []Header // only used by webhook
-	Enabled      bool
-	NtfyUser     string // only used by ntfy (optional)
-	NtfyTopic    string // only used by ntfy (required if provider=ntfy)
-	NtfyTemplate string // only used by ntfy (optional Go template)
+	Provider              string // "webhook" | "ntfy" | "discord" | "slack"
+	URL                   string
+	Secret                string // webhook: HMAC secret; ntfy: password
+	Events                []string
+	Headers               []Header // only used by webhook
+	Enabled               bool
+	NtfyUser              string // only used by ntfy (optional)
+	NtfyTopic             string // only used by ntfy (required if provider=ntfy)
+	NtfyTemplate          string // only used by ntfy (optional Go template)
+	DiscordUsername       string // only used by discord (optional)
+	DiscordAvatarURL      string // only used by discord (optional)
+	DiscordMentionOnError bool   // only used by discord
+	DiscordRoleID         string // only used by discord
+	SlackMentionOnError   bool   // only used by slack
+	SlackMentionText      string // only used by slack
 }
 
 // Header is a key/value pair stored in the `headers` JSON field.
@@ -34,6 +40,10 @@ type Provider interface {
 // NewProvider returns the appropriate Provider implementation based on the config.
 func NewProvider(client *http.Client, providerType string) Provider {
 	switch providerType {
+	case "discord":
+		return &DiscordProvider{client: client}
+	case "slack":
+		return &SlackProvider{client: client}
 	case "ntfy":
 		return &NtfyProvider{client: client}
 	case "webhook":

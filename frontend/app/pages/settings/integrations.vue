@@ -2,8 +2,12 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import dozzleIcon from '~/assets/img/icons/integrations/dozzle.svg'
 import traefikIcon from '~/assets/img/icons/integrations/traefik.svg'
+import caddyIcon from '~/assets/img/icons/integrations/caddy.svg'
+import nginxProxyManagerIcon from '~/assets/img/icons/integrations/nginx-proxy-manager.svg'
 import webhookIcon from '~/assets/img/icons/integrations/webhook.svg'
 import ntfyIcon from '~/assets/img/icons/integrations/ntfy.svg'
+import discordIcon from '~/assets/img/icons/integrations/discord.svg'
+import slackIcon from '~/assets/img/icons/integrations/slack.svg'
 
 const toast = useToast()
 const { getIntegrations, saveIntegration } = useIntegrations()
@@ -16,11 +20,23 @@ const ntfyIntegration = ref<any>(null)
 const showWebhookModal = ref(false)
 const webhookIntegration = ref<any>(null)
 
+const showDiscordModal = ref(false)
+const discordIntegration = ref<any>(null)
+
+const showSlackModal = ref(false)
+const slackIntegration = ref<any>(null)
+
 const showDozzleModal = ref(false)
 const dozzleIntegration = ref<any>(null)
 
 const showTraefikModal = ref(false)
 const traefikIntegration = ref<any>(null)
+
+const showCaddyModal = ref(false)
+const caddyIntegration = ref<any>(null)
+
+const showNginxProxyManagerModal = ref(false)
+const nginxProxyManagerIntegration = ref<any>(null)
 
 
 const groupedIntegrations = computed(() => {
@@ -30,7 +46,15 @@ const groupedIntegrations = computed(() => {
     if (!groups[cat]) groups[cat] = []
     groups[cat].push(item)
   }
-  return groups
+  if (groups.Notification) {
+    groups.Notification.sort((a, b) => String(a.name || a.slug).localeCompare(String(b.name || b.slug)))
+  }
+  return Object.keys(groups)
+    .sort((a, b) => a.localeCompare(b))
+    .reduce<Record<string, any[]>>((ordered, category) => {
+      ordered[category] = groups[category]
+      return ordered
+    }, {})
 })
 
 
@@ -73,36 +97,60 @@ function configureIntegration(integration: any) {
   } else if (integration.slug === 'webhook') {
     webhookIntegration.value = integration
     showWebhookModal.value = true
+  } else if (integration.slug === 'discord') {
+    discordIntegration.value = integration
+    showDiscordModal.value = true
+  } else if (integration.slug === 'slack') {
+    slackIntegration.value = integration
+    showSlackModal.value = true
   } else if (integration.slug === 'dozzle') {
     dozzleIntegration.value = integration
     showDozzleModal.value = true
   } else if (integration.slug === 'traefik') {
     traefikIntegration.value = integration
     showTraefikModal.value = true
+  } else if (integration.slug === 'caddy') {
+    caddyIntegration.value = integration
+    showCaddyModal.value = true
+  } else if (integration.slug === 'nginx-proxy-manager') {
+    nginxProxyManagerIntegration.value = integration
+    showNginxProxyManagerModal.value = true
   }
 }
 
 function getIntegrationIcon(slug: string) {
   if (slug === 'dozzle') return dozzleIcon
   if (slug === 'traefik') return traefikIcon
+  if (slug === 'caddy') return caddyIcon
+  if (slug === 'nginx-proxy-manager') return nginxProxyManagerIcon
   if (slug === 'webhook') return webhookIcon
   if (slug === 'ntfy') return ntfyIcon
+  if (slug === 'discord') return discordIcon
+  if (slug === 'slack') return slackIcon
   return ''
 }
 
 function getIntegrationDescription(slug: string) {
   if (slug === 'dozzle') return 'Realtime log viewer for Docker containers.'
   if (slug === 'traefik') return 'HTTP reverse proxy and load balancer.'
+  if (slug === 'caddy') return 'Discover Caddy Docker Proxy routes from labels.'
+  if (slug === 'nginx-proxy-manager') return 'Open Nginx Proxy Manager routes from wireops labels.'
   if (slug === 'webhook') return 'Send event payloads to custom HTTP endpoints.'
   if (slug === 'ntfy') return 'Push notifications to ntfy.sh or self-hosted topics.'
+  if (slug === 'discord') return 'Send sync notifications to a Discord channel.'
+  if (slug === 'slack') return 'Send sync notifications to a Slack channel.'
   return ''
 }
 
 function getIntegrationDocLink(slug: string) {
   if (slug === 'dozzle') return 'https://dozzle.dev'
   if (slug === 'traefik') return 'https://doc.traefik.io/traefik/'
+  if (slug === 'caddy') return 'https://github.com/lucaslorentz/caddy-docker-proxy'
+  if (slug === 'nginx-proxy-manager') return 'https://nginxproxymanager.com/guide/'
   if (slug === 'ntfy') return 'https://ntfy.sh'
   if (slug === 'webhook') return 'https://webhook.site'
+  if (slug === 'discord') return 'https://support.discord.com/hc/en-us/articles/228383668-Intro-to-Webhooks'
+  if (slug === 'slack') return 'https://api.slack.com/messaging/webhooks'
   return ''
 }
 
@@ -147,7 +195,7 @@ onMounted(() => {
                     <div class="flex items-center gap-2">
                       <USwitch v-model="integration.enabled" @update:model-value="handleSaveIntegration(integration, true)" />
                       <UButton 
-                        v-if="integration.slug === 'webhook' || integration.slug === 'ntfy' || integration.slug === 'dozzle' || integration.slug === 'traefik'"
+                        v-if="integration.slug === 'webhook' || integration.slug === 'ntfy' || integration.slug === 'discord' || integration.slug === 'slack' || integration.slug === 'dozzle' || integration.slug === 'traefik' || integration.slug === 'caddy' || integration.slug === 'nginx-proxy-manager'"
                         icon="i-lucide-settings" 
                         size="xs" 
                         variant="ghost" 
@@ -198,6 +246,18 @@ onMounted(() => {
       @saved="loadIntegrations"
     />
 
+    <IntegrationsDiscordConfigModal
+      v-model:open="showDiscordModal"
+      :integration="discordIntegration"
+      @saved="loadIntegrations"
+    />
+
+    <IntegrationsSlackConfigModal
+      v-model:open="showSlackModal"
+      :integration="slackIntegration"
+      @saved="loadIntegrations"
+    />
+
     <IntegrationsDozzleConfigModal
       v-model:open="showDozzleModal"
       :integration="dozzleIntegration"
@@ -207,6 +267,18 @@ onMounted(() => {
     <IntegrationsTraefikConfigModal
       v-model:open="showTraefikModal"
       :integration="traefikIntegration"
+      @saved="loadIntegrations"
+    />
+
+    <IntegrationsCaddyConfigModal
+      v-model:open="showCaddyModal"
+      :integration="caddyIntegration"
+      @saved="loadIntegrations"
+    />
+
+    <IntegrationsNginxProxyManagerConfigModal
+      v-model:open="showNginxProxyManagerModal"
+      :integration="nginxProxyManagerIntegration"
       @saved="loadIntegrations"
     />
   </div>

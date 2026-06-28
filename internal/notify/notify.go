@@ -81,7 +81,7 @@ func (n *Notifier) dispatch(ctx context.Context, p Payload) error {
 
 	for _, rec := range recs {
 		slug := rec.GetString("slug")
-		if slug != "webhook" && slug != "ntfy" {
+		if slug != "webhook" && slug != "ntfy" && slug != "discord" && slug != "slack" {
 			continue
 		}
 
@@ -153,6 +153,26 @@ func (n *Notifier) BuildConfig(slug string, configMap map[string]interface{}) *C
 		}
 		if templateVal, ok := configMap["template"].(string); ok {
 			cfg.NtfyTemplate = templateVal
+		}
+	} else if slug == "discord" {
+		if usernameVal, ok := configMap["username"].(string); ok {
+			cfg.DiscordUsername = usernameVal
+		}
+		if avatarVal, ok := configMap["avatar_url"].(string); ok {
+			cfg.DiscordAvatarURL = avatarVal
+		}
+		if mentionVal, ok := configMap["mention_on_error"].(bool); ok {
+			cfg.DiscordMentionOnError = mentionVal
+		}
+		if roleVal, ok := configMap["role_id"].(string); ok {
+			cfg.DiscordRoleID = roleVal
+		}
+	} else if slug == "slack" {
+		if mentionVal, ok := configMap["mention_on_error"].(bool); ok {
+			cfg.SlackMentionOnError = mentionVal
+		}
+		if mentionTextVal, ok := configMap["mention_text"].(string); ok {
+			cfg.SlackMentionText = mentionTextVal
 		}
 	}
 

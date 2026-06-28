@@ -223,6 +223,252 @@ func TestNtfyProviderTemplate(t *testing.T) {
 	}
 }
 
+func TestDiscordProviderSend(t *testing.T) {
+	transport := &captureTransport{}
+
+	provider := &DiscordProvider{client: &http.Client{Transport: transport}}
+	cfg := &Config{
+		Provider:              "discord",
+		URL:                   "https://discord.com/api/webhooks/123/token",
+		Events:                []string{SyncError},
+		DiscordUsername:       "wireops-test",
+		DiscordMentionOnError: true,
+		DiscordRoleID:         "987654321",
+	}
+
+	p := Payload{
+		Event:      SyncError,
+		StackID:    "stack-abc",
+		StackName:  "prod-stack",
+		Trigger:    "manual",
+		CommitSHA:  "abc1234",
+		DurationMs: 2500,
+		Error:      "deploy failed",
+	}
+
+	if err := provider.Send(cfg, p); err != nil {
+		t.Fatalf("Send error: %v", err)
+	}
+	if len(transport.requests) != 1 {
+		t.Fatalf("requests = %d, want 1", len(transport.requests))
+	}
+	req := transport.requests[0]
+	if req.Method != http.MethodPost {
+		t.Errorf("expected POST, got %s", req.Method)
+	}
+	if req.URL.Query().Get("wait") != "true" {
+		t.Errorf("expected wait=true query, got %q", req.URL.RawQuery)
+	}
+	if got := req.Header.Get("Content-Type"); got != "application/json" {
+		t.Errorf("expected application/json, got %q", got)
+	}
+
+	var got struct {
+		Content  string `json:"content"`
+		Username string `json:"username"`
+		Embeds   []struct {
+			Title       string `json:"title"`
+			Description string `json:"description"`
+			Color       int    `json:"color"`
+			Fields      []struct {
+				Name  string `json:"name"`
+				Value string `json:"value"`
+			} `json:"fields"`
+		} `json:"embeds"`
+		AllowedMentions struct {
+			Parse []string `json:"parse"`
+			Roles []string `json:"roles"`
+		} `json:"allowed_mentions"`
+	}
+	if err := json.Unmarshal(transport.bodies[0], &got); err != nil {
+		t.Fatalf("failed to decode body: %v", err)
+	}
+	if got.Username != "wireops-test" {
+		t.Errorf("username = %q, want wireops-test", got.Username)
+	}
+	if got.Content != "<@&987654321>" {
+		t.Errorf("content = %q, want role mention", got.Content)
+	}
+	if len(got.AllowedMentions.Parse) != 0 {
+		t.Errorf("expected no broad allowed mention parsing, got %v", got.AllowedMentions.Parse)
+	}
+	if len(got.AllowedMentions.Roles) != 1 || got.AllowedMentions.Roles[0] != "987654321" {
+		t.Errorf("roles = %v, want [987654321]", got.AllowedMentions.Roles)
+	}
+	if len(got.Embeds) != 1 {
+		t.Fatalf("embeds = %d, want 1", len(got.Embeds))
+	}
+	if got.Embeds[0].Title != "Sync failed" {
+		t.Errorf("title = %q, want Sync failed", got.Embeds[0].Title)
+	}
+	if got.Embeds[0].Description != "deploy failed" {
+		t.Errorf("description = %q, want deploy failed", got.Embeds[0].Description)
+	}
+	if got.Embeds[0].Color != discordColorError {
+		t.Errorf("color = %d, want %d", got.Embeds[0].Color, discordColorError)
+	}
+
+	var sawStack bool
+	for _, field := range got.Embeds[0].Fields {
+		if field.Name == "Stack" && field.Value == "prod-stack" {
+			sawStack = true
+			break
+		}
+	}
+	if !sawStack {
+		t.Errorf("expected Stack field for prod-stack, got %+v", got.Embeds[0].Fields)
+	}
+}
+
+func TestDiscordProviderEventFiltering(t *testing.T) {
+	transport := &captureTransport{}
+
+	provider := &DiscordProvider{client: &http.Client{Transport: transport}}
+	cfg := &Config{
+		URL:    "https://discord.com/api/webhooks/123/token",
+		Events: []string{SyncDone},
+	}
+
+	if err := provider.Send(cfg, Payload{Event: SyncError}); err != nil {
+		t.Fatalf("Send error: %v", err)
+	}
+	if got := len(transport.requests); got != 0 {
+		t.Errorf("expected 0 calls for unsubscribed event, got %d", got)
+	}
+
+	if err := provider.Send(cfg, Payload{Event: SyncTest}); err != nil {
+		t.Fatalf("Send error: %v", err)
+	}
+	if got := len(transport.requests); got != 1 {
+		t.Errorf("expected 1 call after sync.test, got %d", got)
+	}
+
+	var body struct {
+		AllowedMentions struct {
+			Parse []string `json:"parse"`
+			Roles []string `json:"roles"`
+		} `json:"allowed_mentions"`
+	}
+	if err := json.Unmarshal(transport.bodies[0], &body); err != nil {
+		t.Fatalf("failed to decode body: %v", err)
+	}
+	if len(body.AllowedMentions.Parse) != 0 || len(body.AllowedMentions.Roles) != 0 {
+		t.Errorf("expected safe empty allowed_mentions, got %+v", body.AllowedMentions)
+	}
+}
+
+func TestSlackProviderSend(t *testing.T) {
+	transport := &captureTransport{}
+
+	provider := &SlackProvider{client: &http.Client{Transport: transport}}
+	cfg := &Config{
+		Provider:            "slack",
+		URL:                 "https://hooks.slack.com/services/T000/B000/token",
+		Events:              []string{SyncError},
+		SlackMentionOnError: true,
+		SlackMentionText:    "<!subteam^S123456|deploys>",
+	}
+
+	p := Payload{
+		Event:      SyncError,
+		StackID:    "stack-abc",
+		StackName:  "prod <stack>",
+		Trigger:    "manual",
+		CommitSHA:  "abc1234",
+		DurationMs: 2500,
+		Error:      "deploy failed <bad>",
+	}
+
+	if err := provider.Send(cfg, p); err != nil {
+		t.Fatalf("Send error: %v", err)
+	}
+	if len(transport.requests) != 1 {
+		t.Fatalf("requests = %d, want 1", len(transport.requests))
+	}
+	req := transport.requests[0]
+	if req.Method != http.MethodPost {
+		t.Errorf("expected POST, got %s", req.Method)
+	}
+	if got := req.Header.Get("Content-Type"); got != "application/json" {
+		t.Errorf("expected application/json, got %q", got)
+	}
+
+	var got struct {
+		Text   string `json:"text"`
+		Blocks []struct {
+			Type string `json:"type"`
+			Text struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"text"`
+			Fields []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"fields"`
+		} `json:"blocks"`
+	}
+	if err := json.Unmarshal(transport.bodies[0], &got); err != nil {
+		t.Fatalf("failed to decode body: %v", err)
+	}
+	if !strings.HasPrefix(got.Text, "<!subteam^S123456|deploys> wireops sync failed") {
+		t.Errorf("text = %q, want mention prefix", got.Text)
+	}
+	if len(got.Blocks) != 3 {
+		t.Fatalf("blocks = %d, want 3", len(got.Blocks))
+	}
+	if got.Blocks[0].Type != "header" || got.Blocks[0].Text.Text != "wireops sync failed" {
+		t.Errorf("header block = %+v", got.Blocks[0])
+	}
+
+	var sawEscapedStack bool
+	for _, field := range got.Blocks[1].Fields {
+		if strings.Contains(field.Text, "prod &lt;stack&gt;") {
+			sawEscapedStack = true
+			break
+		}
+	}
+	if !sawEscapedStack {
+		t.Errorf("expected escaped stack in fields, got %+v", got.Blocks[1].Fields)
+	}
+	if !strings.Contains(got.Blocks[2].Text.Text, "deploy failed &lt;bad&gt;") {
+		t.Errorf("expected escaped error block, got %q", got.Blocks[2].Text.Text)
+	}
+}
+
+func TestSlackProviderEventFiltering(t *testing.T) {
+	transport := &captureTransport{}
+
+	provider := &SlackProvider{client: &http.Client{Transport: transport}}
+	cfg := &Config{
+		URL:    "https://hooks.slack.com/services/T000/B000/token",
+		Events: []string{SyncDone},
+	}
+
+	if err := provider.Send(cfg, Payload{Event: SyncError}); err != nil {
+		t.Fatalf("Send error: %v", err)
+	}
+	if got := len(transport.requests); got != 0 {
+		t.Errorf("expected 0 calls for unsubscribed event, got %d", got)
+	}
+
+	if err := provider.Send(cfg, Payload{Event: SyncTest}); err != nil {
+		t.Fatalf("Send error: %v", err)
+	}
+	if got := len(transport.requests); got != 1 {
+		t.Errorf("expected 1 call after sync.test, got %d", got)
+	}
+
+	var body struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(transport.bodies[0], &body); err != nil {
+		t.Fatalf("failed to decode body: %v", err)
+	}
+	if body.Text != "wireops test notification" {
+		t.Errorf("text = %q, want wireops test notification", body.Text)
+	}
+}
+
 func TestMaskSecret(t *testing.T) {
 	if MaskSecret("") != "" {
 		t.Error("empty secret should return empty string")

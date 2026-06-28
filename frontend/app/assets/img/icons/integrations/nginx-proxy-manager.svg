@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">Nginx Proxy Manager</title>
+  <rect width="512" height="512" rx="112" fill="#10b981"/>
+  <path fill="#fff" d="M256 78 410.1 167v178L256 434 101.9 345V167L256 78Zm0 76.8L168.4 205.4v101.2L256 357.2l87.6-50.6V205.4L256 154.8Z"/>
+  <path fill="#fff" d="M205.6 297.9V214h34.2l32.4 43.8V214h34.2v83.9h-34.2l-32.4-43.8v43.8h-34.2Z"/>
+</svg>
