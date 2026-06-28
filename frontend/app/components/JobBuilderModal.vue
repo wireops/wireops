@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
+import { buildJobYaml } from '../utils/job-yaml-generator'
 
 const props = withDefaults(
   defineProps<{
@@ -166,54 +167,22 @@ const tagsList = computed(() => {
 
 // Build clean, well-formatted YAML
 const yamlCode = computed(() => {
-  const lines: string[] = []
-  
-  lines.push(`name: "${form.value.name.replace(/"/g, '\\"')}"`)
-  lines.push(`description: "${form.value.description.replace(/"/g, '\\"')}"`)
-  lines.push(`cron: "${form.value.cron.replace(/"/g, '\\"')}"`)
-  
-  if (tagsList.value.length > 0) {
-    lines.push('tags:')
-    tagsList.value.forEach(tag => {
-      lines.push(`  - "${tag.replace(/"/g, '\\"')}"`)
-    })
-  } else {
-    lines.push('tags: []')
-  }
-
-  lines.push(`mode: "${form.value.mode}"`)
-  lines.push(`image: "${form.value.image.replace(/"/g, '\\"')}"`)
-  
-  const cmdTrimmed = form.value.command.trim()
-  if (cmdTrimmed || isCommandFocused.value) {
-    if (form.value.commandAsArray) {
-      const parts = parseCommand(cmdTrimmed)
-      lines.push(`command: [${parts.map(p => `"${p.replace(/"/g, '\\"')}"`).join(', ')}]`)
-    } else {
-      lines.push(`command: "${cmdTrimmed.replace(/"/g, '\\"')}"`)
-    }
-  }
-
-  if (volumesList.value.length > 0) {
-    lines.push('volumes:')
-    volumesList.value.forEach(vol => {
-      const volStr = `${vol.host}:${vol.container}`
-      lines.push(`  - "${volStr.replace(/"/g, '\\"')}"`)
-    })
-  } else {
-    lines.push('volumes: []')
-  }
-
-  if (form.value.network.trim()) {
-    lines.push(`network: "${form.value.network.trim().replace(/"/g, '\\"')}"`)
-  }
-
-  lines.push('resources:')
-  lines.push(`  cpu: "${computedCpu.value.replace(/"/g, '\\"')}"`)
-  lines.push(`  memory: "${computedMemory.value.replace(/"/g, '\\"')}"`)
-  lines.push(`  timeout: "${computedTimeout.value.replace(/"/g, '\\"')}"`)
-
-  return lines.join('\n')
+  return buildJobYaml({
+    name: form.value.name,
+    description: form.value.description,
+    cron: form.value.cron,
+    tags: tagsList.value,
+    mode: form.value.mode,
+    image: form.value.image,
+    command: form.value.command,
+    commandAsArray: form.value.commandAsArray,
+    includeEmptyCommand: isCommandFocused.value,
+    volumes: volumesList.value,
+    network: form.value.network,
+    cpu: computedCpu.value,
+    memory: computedMemory.value,
+    timeout: computedTimeout.value,
+  })
 })
 
 const modeOptions = [
@@ -247,31 +216,6 @@ function downloadYaml() {
   } catch (err: any) {
     toast.add({ title: 'Failed to download yaml', description: err?.message, color: 'error' })
   }
-}
-
-function parseCommand(cmd: string): string[] {
-  const args: string[] = []
-  const regex = /[^\s"']+|"([^"]*)"|'([^']*)'/g
-  let match
-  while ((match = regex.exec(cmd)) !== null) {
-    if (match[1] !== undefined) {
-      args.push(match[1])
-    } else if (match[2] !== undefined) {
-      args.push(match[2])
-    } else {
-      let clean = match[0]
-      while (clean.startsWith(',')) {
-        clean = clean.substring(1)
-      }
-      while (clean.endsWith(',')) {
-        clean = clean.substring(0, clean.length - 1)
-      }
-      if (clean) {
-        args.push(clean)
-      }
-    }
-  }
-  return args
 }
 
 async function copyYaml() {

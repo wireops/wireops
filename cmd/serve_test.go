@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/hex"
 	"os"
 	"slices"
 	"strings"
@@ -33,6 +34,56 @@ func TestGetAllowedOriginsIncludesLoopbackDevOrigins(t *testing.T) {
 		if !slices.Contains(origins, expected) {
 			t.Fatalf("expected allowed origins to contain %q, got %v", expected, origins)
 		}
+	}
+}
+
+func TestValidateStartupSecretKey(t *testing.T) {
+	raw := "12345678901234567890123456789012"
+	hexKey := hex.EncodeToString([]byte(raw))
+
+	tests := []struct {
+		name    string
+		key     string
+		wantErr string
+	}{
+		{
+			name: "raw key",
+			key:  raw,
+		},
+		{
+			name: "hex key",
+			key:  hexKey,
+		},
+		{
+			name:    "missing key",
+			key:     "",
+			wantErr: "invalid SECRET_KEY: SECRET_KEY is required",
+		},
+		{
+			name:    "invalid key",
+			key:     "too-short",
+			wantErr: "invalid SECRET_KEY",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("SECRET_KEY", tt.key)
+
+			err := validateStartupSecretKey()
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("validateStartupSecretKey() unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("validateStartupSecretKey() expected error containing %q", tt.wantErr)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("validateStartupSecretKey() error = %q, want to contain %q", err.Error(), tt.wantErr)
+			}
+		})
 	}
 }
 

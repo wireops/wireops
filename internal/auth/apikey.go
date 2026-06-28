@@ -1,26 +1,31 @@
 package auth
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/types"
+	"github.com/wireops/wireops/internal/crypto"
 )
 
 const lastUsedThrottle = 5 * time.Minute
 
 const (
-	APIKeyHeader = "X-Wireops-Api-Key"
-	APIKeyOrigin = "api_key"
-	apiKeyPrefix = "wireops_sk_"
+	APIKeyHeader      = "X-Wireops-Api-Key"
+	APIKeyOrigin      = "api_key"
+	apiKeyPrefix      = "wireops_sk_"
+	apiKeyHashPrefix  = "hmac-sha256:"
+	apiKeyHashContext = "wireops-api-key-hash-v1"
 )
 
 func APIKeyMiddleware(app core.App) func(*core.RequestEvent) error {
@@ -63,8 +68,17 @@ func GenerateAPIKey() (string, error) {
 }
 
 func HashAPIKey(key string) string {
-	sum := sha256.Sum256([]byte(strings.TrimSpace(key)))
-	return hex.EncodeToString(sum[:])
+	mac := hmac.New(sha256.New, apiKeyHashSecret())
+	_, _ = mac.Write([]byte(strings.TrimSpace(key)))
+	return apiKeyHashPrefix + hex.EncodeToString(mac.Sum(nil))
+}
+
+func apiKeyHashSecret() []byte {
+	secretKey := crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))
+	if len(secretKey) == 32 {
+		return append([]byte(apiKeyHashContext+":"), secretKey...)
+	}
+	return []byte(apiKeyHashContext)
 }
 
 func APIKeyPrefix(key string) string {
