@@ -17,7 +17,7 @@ type NtfyProvider struct {
 
 // Send dispatches a notification to the configured ntfy server/topic.
 // It supports custom templates, basic auth, and sets appropriate headers (Title, Priority, Tags).
-func (n *NtfyProvider) Send(cfg *Config, p Payload) error {
+func (n *NtfyProvider) Send(ctx context.Context, cfg *Config, p Payload) error {
 	// BUGFIX: Always allow sync.test even if not explicitly subscribed
 	if p.Event != SyncTest && !cfg.Subscribes(p.Event) {
 		return nil
@@ -64,7 +64,7 @@ func (n *NtfyProvider) Send(cfg *Config, p Payload) error {
 		}
 	}
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, url, &body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, &body)
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}

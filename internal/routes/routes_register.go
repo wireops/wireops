@@ -40,6 +40,66 @@ type routeRegistrar struct {
 	workerSvc sync.WorkerDispatcher
 }
 
+func isNotificationIntegration(slug string) bool {
+	return slug == "webhook" || slug == "ntfy" || slug == "discord" || slug == "slack"
+}
+
+func sensitiveIntegrationConfigKeys(slug string) []string {
+	switch slug {
+	case "discord", "slack":
+		return []string{"url"}
+	case "webhook", "ntfy":
+		return []string{"secret"}
+	default:
+		return nil
+	}
+}
+
+func maskIntegrationConfig(slug string, cfg map[string]interface{}) {
+	for _, key := range sensitiveIntegrationConfigKeys(slug) {
+		if val, ok := cfg[key].(string); ok && val != "" {
+			cfg[key] = notify.MaskSecret(val)
+		}
+	}
+}
+
+func (rr routeRegistrar) resolveMaskedIntegrationConfig(slug string, cfg map[string]interface{}) error {
+	if cfg == nil {
+		return nil
+	}
+
+	var savedConfig map[string]interface{}
+	for _, key := range sensitiveIntegrationConfigKeys(slug) {
+		val, ok := cfg[key].(string)
+		if !ok || val != notify.MaskSecret("x") {
+			continue
+		}
+
+		if savedConfig == nil {
+			recs, err := rr.app.FindAllRecords("integrations", dbx.HashExp{"slug": slug})
+			if err != nil {
+				return fmt.Errorf("failed to query existing integration record: %w", err)
+			}
+			if len(recs) == 0 {
+				return fmt.Errorf("cannot resolve masked %s: no existing integration record found", key)
+			}
+			if err := recs[0].UnmarshalJSONField("config", &savedConfig); err != nil {
+				return fmt.Errorf("failed to unmarshal existing configuration: %w", err)
+			}
+			if savedConfig == nil {
+				return fmt.Errorf("cannot resolve masked %s: existing configuration is empty", key)
+			}
+		}
+
+		savedVal, ok := savedConfig[key].(string)
+		if !ok || savedVal == "" {
+			return fmt.Errorf("cannot resolve masked %s: no saved value found in existing configuration", key)
+		}
+		cfg[key] = savedVal
+	}
+	return nil
+}
+
 func (rr routeRegistrar) resolveWorker(workerID string) (*core.Record, error) {
 	if workerID == "" {
 		return nil, fmt.Errorf("stack has no worker assigned")
@@ -564,11 +624,7 @@ func (rr routeRegistrar) registerIntegrationRoutes() {
 				item.Enabled = rec.GetBool("enabled")
 				var cfg map[string]interface{}
 				if err := rec.UnmarshalJSONField("config", &cfg); err == nil && cfg != nil {
-					if slug == "webhook" || slug == "ntfy" {
-						if secretVal, ok := cfg["secret"].(string); ok && secretVal != "" {
-							cfg["secret"] = notify.MaskSecret(secretVal)
-						}
-					}
+					maskIntegrationConfig(slug, cfg)
 					item.Config = cfg
 				}
 			}
@@ -590,28 +646,11 @@ func (rr routeRegistrar) registerIntegrationRoutes() {
 		if err := json.NewDecoder(e.Request.Body).Decode(&body); err != nil {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid body"})
 		}
-		if body.Config != nil {
-			if secretVal, ok := body.Config["secret"].(string); ok && secretVal == "••••••••" {
-				recs, err := rr.app.FindAllRecords("integrations", dbx.HashExp{"slug": slug})
-				if err != nil {
-					return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to query existing integration record: " + err.Error()})
-				}
-				if len(recs) == 0 {
-					return e.JSON(http.StatusBadRequest, map[string]string{"error": "cannot resolve masked secret: no existing integration record found"})
-				}
-				var savedConfig map[string]interface{}
-				if err := recs[0].UnmarshalJSONField("config", &savedConfig); err != nil {
-					return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to unmarshal existing configuration: " + err.Error()})
-				}
-				if savedConfig == nil {
-					return e.JSON(http.StatusBadRequest, map[string]string{"error": "cannot resolve masked secret: existing configuration is empty"})
-				}
-				savedSecret, ok := savedConfig["secret"].(string)
-				if !ok || savedSecret == "" {
-					return e.JSON(http.StatusBadRequest, map[string]string{"error": "cannot resolve masked secret: no secret found in existing configuration"})
-				}
-				body.Config["secret"] = savedSecret
-			}
+		if err := rr.resolveMaskedIntegrationConfig(slug, body.Config); err != nil {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+		}
+		if err := notify.ValidateIntegrationConfig(slug, body.Config); err != nil {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 		}
 
 		col, err := rr.app.FindCollectionByNameOrId("integrations")
@@ -635,9 +674,7 @@ func (rr routeRegistrar) registerIntegrationRoutes() {
 		}
 
 		if body.Config != nil {
-			if secretVal, ok := body.Config["secret"].(string); ok && secretVal != "" {
-				body.Config["secret"] = "••••••••"
-			}
+			maskIntegrationConfig(slug, body.Config)
 		}
 		return e.JSON(http.StatusOK, map[string]interface{}{
 			"slug":    slug,
@@ -743,8 +780,8 @@ func (rr routeRegistrar) registerIntegrationRoutes() {
 
 	rr.r.POST("/api/custom/integrations/{slug}/test", func(e *core.RequestEvent) error {
 		slug := e.Request.PathValue("slug")
-		if slug != "webhook" && slug != "ntfy" {
-			return e.JSON(http.StatusBadRequest, map[string]string{"error": "only webhook and ntfy integrations can be tested"})
+		if !isNotificationIntegration(slug) {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "only notification integrations can be tested"})
 		}
 
 		var body struct {
@@ -755,26 +792,14 @@ func (rr routeRegistrar) registerIntegrationRoutes() {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid body"})
 		}
 
-		if secretVal, ok := body.Config["secret"].(string); ok && secretVal == "••••••••" {
-			recs, err := rr.app.FindAllRecords("integrations", dbx.HashExp{"slug": slug})
-			if err != nil {
-				return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to query existing integration record: " + err.Error()})
-			}
-			if len(recs) == 0 {
-				return e.JSON(http.StatusBadRequest, map[string]string{"error": "cannot resolve masked secret: no existing integration record found"})
-			}
-			var savedConfig map[string]interface{}
-			if err := recs[0].UnmarshalJSONField("config", &savedConfig); err != nil {
-				return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to unmarshal existing configuration: " + err.Error()})
-			}
-			if savedConfig == nil {
-				return e.JSON(http.StatusBadRequest, map[string]string{"error": "cannot resolve masked secret: existing configuration is empty"})
-			}
-			savedSecret, ok := savedConfig["secret"].(string)
-			if !ok || savedSecret == "" {
-				return e.JSON(http.StatusBadRequest, map[string]string{"error": "cannot resolve masked secret: no secret found in existing configuration"})
-			}
-			body.Config["secret"] = savedSecret
+		if body.Config == nil {
+			body.Config = map[string]interface{}{}
+		}
+		if err := rr.resolveMaskedIntegrationConfig(slug, body.Config); err != nil {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+		}
+		if err := notify.ValidateIntegrationConfig(slug, body.Config); err != nil {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 		}
 
 		notifier := notify.New(rr.app)
