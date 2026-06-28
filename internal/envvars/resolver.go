@@ -2,6 +2,8 @@ package envvars
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -77,7 +79,10 @@ func loadGlobalRecords(app core.App, bindingCollection, targetField, targetID st
 
 func findAllIfCollectionExists(app core.App, collection string, exprs ...dbx.Expression) ([]*core.Record, error) {
 	if _, err := app.FindCollectionByNameOrId(collection); err != nil {
-		return nil, nil
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
 	}
 	return app.FindAllRecords(collection, exprs...)
 }

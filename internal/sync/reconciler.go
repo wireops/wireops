@@ -228,7 +228,10 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 
 	envVars, envErr := r.loadEnvVars(ctx, stackID)
 	if envErr != nil {
-		log.Printf("[reconciler] failed to load env vars for stack %s: %v", stackID, envErr)
+		errMsg := fmt.Sprintf("failed to load env vars: %v", envErr)
+		r.logFailure(stackID, trigger, remoteSHA, errMsg)
+		r.markError(stack, "stacks")
+		return fmt.Errorf("%s", errMsg)
 	}
 
 	// Write .env to the repo workDir NOW so that compose config (called by
@@ -337,7 +340,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	}
 
 	if runErr != nil {
-		errOutput := buildErrorOutput(output, runErr, envErr)
+		errOutput := buildErrorOutput(output, runErr)
 		if err := r.updateSyncLog(syncLog.Id, "error", errOutput, duration); err != nil {
 			_ = r.markError(stack, "stacks")
 			return err
@@ -447,7 +450,10 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 
 	envVars, envErr := r.loadEnvVars(ctx, stackID)
 	if envErr != nil {
-		log.Printf("[reconciler] failed to load env vars for stack %s: %v", stackID, envErr)
+		errMsg := fmt.Sprintf("failed to load env vars: %v", envErr)
+		r.logFailure(stackID, "manual", commitSHA, errMsg)
+		r.markError(stack, "stacks")
+		return fmt.Errorf("%s", errMsg)
 	}
 
 	workerID, workerFingerprint, err := r.resolveWorker(stack)
@@ -521,7 +527,7 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 	duration := time.Since(start).Milliseconds()
 
 	if runErr != nil {
-		errOutput := buildErrorOutput(output, runErr, envErr)
+		errOutput := buildErrorOutput(output, runErr)
 		if err := r.updateSyncLog(syncLog.Id, "error", errOutput, duration); err != nil {
 			_ = r.markError(stack, "stacks")
 			return err
@@ -613,7 +619,10 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 	lastSHA := repo.GetString("last_commit_sha")
 	envVars, envErr := r.loadEnvVars(ctx, stackID)
 	if envErr != nil {
-		log.Printf("[reconciler] failed to load env vars for stack %s: %v", stackID, envErr)
+		errMsg := fmt.Sprintf("failed to load env vars: %v", envErr)
+		r.logFailure(stackID, "redeploy", lastSHA, errMsg)
+		r.markError(stack, "stacks")
+		return fmt.Errorf("%s", errMsg)
 	}
 
 	workerID, workerFingerprint, err := r.resolveWorker(stack)
@@ -692,7 +701,7 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 	duration := time.Since(start).Milliseconds()
 
 	if runErr != nil {
-		errOutput := buildErrorOutput(output, runErr, envErr)
+		errOutput := buildErrorOutput(output, runErr)
 		if err := r.updateSyncLog(syncLog.Id, "error", errOutput, duration); err != nil {
 			_ = r.markError(stack, "stacks")
 			return err
@@ -861,7 +870,10 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 
 	envVars, envErr := r.loadEnvVars(ctx, stackID)
 	if envErr != nil {
-		log.Printf("[reconciler] failed to load env vars for local stack %s: %v", stackID, envErr)
+		errMsg := fmt.Sprintf("failed to load env vars: %v", envErr)
+		r.logFailure(stackID, trigger, "", errMsg)
+		r.markError(stack, "stacks")
+		return fmt.Errorf("%s", errMsg)
 	}
 
 	// Write .env to workDir so that compose config (called inside
@@ -934,7 +946,7 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 	duration := time.Since(start).Milliseconds()
 
 	if runErr != nil {
-		errOutput := buildErrorOutput(output, runErr, envErr)
+		errOutput := buildErrorOutput(output, runErr)
 		if err := r.updateSyncLog(syncLog.Id, "error", errOutput, duration); err != nil {
 			_ = r.markError(stack, "stacks")
 			return err
@@ -1138,11 +1150,8 @@ func (r *Reconciler) logFailure(stackID, trigger, commitSHA, errMsg string) erro
 	return nil
 }
 
-func buildErrorOutput(output string, runErr, envErr error) string {
+func buildErrorOutput(output string, runErr error) string {
 	var b strings.Builder
-	if envErr != nil {
-		fmt.Fprintf(&b, "warning: failed to load env vars: %v\n\n", envErr)
-	}
 	if output != "" {
 		b.WriteString(output)
 		if output[len(output)-1] != '\n' {
@@ -1247,7 +1256,7 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 
 	envVars, envErr := r.loadEnvVars(ctx, stackID)
 	if envErr != nil {
-		log.Printf("[reconciler] failed to load env vars for stack %s: %v", stackID, envErr)
+		return fmt.Errorf("failed to load env vars: %w", envErr)
 	}
 
 	composeB64 := base64.StdEncoding.EncodeToString(composeContent)

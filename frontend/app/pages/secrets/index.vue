@@ -16,7 +16,6 @@ const variableToDelete = ref<any | null>(null)
 const form = ref({
   key: '',
   value: '',
-  description: '',
   secret: false,
 })
 
@@ -24,7 +23,6 @@ const editingId = ref('')
 const editForm = ref({
   key: '',
   value: '',
-  description: '',
   secret: false,
 })
 
@@ -72,7 +70,7 @@ async function load() {
 }
 
 function resetForm() {
-  form.value = { key: '', value: '', description: '', secret: false }
+  form.value = { key: '', value: '', secret: false }
 }
 
 function startCreate() {
@@ -93,7 +91,6 @@ async function createVariable() {
     await $pb.collection('global_env_vars').create({
       key: form.value.key.trim(),
       value: form.value.value,
-      description: form.value.description.trim(),
       secret: form.value.secret,
     }, {
       requestKey: null,
@@ -115,7 +112,6 @@ function startEdit(variable: any) {
   editForm.value = {
     key: variable.key,
     value: variable.secret ? '' : variable.value,
-    description: variable.description || '',
     secret: variable.secret,
   }
 }
@@ -130,7 +126,6 @@ async function saveEdit(variable: any) {
   try {
     const payload: Record<string, any> = {
       key: editForm.value.key.trim(),
-      description: editForm.value.description.trim(),
       secret: editForm.value.secret,
     }
     if (!variable.secret || editForm.value.value || variable.secret !== editForm.value.secret) {

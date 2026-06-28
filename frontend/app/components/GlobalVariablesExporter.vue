@@ -42,10 +42,7 @@ const availableVariables = computed(() => globals.value.filter(variable => !bind
 const filteredAvailableVariables = computed(() => {
   const query = addSearch.value.trim().toLowerCase()
   if (!query) return availableVariables.value
-  return availableVariables.value.filter(variable =>
-    variable.key?.toLowerCase().includes(query) ||
-    variable.description?.toLowerCase().includes(query)
-  )
+  return availableVariables.value.filter(variable => variable.key?.toLowerCase().includes(query))
 })
 
 async function load() {

@@ -131,7 +131,7 @@ func TestLoadEnvVarsRejectsInvalidSecretKey(t *testing.T) {
 	t.Setenv("SECRET_KEY", strings.Repeat("z", 64))
 	s := NewScheduler(app, fakeJobDispatcher{}, config.GetReposWorkspace())
 
-	_, err := s.loadEnvVars(jobRec.Id)
+	_, err := s.loadEnvVars(context.Background(), jobRec.Id)
 	if err == nil {
 		t.Fatal("expected invalid SECRET_KEY to fail secret env loading")
 	}

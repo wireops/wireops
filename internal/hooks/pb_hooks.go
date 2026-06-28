@@ -2,6 +2,7 @@ package hooks
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"html"
@@ -948,6 +949,10 @@ func encryptField(record *core.Record, field string, key []byte) error {
 }
 
 func prepareEnvSecretRecord(record *core.Record, key []byte) error {
+	if err := normalizeEnvVarKey(record); err != nil {
+		return err
+	}
+
 	provider := record.GetString("secret_provider")
 	if provider != "" {
 		if err := validateSecretProvider(provider); err != nil {
@@ -957,11 +962,39 @@ func prepareEnvSecretRecord(record *core.Record, key []byte) error {
 		record.Set("secret_provider", "internal")
 	}
 	if record.GetBool("secret") {
+		preserveMaskedSecretValue(record, "value")
 		if err := encryptField(record, "value", key); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func normalizeEnvVarKey(record *core.Record) error {
+	key := strings.TrimSpace(record.GetString("key"))
+	if key == "" {
+		return validation.Errors{
+			"key": validation.NewError("validation_required", "Key is required."),
+		}
+	}
+	record.Set("key", key)
+	return nil
+}
+
+func preserveMaskedSecretValue(record *core.Record, field string) {
+	val := record.GetString(field)
+	if val != "" && val != "••••••••" {
+		return
+	}
+	original := record.Original()
+	if original == nil || !original.GetBool("secret") {
+		return
+	}
+	originalValue := original.GetString(field)
+	if originalValue == "" {
+		return
+	}
+	record.Set(field, originalValue)
 }
 
 func preventEnvSecretDowngrade(record *core.Record) error {
@@ -979,7 +1012,10 @@ func preventEnvSecretDowngrade(record *core.Record) error {
 
 func findAllRecordsIfCollectionExists(app core.App, collection string, exprs ...dbx.Expression) ([]*core.Record, error) {
 	if _, err := app.FindCollectionByNameOrId(collection); err != nil {
-		return nil, nil
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
 	}
 	return app.FindAllRecords(collection, exprs...)
 }

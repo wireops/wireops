@@ -268,7 +268,7 @@ func (s *Scheduler) executeJob(jobID, trigger string, userID string) {
 		return
 	}
 
-	envMap, err := s.loadEnvVars(jobID)
+	envMap, err := s.loadEnvVars(ctx, jobID)
 	if err != nil {
 		msg := fmt.Sprintf("cannot load env vars for job %s: %v", jobID, err)
 		log.Printf("[jobscheduler] executeJob: %s", msg)
@@ -861,8 +861,10 @@ func (s *Scheduler) updateJobRun(runID, status, output string, durationMs int64,
 }
 
 // loadEnvVars fetches and decrypts job_env_vars for the given job.
-func (s *Scheduler) loadEnvVars(jobID string) (map[string]string, error) {
-	return envvars.LoadJob(s.rootCtx, s.app, s.secretsRegistry, jobID)
+func (s *Scheduler) loadEnvVars(ctx context.Context, jobID string) (map[string]string, error) {
+	loadCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	return envvars.LoadJob(loadCtx, s.app, s.secretsRegistry, jobID)
 }
 
 // repoHeadSHA returns the local HEAD commit SHA for the given repository.

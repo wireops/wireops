@@ -107,11 +107,14 @@ async function saveEditEnv(id: string) {
   if (!editEnvKey.value.trim()) return
   saving.value = true
   try {
+    const original = envVars.value.find(env => env.id === id)
     const data: Record<string, any> = {
       key: editEnvKey.value.trim(),
       secret: editEnvSecret.value,
     }
-    if (editEnvValue.value) data.value = editEnvValue.value
+    if (!editEnvSecret.value || !original?.secret || editEnvValue.value !== '') {
+      data.value = editEnvValue.value
+    }
     await $pb.collection(collection.value).update(id, data, { requestKey: null })
     editingEnvId.value = null
     await load()
