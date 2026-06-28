@@ -74,6 +74,45 @@ func TestLoadJobResolvesGlobalSecret(t *testing.T) {
 	}
 }
 
+func TestLoadJobMergesGlobalsAndLocalOverrides(t *testing.T) {
+	app := newEnvVarsTestApp(t)
+	job := mustCreateEnvRecord(t, app, "scheduled_jobs", map[string]any{"name": "job"})
+
+	globalShared := mustCreateEnvRecord(t, app, "global_env_vars", map[string]any{
+		"key":   "SHARED",
+		"value": "global",
+	})
+	globalOnly := mustCreateEnvRecord(t, app, "global_env_vars", map[string]any{
+		"key":   "GLOBAL_ONLY",
+		"value": "global",
+	})
+	mustCreateEnvRecord(t, app, "job_env_vars", map[string]any{
+		"job":   job.Id,
+		"key":   "SHARED",
+		"value": "local",
+	})
+	mustCreateEnvRecord(t, app, "job_env_vars", map[string]any{
+		"job":   job.Id,
+		"key":   "LOCAL_ONLY",
+		"value": "local",
+	})
+	mustCreateEnvRecord(t, app, "job_global_env_vars", map[string]any{"job": job.Id, "global_env_var": globalShared.Id})
+	mustCreateEnvRecord(t, app, "job_global_env_vars", map[string]any{"job": job.Id, "global_env_var": globalOnly.Id})
+
+	got, err := LoadJob(context.Background(), app, secrets.NewDefaultRegistry([]byte(strings.Repeat("x", 32))), job.Id)
+	if err != nil {
+		t.Fatalf("LoadJob failed: %v", err)
+	}
+	want := map[string]string{
+		"GLOBAL_ONLY": "global",
+		"LOCAL_ONLY":  "local",
+		"SHARED":      "local",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("LoadJob = %#v, want %#v", got, want)
+	}
+}
+
 func newEnvVarsTestApp(t *testing.T) *tests.TestApp {
 	t.Helper()
 	app, err := tests.NewTestApp()
