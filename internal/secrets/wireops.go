@@ -28,7 +28,7 @@ func (p *InternalSecretProvider) Name() string { return "internal" }
 // the caller can fail-fast rather than deploying raw ciphertext or an empty value.
 func (p *InternalSecretProvider) Resolve(_ context.Context, rawValue string) (string, error) {
 	if len(p.secretKey) != 32 {
-		return "", errors.New("internal secret provider: SECRET_KEY is not configured or is not 32 bytes")
+		return "", errors.New("SECRET_KEY must be exactly 32 bytes")
 	}
 	decrypted, err := crypto.Decrypt(rawValue, p.secretKey)
 	if err != nil {

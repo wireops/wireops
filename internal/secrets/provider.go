@@ -39,6 +39,18 @@ func NewRegistry() *Registry {
 	return &Registry{providers: make(map[string]SecretProvider)}
 }
 
+// NewDefaultRegistry returns the providers available to deploy/runtime
+// resolution. Only providers in ValidProviders are accepted by write-time
+// validation; the stubs are registered so older records fail with a clear
+// provider-specific error instead of "unknown provider".
+func NewDefaultRegistry(secretKey []byte) *Registry {
+	reg := NewRegistry()
+	reg.Register(NewInternalProvider(secretKey))
+	reg.Register(NewVaultProvider())
+	reg.Register(NewInfisicalProvider())
+	return reg
+}
+
 // Register adds a provider to the registry. Panics if a provider with the same
 // name is already registered (programming error — providers are registered at startup).
 func (r *Registry) Register(p SecretProvider) {

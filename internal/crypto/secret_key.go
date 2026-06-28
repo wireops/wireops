@@ -16,6 +16,10 @@ func NormalizeSecretKey(raw string) []byte {
 		if decoded, err := hex.DecodeString(raw); err == nil && len(decoded) == 32 {
 			return decoded
 		}
+		return nil
 	}
-	return []byte(raw)
+	if len(raw) == 32 {
+		return []byte(raw)
+	}
+	return nil
 }

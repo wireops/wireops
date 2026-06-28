@@ -20,6 +20,7 @@ import (
 
 	"github.com/wireops/wireops/internal/config"
 	"github.com/wireops/wireops/internal/crypto"
+	"github.com/wireops/wireops/internal/envvars"
 	gitpkg "github.com/wireops/wireops/internal/git"
 	"github.com/wireops/wireops/internal/notify"
 	"github.com/wireops/wireops/internal/protocol"
@@ -38,7 +39,6 @@ type WorkerDispatcher interface {
 type Reconciler struct {
 	app             core.App
 	mu              sync.Map
-	secretKey       []byte
 	notifier        *notify.Notifier
 	renderer        *Renderer
 	dispatcher      WorkerDispatcher
@@ -48,15 +48,10 @@ type Reconciler struct {
 func NewReconciler(app core.App, notifier *notify.Notifier, dispatcher WorkerDispatcher) *Reconciler {
 	key := crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))
 
-	// Build the secret provider registry with all supported providers.
-	reg := secrets.NewRegistry()
-	reg.Register(secrets.NewInternalProvider(key))
-	reg.Register(secrets.NewVaultProvider())
-	reg.Register(secrets.NewInfisicalProvider())
+	reg := secrets.NewDefaultRegistry(key)
 
 	return &Reconciler{
 		app:             app,
-		secretKey:       key,
 		notifier:        notifier,
 		renderer:        NewRenderer(app),
 		dispatcher:      dispatcher,
@@ -1048,41 +1043,7 @@ func (r *Reconciler) loadCredential(repoID string) (*gitpkg.Credential, error) {
 }
 
 func (r *Reconciler) loadEnvVars(ctx context.Context, stackID string) ([]string, error) {
-	records, err := r.app.FindAllRecords("stack_env_vars",
-		dbx.HashExp{"stack": stackID},
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	var envVars []string
-	for _, rec := range records {
-		key := rec.GetString("key")
-		val := rec.GetString("value")
-		if key == "" {
-			continue
-		}
-
-		if rec.GetBool("secret") {
-			// Resolve the secret value via the appropriate provider.
-			providerName := rec.GetString("secret_provider")
-			if providerName == "" {
-				providerName = "internal"
-			}
-			provider, provErr := r.secretsRegistry.Get(providerName)
-			if provErr != nil {
-				return nil, fmt.Errorf("stack %s: unknown secret provider %q for key %q: %w", stackID, providerName, key, provErr)
-			}
-			resolved, resolveErr := provider.Resolve(ctx, val)
-			if resolveErr != nil {
-				return nil, fmt.Errorf("stack %s: failed to resolve secret %q (provider=%s): %w", stackID, key, providerName, resolveErr)
-			}
-			val = resolved
-		}
-
-		envVars = append(envVars, key+"="+val)
-	}
-	return envVars, nil
+	return envvars.LoadStack(ctx, r.app, r.secretsRegistry, stackID)
 }
 
 // buildEnvFileB64 renders envVars as a .env file using the canonical

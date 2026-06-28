@@ -1,0 +1,197 @@
+name: 80li3dtnj9zzeza
+networks:
+    app_network:
+        driver: bridge
+        name: 80li3dtnj9zzeza_app_network
+services:
+    nginx:
+        annotations:
+            customization.image.slug: nginx
+            dev.wireops.checksum: fa463c56d0330712c93cc26159b42e05381345497a5e15adb04587e56a05ab5a
+            dev.wireops.generated_at: "2026-06-27T13:49:32Z"
+            dev.wireops.repository: Testes
+            dev.wireops.repository.branch: main
+            dev.wireops.repository.commit_sha: c4250ab6711e7845155e94b94a8a6a0fb82a8286
+            dev.wireops.repository.file: docker-compose.yml
+            dev.wireops.repository.url: git@github.com:jfxdev/tests.git
+            dev.wireops.stack_name: Teste
+            dev.wireops.version: "1"
+            dev.wireops.worker.fingerprint: remote:ia6w3tjnpua7bf5
+        command: |
+            sh -c "echo '<html><body><h1>Env Vars</h1><pre>' > /usr/share/nginx/html/index.html && env | sort >> /usr/share/nginx/html/index.html && echo '</pre></body></html>' >> /usr/share/nginx/html/index.html && nginx -g 'daemon off;'"
+        container_name: nginx
+        environment:
+            - TEST_VAR=${TEST_VAR}
+            - TEST_VAR1=${TEST_VAR1}
+            - TEST_VAR2=${TEST_VAR2}
+            - TEST_VAR3=${TEST_VAR3}
+            - TEST_VAR4=${TEST_VAR4}
+            - TEST_VAR5=${TEST_VAR5}
+            - TEST_VAR6=${TEST_VAR6}
+        image: nginx:1.28.2-alpine
+        labels:
+            dev.wireops.managed: "true"
+            dev.wireops.repository.commit_sha: c4250ab6711e7845155e94b94a8a6a0fb82a8286
+            dev.wireops.stack_id: tjfw9nf2gfs7xex
+            traefik.http.routers.my-container.rule: Host(`test.minilab.cloud`)
+        networks:
+            app_network: null
+        ports:
+            - mode: ingress
+              protocol: tcp
+              published: "8082"
+              target: 80
+        restart: unless-stopped
+        volumes:
+            - source: nginx_data
+              target: /usr/share/nginx/csv
+              type: volume
+              volume: {}
+    nginx2:
+        annotations:
+            dev.wireops.checksum: fa463c56d0330712c93cc26159b42e05381345497a5e15adb04587e56a05ab5a
+            dev.wireops.generated_at: "2026-06-27T13:49:32Z"
+            dev.wireops.repository: Testes
+            dev.wireops.repository.branch: main
+            dev.wireops.repository.commit_sha: c4250ab6711e7845155e94b94a8a6a0fb82a8286
+            dev.wireops.repository.file: docker-compose.yml
+            dev.wireops.repository.url: git@github.com:jfxdev/tests.git
+            dev.wireops.stack_name: Teste
+            dev.wireops.version: "1"
+            dev.wireops.worker.fingerprint: remote:ia6w3tjnpua7bf5
+        command: |
+            sh -c "echo '<html><body><h1>Env Vars</h1><pre>' > /usr/share/nginx/html/index.html && env | sort >> /usr/share/nginx/html/index.html && echo '</pre></body></html>' >> /usr/share/nginx/html/index.html && nginx -g 'daemon off;'"
+        container_name: nginx2
+        environment:
+            - TEST_VAR=${TEST_VAR}
+        image: nginx:1.28.2-alpine
+        labels:
+            dev.wireops.managed: "true"
+            dev.wireops.repository.commit_sha: c4250ab6711e7845155e94b94a8a6a0fb82a8286
+            dev.wireops.stack_id: tjfw9nf2gfs7xex
+            traefik.http.routers.my-container.rule: Host(`test2.minilab.cloud`)
+        networks:
+            app_network: null
+        ports:
+            - mode: ingress
+              protocol: tcp
+              published: "8084"
+              target: 80
+        restart: unless-stopped
+        volumes:
+            - source: nginx_data
+              target: /usr/share/nginx/csv
+              type: volume
+              volume: {}
+    nginx3:
+        annotations:
+            dev.wireops.checksum: fa463c56d0330712c93cc26159b42e05381345497a5e15adb04587e56a05ab5a
+            dev.wireops.generated_at: "2026-06-27T13:49:32Z"
+            dev.wireops.repository: Testes
+            dev.wireops.repository.branch: main
+            dev.wireops.repository.commit_sha: c4250ab6711e7845155e94b94a8a6a0fb82a8286
+            dev.wireops.repository.file: docker-compose.yml
+            dev.wireops.repository.url: git@github.com:jfxdev/tests.git
+            dev.wireops.stack_name: Teste
+            dev.wireops.version: "1"
+            dev.wireops.worker.fingerprint: remote:ia6w3tjnpua7bf5
+        command: |
+            sh -c "echo '<html><body><h1>Env Vars</h1><pre>' > /usr/share/nginx/html/index.html && env | sort >> /usr/share/nginx/html/index.html && echo '</pre></body></html>' >> /usr/share/nginx/html/index.html && nginx -g 'daemon off;'"
+        container_name: nginx3
+        environment:
+            - TEST_VAR=${TEST_VAR}
+        image: nginx:1.28.2-alpine
+        labels:
+            dev.wireops.managed: "true"
+            dev.wireops.repository.commit_sha: c4250ab6711e7845155e94b94a8a6a0fb82a8286
+            dev.wireops.stack_id: tjfw9nf2gfs7xex
+            traefik.http.routers.my-container.rule: Host(`test2.minilab.cloud`)
+        networks:
+            app_network: null
+        ports:
+            - mode: ingress
+              protocol: tcp
+              published: "8085"
+              target: 80
+        restart: unless-stopped
+        volumes:
+            - source: nginx_data
+              target: /usr/share/nginx/csv
+              type: volume
+              volume: {}
+    nginx4:
+        annotations:
+            dev.wireops.checksum: fa463c56d0330712c93cc26159b42e05381345497a5e15adb04587e56a05ab5a
+            dev.wireops.generated_at: "2026-06-27T13:49:32Z"
+            dev.wireops.repository: Testes
+            dev.wireops.repository.branch: main
+            dev.wireops.repository.commit_sha: c4250ab6711e7845155e94b94a8a6a0fb82a8286
+            dev.wireops.repository.file: docker-compose.yml
+            dev.wireops.repository.url: git@github.com:jfxdev/tests.git
+            dev.wireops.stack_name: Teste
+            dev.wireops.version: "1"
+            dev.wireops.worker.fingerprint: remote:ia6w3tjnpua7bf5
+        command: |
+            sh -c "echo '<html><body><h1>Env Vars</h1><pre>' > /usr/share/nginx/html/index.html && env | sort >> /usr/share/nginx/html/index.html && echo '</pre></body></html>' >> /usr/share/nginx/html/index.html && nginx -g 'daemon off;'"
+        container_name: nginx4
+        environment:
+            - TEST_VAR=${TEST_VAR}
+        image: nginx:1.28.2-alpine
+        labels:
+            dev.wireops.managed: "true"
+            dev.wireops.repository.commit_sha: c4250ab6711e7845155e94b94a8a6a0fb82a8286
+            dev.wireops.stack_id: tjfw9nf2gfs7xex
+            traefik.http.routers.my-container.rule: Host(`test2.minilab.cloud`)
+        networks:
+            app_network: null
+        ports:
+            - mode: ingress
+              protocol: tcp
+              published: "8086"
+              target: 80
+        restart: unless-stopped
+        volumes:
+            - source: nginx_data
+              target: /usr/share/nginx/csv
+              type: volume
+              volume: {}
+    nginx5:
+        annotations:
+            dev.wireops.checksum: fa463c56d0330712c93cc26159b42e05381345497a5e15adb04587e56a05ab5a
+            dev.wireops.generated_at: "2026-06-27T13:49:32Z"
+            dev.wireops.repository: Testes
+            dev.wireops.repository.branch: main
+            dev.wireops.repository.commit_sha: c4250ab6711e7845155e94b94a8a6a0fb82a8286
+            dev.wireops.repository.file: docker-compose.yml
+            dev.wireops.repository.url: git@github.com:jfxdev/tests.git
+            dev.wireops.stack_name: Teste
+            dev.wireops.version: "1"
+            dev.wireops.worker.fingerprint: remote:ia6w3tjnpua7bf5
+        command: |
+            sh -c "echo '<html><body><h1>Env Vars</h1><pre>' > /usr/share/nginx/html/index.html && env | sort >> /usr/share/nginx/html/index.html && echo '</pre></body></html>' >> /usr/share/nginx/html/index.html && nginx -g 'daemon off;'"
+        container_name: nginx5
+        environment:
+            - TEST_VAR=${TEST_VAR}
+        image: nginx:1.28.2-alpine
+        labels:
+            dev.wireops.managed: "true"
+            dev.wireops.repository.commit_sha: c4250ab6711e7845155e94b94a8a6a0fb82a8286
+            dev.wireops.stack_id: tjfw9nf2gfs7xex
+            traefik.http.routers.my-container.rule: Host(`test2.minilab.cloud`)
+        networks:
+            app_network: null
+        ports:
+            - mode: ingress
+              protocol: tcp
+              published: "8083"
+              target: 80
+        restart: unless-stopped
+        volumes:
+            - source: nginx_data
+              target: /usr/share/nginx/csv
+              type: volume
+              volume: {}
+volumes:
+    nginx_data:
+        driver: local
+        name: 80li3dtnj9zzeza_nginx_data

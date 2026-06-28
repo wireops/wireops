@@ -50,12 +50,7 @@ const { data: logs, refresh: refreshLogs } = useAsyncData(`logs_${stackId}`, () 
   })
 )
 
-const { data: envVars, refresh: refreshEnv } = useAsyncData(`env_${stackId}`, () =>
-  $pb.collection('stack_env_vars').getFullList({
-    filter: `stack = "${stackId}"`,
-    sort: 'key',
-  })
-)
+const localEnvKeys = ref<string[]>([])
 
 const { data: webhookUrl } = useAsyncData(`webhook_url_${stackId}`, () => getWebhookUrl(stackId))
 
@@ -254,53 +249,6 @@ async function saveEdit() {
   refreshStack()
 }
 
-const newEnvKey = ref('')
-const newEnvValue = ref('')
-const newEnvSecret = ref(false)
-
-async function addEnvVar() {
-  if (!newEnvKey.value) return
-  await $pb.collection('stack_env_vars').create({
-    stack: stackId,
-    key: newEnvKey.value,
-    value: newEnvValue.value,
-    secret: newEnvSecret.value,
-  })
-  newEnvKey.value = ''
-  newEnvValue.value = ''
-  newEnvSecret.value = false
-  refreshEnv()
-}
-const editingEnvId = ref<string | null>(null)
-const editEnvKey = ref('')
-const editEnvValue = ref('')
-const editEnvSecret = ref(false)
-
-function startEditEnv(ev: any) {
-  editingEnvId.value = ev.id
-  editEnvKey.value = ev.key
-  editEnvValue.value = ev.secret ? '' : ev.value
-  editEnvSecret.value = ev.secret
-}
-function cancelEditEnv() {
-  editingEnvId.value = null
-}
-async function saveEditEnv(id: string) {
-  if (!editEnvKey.value) return
-  const data: any = {
-    key: editEnvKey.value,
-    secret: editEnvSecret.value,
-  }
-  if (editEnvValue.value) data.value = editEnvValue.value
-  await $pb.collection('stack_env_vars').update(id, data)
-  editingEnvId.value = null
-  refreshEnv()
-}
-async function deleteEnvVar(id: string) {
-  await $pb.collection('stack_env_vars').delete(id)
-  refreshEnv()
-}
-
 // Sync & rollback
 const showSyncModal = ref(false)
 
@@ -427,13 +375,6 @@ onMounted(() => {
   subscribe('sync_logs', (e) => {
     if (e.record?.stack === stackId) {
       refreshLogs()
-    }
-  })
-
-  // Subscribe to env vars changes
-  subscribe('stack_env_vars', (e) => {
-    if (e.record?.stack === stackId) {
-      refreshEnv()
     }
   })
 
@@ -678,46 +619,9 @@ onMounted(() => {
 
     <!-- Variables -->
     <div v-if="activeTab === 'env'" class="space-y-4">
-      <UCard>
-        <template #header><h3 class="font-semibold">Environment Variables</h3></template>
-        <div v-if="envVars?.length" class="divide-y divide-gray-200 dark:divide-gray-800">
-          <!-- Editing row -->
-          <div v-for="ev in envVars" :key="ev.id" class="flex flex-col sm:flex-row sm:items-center gap-2 py-2">
-            <template v-if="editingEnvId === ev.id">
-              <UInput v-model="editEnvKey" placeholder="KEY" class="font-mono" />
-              <UInput v-model="editEnvValue" :placeholder="ev.secret ? '(unchanged if empty)' : 'value'" :type="editEnvSecret ? 'password' : 'text'" class="flex-1" />
-              <USwitch v-model="editEnvSecret" label="Secret" />
-              <UButton icon="i-lucide-check" variant="ghost" color="success" size="xs" @click="saveEditEnv(ev.id)" />
-                <UButton icon="i-lucide-x" variant="ghost" color="neutral" size="xs" @click="cancelEditEnv" />
-            </template>
-            <!-- Display row -->
-            <template v-else>
-              <UInput :model-value="ev.key" readonly class="font-mono" />
-              <UInput v-if="ev.secret" model-value="••••••••" readonly type="password" class="flex-1" />
-              <UInput v-else :model-value="ev.value" readonly class="flex-1 font-mono" />
-              <div class="flex items-center gap-2">
-                <BadgeLabel v-if="ev.secret" label="secret" color="warning" class="uppercase" />
-                <UButton icon="i-lucide-pencil" variant="ghost" size="xs" @click="startEditEnv(ev)" />
-                <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="xs" @click="deleteEnvVar(ev.id)" />
-              </div>
-            </template>
-          </div>
-        </div>
-        <p v-else class="text-sm text-gray-500 py-2">No environment variables defined</p>
-      </UCard>
-      <UCard>
-        <template #header><h3 class="font-semibold">Add Variable</h3></template>
-        <form class="flex flex-col gap-4" @submit.prevent="addEnvVar">
-          <div class="flex flex-col sm:flex-row sm:items-center gap-2">
-            <UInput v-model="newEnvKey" placeholder="KEY" class="font-mono" />
-            <UInput v-model="newEnvValue" placeholder="value" :type="newEnvSecret ? 'password' : 'text'" class="flex-1" />
-            <UButton type="submit" icon="i-lucide-plus" label="Add" :disabled="!newEnvKey" />
-          </div>
-          <div class="flex items-center gap-4">
-            <USwitch v-model="newEnvSecret" label="Secret (Encrypted in DB)" />
-          </div>
-        </form>
-      </UCard>
+      <EnvironmentVariablesCard target-type="stack" :target-id="stackId" @keys-changed="localEnvKeys = $event" />
+
+      <GlobalVariablesExporter target-type="stack" :target-id="stackId" :local-keys="localEnvKeys" />
     </div>
 
     <!-- Sync Logs -->

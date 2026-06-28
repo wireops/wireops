@@ -28,6 +28,7 @@ import (
 	"github.com/wireops/wireops/internal/compose"
 	"github.com/wireops/wireops/internal/config"
 	"github.com/wireops/wireops/internal/crypto"
+	"github.com/wireops/wireops/internal/envvars"
 	"github.com/wireops/wireops/internal/git"
 	"github.com/wireops/wireops/internal/integrations"
 	"github.com/wireops/wireops/internal/job"
@@ -35,6 +36,7 @@ import (
 	"github.com/wireops/wireops/internal/protocol"
 	"github.com/wireops/wireops/internal/rbac"
 	"github.com/wireops/wireops/internal/safepath"
+	"github.com/wireops/wireops/internal/secrets"
 	"github.com/wireops/wireops/internal/sync"
 )
 
@@ -730,8 +732,9 @@ func (rr routeRegistrar) registerCredentialRoutes() {
 			}
 			if err != nil {
 				log.Printf("TestConnection: failed to load credentials: %v", err)
+				return e.JSON(http.StatusOK, map[string]string{"success": "false", "error": err.Error()})
 			}
-			if err == nil && savedCred != nil {
+			if savedCred != nil {
 				if cred.AuthType == git.AuthTypeNone || cred.AuthType == "" {
 					cred.AuthType = savedCred.AuthType
 				}
@@ -1012,25 +1015,12 @@ func (rr routeRegistrar) registerStackDeleteRoute() {
 		var teardownOutput string
 		if len(composeContent) > 0 && agentIsOnline {
 			var teardownEnvFileB64 string
-			if envRecords, envLoadErr := rr.app.FindAllRecords("stack_env_vars", dbx.HashExp{"stack": stackID}); envLoadErr == nil {
-				secretKey := crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))
-				var envVars []string
-				for _, rec := range envRecords {
-					key := rec.GetString("key")
-					if key == "" {
-						continue
-					}
-					val := rec.GetString("value")
-					if rec.GetBool("secret") {
-						dec, decErr := crypto.Decrypt(val, secretKey)
-						if decErr != nil {
-							log.Printf("[routes] teardown: skipping secret env var %q for stack %s: %v", key, stackID, decErr)
-							continue
-						}
-						val = string(dec)
-					}
-					envVars = append(envVars, key+"="+val)
-				}
+			secretKey := crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))
+			envVars, envLoadErr := envvars.LoadStack(e.Request.Context(), rr.app, secrets.NewDefaultRegistry(secretKey), stackID)
+			if envLoadErr != nil {
+				return e.JSON(http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("failed to load env vars for teardown: %v", envLoadErr)})
+			}
+			if len(envVars) > 0 {
 				var b64Err error
 				teardownEnvFileB64, b64Err = sync.BuildEnvFileB64(envVars)
 				if b64Err != nil {
@@ -1058,7 +1048,7 @@ func (rr routeRegistrar) registerStackDeleteRoute() {
 
 		rr.scheduler.UnregisterStack(stackID)
 
-		for _, col := range []string{"sync_logs", "stack_services", "stack_env_vars", "stack_revisions", "stack_pending_reconciles"} {
+		for _, col := range []string{"sync_logs", "stack_services", "stack_env_vars", "stack_global_env_vars", "stack_revisions", "stack_pending_reconciles"} {
 			records, err := rr.app.FindAllRecords(col, dbx.HashExp{"stack": stackID})
 			if err != nil {
 				return e.JSON(http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("failed to query related %s records: %v", col, err)})

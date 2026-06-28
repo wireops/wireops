@@ -30,6 +30,7 @@ const navItems = computed(() => {
       ],
     },
     { label: 'Repositories', icon: 'i-lucide-git-branch', to: '/repositories' },
+    { label: 'Secrets', icon: 'i-lucide-key-round', to: '/secrets' },
     ...(isViewer.value ? [] : [{ label: 'Workers', icon: 'i-lucide-network', to: '/workers' }]),
     ...(isViewer.value ? [] : [{
       label: 'Settings',

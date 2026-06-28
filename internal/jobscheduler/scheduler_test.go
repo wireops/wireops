@@ -118,6 +118,28 @@ func TestExecuteJobWithoutWorkersPersistsStalledRun(t *testing.T) {
 	}
 }
 
+func TestLoadEnvVarsRejectsInvalidSecretKey(t *testing.T) {
+	app := newJobSchedulerTestApp(t)
+	repo := createJobRepoRecord(t, app)
+	jobRec := createScheduledJobRecord(t, app, repo.Id, "job.yaml")
+	mustCreateRecord(t, app, "job_env_vars", map[string]any{
+		"job":    jobRec.Id,
+		"key":    "TOKEN",
+		"value":  "encrypted-value",
+		"secret": true,
+	})
+	t.Setenv("SECRET_KEY", strings.Repeat("z", 64))
+	s := NewScheduler(app, fakeJobDispatcher{}, config.GetReposWorkspace())
+
+	_, err := s.loadEnvVars(jobRec.Id)
+	if err == nil {
+		t.Fatal("expected invalid SECRET_KEY to fail secret env loading")
+	}
+	if !strings.Contains(err.Error(), "SECRET_KEY must be exactly 32 bytes") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestExecuteJobWithoutWorkersBackfillsLegacyName(t *testing.T) {
 	app := newJobSchedulerTestApp(t)
 	repo := createJobRepoRecord(t, app)

@@ -22,9 +22,7 @@ const { data: job, refresh: refreshJob } = useAsyncData(`job_${jobId.value}`, ()
 // The runs logic has been moved to JobRunsList.vue
 const jobRunsListRef = ref<any>(null)
 
-const { data: envVars, refresh: refreshEnvVars } = useAsyncData(`job_env_${jobId.value}`, () =>
-  $pb.collection('job_env_vars').getFullList({ filter: `job = "${jobId.value}"`, sort: 'key' })
-)
+const localEnvKeys = ref<string[]>([])
 
 const definition = ref<any>(null)
 const definitionError = ref('')
@@ -79,44 +77,6 @@ onMounted(() => {
     if (data.record?.id === jobId.value) { refreshJob(); loadDefinition() }
   })
 })
-
-// Env var editing
-const newEnvKey = ref('')
-const newEnvValue = ref('')
-const newEnvSecret = ref(false)
-const addingEnv = ref(false)
-
-async function addEnvVar() {
-  if (!newEnvKey.value.trim()) return
-  addingEnv.value = true
-  try {
-    await $pb.collection('job_env_vars').create({
-      job: jobId.value,
-      key: newEnvKey.value.trim(),
-      value: newEnvValue.value,
-      secret: newEnvSecret.value,
-    })
-    newEnvKey.value = ''
-    newEnvValue.value = ''
-    newEnvSecret.value = false
-    refreshEnvVars()
-    toast.add({ title: 'Env var added', color: 'success' })
-  } catch (e: any) {
-    toast.add({ title: 'Failed to add env var', description: e?.message, color: 'error' })
-  } finally {
-    addingEnv.value = false
-  }
-}
-
-async function deleteEnvVar(envId: string) {
-  try {
-    await $pb.collection('job_env_vars').delete(envId)
-    refreshEnvVars()
-    toast.add({ title: 'Env var removed', color: 'success' })
-  } catch (e: any) {
-    toast.add({ title: 'Failed to remove env var', description: e?.message, color: 'error' })
-  }
-}
 
 // Cancel running logic moved to component
 
@@ -211,59 +171,8 @@ async function toggleEnabled() {
 
     <!-- Env Vars tab -->
     <div v-if="activeTab === 'env'" class="space-y-4">
-      <p class="text-sm text-gray-500 dark:text-wire-200/60">
-        Secret key/value pairs injected at runtime. These are not committed to the repository.
-      </p>
-
-      <div v-if="envVars && envVars.length > 0" class="space-y-2">
-        <div
-          v-for="env in envVars"
-          :key="env.id"
-          class="flex items-center justify-between px-4 py-3 rounded-lg bg-gray-50 dark:bg-carbon-800/40 border border-gray-200 dark:border-carbon-700"
-        >
-          <div class="flex items-center gap-3 min-w-0">
-            <UIcon
-              :name="env.secret ? 'i-lucide-lock' : 'i-lucide-variable'"
-              class="w-4 h-4 shrink-0"
-              :class="env.secret ? 'text-amber-400' : 'text-gray-400'"
-            />
-            <code class="text-sm font-mono text-gray-800 dark:text-wire-200">{{ env.key }}</code>
-            <span v-if="!env.secret && env.value" class="text-sm text-gray-500 dark:text-wire-200/50 truncate max-w-xs font-mono">
-              = {{ env.value }}
-            </span>
-            <span v-else-if="env.secret" class="text-xs text-amber-400/70">encrypted</span>
-          </div>
-          <UButton
-            icon="i-lucide-trash-2"
-            variant="ghost"
-            size="xs"
-            color="error"
-            @click="deleteEnvVar(env.id)"
-          />
-        </div>
-      </div>
-
-      <!-- Add new env var -->
-      <UCard>
-        <template #header>
-          <span class="text-sm font-semibold">Add variable</span>
-        </template>
-        <div class="flex flex-col sm:flex-row gap-3">
-          <UInput v-model="newEnvKey" placeholder="KEY" class="font-mono flex-1" />
-          <UInput v-model="newEnvValue" placeholder="value" class="font-mono flex-1" :type="newEnvSecret ? 'password' : 'text'" />
-          <div class="flex items-center gap-2">
-            <USwitch v-model="newEnvSecret" size="xs" />
-            <span class="text-xs text-gray-500">Secret</span>
-          </div>
-          <UButton
-            icon="i-lucide-plus"
-            label="Add"
-            :loading="addingEnv"
-            :disabled="!newEnvKey.trim()"
-            @click="addEnvVar"
-          />
-        </div>
-      </UCard>
+      <EnvironmentVariablesCard target-type="job" :target-id="jobId" @keys-changed="localEnvKeys = $event" />
+      <GlobalVariablesExporter target-type="job" :target-id="jobId" :local-keys="localEnvKeys" />
     </div>
 
     <!-- Definition tab -->
