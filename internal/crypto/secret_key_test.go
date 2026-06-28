@@ -15,4 +15,12 @@ func TestNormalizeSecretKey(t *testing.T) {
 	if got := NormalizeSecretKey(hexKey); string(got) != raw {
 		t.Fatalf("expected hex key to decode to raw bytes")
 	}
+
+	if got := NormalizeSecretKey("not-a-supported-secret-key-format"); got != nil {
+		t.Fatalf("expected unsupported key length to be rejected")
+	}
+
+	if got := NormalizeSecretKey("zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"); got != nil {
+		t.Fatalf("expected invalid 64-character hex key to be rejected")
+	}
 }

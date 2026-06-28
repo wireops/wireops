@@ -2,6 +2,7 @@ package hooks
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"html"
@@ -118,7 +119,7 @@ func triggerRepositoryBackgroundClone(app core.App, repoID, gitURL, branch strin
 	go func() {
 		auth, hasCred, err := loadRepositoryTransportAuth(app, repoID)
 		if err != nil {
-			log.Printf("[hooks] failed to resolve git auth for repo %s: %v", repoID, err)
+			log.Printf("[hooks] failed to resolve git auth for repo %s", repoID)
 			return
 		}
 
@@ -135,7 +136,7 @@ func triggerRepositoryBackgroundClone(app core.App, repoID, gitURL, branch strin
 			if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				log.Printf("[hooks] background clone timed out for repo %s", repoID)
 			} else {
-				log.Printf("[hooks] background clone failed for repo %s: %v", repoID, err)
+				log.Printf("[hooks] background clone failed for repo %s", repoID)
 			}
 		} else {
 			log.Printf("[hooks] background clone success for repo %s", repoID)
@@ -391,39 +392,63 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 
 	// Encrypt stack env var values on create/update only when secret=true
 	app.OnRecordCreate("stack_env_vars").BindFunc(func(e *core.RecordEvent) error {
-		if provider := e.Record.GetString("secret_provider"); provider != "" {
-			if err := validateSecretProvider(provider); err != nil {
-				return err
-			}
-		} else if e.Record.GetBool("secret") {
-			// Default to "internal" so the schema Pattern constraint (^(internal|)$)
-			// is satisfied and the reconciler can resolve the secret at deploy time.
-			e.Record.Set("secret_provider", "internal")
-		}
-		if e.Record.GetBool("secret") {
-			if err := encryptField(e.Record, "value", secretKey); err != nil {
-				return err
-			}
+		if err := prepareEnvSecretRecord(e.Record, secretKey); err != nil {
+			return err
 		}
 		return e.Next()
 	})
 
 	app.OnRecordUpdate("stack_env_vars").BindFunc(func(e *core.RecordEvent) error {
-		if provider := e.Record.GetString("secret_provider"); provider != "" {
-			if err := validateSecretProvider(provider); err != nil {
-				return err
-			}
+		if err := preventEnvSecretDowngrade(e.Record); err != nil {
+			return err
 		}
-		if e.Record.GetBool("secret") {
-			if err := encryptField(e.Record, "value", secretKey); err != nil {
-				return err
-			}
+		if err := prepareEnvSecretRecord(e.Record, secretKey); err != nil {
+			return err
 		}
 		return e.Next()
 	})
 
 	// Mask secret env var values on API responses
 	app.OnRecordEnrich("stack_env_vars").BindFunc(func(e *core.RecordEnrichEvent) error {
+		if e.Record.GetBool("secret") {
+			e.Record.Set("value", "")
+		}
+		return e.Next()
+	})
+
+	app.OnRecordCreate("global_env_vars").BindFunc(func(e *core.RecordEvent) error {
+		if err := prepareEnvSecretRecord(e.Record, secretKey); err != nil {
+			return err
+		}
+		return e.Next()
+	})
+
+	app.OnRecordUpdate("global_env_vars").BindFunc(func(e *core.RecordEvent) error {
+		if err := preventEnvSecretDowngrade(e.Record); err != nil {
+			return err
+		}
+		if err := prepareEnvSecretRecord(e.Record, secretKey); err != nil {
+			return err
+		}
+		return e.Next()
+	})
+
+	app.OnRecordDelete("global_env_vars").BindFunc(func(e *core.RecordEvent) error {
+		stackCount, err := countRecordsIfCollectionExists(e.App, "stack_global_env_vars", dbx.HashExp{"global_env_var": e.Record.Id})
+		if err != nil {
+			return err
+		}
+		jobCount, err := countRecordsIfCollectionExists(e.App, "job_global_env_vars", dbx.HashExp{"global_env_var": e.Record.Id})
+		if err != nil {
+			return err
+		}
+		if stackCount+jobCount > 0 {
+			return fmt.Errorf("cannot delete global variable because it is associated with %d stack(s) and %d job(s)", stackCount, jobCount)
+		}
+		return e.Next()
+	})
+
+	app.OnRecordEnrich("global_env_vars").BindFunc(func(e *core.RecordEnrichEvent) error {
 		if e.Record.GetBool("secret") {
 			e.Record.Set("value", "")
 		}
@@ -494,6 +519,15 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 		} else {
 			return fmt.Errorf("failed to list job_env_vars for job %s: %w", jobID, err)
 		}
+		globalBindings, err := findAllRecordsIfCollectionExists(app, "job_global_env_vars", dbx.HashExp{"job": jobID})
+		if err != nil {
+			return fmt.Errorf("failed to list job_global_env_vars for job %s: %w", jobID, err)
+		}
+		for _, r := range globalBindings {
+			if err := app.Delete(r); err != nil {
+				return fmt.Errorf("failed to delete job_global_env_vars %s for job %s: %w", r.Id, jobID, err)
+			}
+		}
 		return e.Next()
 	})
 
@@ -526,19 +560,18 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 
 	// Encrypt job env var values on create/update when secret=true
 	app.OnRecordCreate("job_env_vars").BindFunc(func(e *core.RecordEvent) error {
-		if e.Record.GetBool("secret") {
-			if err := encryptField(e.Record, "value", secretKey); err != nil {
-				return err
-			}
+		if err := prepareEnvSecretRecord(e.Record, secretKey); err != nil {
+			return err
 		}
 		return e.Next()
 	})
 
 	app.OnRecordUpdate("job_env_vars").BindFunc(func(e *core.RecordEvent) error {
-		if e.Record.GetBool("secret") {
-			if err := encryptField(e.Record, "value", secretKey); err != nil {
-				return err
-			}
+		if err := preventEnvSecretDowngrade(e.Record); err != nil {
+			return err
+		}
+		if err := prepareEnvSecretRecord(e.Record, secretKey); err != nil {
+			return err
 		}
 		return e.Next()
 	})
@@ -913,6 +946,86 @@ func encryptField(record *core.Record, field string, key []byte) error {
 	}
 	record.Set(field, encrypted)
 	return nil
+}
+
+func prepareEnvSecretRecord(record *core.Record, key []byte) error {
+	if err := normalizeEnvVarKey(record); err != nil {
+		return err
+	}
+
+	provider := record.GetString("secret_provider")
+	if provider != "" {
+		if err := validateSecretProvider(provider); err != nil {
+			return err
+		}
+	} else if record.GetBool("secret") && record.Collection().Fields.GetByName("secret_provider") != nil {
+		record.Set("secret_provider", "internal")
+	}
+	if record.GetBool("secret") {
+		preserveMaskedSecretValue(record, "value")
+		if err := encryptField(record, "value", key); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func normalizeEnvVarKey(record *core.Record) error {
+	key := strings.TrimSpace(record.GetString("key"))
+	if key == "" {
+		return validation.Errors{
+			"key": validation.NewError("validation_required", "Key is required."),
+		}
+	}
+	record.Set("key", key)
+	return nil
+}
+
+func preserveMaskedSecretValue(record *core.Record, field string) {
+	val := record.GetString(field)
+	if val != "" && val != "••••••••" {
+		return
+	}
+	original := record.Original()
+	if original == nil || !original.GetBool("secret") {
+		return
+	}
+	originalValue := original.GetString(field)
+	if originalValue == "" {
+		return
+	}
+	record.Set(field, originalValue)
+}
+
+func preventEnvSecretDowngrade(record *core.Record) error {
+	original := record.Original()
+	if original == nil {
+		return nil
+	}
+	if original.GetBool("secret") && !record.GetBool("secret") {
+		return validation.Errors{
+			"secret": validation.NewError("validation_secret_downgrade", "Secrets cannot be converted to plain text."),
+		}
+	}
+	return nil
+}
+
+func findAllRecordsIfCollectionExists(app core.App, collection string, exprs ...dbx.Expression) ([]*core.Record, error) {
+	if _, err := app.FindCollectionByNameOrId(collection); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return app.FindAllRecords(collection, exprs...)
+}
+
+func countRecordsIfCollectionExists(app core.App, collection string, exprs ...dbx.Expression) (int, error) {
+	records, err := findAllRecordsIfCollectionExists(app, collection, exprs...)
+	if err != nil {
+		return 0, err
+	}
+	return len(records), nil
 }
 
 // validateSecretProvider returns an error when provider is not in

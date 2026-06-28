@@ -9,6 +9,8 @@ import (
 	"github.com/pocketbase/pocketbase/tests"
 	"github.com/pocketbase/pocketbase/tools/auth"
 	"github.com/pocketbase/pocketbase/tools/types"
+
+	"github.com/wireops/wireops/internal/crypto"
 )
 
 func TestValidateRepositoryKeyAssignment(t *testing.T) {
@@ -115,6 +117,100 @@ func TestRepositoryKeyTypeCannotChangeAfterCreate(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "Repository key type cannot be changed after creation") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestEnvSecretMaskedUpdatePreservesEncryptedValue(t *testing.T) {
+	t.Setenv("SECRET_KEY", "12345678901234567890123456789012")
+
+	app, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatalf("new test app: %v", err)
+	}
+	t.Cleanup(func() { app.Cleanup() })
+
+	envVars := core.NewBaseCollection("stack_env_vars")
+	envVars.Fields.Add(&core.TextField{Name: "key"})
+	envVars.Fields.Add(&core.TextField{Name: "value"})
+	envVars.Fields.Add(&core.BoolField{Name: "secret"})
+	envVars.Fields.Add(&core.TextField{Name: "secret_provider"})
+	if err := app.Save(envVars); err != nil {
+		t.Fatalf("save stack_env_vars collection: %v", err)
+	}
+
+	Register(app, nil, nil)
+
+	rec := core.NewRecord(envVars)
+	rec.Set("key", "TOKEN")
+	rec.Set("value", "initial-secret")
+	rec.Set("secret", true)
+	if err := app.Save(rec); err != nil {
+		t.Fatalf("save secret env var: %v", err)
+	}
+
+	saved, err := app.FindRecordById("stack_env_vars", rec.Id)
+	if err != nil {
+		t.Fatalf("find saved secret env var: %v", err)
+	}
+	encryptedValue := saved.GetString("value")
+	if encryptedValue == "" || encryptedValue == "initial-secret" || !crypto.IsEncrypted(encryptedValue) {
+		t.Fatalf("secret value was not encrypted: %q", encryptedValue)
+	}
+
+	saved.Set("key", "RENAMED_TOKEN")
+	saved.Set("value", "")
+	if err := app.Save(saved); err != nil {
+		t.Fatalf("save masked secret update: %v", err)
+	}
+
+	updated, err := app.FindRecordById("stack_env_vars", rec.Id)
+	if err != nil {
+		t.Fatalf("find updated secret env var: %v", err)
+	}
+	if got := updated.GetString("value"); got != encryptedValue {
+		t.Fatalf("secret value changed on masked update: got %q, want %q", got, encryptedValue)
+	}
+}
+
+func TestEnvVarKeyIsTrimmedAndBlankRejected(t *testing.T) {
+	t.Setenv("SECRET_KEY", "12345678901234567890123456789012")
+
+	app, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatalf("new test app: %v", err)
+	}
+	t.Cleanup(func() { app.Cleanup() })
+
+	envVars := core.NewBaseCollection("stack_env_vars")
+	envVars.Fields.Add(&core.TextField{Name: "key"})
+	envVars.Fields.Add(&core.TextField{Name: "value"})
+	envVars.Fields.Add(&core.BoolField{Name: "secret"})
+	envVars.Fields.Add(&core.TextField{Name: "secret_provider"})
+	if err := app.Save(envVars); err != nil {
+		t.Fatalf("save stack_env_vars collection: %v", err)
+	}
+
+	Register(app, nil, nil)
+
+	rec := core.NewRecord(envVars)
+	rec.Set("key", "  API_KEY  ")
+	rec.Set("value", "plain-value")
+	if err := app.Save(rec); err != nil {
+		t.Fatalf("save env var with padded key: %v", err)
+	}
+	saved, err := app.FindRecordById("stack_env_vars", rec.Id)
+	if err != nil {
+		t.Fatalf("find saved env var: %v", err)
+	}
+	if got := saved.GetString("key"); got != "API_KEY" {
+		t.Fatalf("env var key = %q, want API_KEY", got)
+	}
+
+	blank := core.NewRecord(envVars)
+	blank.Set("key", "   ")
+	blank.Set("value", "plain-value")
+	if err := app.Save(blank); err == nil {
+		t.Fatal("expected blank env var key to be rejected")
 	}
 }
 

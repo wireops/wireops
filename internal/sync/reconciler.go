@@ -20,6 +20,7 @@ import (
 
 	"github.com/wireops/wireops/internal/config"
 	"github.com/wireops/wireops/internal/crypto"
+	"github.com/wireops/wireops/internal/envvars"
 	gitpkg "github.com/wireops/wireops/internal/git"
 	"github.com/wireops/wireops/internal/notify"
 	"github.com/wireops/wireops/internal/protocol"
@@ -38,7 +39,6 @@ type WorkerDispatcher interface {
 type Reconciler struct {
 	app             core.App
 	mu              sync.Map
-	secretKey       []byte
 	notifier        *notify.Notifier
 	renderer        *Renderer
 	dispatcher      WorkerDispatcher
@@ -48,15 +48,10 @@ type Reconciler struct {
 func NewReconciler(app core.App, notifier *notify.Notifier, dispatcher WorkerDispatcher) *Reconciler {
 	key := crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))
 
-	// Build the secret provider registry with all supported providers.
-	reg := secrets.NewRegistry()
-	reg.Register(secrets.NewInternalProvider(key))
-	reg.Register(secrets.NewVaultProvider())
-	reg.Register(secrets.NewInfisicalProvider())
+	reg := secrets.NewDefaultRegistry(key)
 
 	return &Reconciler{
 		app:             app,
-		secretKey:       key,
 		notifier:        notifier,
 		renderer:        NewRenderer(app),
 		dispatcher:      dispatcher,
@@ -233,7 +228,10 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 
 	envVars, envErr := r.loadEnvVars(ctx, stackID)
 	if envErr != nil {
-		log.Printf("[reconciler] failed to load env vars for stack %s: %v", stackID, envErr)
+		errMsg := fmt.Sprintf("failed to load env vars: %v", envErr)
+		r.logFailure(stackID, trigger, remoteSHA, errMsg)
+		r.markError(stack, "stacks")
+		return fmt.Errorf("%s", errMsg)
 	}
 
 	// Write .env to the repo workDir NOW so that compose config (called by
@@ -342,7 +340,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	}
 
 	if runErr != nil {
-		errOutput := buildErrorOutput(output, runErr, envErr)
+		errOutput := buildErrorOutput(output, runErr)
 		if err := r.updateSyncLog(syncLog.Id, "error", errOutput, duration); err != nil {
 			_ = r.markError(stack, "stacks")
 			return err
@@ -452,7 +450,10 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 
 	envVars, envErr := r.loadEnvVars(ctx, stackID)
 	if envErr != nil {
-		log.Printf("[reconciler] failed to load env vars for stack %s: %v", stackID, envErr)
+		errMsg := fmt.Sprintf("failed to load env vars: %v", envErr)
+		r.logFailure(stackID, "manual", commitSHA, errMsg)
+		r.markError(stack, "stacks")
+		return fmt.Errorf("%s", errMsg)
 	}
 
 	workerID, workerFingerprint, err := r.resolveWorker(stack)
@@ -526,7 +527,7 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 	duration := time.Since(start).Milliseconds()
 
 	if runErr != nil {
-		errOutput := buildErrorOutput(output, runErr, envErr)
+		errOutput := buildErrorOutput(output, runErr)
 		if err := r.updateSyncLog(syncLog.Id, "error", errOutput, duration); err != nil {
 			_ = r.markError(stack, "stacks")
 			return err
@@ -618,7 +619,10 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 	lastSHA := repo.GetString("last_commit_sha")
 	envVars, envErr := r.loadEnvVars(ctx, stackID)
 	if envErr != nil {
-		log.Printf("[reconciler] failed to load env vars for stack %s: %v", stackID, envErr)
+		errMsg := fmt.Sprintf("failed to load env vars: %v", envErr)
+		r.logFailure(stackID, "redeploy", lastSHA, errMsg)
+		r.markError(stack, "stacks")
+		return fmt.Errorf("%s", errMsg)
 	}
 
 	workerID, workerFingerprint, err := r.resolveWorker(stack)
@@ -697,7 +701,7 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 	duration := time.Since(start).Milliseconds()
 
 	if runErr != nil {
-		errOutput := buildErrorOutput(output, runErr, envErr)
+		errOutput := buildErrorOutput(output, runErr)
 		if err := r.updateSyncLog(syncLog.Id, "error", errOutput, duration); err != nil {
 			_ = r.markError(stack, "stacks")
 			return err
@@ -866,7 +870,10 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 
 	envVars, envErr := r.loadEnvVars(ctx, stackID)
 	if envErr != nil {
-		log.Printf("[reconciler] failed to load env vars for local stack %s: %v", stackID, envErr)
+		errMsg := fmt.Sprintf("failed to load env vars: %v", envErr)
+		r.logFailure(stackID, trigger, "", errMsg)
+		r.markError(stack, "stacks")
+		return fmt.Errorf("%s", errMsg)
 	}
 
 	// Write .env to workDir so that compose config (called inside
@@ -939,7 +946,7 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 	duration := time.Since(start).Milliseconds()
 
 	if runErr != nil {
-		errOutput := buildErrorOutput(output, runErr, envErr)
+		errOutput := buildErrorOutput(output, runErr)
 		if err := r.updateSyncLog(syncLog.Id, "error", errOutput, duration); err != nil {
 			_ = r.markError(stack, "stacks")
 			return err
@@ -1048,41 +1055,7 @@ func (r *Reconciler) loadCredential(repoID string) (*gitpkg.Credential, error) {
 }
 
 func (r *Reconciler) loadEnvVars(ctx context.Context, stackID string) ([]string, error) {
-	records, err := r.app.FindAllRecords("stack_env_vars",
-		dbx.HashExp{"stack": stackID},
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	var envVars []string
-	for _, rec := range records {
-		key := rec.GetString("key")
-		val := rec.GetString("value")
-		if key == "" {
-			continue
-		}
-
-		if rec.GetBool("secret") {
-			// Resolve the secret value via the appropriate provider.
-			providerName := rec.GetString("secret_provider")
-			if providerName == "" {
-				providerName = "internal"
-			}
-			provider, provErr := r.secretsRegistry.Get(providerName)
-			if provErr != nil {
-				return nil, fmt.Errorf("stack %s: unknown secret provider %q for key %q: %w", stackID, providerName, key, provErr)
-			}
-			resolved, resolveErr := provider.Resolve(ctx, val)
-			if resolveErr != nil {
-				return nil, fmt.Errorf("stack %s: failed to resolve secret %q (provider=%s): %w", stackID, key, providerName, resolveErr)
-			}
-			val = resolved
-		}
-
-		envVars = append(envVars, key+"="+val)
-	}
-	return envVars, nil
+	return envvars.LoadStack(ctx, r.app, r.secretsRegistry, stackID)
 }
 
 // buildEnvFileB64 renders envVars as a .env file using the canonical
@@ -1177,11 +1150,8 @@ func (r *Reconciler) logFailure(stackID, trigger, commitSHA, errMsg string) erro
 	return nil
 }
 
-func buildErrorOutput(output string, runErr, envErr error) string {
+func buildErrorOutput(output string, runErr error) string {
 	var b strings.Builder
-	if envErr != nil {
-		fmt.Fprintf(&b, "warning: failed to load env vars: %v\n\n", envErr)
-	}
 	if output != "" {
 		b.WriteString(output)
 		if output[len(output)-1] != '\n' {
@@ -1286,7 +1256,7 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 
 	envVars, envErr := r.loadEnvVars(ctx, stackID)
 	if envErr != nil {
-		log.Printf("[reconciler] failed to load env vars for stack %s: %v", stackID, envErr)
+		return fmt.Errorf("failed to load env vars: %w", envErr)
 	}
 
 	composeB64 := base64.StdEncoding.EncodeToString(composeContent)

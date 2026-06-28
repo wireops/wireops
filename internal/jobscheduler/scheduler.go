@@ -24,10 +24,12 @@ import (
 	"github.com/wireops/wireops/internal/audit"
 	"github.com/wireops/wireops/internal/contextutil"
 	"github.com/wireops/wireops/internal/crypto"
+	"github.com/wireops/wireops/internal/envvars"
 	"github.com/wireops/wireops/internal/git"
 	"github.com/wireops/wireops/internal/job"
 	"github.com/wireops/wireops/internal/policy"
 	"github.com/wireops/wireops/internal/protocol"
+	"github.com/wireops/wireops/internal/secrets"
 )
 
 // WorkerDispatcher is the subset of worker.MTLSServer used by the scheduler.
@@ -50,10 +52,10 @@ type jobRunParams struct {
 
 // Scheduler manages cron entries for scheduled jobs and dispatches them to workers.
 type Scheduler struct {
-	app           core.App
-	dispatcher    WorkerDispatcher
-	repoWorkspace string
-	secretKey     []byte
+	app             core.App
+	dispatcher      WorkerDispatcher
+	repoWorkspace   string
+	secretsRegistry *secrets.Registry
 
 	cron    *cron.Cron
 	mu      gosync.Mutex            // protects entries map
@@ -68,14 +70,15 @@ type Scheduler struct {
 // locate cloned repositories and job definitions.
 func NewScheduler(app core.App, dispatcher WorkerDispatcher, repoWorkspace string) *Scheduler {
 	rootCtx, rootCancel := context.WithCancel(context.Background())
+	secretKey := crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))
 	return &Scheduler{
-		app:           app,
-		dispatcher:    dispatcher,
-		repoWorkspace: repoWorkspace,
-		secretKey:     crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY")),
-		entries:       make(map[string]cron.EntryID),
-		rootCtx:       rootCtx,
-		rootCancel:    rootCancel,
+		app:             app,
+		dispatcher:      dispatcher,
+		repoWorkspace:   repoWorkspace,
+		secretsRegistry: secrets.NewDefaultRegistry(secretKey),
+		entries:         make(map[string]cron.EntryID),
+		rootCtx:         rootCtx,
+		rootCancel:      rootCancel,
 	}
 }
 
@@ -265,7 +268,7 @@ func (s *Scheduler) executeJob(jobID, trigger string, userID string) {
 		return
 	}
 
-	envMap, err := s.loadEnvVars(jobID)
+	envMap, err := s.loadEnvVars(ctx, jobID)
 	if err != nil {
 		msg := fmt.Sprintf("cannot load env vars for job %s: %v", jobID, err)
 		log.Printf("[jobscheduler] executeJob: %s", msg)
@@ -858,26 +861,10 @@ func (s *Scheduler) updateJobRun(runID, status, output string, durationMs int64,
 }
 
 // loadEnvVars fetches and decrypts job_env_vars for the given job.
-func (s *Scheduler) loadEnvVars(jobID string) (map[string]string, error) {
-	records, err := s.app.FindAllRecords("job_env_vars", dbx.HashExp{"job": jobID})
-	if err != nil {
-		return nil, err
-	}
-	result := make(map[string]string, len(records))
-	for _, rec := range records {
-		key := rec.GetString("key")
-		val := rec.GetString("value")
-		if rec.GetBool("secret") && len(s.secretKey) == 32 {
-			dec, err := crypto.Decrypt(val, s.secretKey)
-			if err != nil {
-				log.Printf("[jobscheduler] loadEnvVars: failed to decrypt env var %q for job %s: %v", key, jobID, err)
-				continue
-			}
-			val = string(dec)
-		}
-		result[key] = val
-	}
-	return result, nil
+func (s *Scheduler) loadEnvVars(ctx context.Context, jobID string) (map[string]string, error) {
+	loadCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	return envvars.LoadJob(loadCtx, s.app, s.secretsRegistry, jobID)
 }
 
 // repoHeadSHA returns the local HEAD commit SHA for the given repository.
