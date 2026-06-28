@@ -67,6 +67,13 @@ func ValidateIntegrationConfig(provider string, cfg map[string]interface{}) erro
 	if cfg == nil {
 		return nil
 	}
-	rawURL, _ := cfg["url"].(string)
+	value, ok := cfg["url"]
+	if !ok {
+		return nil
+	}
+	rawURL, ok := value.(string)
+	if !ok {
+		return fmt.Errorf("%s webhook URL must be a string", provider)
+	}
 	return ValidateProviderURL(provider, rawURL)
 }

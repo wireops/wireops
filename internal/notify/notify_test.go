@@ -619,6 +619,18 @@ func TestValidateProviderURL(t *testing.T) {
 	}
 }
 
+func TestValidateIntegrationConfigRejectsNonStringURL(t *testing.T) {
+	if err := ValidateIntegrationConfig("slack", nil); err != nil {
+		t.Fatalf("nil config error = %v, want nil", err)
+	}
+	if err := ValidateIntegrationConfig("slack", map[string]interface{}{}); err != nil {
+		t.Fatalf("missing url error = %v, want nil", err)
+	}
+	if err := ValidateIntegrationConfig("slack", map[string]interface{}{"url": 123}); err == nil {
+		t.Fatal("expected non-string url error")
+	}
+}
+
 func TestMaskSecret(t *testing.T) {
 	if MaskSecret("") != "" {
 		t.Error("empty secret should return empty string")
