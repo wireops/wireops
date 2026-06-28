@@ -102,7 +102,11 @@ func RegisterServiceAccountRoutes(r *router.Router[*core.RequestEvent], app core
 		rec.Set("description", body.Description)
 		rec.Set("role", role)
 		rec.Set("enabled", enabled)
-		rec.Set("key_hash", wireauth.HashAPIKey(key))
+		keyHash, err := wireauth.HashAPIKey(key)
+		if err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "api key hashing is not configured"})
+		}
+		rec.Set("key_hash", keyHash)
 		rec.Set("key_prefix", wireauth.APIKeyPrefix(key))
 		rec.Set("key_revoked", false)
 		rec.Set("key_last_used_at", nil)
@@ -207,7 +211,11 @@ func RegisterServiceAccountRoutes(r *router.Router[*core.RequestEvent], app core
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to generate api key"})
 		}
 
-		account.Set("key_hash", wireauth.HashAPIKey(key))
+		keyHash, err := wireauth.HashAPIKey(key)
+		if err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "api key hashing is not configured"})
+		}
+		account.Set("key_hash", keyHash)
 		account.Set("key_prefix", wireauth.APIKeyPrefix(key))
 		account.Set("key_revoked", false)
 		account.Set("key_last_used_at", nil)

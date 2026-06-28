@@ -39,7 +39,11 @@ func APIKeyMiddleware(app core.App) func(*core.RequestEvent) error {
 			return e.Next()
 		}
 
-		keyRecord, accountRecord, ok := authenticateAPIKey(app, raw)
+		keyRecord, accountRecord, ok, err := authenticateAPIKey(app, raw)
+		if err != nil {
+			log.Printf("[auth] api key authentication failed due to invalid server configuration: %v", err)
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "api key authentication is not configured"})
+		}
 		if !ok {
 			return e.JSON(http.StatusUnauthorized, map[string]string{"error": "invalid api key"})
 		}
@@ -67,18 +71,23 @@ func GenerateAPIKey() (string, error) {
 	return apiKeyPrefix + base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-func HashAPIKey(key string) string {
-	mac := hmac.New(sha256.New, apiKeyHashSecret())
+func HashAPIKey(key string) (string, error) {
+	secret, err := apiKeyHashSecret()
+	if err != nil {
+		return "", err
+	}
+	mac := hmac.New(sha256.New, secret)
 	_, _ = mac.Write([]byte(strings.TrimSpace(key)))
-	return apiKeyHashPrefix + hex.EncodeToString(mac.Sum(nil))
+	return apiKeyHashPrefix + hex.EncodeToString(mac.Sum(nil)), nil
 }
 
-func apiKeyHashSecret() []byte {
-	secretKey := crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))
-	if len(secretKey) == 32 {
-		return append([]byte(apiKeyHashContext+":"), secretKey...)
+func apiKeyHashSecret() ([]byte, error) {
+	raw := os.Getenv("SECRET_KEY")
+	if err := crypto.ValidateSecretKey(raw); err != nil {
+		return nil, err
 	}
-	return []byte(apiKeyHashContext)
+	secretKey := crypto.NormalizeSecretKey(raw)
+	return append([]byte(apiKeyHashContext+":"), secretKey...), nil
 }
 
 func APIKeyPrefix(key string) string {
@@ -103,21 +112,25 @@ func apiKeyFromRequest(r *http.Request) string {
 	return ""
 }
 
-func authenticateAPIKey(app core.App, raw string) (*core.Record, *core.Record, bool) {
-	records, err := app.FindAllRecords("service_accounts", dbx.HashExp{"key_hash": HashAPIKey(raw)})
+func authenticateAPIKey(app core.App, raw string) (*core.Record, *core.Record, bool, error) {
+	keyHash, err := HashAPIKey(raw)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	records, err := app.FindAllRecords("service_accounts", dbx.HashExp{"key_hash": keyHash})
 	if err != nil || len(records) == 0 {
-		return nil, nil, false
+		return nil, nil, false, nil
 	}
 	accountRecord := records[0]
 	if !accountRecord.GetBool("enabled") {
-		return nil, nil, false
+		return nil, nil, false, nil
 	}
 	if accountRecord.GetBool("key_revoked") {
-		return nil, nil, false
+		return nil, nil, false, nil
 	}
 	expiresAt := accountRecord.GetDateTime("key_expires_at")
 	if !expiresAt.IsZero() && expiresAt.Time().Before(time.Now()) {
-		return nil, nil, false
+		return nil, nil, false, nil
 	}
-	return accountRecord, accountRecord, true
+	return accountRecord, accountRecord, true, nil
 }
