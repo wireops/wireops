@@ -20,6 +20,8 @@ import (
 // setupTestSAApp initializes a setup test application, clears users,
 // creates an admin user, configures router with admin auth, and registers SA routes.
 func setupTestSAApp(t *testing.T) (core.App, http.Handler, *core.Record) {
+	t.Setenv("SECRET_KEY", strings.Repeat("a", 32))
+
 	app := newSetupTestApp(t)
 	clearAllUsers(t, app)
 	admin := createTestUser(t, app, "admin@example.com", "Password1!", rbac.RoleAdmin)
@@ -424,4 +426,3 @@ func TestCreateDisabledServiceAccountBlocked(t *testing.T) {
 		t.Fatalf("expected error message about disabled service accounts, got: %s", resp["error"])
 	}
 }
-

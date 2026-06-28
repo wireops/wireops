@@ -140,7 +140,7 @@ func loadOrGenerateSelfSigned(dataDir string) (tls.Certificate, error) {
 // encryptAndWriteKey encrypts keyPEM with AES-GCM (using SECRET_KEY) and
 // writes the base64-encoded ciphertext to path with mode 0600.
 func encryptAndWriteKey(path string, keyPEM []byte) error {
-	secretKey := []byte(os.Getenv("SECRET_KEY"))
+	secretKey := crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))
 	if len(secretKey) != 32 {
 		return fmt.Errorf("SECRET_KEY must be exactly 32 bytes to encrypt the TLS private key (got %d)", len(secretKey))
 	}
@@ -154,7 +154,7 @@ func encryptAndWriteKey(path string, keyPEM []byte) error {
 // loadAndDecryptKey reads the encrypted key file at path, decrypts it with
 // SECRET_KEY, and returns the plaintext PEM bytes (held only in memory).
 func loadAndDecryptKey(path string) ([]byte, error) {
-	secretKey := []byte(os.Getenv("SECRET_KEY"))
+	secretKey := crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))
 	if len(secretKey) != 32 {
 		return nil, fmt.Errorf("SECRET_KEY must be exactly 32 bytes to decrypt the TLS private key (got %d)", len(secretKey))
 	}
@@ -168,7 +168,6 @@ func loadAndDecryptKey(path string) ([]byte, error) {
 	}
 	return plaintext, nil
 }
-
 
 // generateSelfSignedPEM creates an ECDSA P-256 self-signed certificate valid
 // for 10 years and returns the PEM-encoded certificate and private key.

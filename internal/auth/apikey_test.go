@@ -2,6 +2,7 @@ package auth
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -28,23 +29,55 @@ func TestGenerateAPIKeyUniqueness(t *testing.T) {
 }
 
 func TestHashAPIKeyDeterministic(t *testing.T) {
+	t.Setenv("SECRET_KEY", strings.Repeat("a", 32))
 	key := "wireops_sk_testvalue"
-	first := HashAPIKey(key)
-	second := HashAPIKey(key)
+	first, err := HashAPIKey(key)
+	if err != nil {
+		t.Fatalf("HashAPIKey: %v", err)
+	}
+	second, err := HashAPIKey(key)
+	if err != nil {
+		t.Fatalf("HashAPIKey: %v", err)
+	}
 	if first != second {
 		t.Fatalf("HashAPIKey must return the same value for the same input: %q != %q", first, second)
 	}
 }
 
 func TestHashAPIKeyDifferentInputs(t *testing.T) {
-	if HashAPIKey("key1") == HashAPIKey("key2") {
+	t.Setenv("SECRET_KEY", strings.Repeat("a", 32))
+	first, err := HashAPIKey("key1")
+	if err != nil {
+		t.Fatalf("HashAPIKey: %v", err)
+	}
+	second, err := HashAPIKey("key2")
+	if err != nil {
+		t.Fatalf("HashAPIKey: %v", err)
+	}
+	if first == second {
 		t.Fatal("different keys must produce different hashes")
 	}
 }
 
 func TestHashAPIKeyTrimsSpace(t *testing.T) {
-	if HashAPIKey("  key  ") != HashAPIKey("key") {
+	t.Setenv("SECRET_KEY", strings.Repeat("a", 32))
+	first, err := HashAPIKey("  key  ")
+	if err != nil {
+		t.Fatalf("HashAPIKey: %v", err)
+	}
+	second, err := HashAPIKey("key")
+	if err != nil {
+		t.Fatalf("HashAPIKey: %v", err)
+	}
+	if first != second {
 		t.Fatal("HashAPIKey should trim surrounding whitespace")
+	}
+}
+
+func TestHashAPIKeyRequiresValidSecretKey(t *testing.T) {
+	t.Setenv("SECRET_KEY", "")
+	if _, err := HashAPIKey("wireops_sk_testvalue"); err == nil {
+		t.Fatal("expected missing SECRET_KEY to fail")
 	}
 }
 

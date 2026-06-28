@@ -21,6 +21,7 @@ import (
 	"github.com/wireops/wireops/internal/audit"
 	wireauth "github.com/wireops/wireops/internal/auth"
 	"github.com/wireops/wireops/internal/config"
+	"github.com/wireops/wireops/internal/crypto"
 	"github.com/wireops/wireops/internal/hooks"
 	"github.com/wireops/wireops/internal/jobscheduler"
 	"github.com/wireops/wireops/internal/oidc"
@@ -133,6 +134,10 @@ func Execute() error {
 	})
 
 	app.OnBootstrap().BindFunc(func(e *core.BootstrapEvent) error {
+		if err := validateStartupSecretKey(); err != nil {
+			return err
+		}
+
 		isMigrationCmd := false
 		if len(os.Args) < 2 {
 			isMigrationCmd = true // default command is serve
@@ -388,6 +393,13 @@ func Execute() error {
 	}
 
 	return app.Start()
+}
+
+func validateStartupSecretKey() error {
+	if err := crypto.ValidateSecretKey(os.Getenv("SECRET_KEY")); err != nil {
+		return fmt.Errorf("invalid SECRET_KEY: %w", err)
+	}
+	return nil
 }
 
 // validateOIDCURL validates that a URL is well-formed and uses HTTPS in production.

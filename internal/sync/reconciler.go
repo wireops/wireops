@@ -111,7 +111,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	// --- git fetch ---
 	gitAuth, err := r.resolveGitAuth(repoID)
 	if err != nil {
-		log.Printf("[reconciler] no auth for repo %s: %v", repoID, err)
+		log.Printf("[reconciler] failed to resolve auth for repo %s; continuing without auth", repoID)
 	}
 
 	workspace := r.reposWorkspace()
