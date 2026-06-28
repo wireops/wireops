@@ -19,7 +19,7 @@ type WebhookProvider struct {
 
 // Send dispatches a JSON payload to the configured URL.
 // It handles HMAC signing and custom headers.
-func (w *WebhookProvider) Send(cfg *Config, p Payload) error {
+func (w *WebhookProvider) Send(ctx context.Context, cfg *Config, p Payload) error {
 	// BUGFIX: Always allow sync.test even if not explicitly subscribed
 	if p.Event != SyncTest && !cfg.Subscribes(p.Event) {
 		return nil
@@ -33,7 +33,7 @@ func (w *WebhookProvider) Send(cfg *Config, p Payload) error {
 		return fmt.Errorf("marshal payload: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, cfg.URL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.URL, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}

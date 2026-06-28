@@ -52,6 +52,53 @@ func TestNginxProxyManagerResolveContainerActionsWithGenericHints(t *testing.T) 
 	}
 }
 
+func TestNginxProxyManagerResolveContainerActionsAggregatesSingularAndPluralHints(t *testing.T) {
+	integration := &NginxProxyManagerIntegration{}
+	ctx := integrations.ContainerContext{
+		Labels: map[string]string{
+			"dev.wireops.npm.host":     "app.example.com",
+			"dev.wireops.npm.hosts":    "api.example.com app.example.com",
+			"dev.wireops.proxy.host":   "admin.example.com",
+			"dev.wireops.proxy.hosts":  "docs.example.com",
+			"dev.wireops.proxy.scheme": "http",
+		},
+	}
+
+	actions := integration.ResolveContainerActions(nil, ctx)
+	if len(actions) != 4 {
+		t.Fatalf("actions = %d, want 4", len(actions))
+	}
+	want := []string{
+		"http://admin.example.com",
+		"http://api.example.com",
+		"http://app.example.com",
+		"http://docs.example.com",
+	}
+	for i, expected := range want {
+		if actions[i].URL != expected {
+			t.Errorf("actions[%d].URL = %q, want %q", i, actions[i].URL, expected)
+		}
+	}
+}
+
+func TestNginxProxyManagerResolveContainerActionsPreservesBareAddressPort(t *testing.T) {
+	integration := &NginxProxyManagerIntegration{}
+	ctx := integrations.ContainerContext{
+		Labels: map[string]string{
+			"dev.wireops.npm.host":    "app.example.com:8443",
+			"dev.wireops.proxy.hosts": "https://app.example.com:8443",
+		},
+	}
+
+	actions := integration.ResolveContainerActions(nil, ctx)
+	if len(actions) != 1 {
+		t.Fatalf("actions = %d, want 1", len(actions))
+	}
+	if actions[0].URL != "https://app.example.com:8443" {
+		t.Errorf("URL = %q, want https://app.example.com:8443", actions[0].URL)
+	}
+}
+
 func TestNginxProxyManagerResolveContainerActionsAdminLink(t *testing.T) {
 	integration := &NginxProxyManagerIntegration{}
 	ctx := integrations.ContainerContext{

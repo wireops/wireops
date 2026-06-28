@@ -35,12 +35,15 @@ type slackText struct {
 }
 
 // Send dispatches a Slack webhook message with Block Kit content.
-func (s *SlackProvider) Send(cfg *Config, p Payload) error {
+func (s *SlackProvider) Send(ctx context.Context, cfg *Config, p Payload) error {
 	if p.Event != SyncTest && !cfg.Subscribes(p.Event) {
 		return nil
 	}
 	if strings.TrimSpace(cfg.URL) == "" {
 		return nil
+	}
+	if err := ValidateProviderURL("slack", cfg.URL); err != nil {
+		return err
 	}
 
 	payload := buildSlackPayload(cfg, p)
@@ -49,7 +52,7 @@ func (s *SlackProvider) Send(cfg *Config, p Payload) error {
 		return fmt.Errorf("marshal slack payload: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, cfg.URL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.URL, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
@@ -84,7 +87,7 @@ func buildSlackPayload(cfg *Config, p Payload) slackWebhookPayload {
 
 	text := title
 	if p.StackName != "" {
-		text += " for " + p.StackName
+		text += " for " + slackEscape(p.StackName)
 	}
 	if mention != "" {
 		text = mention + " " + text
@@ -165,13 +168,14 @@ func slackEscape(value string) string {
 }
 
 func truncateSlack(value string, limit int) string {
-	if len(value) <= limit {
+	runes := []rune(value)
+	if len(runes) <= limit {
 		return value
 	}
 	if limit <= 3 {
-		return value[:limit]
+		return string(runes[:limit])
 	}
-	return value[:limit-3] + "..."
+	return string(runes[:limit-3]) + "..."
 }
 
 func maskSlackWebhookURL(raw string) string {

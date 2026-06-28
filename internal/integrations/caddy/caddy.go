@@ -124,8 +124,8 @@ func normalizeSiteAddress(raw string) string {
 		return strings.ToLower(u.Host)
 	}
 
-	if host, _, err := net.SplitHostPort(raw); err == nil && host != "" {
-		return strings.ToLower(host)
+	if host, port, err := net.SplitHostPort(raw); err == nil && host != "" {
+		return strings.ToLower(net.JoinHostPort(host, port))
 	}
 
 	raw = strings.Trim(raw, "[]")

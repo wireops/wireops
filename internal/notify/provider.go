@@ -1,6 +1,7 @@
 package notify
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 )
@@ -34,7 +35,7 @@ type Header struct {
 // Provider defines the interface for notification providers.
 type Provider interface {
 	// Send dispatches the notification.
-	Send(cfg *Config, p Payload) error
+	Send(ctx context.Context, cfg *Config, p Payload) error
 }
 
 // NewProvider returns the appropriate Provider implementation based on the config.

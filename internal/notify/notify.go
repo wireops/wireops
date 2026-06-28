@@ -70,7 +70,7 @@ func (n *Notifier) DispatchWithConfig(ctx context.Context, cfg *Config, p Payloa
 		cfg.Provider = "webhook"
 	}
 	provider := NewProvider(n.client, cfg.Provider)
-	return provider.Send(cfg, p)
+	return provider.Send(ctx, cfg, p)
 }
 
 func (n *Notifier) dispatch(ctx context.Context, p Payload) error {
@@ -101,7 +101,7 @@ func (n *Notifier) dispatch(ctx context.Context, p Payload) error {
 		}
 
 		provider := NewProvider(n.client, cfg.Provider)
-		if err := provider.Send(cfg, p); err != nil {
+		if err := provider.Send(ctx, cfg, p); err != nil {
 			log.Printf("[notify] dispatch to %s failed: %v", slug, err)
 		}
 	}

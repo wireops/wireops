@@ -58,12 +58,15 @@ type discordEmbedFooter struct {
 }
 
 // Send dispatches a Discord webhook message with an embed summarizing the sync event.
-func (d *DiscordProvider) Send(cfg *Config, p Payload) error {
+func (d *DiscordProvider) Send(ctx context.Context, cfg *Config, p Payload) error {
 	if p.Event != SyncTest && !cfg.Subscribes(p.Event) {
 		return nil
 	}
 	if strings.TrimSpace(cfg.URL) == "" {
 		return nil
+	}
+	if err := ValidateProviderURL("discord", cfg.URL); err != nil {
+		return err
 	}
 
 	payload := buildDiscordPayload(cfg, p)
@@ -72,7 +75,7 @@ func (d *DiscordProvider) Send(cfg *Config, p Payload) error {
 		return fmt.Errorf("marshal discord payload: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, discordWebhookURL(cfg.URL), bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, discordWebhookURL(cfg.URL), bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}

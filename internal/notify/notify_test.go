@@ -1,11 +1,13 @@
 package notify
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 type captureTransport struct {
@@ -54,7 +56,7 @@ func TestWebhookProviderSend(t *testing.T) {
 		DurationMs: 1234,
 	}
 
-	if err := provider.Send(cfg, p); err != nil {
+	if err := provider.Send(context.Background(), cfg, p); err != nil {
 		t.Fatalf("Send error: %v", err)
 	}
 	if len(transport.requests) != 1 {
@@ -102,7 +104,7 @@ func TestWebhookProviderEventFiltering(t *testing.T) {
 	}
 
 	// Unsubscribed event -> no call
-	if err := provider.Send(cfg, Payload{Event: SyncError}); err != nil {
+	if err := provider.Send(context.Background(), cfg, Payload{Event: SyncError}); err != nil {
 		t.Fatalf("Send error: %v", err)
 	}
 	if got := len(transport.requests); got != 0 {
@@ -110,7 +112,7 @@ func TestWebhookProviderEventFiltering(t *testing.T) {
 	}
 
 	// Subscribed event -> call
-	if err := provider.Send(cfg, Payload{Event: SyncDone}); err != nil {
+	if err := provider.Send(context.Background(), cfg, Payload{Event: SyncDone}); err != nil {
 		t.Fatalf("Send error: %v", err)
 	}
 	if got := len(transport.requests); got != 1 {
@@ -118,7 +120,7 @@ func TestWebhookProviderEventFiltering(t *testing.T) {
 	}
 
 	// Test event (not in list) -> call (bypass)
-	if err := provider.Send(cfg, Payload{Event: SyncTest}); err != nil {
+	if err := provider.Send(context.Background(), cfg, Payload{Event: SyncTest}); err != nil {
 		t.Fatalf("Send error: %v", err)
 	}
 	if got := len(transport.requests); got != 2 {
@@ -157,7 +159,7 @@ func TestNtfyProviderSend(t *testing.T) {
 		Error:     "deploy failed",
 	}
 
-	if err := provider.Send(cfg, p); err != nil {
+	if err := provider.Send(context.Background(), cfg, p); err != nil {
 		t.Fatalf("Send error: %v", err)
 	}
 	if len(transport.requests) != 1 {
@@ -209,7 +211,7 @@ func TestNtfyProviderTemplate(t *testing.T) {
 		StackName: "world",
 	}
 
-	if err := provider.Send(cfg, p); err != nil {
+	if err := provider.Send(context.Background(), cfg, p); err != nil {
 		t.Fatalf("Send error: %v", err)
 	}
 	if len(transport.bodies) != 1 {
@@ -246,7 +248,7 @@ func TestDiscordProviderSend(t *testing.T) {
 		Error:      "deploy failed",
 	}
 
-	if err := provider.Send(cfg, p); err != nil {
+	if err := provider.Send(context.Background(), cfg, p); err != nil {
 		t.Fatalf("Send error: %v", err)
 	}
 	if len(transport.requests) != 1 {
@@ -320,6 +322,29 @@ func TestDiscordProviderSend(t *testing.T) {
 	}
 }
 
+func TestDiscordProviderSendUsesCallerContext(t *testing.T) {
+	type contextKey struct{}
+
+	transport := &captureTransport{}
+	provider := &DiscordProvider{client: &http.Client{Transport: transport}}
+	cfg := &Config{
+		Provider: "discord",
+		URL:      "https://discord.com/api/webhooks/123/token",
+		Events:   []string{SyncTest},
+	}
+	ctx := context.WithValue(context.Background(), contextKey{}, "request-context")
+
+	if err := provider.Send(ctx, cfg, Payload{Event: SyncTest}); err != nil {
+		t.Fatalf("Send error: %v", err)
+	}
+	if len(transport.requests) != 1 {
+		t.Fatalf("requests = %d, want 1", len(transport.requests))
+	}
+	if got := transport.requests[0].Context().Value(contextKey{}); got != "request-context" {
+		t.Errorf("request context value = %v, want request-context", got)
+	}
+}
+
 func TestDiscordProviderEventFiltering(t *testing.T) {
 	transport := &captureTransport{}
 
@@ -329,14 +354,14 @@ func TestDiscordProviderEventFiltering(t *testing.T) {
 		Events: []string{SyncDone},
 	}
 
-	if err := provider.Send(cfg, Payload{Event: SyncError}); err != nil {
+	if err := provider.Send(context.Background(), cfg, Payload{Event: SyncError}); err != nil {
 		t.Fatalf("Send error: %v", err)
 	}
 	if got := len(transport.requests); got != 0 {
 		t.Errorf("expected 0 calls for unsubscribed event, got %d", got)
 	}
 
-	if err := provider.Send(cfg, Payload{Event: SyncTest}); err != nil {
+	if err := provider.Send(context.Background(), cfg, Payload{Event: SyncTest}); err != nil {
 		t.Fatalf("Send error: %v", err)
 	}
 	if got := len(transport.requests); got != 1 {
@@ -354,6 +379,22 @@ func TestDiscordProviderEventFiltering(t *testing.T) {
 	}
 	if len(body.AllowedMentions.Parse) != 0 || len(body.AllowedMentions.Roles) != 0 {
 		t.Errorf("expected safe empty allowed_mentions, got %+v", body.AllowedMentions)
+	}
+}
+
+func TestDiscordProviderRejectsInvalidWebhookHost(t *testing.T) {
+	transport := &captureTransport{}
+	provider := &DiscordProvider{client: &http.Client{Transport: transport}}
+	cfg := &Config{
+		URL:    "https://example.com/api/webhooks/123/token",
+		Events: []string{SyncTest},
+	}
+
+	if err := provider.Send(context.Background(), cfg, Payload{Event: SyncTest}); err == nil {
+		t.Fatal("expected invalid host error")
+	}
+	if got := len(transport.requests); got != 0 {
+		t.Errorf("requests = %d, want 0", got)
 	}
 }
 
@@ -379,7 +420,7 @@ func TestSlackProviderSend(t *testing.T) {
 		Error:      "deploy failed <bad>",
 	}
 
-	if err := provider.Send(cfg, p); err != nil {
+	if err := provider.Send(context.Background(), cfg, p); err != nil {
 		t.Fatalf("Send error: %v", err)
 	}
 	if len(transport.requests) != 1 {
@@ -413,6 +454,9 @@ func TestSlackProviderSend(t *testing.T) {
 	if !strings.HasPrefix(got.Text, "<!subteam^S123456|deploys> wireops sync failed") {
 		t.Errorf("text = %q, want mention prefix", got.Text)
 	}
+	if !strings.Contains(got.Text, "prod &lt;stack&gt;") {
+		t.Errorf("text = %q, want escaped stack name", got.Text)
+	}
 	if len(got.Blocks) != 3 {
 		t.Fatalf("blocks = %d, want 3", len(got.Blocks))
 	}
@@ -444,14 +488,14 @@ func TestSlackProviderEventFiltering(t *testing.T) {
 		Events: []string{SyncDone},
 	}
 
-	if err := provider.Send(cfg, Payload{Event: SyncError}); err != nil {
+	if err := provider.Send(context.Background(), cfg, Payload{Event: SyncError}); err != nil {
 		t.Fatalf("Send error: %v", err)
 	}
 	if got := len(transport.requests); got != 0 {
 		t.Errorf("expected 0 calls for unsubscribed event, got %d", got)
 	}
 
-	if err := provider.Send(cfg, Payload{Event: SyncTest}); err != nil {
+	if err := provider.Send(context.Background(), cfg, Payload{Event: SyncTest}); err != nil {
 		t.Fatalf("Send error: %v", err)
 	}
 	if got := len(transport.requests); got != 1 {
@@ -466,6 +510,112 @@ func TestSlackProviderEventFiltering(t *testing.T) {
 	}
 	if body.Text != "wireops test notification" {
 		t.Errorf("text = %q, want wireops test notification", body.Text)
+	}
+}
+
+func TestSlackProviderRejectsInvalidWebhookHost(t *testing.T) {
+	transport := &captureTransport{}
+	provider := &SlackProvider{client: &http.Client{Transport: transport}}
+	cfg := &Config{
+		URL:    "https://example.com/services/T000/B000/token",
+		Events: []string{SyncTest},
+	}
+
+	if err := provider.Send(context.Background(), cfg, Payload{Event: SyncTest}); err == nil {
+		t.Fatal("expected invalid host error")
+	}
+	if got := len(transport.requests); got != 0 {
+		t.Errorf("requests = %d, want 0", got)
+	}
+}
+
+func TestTruncateSlackIsRuneAware(t *testing.T) {
+	got := truncateSlack("áéíóú", 4)
+	if got != "á..." {
+		t.Errorf("truncateSlack() = %q, want %q", got, "á...")
+	}
+	if !utf8.ValidString(got) {
+		t.Errorf("truncateSlack() returned invalid UTF-8: %q", got)
+	}
+}
+
+func TestTruncateSlackShortLimitIsRuneAware(t *testing.T) {
+	got := truncateSlack("áéí", 2)
+	if got != "áé" {
+		t.Errorf("truncateSlack() = %q, want %q", got, "áé")
+	}
+	if !utf8.ValidString(got) {
+		t.Errorf("truncateSlack() returned invalid UTF-8: %q", got)
+	}
+}
+
+func TestValidateProviderURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		slug    string
+		rawURL  string
+		wantErr bool
+	}{
+		{
+			name:   "slack valid",
+			slug:   "slack",
+			rawURL: "https://hooks.slack.com/services/T000/B000/token",
+		},
+		{
+			name:   "discord valid",
+			slug:   "discord",
+			rawURL: "https://discord.com/api/webhooks/123/token",
+		},
+		{
+			name:   "discord legacy host valid",
+			slug:   "discord",
+			rawURL: "https://discordapp.com/api/webhooks/123/token",
+		},
+		{
+			name:    "slack rejects http",
+			slug:    "slack",
+			rawURL:  "http://hooks.slack.com/services/T000/B000/token",
+			wantErr: true,
+		},
+		{
+			name:    "slack rejects other host",
+			slug:    "slack",
+			rawURL:  "https://example.com/services/T000/B000/token",
+			wantErr: true,
+		},
+		{
+			name:    "slack rejects custom port",
+			slug:    "slack",
+			rawURL:  "https://hooks.slack.com:8443/services/T000/B000/token",
+			wantErr: true,
+		},
+		{
+			name:    "slack rejects wrong path",
+			slug:    "slack",
+			rawURL:  "https://hooks.slack.com/hooks/T000/B000/token",
+			wantErr: true,
+		},
+		{
+			name:    "discord rejects subdomain",
+			slug:    "discord",
+			rawURL:  "https://evil.discord.com/api/webhooks/123/token",
+			wantErr: true,
+		},
+		{
+			name:    "discord rejects wrong path",
+			slug:    "discord",
+			rawURL:  "https://discord.com/webhooks/123/token",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateProviderURL(tt.slug, tt.rawURL)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("ValidateProviderURL() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
 	}
 }
 

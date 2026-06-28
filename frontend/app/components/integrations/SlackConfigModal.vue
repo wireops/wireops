@@ -27,16 +27,24 @@ const form = ref({
   events: ['sync.started', 'sync.done', 'sync.error'] as string[],
 })
 
-watch(() => props.integration, (newVal) => {
-  if (newVal) {
-    const config = newVal.config || {}
-    form.value.url = config.url || ''
-    form.value.mention_on_error = Boolean(config.mention_on_error)
-    form.value.mention_text = config.mention_text || ''
-    form.value.events = config.events ? [...config.events] : ['sync.started', 'sync.done', 'sync.error']
-    hasWebhookUrl.value = config.url === '••••••••'
+function resetForm(integration: any) {
+  if (!integration) {
+    return
   }
-}, { immediate: true, deep: true })
+  const config = integration.config || {}
+  form.value.url = config.url || ''
+  form.value.mention_on_error = Boolean(config.mention_on_error)
+  form.value.mention_text = config.mention_text || ''
+  form.value.events = config.events ? [...config.events] : ['sync.started', 'sync.done', 'sync.error']
+  hasWebhookUrl.value = config.url === '••••••••'
+}
+
+watch(() => props.integration, resetForm, { immediate: true, deep: true })
+watch(isOpen, (open) => {
+  if (open) {
+    resetForm(props.integration)
+  }
+})
 
 const toast = useToast()
 const { saveIntegration, testIntegration } = useIntegrations()
@@ -70,9 +78,41 @@ function payload() {
   }
 }
 
+function webhookUrlError() {
+  if (hasWebhookUrl.value && form.value.url === '••••••••') {
+    return ''
+  }
+  try {
+    const url = new URL(form.value.url.trim())
+    if (url.protocol !== 'https:') {
+      return 'Slack webhook URL must use https'
+    }
+    if (url.username || url.password) {
+      return 'Slack webhook URL must not include credentials'
+    }
+    if (url.hostname.toLowerCase().replace(/\.$/, '') !== 'hooks.slack.com') {
+      return 'Slack webhook URL host must be hooks.slack.com'
+    }
+    if (url.port) {
+      return 'Slack webhook URL must not include a custom port'
+    }
+    if (!url.pathname.startsWith('/services/')) {
+      return 'Slack webhook URL must use the /services path'
+    }
+  } catch {
+    return 'Slack webhook URL is invalid'
+  }
+  return ''
+}
+
 async function handleSave() {
   if (!form.value.url) {
     toast.add({ title: 'Webhook URL is required', color: 'error' })
+    return
+  }
+  const validationError = webhookUrlError()
+  if (validationError) {
+    toast.add({ title: validationError, color: 'error' })
     return
   }
   loading.value = true
@@ -95,6 +135,11 @@ async function handleSave() {
 async function handleTest() {
   if (!form.value.url) {
     toast.add({ title: 'Webhook URL is required to test', color: 'error' })
+    return
+  }
+  const validationError = webhookUrlError()
+  if (validationError) {
+    toast.add({ title: validationError, color: 'error' })
     return
   }
   testLoading.value = true

@@ -649,6 +649,9 @@ func (rr routeRegistrar) registerIntegrationRoutes() {
 		if err := rr.resolveMaskedIntegrationConfig(slug, body.Config); err != nil {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 		}
+		if err := notify.ValidateIntegrationConfig(slug, body.Config); err != nil {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+		}
 
 		col, err := rr.app.FindCollectionByNameOrId("integrations")
 		if err != nil {
@@ -793,6 +796,9 @@ func (rr routeRegistrar) registerIntegrationRoutes() {
 			body.Config = map[string]interface{}{}
 		}
 		if err := rr.resolveMaskedIntegrationConfig(slug, body.Config); err != nil {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+		}
+		if err := notify.ValidateIntegrationConfig(slug, body.Config); err != nil {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 		}
 

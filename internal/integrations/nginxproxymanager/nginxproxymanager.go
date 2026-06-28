@@ -67,8 +67,10 @@ func (n *NginxProxyManagerIntegration) ResolveContainerActions(config map[string
 
 func proxyHintHosts(labels map[string]string, allowLocalHosts bool) []string {
 	rawValues := []string{
-		labelValue(labels, "dev.wireops.npm.host", "dev.wireops.npm.hosts"),
-		labelValue(labels, "dev.wireops.proxy.host", "dev.wireops.proxy.hosts"),
+		labels["dev.wireops.npm.host"],
+		labels["dev.wireops.npm.hosts"],
+		labels["dev.wireops.proxy.host"],
+		labels["dev.wireops.proxy.hosts"],
 	}
 
 	seen := make(map[string]struct{})
@@ -128,8 +130,8 @@ func normalizeProxyHost(raw string) string {
 		return strings.ToLower(u.Host)
 	}
 
-	if host, _, err := net.SplitHostPort(raw); err == nil && host != "" {
-		return strings.ToLower(host)
+	if host, port, err := net.SplitHostPort(raw); err == nil && host != "" {
+		return strings.ToLower(net.JoinHostPort(host, port))
 	}
 
 	if strings.Contains(raw, "/") {

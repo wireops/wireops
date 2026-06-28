@@ -55,6 +55,24 @@ func TestCaddyResolveContainerActionsMultipleSites(t *testing.T) {
 	}
 }
 
+func TestCaddyResolveContainerActionsPreservesBareAddressPort(t *testing.T) {
+	integration := &CaddyIntegration{}
+	ctx := integrations.ContainerContext{
+		Labels: map[string]string{
+			"caddy":   "example.com:8443",
+			"caddy_0": "https://example.com:8443",
+		},
+	}
+
+	actions := integration.ResolveContainerActions(nil, ctx)
+	if len(actions) != 1 {
+		t.Fatalf("actions = %d, want 1", len(actions))
+	}
+	if actions[0].URL != "https://example.com:8443" {
+		t.Errorf("URL = %q, want https://example.com:8443", actions[0].URL)
+	}
+}
+
 func TestCaddyResolveContainerActionsWildcardAndLocalFilters(t *testing.T) {
 	integration := &CaddyIntegration{}
 	ctx := integrations.ContainerContext{
