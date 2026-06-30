@@ -3,7 +3,15 @@ const { $pb } = useNuxtApp()
 const { canOperate } = usePermissions()
 const { subscribe } = useRealtime()
 const toast = useToast()
+const route = useRoute()
+const router = useRouter()
 
+const activeTab = ref(route.query.tab === 'repository-keys' ? 'repository-keys' : 'global-variables')
+const keysPanel = ref<any>()
+const tabs = [
+  { label: 'Global Variables', value: 'global-variables', icon: 'i-lucide-variable' },
+  { label: 'Repository Keys', value: 'repository-keys', icon: 'i-lucide-key-round' },
+]
 const globals = ref<any[]>([])
 const stackBindings = ref<any[]>([])
 const jobBindings = ref<any[]>([])
@@ -11,12 +19,13 @@ const loading = ref(false)
 const saving = ref(false)
 const deletingId = ref('')
 const creating = ref(false)
+const showCreateModal = ref(false)
 const variableToDelete = ref<any | null>(null)
 
 const form = ref({
   key: '',
   value: '',
-  secret: false,
+  secret: true,
 })
 
 const editingId = ref('')
@@ -69,19 +78,55 @@ async function load() {
   }
 }
 
+async function refreshActiveTab() {
+  if (activeTab.value === 'repository-keys') {
+    await (keysPanel.value?.refresh?.() || refreshNuxtData('repository_keys_panel'))
+    return
+  }
+  await load()
+}
+
+watch(activeTab, (tab) => {
+  const nextQuery = { ...route.query }
+  if (tab === 'repository-keys') {
+    nextQuery.tab = tab
+  } else {
+    delete nextQuery.tab
+  }
+  if (route.query.tab !== nextQuery.tab) router.replace({ query: nextQuery })
+  if (tab === 'repository-keys') refreshNuxtData('repository_keys_panel')
+})
+
+watch(() => route.query.tab, (tab) => {
+  activeTab.value = tab === 'repository-keys' ? 'repository-keys' : 'global-variables'
+})
+
+watch(showCreateModal, (open) => {
+  if (!open && !saving.value) resetForm()
+})
+
 function resetForm() {
-  form.value = { key: '', value: '', secret: false }
+  form.value = { key: '', value: '', secret: true }
 }
 
 function startCreate() {
   editingId.value = ''
+  showCreateModal.value = false
   resetForm()
   creating.value = true
 }
 
 function cancelCreate() {
   creating.value = false
+  showCreateModal.value = false
   resetForm()
+}
+
+function openCreateModal() {
+  editingId.value = ''
+  creating.value = false
+  resetForm()
+  showCreateModal.value = true
 }
 
 async function createVariable() {
@@ -97,6 +142,7 @@ async function createVariable() {
     })
     resetForm()
     creating.value = false
+    showCreateModal.value = false
     await load()
     toast.add({ title: 'Global variable created', color: 'success' })
   } catch (error: any) {
@@ -108,6 +154,7 @@ async function createVariable() {
 
 function startEdit(variable: any) {
   creating.value = false
+  showCreateModal.value = false
   editingId.value = variable.id
   editForm.value = {
     key: variable.key,
@@ -187,21 +234,34 @@ onMounted(() => {
           Secrets
         </h1>
       </div>
-      <UButton icon="i-lucide-refresh-cw" label="Refresh" variant="outline" :loading="loading" @click="load" />
+      <UButton icon="i-lucide-refresh-cw" label="Refresh" variant="outline" :loading="activeTab === 'global-variables' && loading" @click="refreshActiveTab" />
     </div>
 
-    <UCard>
+    <UTabs v-model="activeTab" :items="tabs" />
+
+    <UCard v-if="activeTab === 'global-variables'">
       <template #header>
         <div class="flex items-center justify-between gap-3">
-          <div class="flex items-center gap-2">
-            <h3 class="font-semibold">Global Variables</h3>
-            <UBadge :label="`${globals.length}`" color="neutral" variant="subtle" />
+          <div>
+            <div class="flex items-center gap-2">
+              <h3 class="font-semibold">Global Variables</h3>
+              <UBadge :label="`${globals.length}`" color="neutral" variant="subtle" />
+            </div>
+            <p class="text-xs text-gray-500 mt-0.5">Reusable variables and secrets for stacks and jobs.</p>
           </div>
           <UButton
             v-if="canOperate"
             icon="i-lucide-plus"
             label="Add"
-            size="xs"
+            class="sm:hidden"
+            :disabled="showCreateModal"
+            @click="openCreateModal"
+          />
+          <UButton
+            v-if="canOperate"
+            icon="i-lucide-plus"
+            label="Add"
+            class="hidden sm:inline-flex"
             :disabled="creating"
             @click="startCreate"
           />
@@ -212,20 +272,23 @@ onMounted(() => {
         <form v-if="creating" class="grid grid-cols-1 gap-2 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2rem_2rem_2rem] sm:items-center" @submit.prevent="createVariable">
           <UInput v-model="form.key" placeholder="KEY" class="font-mono" />
           <UInput v-model="form.value" placeholder="value" :type="form.secret ? 'password' : 'text'" class="font-mono" />
-          <UButton
-            type="button"
-            :icon="form.secret ? 'i-lucide-lock' : 'i-lucide-variable'"
-            :color="form.secret ? 'warning' : 'neutral'"
-            variant="soft"
-            size="xs"
-            class="h-8 w-8 justify-center p-0"
-            :aria-pressed="form.secret"
-            :aria-label="form.secret ? 'Set as plain text' : 'Set as secret'"
-            :title="form.secret ? 'Secret' : 'Plain text'"
-            @click="form.secret = !form.secret"
-          />
-          <UButton type="submit" icon="i-lucide-check" variant="ghost" color="success" size="xs" class="h-8 w-8 justify-center p-0" :loading="saving" :disabled="!form.key.trim()" aria-label="Create variable" />
-          <UButton type="button" icon="i-lucide-x" variant="ghost" color="neutral" size="xs" class="h-8 w-8 justify-center p-0" aria-label="Cancel" @click="cancelCreate" />
+          <div class="grid grid-cols-3 gap-2 sm:contents">
+            <UButton
+              type="button"
+              :icon="form.secret ? 'i-lucide-lock' : 'i-lucide-variable'"
+              :color="form.secret ? 'warning' : 'neutral'"
+              variant="soft"
+              size="xs"
+              class="h-8 w-full justify-center p-0 sm:w-8"
+              :class="form.secret ? '!bg-amber-400/15 !text-amber-500 dark:!bg-amber-400/10 dark:!text-amber-400' : '!bg-gray-100 !text-gray-500 sm:!bg-transparent dark:!bg-carbon-800 dark:!text-gray-400 sm:dark:!bg-transparent'"
+              :aria-pressed="form.secret"
+              :aria-label="form.secret ? 'Set as plain text' : 'Set as secret'"
+              :title="form.secret ? 'Secret' : 'Plain text'"
+              @click="form.secret = !form.secret"
+            />
+            <UButton type="submit" icon="i-lucide-check" variant="ghost" color="success" size="xs" class="h-8 w-full justify-center !bg-green-500/10 p-0 !text-green-600 hover:!bg-green-500/15 sm:w-8 sm:!bg-transparent sm:!text-inherit sm:hover:!bg-transparent dark:!text-green-400" :loading="saving" :disabled="!form.key.trim()" aria-label="Create variable" />
+            <UButton type="button" icon="i-lucide-x" variant="ghost" color="neutral" size="xs" class="h-8 w-full justify-center !bg-gray-100 p-0 !text-gray-600 hover:!bg-gray-200 sm:w-8 sm:!bg-transparent sm:!text-inherit sm:hover:!bg-transparent dark:!bg-carbon-800 dark:!text-gray-400 dark:hover:!bg-carbon-700 sm:dark:!bg-transparent sm:dark:hover:!bg-transparent" aria-label="Cancel" @click="cancelCreate" />
+          </div>
         </form>
 
         <div v-for="variable in globals" :key="variable.id" class="py-2">
@@ -253,30 +316,35 @@ onMounted(() => {
             <UInput :model-value="variable.key" disabled class="font-mono opacity-60" />
             <UInput v-if="variable.secret" model-value="••••••••" disabled type="password" class="font-mono opacity-60" />
             <UInput v-else :model-value="variable.value" disabled class="font-mono opacity-60" />
-            <div class="flex h-8 w-8 items-center justify-center">
-              <UIcon
-                :name="variable.secret ? 'i-lucide-lock' : 'i-lucide-variable'"
-                class="h-4 w-4"
-                :class="variable.secret ? 'text-amber-400' : 'text-gray-400'"
-                :title="variable.secret ? 'Secret' : 'Plain text'"
-              />
+            <div class="grid grid-cols-3 gap-2 sm:contents">
+              <div
+                class="flex h-8 w-full items-center justify-center rounded-md bg-gray-100 text-gray-500 sm:w-8 sm:bg-transparent dark:bg-carbon-800 dark:text-gray-400 sm:dark:bg-transparent"
+                :class="variable.secret ? 'bg-amber-400/15 text-amber-500 dark:bg-amber-400/10 dark:text-amber-400' : ''"
+              >
+                <UIcon
+                  :name="variable.secret ? 'i-lucide-lock' : 'i-lucide-variable'"
+                  class="h-4 w-4"
+                  :title="variable.secret ? 'Secret' : 'Plain text'"
+                />
+              </div>
+              <UButton v-if="canOperate" icon="i-lucide-pencil" variant="ghost" color="neutral" size="xs" class="h-8 w-full justify-center bg-sky-500/10 p-0 text-sky-600 hover:bg-sky-500/15 sm:w-8 sm:bg-transparent sm:text-inherit sm:hover:bg-transparent dark:text-sky-400" aria-label="Edit variable" @click="startEdit(variable)" />
+              <div v-else class="h-8 w-full sm:w-8" />
+              <UTooltip v-if="canOperate" :text="usageTotal(variable) > 0 ? 'Detach this variable from stacks and jobs before deleting it' : 'Delete variable'" class="w-full sm:w-8">
+                <UButton
+                  icon="i-lucide-trash-2"
+                  variant="ghost"
+                  color="error"
+                  size="xs"
+                  class="h-8 w-full justify-center p-0 sm:w-8 sm:!bg-transparent sm:!text-inherit sm:hover:!bg-transparent"
+                  :class="usageTotal(variable) > 0 ? '!bg-gray-100 !text-gray-400 hover:!bg-gray-100 dark:!bg-carbon-800 dark:!text-gray-500 dark:hover:!bg-carbon-800 sm:dark:!bg-transparent' : '!bg-red-500/10 !text-red-600 hover:!bg-red-500/15 dark:!text-red-400'"
+                  :disabled="usageTotal(variable) > 0"
+                  :loading="deletingId === variable.id"
+                  aria-label="Delete variable"
+                  @click="openDeleteVariableModal(variable)"
+                />
+              </UTooltip>
+              <div v-else class="h-8 w-full sm:w-8" />
             </div>
-            <UButton v-if="canOperate" icon="i-lucide-pencil" variant="ghost" color="neutral" size="xs" class="h-8 w-8 justify-center p-0" aria-label="Edit variable" @click="startEdit(variable)" />
-            <div v-else class="h-8 w-8" />
-            <UTooltip v-if="canOperate" :text="usageTotal(variable) > 0 ? 'Detach this variable from stacks and jobs before deleting it' : 'Delete variable'">
-              <UButton
-                icon="i-lucide-trash-2"
-                variant="ghost"
-                color="error"
-                size="xs"
-                class="h-8 w-8 justify-center p-0"
-                :disabled="usageTotal(variable) > 0"
-                :loading="deletingId === variable.id"
-                aria-label="Delete variable"
-                @click="openDeleteVariableModal(variable)"
-              />
-            </UTooltip>
-            <div v-else class="h-8 w-8" />
           </div>
         </div>
       </div>
@@ -286,6 +354,47 @@ onMounted(() => {
         <p class="mt-2 text-sm text-gray-500">No global variables configured</p>
       </div>
     </UCard>
+
+    <UModal v-model:open="showCreateModal" :ui="{ content: 'w-full sm:max-w-md' }">
+      <template #content>
+        <UCard>
+          <template #header>
+            <div class="flex items-center gap-2">
+              <UIcon name="i-lucide-key-round" class="h-5 w-5 text-yellow-400" />
+              <h3 class="font-semibold text-gray-900 dark:text-white">Create Secret</h3>
+            </div>
+          </template>
+
+          <form class="space-y-4" @submit.prevent="createVariable">
+            <UFormField label="Key" required>
+              <UInput v-model="form.key" placeholder="KEY" class="w-full font-mono" />
+            </UFormField>
+
+            <UFormField label="Value">
+              <UInput v-model="form.value" placeholder="value" :type="form.secret ? 'password' : 'text'" class="w-full font-mono" />
+            </UFormField>
+
+            <UButton
+              type="button"
+              :icon="form.secret ? 'i-lucide-lock' : 'i-lucide-variable'"
+              :color="form.secret ? 'warning' : 'neutral'"
+              variant="soft"
+              class="w-full justify-center"
+              :aria-pressed="form.secret"
+              :aria-label="form.secret ? 'Set as plain text' : 'Set as secret'"
+              @click="form.secret = !form.secret"
+            >
+              {{ form.secret ? 'Secret' : 'Plain text' }}
+            </UButton>
+
+            <div class="grid grid-cols-2 gap-2 pt-2">
+              <UButton type="button" label="Cancel" variant="outline" color="neutral" block @click="cancelCreate" />
+              <UButton type="submit" label="Create" icon="i-lucide-check" color="success" block :loading="saving" :disabled="!form.key.trim()" />
+            </div>
+          </form>
+        </UCard>
+      </template>
+    </UModal>
 
     <UModal :open="!!variableToDelete" @update:open="value => { if (!value) cancelDeleteVariable() }">
       <template #content>
@@ -319,5 +428,7 @@ onMounted(() => {
         </UCard>
       </template>
     </UModal>
+
+    <RepositoryKeysPanel v-if="activeTab === 'repository-keys'" ref="keysPanel" />
   </div>
 </template>

@@ -78,28 +78,29 @@ function formatRelative(dateStr: string) {
 
 <template>
   <div class="space-y-6">
-    <div class="flex items-center justify-between">
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       <h1 class="flex items-center gap-3 text-2xl font-bold text-gray-900 dark:text-wire-200">
         <div class="flex items-center justify-center w-9 h-9 rounded-lg bg-yellow-400/10">
           <UIcon name="i-lucide-calendar-clock" class="w-5 h-5 text-yellow-400" />
         </div>
-        Scheduled Jobs
+        Jobs
       </h1>
-      <div class="flex items-center gap-3">
+      <div class="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:gap-3">
+        <UButton
+          v-if="!isViewer"
+          icon="i-lucide-plus"
+          label="New Job"
+          class="w-full justify-center shadow-[0_0_16px_rgba(255,198,0,0.35)] transition-shadow hover:shadow-[0_0_24px_rgba(255,198,0,0.55)] sm:w-auto"
+          @click="refreshRepos().then(() => { showCreate = true })"
+        />
         <UButton
           v-if="!isViewer"
           icon="i-lucide-wrench"
           label="Job Builder"
           color="neutral"
           variant="outline"
+          class="w-full justify-center sm:w-auto"
           @click="showBuilder = true"
-        />
-        <UButton
-          v-if="!isViewer"
-          icon="i-lucide-plus"
-          label="New Job"
-          class="shadow-[0_0_16px_rgba(255,198,0,0.35)] hover:shadow-[0_0_24px_rgba(255,198,0,0.55)] transition-shadow"
-          @click="refreshRepos().then(() => { showCreate = true })"
         />
       </div>
     </div>

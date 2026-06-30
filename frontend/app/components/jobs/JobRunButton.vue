@@ -14,7 +14,7 @@ const emit = defineEmits<{
 const isDisabled = computed(() => !props.enabled || props.hasError)
 
 const variant = computed(() => props.hasError ? 'outline' : 'solid')
-const color = computed(() => props.hasError ? 'neutral' : 'primary')
+const color = computed(() => isDisabled.value ? 'neutral' : 'primary')
 </script>
 
 <template>

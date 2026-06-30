@@ -19,12 +19,13 @@ const loading = ref(false)
 const saving = ref(false)
 const deletingId = ref('')
 const creating = ref(false)
+const showCreateModal = ref(false)
 const editingEnvId = ref<string | null>(null)
 const envToDelete = ref<any | null>(null)
 
 const newEnvKey = ref('')
 const newEnvValue = ref('')
-const newEnvSecret = ref(false)
+const newEnvSecret = ref(true)
 const editEnvKey = ref('')
 const editEnvValue = ref('')
 const editEnvSecret = ref(false)
@@ -39,18 +40,27 @@ function emitKeys() {
 function resetNewEnv() {
   newEnvKey.value = ''
   newEnvValue.value = ''
-  newEnvSecret.value = false
+  newEnvSecret.value = true
 }
 
 function startCreateEnv() {
   editingEnvId.value = null
+  showCreateModal.value = false
   resetNewEnv()
   creating.value = true
 }
 
 function cancelCreateEnv() {
   creating.value = false
+  showCreateModal.value = false
   resetNewEnv()
+}
+
+function openCreateEnvModal() {
+  editingEnvId.value = null
+  creating.value = false
+  resetNewEnv()
+  showCreateModal.value = true
 }
 
 async function load() {
@@ -82,6 +92,7 @@ async function addEnvVar() {
     }, { requestKey: null })
     resetNewEnv()
     creating.value = false
+    showCreateModal.value = false
     await load()
     toast.add({ title: 'Env var added', color: 'success' })
   } catch (error: any) {
@@ -93,6 +104,7 @@ async function addEnvVar() {
 
 function startEditEnv(env: any) {
   creating.value = false
+  showCreateModal.value = false
   editingEnvId.value = env.id
   editEnvKey.value = env.key
   editEnvValue.value = env.secret ? '' : env.value
@@ -155,6 +167,10 @@ onMounted(() => {
     if (event.record?.[targetField.value] === props.targetId) load()
   })
 })
+
+watch(showCreateModal, (open) => {
+  if (!open && !saving.value) resetNewEnv()
+})
 </script>
 
 <template>
@@ -167,7 +183,8 @@ onMounted(() => {
         </div>
         <div class="flex items-center gap-2">
           <UBadge :label="`${envVars.length}`" color="neutral" variant="subtle" />
-          <UButton icon="i-lucide-plus" label="Add" size="xs" :disabled="creating" @click="startCreateEnv" />
+          <UButton icon="i-lucide-plus" label="Add" size="xs" class="sm:hidden" :disabled="showCreateModal" @click="openCreateEnvModal" />
+          <UButton icon="i-lucide-plus" label="Add" size="xs" class="hidden sm:inline-flex" :disabled="creating" @click="startCreateEnv" />
           <UButton icon="i-lucide-refresh-cw" variant="ghost" color="neutral" size="xs" :loading="loading" @click="load" />
         </div>
       </div>
@@ -178,20 +195,23 @@ onMounted(() => {
         <form v-if="creating" class="grid grid-cols-1 gap-2 py-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2rem_2rem_2rem] sm:items-center" @submit.prevent="addEnvVar">
           <UInput v-model="newEnvKey" placeholder="KEY" class="font-mono" />
           <UInput v-model="newEnvValue" placeholder="value" :type="newEnvSecret ? 'password' : 'text'" class="font-mono" />
-          <UButton
-            type="button"
-            :icon="newEnvSecret ? 'i-lucide-lock' : 'i-lucide-variable'"
-            :color="newEnvSecret ? 'warning' : 'neutral'"
-            variant="soft"
-            size="xs"
-            class="h-8 w-8 justify-center p-0"
-            :aria-pressed="newEnvSecret"
-            :aria-label="newEnvSecret ? 'Set as plain text' : 'Set as secret'"
-            :title="newEnvSecret ? 'Secret' : 'Plain text'"
-            @click="newEnvSecret = !newEnvSecret"
-          />
-          <UButton type="submit" icon="i-lucide-check" variant="ghost" color="success" size="xs" class="h-8 w-8 justify-center p-0" :loading="saving" :disabled="!newEnvKey.trim()" aria-label="Add environment variable" />
-          <UButton type="button" icon="i-lucide-x" variant="ghost" color="neutral" size="xs" class="h-8 w-8 justify-center p-0" aria-label="Cancel" @click="cancelCreateEnv" />
+          <div class="grid grid-cols-3 gap-2 sm:contents">
+            <UButton
+              type="button"
+              :icon="newEnvSecret ? 'i-lucide-lock' : 'i-lucide-variable'"
+              :color="newEnvSecret ? 'warning' : 'neutral'"
+              variant="soft"
+              size="xs"
+              class="h-8 w-full justify-center p-0 sm:w-8"
+              :class="newEnvSecret ? '!bg-amber-400/15 !text-amber-500 dark:!bg-amber-400/10 dark:!text-amber-400' : '!bg-gray-100 !text-gray-500 sm:!bg-transparent dark:!bg-carbon-800 dark:!text-gray-400 sm:dark:!bg-transparent'"
+              :aria-pressed="newEnvSecret"
+              :aria-label="newEnvSecret ? 'Set as plain text' : 'Set as secret'"
+              :title="newEnvSecret ? 'Secret' : 'Plain text'"
+              @click="newEnvSecret = !newEnvSecret"
+            />
+            <UButton type="submit" icon="i-lucide-check" variant="ghost" color="success" size="xs" class="h-8 w-full justify-center !bg-green-500/10 p-0 !text-green-600 hover:!bg-green-500/15 sm:w-8 sm:!bg-transparent sm:!text-inherit sm:hover:!bg-transparent dark:!text-green-400" :loading="saving" :disabled="!newEnvKey.trim()" aria-label="Add environment variable" />
+            <UButton type="button" icon="i-lucide-x" variant="ghost" color="neutral" size="xs" class="h-8 w-full justify-center !bg-gray-100 p-0 !text-gray-600 hover:!bg-gray-200 sm:w-8 sm:!bg-transparent sm:!text-inherit sm:hover:!bg-transparent dark:!bg-carbon-800 dark:!text-gray-400 dark:hover:!bg-carbon-700 sm:dark:!bg-transparent sm:dark:hover:!bg-transparent" aria-label="Cancel" @click="cancelCreateEnv" />
+          </div>
         </form>
 
         <div v-for="env in envVars" :key="env.id" class="py-2">
@@ -222,22 +242,67 @@ onMounted(() => {
               <UInput :model-value="env.key" disabled class="font-mono opacity-60" />
               <UInput v-if="env.secret" model-value="••••••••" disabled type="password" class="font-mono opacity-60" />
               <UInput v-else :model-value="env.value" disabled class="font-mono opacity-60" />
-              <div class="flex h-8 w-8 items-center justify-center">
-                <UIcon
-                  :name="env.secret ? 'i-lucide-lock' : 'i-lucide-variable'"
-                  class="h-4 w-4"
-                  :class="env.secret ? 'text-amber-400' : 'text-gray-400'"
-                  :title="env.secret ? 'Secret' : 'Plain text'"
-                />
+              <div class="grid grid-cols-3 gap-2 sm:contents">
+                <div
+                  class="flex h-8 w-full items-center justify-center rounded-md bg-gray-100 text-gray-500 sm:w-8 sm:bg-transparent dark:bg-carbon-800 dark:text-gray-400 sm:dark:bg-transparent"
+                  :class="env.secret ? 'bg-amber-400/15 text-amber-500 dark:bg-amber-400/10 dark:text-amber-400' : ''"
+                >
+                  <UIcon
+                    :name="env.secret ? 'i-lucide-lock' : 'i-lucide-variable'"
+                    class="h-4 w-4"
+                    :title="env.secret ? 'Secret' : 'Plain text'"
+                  />
+                </div>
+                <UButton icon="i-lucide-pencil" variant="ghost" size="xs" class="h-8 w-full justify-center bg-sky-500/10 p-0 text-sky-600 hover:bg-sky-500/15 sm:w-8 sm:bg-transparent sm:text-inherit sm:hover:bg-transparent dark:text-sky-400" aria-label="Edit environment variable" @click="startEditEnv(env)" />
+                <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="xs" class="h-8 w-full justify-center !bg-red-500/10 p-0 !text-red-600 hover:!bg-red-500/15 sm:w-8 sm:!bg-transparent sm:!text-inherit sm:hover:!bg-transparent dark:!text-red-400" :loading="deletingId === env.id" aria-label="Delete environment variable" @click="openDeleteEnvModal(env)" />
               </div>
-              <UButton icon="i-lucide-pencil" variant="ghost" size="xs" class="h-8 w-8 justify-center p-0" aria-label="Edit environment variable" @click="startEditEnv(env)" />
-              <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="xs" class="h-8 w-8 justify-center p-0" :loading="deletingId === env.id" aria-label="Delete environment variable" @click="openDeleteEnvModal(env)" />
             </div>
           </template>
         </div>
       </div>
       <p v-else class="py-2 text-sm text-gray-500">No environment variables defined</p>
     </div>
+
+    <UModal v-model:open="showCreateModal" :ui="{ content: 'w-full sm:max-w-md' }">
+      <template #content>
+        <UCard>
+          <template #header>
+            <div class="flex items-center gap-2">
+              <UIcon name="i-lucide-variable" class="h-5 w-5 text-yellow-400" />
+              <h3 class="font-semibold text-gray-900 dark:text-white">Create Environment Variable</h3>
+            </div>
+          </template>
+
+          <form class="space-y-4" @submit.prevent="addEnvVar">
+            <UFormField label="Key" required>
+              <UInput v-model="newEnvKey" placeholder="KEY" class="w-full font-mono" />
+            </UFormField>
+
+            <UFormField label="Value">
+              <UInput v-model="newEnvValue" placeholder="value" :type="newEnvSecret ? 'password' : 'text'" class="w-full font-mono" />
+            </UFormField>
+
+            <UButton
+              type="button"
+              :icon="newEnvSecret ? 'i-lucide-lock' : 'i-lucide-variable'"
+              :color="newEnvSecret ? 'warning' : 'neutral'"
+              variant="soft"
+              class="w-full justify-center"
+              :aria-pressed="newEnvSecret"
+              :aria-label="newEnvSecret ? 'Set as plain text' : 'Set as secret'"
+              @click="newEnvSecret = !newEnvSecret"
+            >
+              {{ newEnvSecret ? 'Secret' : 'Plain text' }}
+            </UButton>
+
+            <div class="grid grid-cols-2 gap-2 pt-2">
+              <UButton type="button" label="Cancel" variant="outline" color="neutral" block @click="cancelCreateEnv" />
+              <UButton type="submit" label="Create" icon="i-lucide-check" color="success" block :loading="saving" :disabled="!newEnvKey.trim()" />
+            </div>
+          </form>
+        </UCard>
+      </template>
+    </UModal>
 
     <UModal :open="!!envToDelete" @update:open="value => { if (!value) cancelDeleteEnv() }">
       <template #content>

@@ -8,11 +8,11 @@ const { subscribe } = useRealtime()
 const toast = useToast()
 
 const jobId = computed(() => route.params.id as string)
-const activeTab = ref('runs')
+const activeTab = ref('definition')
 const tabs = [
-  { id: 'runs', label: 'Runs', icon: 'i-lucide-history' },
-  { id: 'env', label: 'Env Vars', icon: 'i-lucide-key' },
   { id: 'definition', label: 'Definition', icon: 'i-lucide-file-code' },
+  { id: 'env', label: 'Env Vars', icon: 'i-lucide-key' },
+  { id: 'runs', label: 'Runs', icon: 'i-lucide-history' },
 ]
 
 const { data: job, refresh: refreshJob } = useAsyncData(`job_${jobId.value}`, () =>
