@@ -218,7 +218,7 @@ async function handlePurge(dirName: string) {
 
 <template>
   <div class="space-y-6">
-    <div class="flex items-center justify-between">
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       <div class="flex items-center gap-3">
         <h1 class="flex items-center gap-3 text-2xl font-bold text-gray-900 dark:text-wire-200">
           <div class="flex items-center justify-center w-9 h-9 rounded-lg bg-yellow-400/10">
@@ -231,9 +231,9 @@ async function handlePurge(dirName: string) {
           <span class="hidden sm:inline">Updating...</span>
         </div>
       </div>
-      <div v-if="!isViewer" class="flex items-center gap-2">
-        <UButton icon="i-lucide-package-plus" label="Import" variant="outline" @click="showImport = true" />
-        <UButton icon="i-lucide-plus" label="Add Stack" class="shadow-[0_0_16px_rgba(255,198,0,0.35)] hover:shadow-[0_0_24px_rgba(255,198,0,0.55)] transition-shadow" @click="openCreate()" />
+      <div v-if="!isViewer" class="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+        <UButton icon="i-lucide-plus" label="Add Stack" class="w-full justify-center shadow-[0_0_16px_rgba(255,198,0,0.35)] transition-shadow hover:shadow-[0_0_24px_rgba(255,198,0,0.55)] sm:w-auto" @click="openCreate()" />
+        <UButton icon="i-lucide-package-plus" label="Import" variant="outline" class="w-full justify-center sm:w-auto" @click="showImport = true" />
       </div>
     </div>
 

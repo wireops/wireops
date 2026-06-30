@@ -15,10 +15,9 @@ export function useKeyboard() {
     { key: 'G then W', description: 'Go to Stacks' },
     { key: 'G then R', description: 'Go to Repositories' },
     { key: 'G then K', description: 'Go to Repository Keys' },
-    { key: '1 / 2', description: 'Switch repository tabs (on Repositories page)' },
     { key: '/', description: 'Focus page search (on list pages)' },
-    { key: 'R', description: 'Refresh current repositories tab' },
-    { key: 'N', description: 'Create item on current repositories tab' },
+    { key: 'R', description: 'Refresh current list' },
+    { key: 'N', description: 'Create item on current list' },
     { key: '?', description: 'Show this help' },
   ]
 
@@ -109,7 +108,7 @@ export function useKeyboard() {
             break
           case 'k':
             event.preventDefault()
-            router.push('/repositories?tab=keys')
+            router.push('/secrets?tab=repository-keys')
             break
         }
       }

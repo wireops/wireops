@@ -140,7 +140,7 @@ onMounted(() => {
           <UButton
             v-if="canOperate"
             icon="i-lucide-plus"
-            label="Add Global Variable"
+            label="Add"
             size="xs"
             :disabled="availableVariables.length === 0"
             @click="showAddModal = true"
@@ -155,26 +155,29 @@ onMounted(() => {
           <UInput :model-value="variable.key" disabled class="font-mono opacity-60" />
           <UInput v-if="variable.secret" model-value="••••••••" disabled type="password" class="font-mono opacity-60" />
           <UInput v-else :model-value="variable.value" disabled class="font-mono opacity-60" />
-          <div class="flex h-8 w-8 items-center justify-center">
-            <UIcon
-              :name="variable.secret ? 'i-lucide-lock' : 'i-lucide-variable'"
-              class="h-4 w-4"
-              :class="variable.secret ? 'text-amber-400' : 'text-gray-400'"
-              :title="variable.secret ? 'Secret' : 'Plain text'"
+          <div class="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-2 sm:contents">
+            <div
+              class="flex h-8 w-full items-center justify-center rounded-md bg-gray-100 text-gray-500 sm:w-8 sm:bg-transparent dark:bg-carbon-800 dark:text-gray-400 sm:dark:bg-transparent"
+              :class="variable.secret ? 'bg-amber-400/15 text-amber-500 dark:bg-amber-400/10 dark:text-amber-400' : ''"
+            >
+              <UIcon
+                :name="variable.secret ? 'i-lucide-lock' : 'i-lucide-variable'"
+                class="h-4 w-4"
+                :title="variable.secret ? 'Secret' : 'Plain text'"
+              />
+            </div>
+            <UButton
+              icon="i-lucide-unlink"
+              variant="ghost"
+              color="warning"
+              size="xs"
+              class="h-8 w-full justify-center !bg-amber-500/10 p-0 !text-amber-600 hover:!bg-amber-500/15 sm:w-8 sm:!bg-transparent sm:!text-inherit sm:hover:!bg-transparent dark:!text-amber-400"
+              :disabled="!canOperate"
+              :loading="savingId === variable.id"
+              :aria-label="`Detach ${variable.key}`"
+              @click="openDetachModal(variable)"
             />
           </div>
-          <UButton
-            icon="i-lucide-unlink"
-            variant="ghost"
-            color="warning"
-            size="xs"
-            class="h-8 w-8 justify-center p-0"
-            :disabled="!canOperate"
-            :loading="savingId === variable.id"
-            :aria-label="`Detach ${variable.key}`"
-            @click="openDetachModal(variable)"
-          />
-          <div class="h-8 w-8" />
         </div>
       </div>
     </div>
@@ -202,21 +205,26 @@ onMounted(() => {
             <div v-if="filteredAvailableVariables.length" class="max-h-80 divide-y divide-gray-200 overflow-y-auto dark:divide-carbon-800">
               <div v-for="variable in filteredAvailableVariables" :key="variable.id" class="grid grid-cols-1 gap-2 py-3 sm:grid-cols-[minmax(0,1fr)_2rem_auto] sm:items-center">
                 <UInput :model-value="variable.key" disabled class="font-mono opacity-60" />
-                <div class="flex h-8 w-8 items-center justify-center">
-                  <UIcon
-                    :name="variable.secret ? 'i-lucide-lock' : 'i-lucide-variable'"
-                    class="h-4 w-4"
-                    :class="variable.secret ? 'text-amber-400' : 'text-gray-400'"
-                    :title="variable.secret ? 'Secret' : 'Plain text'"
+                <div class="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-2 sm:contents">
+                  <div
+                    class="flex h-8 w-full items-center justify-center rounded-md bg-gray-100 text-gray-500 sm:w-8 sm:bg-transparent dark:bg-carbon-800 dark:text-gray-400 sm:dark:bg-transparent"
+                    :class="variable.secret ? 'bg-amber-400/15 text-amber-500 dark:bg-amber-400/10 dark:text-amber-400' : ''"
+                  >
+                    <UIcon
+                      :name="variable.secret ? 'i-lucide-lock' : 'i-lucide-variable'"
+                      class="h-4 w-4"
+                      :title="variable.secret ? 'Secret' : 'Plain text'"
+                    />
+                  </div>
+                  <UButton
+                    icon="i-lucide-link"
+                    label="Attach"
+                    size="xs"
+                    class="h-8 w-full justify-center !bg-green-500/10 !text-green-600 hover:!bg-green-500/15 sm:w-auto sm:!bg-transparent sm:!text-inherit sm:hover:!bg-transparent dark:!text-green-400"
+                    :loading="savingId === variable.id"
+                    @click="attachGlobal(variable)"
                   />
                 </div>
-                <UButton
-                  icon="i-lucide-link"
-                  label="Attach"
-                  size="xs"
-                  :loading="savingId === variable.id"
-                  @click="attachGlobal(variable)"
-                />
               </div>
             </div>
             <p v-else class="py-6 text-center text-sm text-gray-500">No available global variables</p>
