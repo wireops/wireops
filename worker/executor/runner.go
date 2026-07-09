@@ -24,7 +24,7 @@ import (
 )
 
 // stackDir is the root directory under which per-stack compose work dirs are created.
-// Defaults to <os.TempDir()>/wireops and can be overridden via WORKER_STACK_DIR.
+// Defaults to $HOME/.wireops and can be overridden via WORKER_STACK_DIR.
 // The supplied path must be absolute and must not contain ".." segments;
 // invalid values are rejected with a warning and the default is used instead.
 var stackDir = func() string {
@@ -671,8 +671,24 @@ func prepareComposeFile(stackID, commandID, b64Content string) (string, string, 
 		return "", "", func() {}, fmt.Errorf("failed to write compose file: %w", err)
 	}
 
-	cleanup := func() { _ = os.RemoveAll(dir) }
+	log.Printf("[executor] compose workdir prepared stack=%s command=%s dir=%s bytes=%d", stackID, commandID, dir, len(content))
+
+	cleanup := func() {
+		if keepWorkerWorkDir() {
+			log.Printf("[executor] keeping compose workdir for debugging stack=%s command=%s dir=%s", stackID, commandID, dir)
+			return
+		}
+		if err := os.RemoveAll(dir); err != nil {
+			log.Printf("[executor] failed to clean compose workdir stack=%s command=%s dir=%s error=%v", stackID, commandID, dir, err)
+			return
+		}
+		log.Printf("[executor] cleaned compose workdir stack=%s command=%s dir=%s", stackID, commandID, dir)
+	}
 	return dir, filename, cleanup, nil
+}
+
+func keepWorkerWorkDir() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("WORKER_KEEP_WORKDIR")), "true")
 }
 
 // applyEnvFile writes or removes the .env file in workDir based on envFileB64.

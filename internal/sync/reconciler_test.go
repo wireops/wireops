@@ -1,6 +1,8 @@
 package sync
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -61,6 +63,74 @@ func TestQueuePendingReconcilePersistsRecordAndQueuedLog(t *testing.T) {
 	}
 }
 
+func TestLogNoopSyncPersistsNoopStatus(t *testing.T) {
+	app, stack := newReconcilerPhase1TestApp(t)
+	r := &Reconciler{app: app}
+
+	if err := r.logNoopSync(context.Background(), stack, stack.Id, "manual", "abc123", "No changes", "No changes detected."); err != nil {
+		t.Fatalf("logNoopSync failed: %v", err)
+	}
+
+	logs, err := app.FindAllRecords("sync_logs", dbx.HashExp{"stack": stack.Id})
+	if err != nil {
+		t.Fatalf("failed to query sync logs: %v", err)
+	}
+	if len(logs) != 1 {
+		t.Fatalf("sync logs = %d, want 1", len(logs))
+	}
+	if got := logs[0].GetString("status"); got != "noop" {
+		t.Fatalf("sync log status = %q, want noop", got)
+	}
+	if got := logs[0].GetString("output"); got != "No changes detected." {
+		t.Fatalf("sync log output = %q, want no-op message", got)
+	}
+}
+
+func TestIsTransientGitError(t *testing.T) {
+	cases := []error{
+		context.DeadlineExceeded,
+		errors.New("failed to list remote refs: ssh: handshake failed: read tcp 172.18.0.4:51034->4.228.31.150:22: read: connection timed out"),
+		errors.New("git fetch failed: ssh: unexpected packet in response to channel open: <nil>"),
+	}
+
+	for _, err := range cases {
+		if !isTransientGitError(err) {
+			t.Fatalf("expected %q to be treated as transient", err)
+		}
+	}
+
+	if isTransientGitError(errors.New("authentication required")) {
+		t.Fatal("authentication errors should not be treated as transient")
+	}
+}
+
+func TestForceRedeployStackAllowsNilNotifierOnEarlyFailure(t *testing.T) {
+	app, stack := newForceRedeployNilNotifierTestApp(t)
+	r := &Reconciler{app: app}
+
+	err := r.ForceRedeployStack(context.Background(), stack.Id, true, false, false)
+	if err == nil {
+		t.Fatal("ForceRedeployStack succeeded, want invalid compose_path error")
+	}
+	if !strings.Contains(err.Error(), "invalid compose_path") {
+		t.Fatalf("ForceRedeployStack error = %q, want invalid compose_path", err)
+	}
+
+	logs, err := app.FindAllRecords("sync_logs", dbx.HashExp{"stack": stack.Id})
+	if err != nil {
+		t.Fatalf("failed to query sync logs: %v", err)
+	}
+	if len(logs) != 1 {
+		t.Fatalf("sync logs = %d, want 1", len(logs))
+	}
+	if got := logs[0].GetString("trigger"); got != "redeploy" {
+		t.Fatalf("sync log trigger = %q, want redeploy", got)
+	}
+	if got := logs[0].GetString("status"); got != "error" {
+		t.Fatalf("sync log status = %q, want error", got)
+	}
+}
+
 func newReconcilerPhase1TestApp(t *testing.T) (*tests.TestApp, *core.Record) {
 	t.Helper()
 	app, err := tests.NewTestApp()
@@ -79,7 +149,7 @@ func newReconcilerPhase1TestApp(t *testing.T) (*tests.TestApp, *core.Record) {
 	syncLogs := core.NewBaseCollection("sync_logs")
 	syncLogs.Fields.Add(&core.RelationField{Name: "stack", CollectionId: stacks.Id, Required: true, MaxSelect: 1})
 	syncLogs.Fields.Add(&core.SelectField{Name: "trigger", Values: []string{"cron", "webhook", "manual", "redeploy", "rollback", "transfer", "queue"}})
-	syncLogs.Fields.Add(&core.SelectField{Name: "status", Values: []string{"running", "success", "error", "queued"}})
+	syncLogs.Fields.Add(&core.SelectField{Name: "status", Values: []string{"running", "success", "error", "queued", "noop"}})
 	syncLogs.Fields.Add(&core.TextField{Name: "commit_sha"})
 	syncLogs.Fields.Add(&core.TextField{Name: "commit_message"})
 	syncLogs.Fields.Add(&core.TextField{Name: "output"})
@@ -103,6 +173,61 @@ func newReconcilerPhase1TestApp(t *testing.T) (*tests.TestApp, *core.Record) {
 	if err := app.Save(stack); err != nil {
 		t.Fatalf("failed to create stack: %v", err)
 	}
+	return app, stack
+}
+
+func newForceRedeployNilNotifierTestApp(t *testing.T) (*tests.TestApp, *core.Record) {
+	t.Helper()
+	app, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatalf("failed to create test app: %v", err)
+	}
+	t.Cleanup(func() { app.Cleanup() })
+
+	repos := core.NewBaseCollection("repositories")
+	repos.Fields.Add(&core.TextField{Name: "name"})
+	repos.Fields.Add(&core.TextField{Name: "last_commit_sha"})
+	if err := app.Save(repos); err != nil {
+		t.Fatalf("failed to create repositories collection: %v", err)
+	}
+
+	stacks := core.NewBaseCollection("stacks")
+	stacks.Fields.Add(&core.TextField{Name: "name", Required: true})
+	stacks.Fields.Add(&core.RelationField{Name: "repository", CollectionId: repos.Id, Required: true, MaxSelect: 1})
+	stacks.Fields.Add(&core.TextField{Name: "compose_path"})
+	stacks.Fields.Add(&core.SelectField{Name: "status", Values: []string{"active", "syncing", "paused", "error", "pending"}})
+	if err := app.Save(stacks); err != nil {
+		t.Fatalf("failed to create stacks collection: %v", err)
+	}
+
+	syncLogs := core.NewBaseCollection("sync_logs")
+	syncLogs.Fields.Add(&core.RelationField{Name: "stack", CollectionId: stacks.Id, Required: true, MaxSelect: 1})
+	syncLogs.Fields.Add(&core.SelectField{Name: "trigger", Values: []string{"cron", "webhook", "manual", "redeploy", "rollback", "transfer", "queue"}})
+	syncLogs.Fields.Add(&core.SelectField{Name: "status", Values: []string{"running", "success", "error", "queued", "noop"}})
+	syncLogs.Fields.Add(&core.TextField{Name: "commit_sha"})
+	syncLogs.Fields.Add(&core.TextField{Name: "commit_message"})
+	syncLogs.Fields.Add(&core.TextField{Name: "output"})
+	syncLogs.Fields.Add(&core.NumberField{Name: "duration_ms"})
+	if err := app.Save(syncLogs); err != nil {
+		t.Fatalf("failed to create sync_logs collection: %v", err)
+	}
+
+	repo := core.NewRecord(repos)
+	repo.Set("name", "repo")
+	repo.Set("last_commit_sha", "abc123")
+	if err := app.Save(repo); err != nil {
+		t.Fatalf("failed to create repository: %v", err)
+	}
+
+	stack := core.NewRecord(stacks)
+	stack.Set("name", "stack")
+	stack.Set("repository", repo.Id)
+	stack.Set("compose_path", "../invalid")
+	stack.Set("status", "active")
+	if err := app.Save(stack); err != nil {
+		t.Fatalf("failed to create stack: %v", err)
+	}
+
 	return app, stack
 }
 

@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/wireops/wireops/internal/buildinfo"
 	"github.com/wireops/wireops/pkg/logger"
 	"github.com/wireops/wireops/worker/handlers"
 	"github.com/wireops/wireops/worker/telemetry"
@@ -60,14 +61,12 @@ func sanitizeProcessPATH() {
 	os.Setenv("PATH", safePath)
 }
 
-func cleanupLeftoverWorkdirs() {
-	stackDirVar := getStackDir()
+func cleanupLeftoverWorkdirs(stackDirVar string) {
 	stacksPath := filepath.Join(stackDirVar, "stacks")
 	if _, err := os.Stat(stacksPath); os.IsNotExist(err) {
 		return
 	}
 
-	log.Printf("[worker] using stack directory: %s (for security, ensure this path is backed by a tmpfs/in-memory filesystem)", stackDirVar)
 	log.Printf("[worker] checking for leftover work directories in %s...", stacksPath)
 
 	stackDirs, err := os.ReadDir(stacksPath)
@@ -106,8 +105,11 @@ func parseTags(raw string) []string {
 
 func Run() {
 	logger.InitLogger()
+	log.Printf("[worker] starting version=%s commit=%s build_date=%s", buildinfo.Version, buildinfo.Commit, buildinfo.BuildDate)
 	sanitizeProcessPATH()
-	cleanupLeftoverWorkdirs()
+	stackDir := getStackDir()
+	log.Printf("[worker] using stack directory: %s (for security, ensure this path is backed by a tmpfs/in-memory filesystem)", stackDir)
+	cleanupLeftoverWorkdirs(stackDir)
 	telemetry.InitWorkerInfo()
 
 	serverURL := os.Getenv("SERVER_URL")
@@ -175,8 +177,6 @@ func Run() {
 
 	tags := parseTags(os.Getenv("WORKER_TAGS"))
 	backoff := initialBackoff
-	stackDir := getStackDir()
-
 	for {
 		reason, connected := transport.RunSession(serverURL, workerToken, hostname, stackDir, tags, shutdownCtx)
 

@@ -227,7 +227,7 @@ func createSyncLogs(app core.App) error {
 	})
 	col.Fields.Add(&core.SelectField{
 		Name:   "status",
-		Values: []string{"running", "success", "error", "queued"},
+		Values: []string{"running", "success", "error", "queued", "noop"},
 	})
 	col.Fields.Add(&core.TextField{Name: "commit_sha"})
 	col.Fields.Add(&core.TextField{Name: "commit_message"})

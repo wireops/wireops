@@ -20,8 +20,6 @@ services:
     image: ghcr.io/wireops/worker:latest
     container_name: wireops-worker
     restart: unless-stopped
-    depends_on:
-      - wireops
     environment:
       - SERVER_URL=${SERVER_URL:-http://wireops:8443}
       - WORKER_TOKEN=${WORKER_TOKEN:-}
