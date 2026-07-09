@@ -92,6 +92,14 @@ func init() {
 			}
 		}
 
+		var newIndexes []string
+		for _, idx := range col.Indexes {
+			if idx != workerCommandsIdempotencyKeyIndexSQL {
+				newIndexes = append(newIndexes, idx)
+			}
+		}
+		col.Indexes = newIndexes
+
 		return app.Save(col)
 	})
 }

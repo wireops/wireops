@@ -62,6 +62,7 @@ func (r *Reconciler) waitForRunningJobs(ctx context.Context, stack *core.Record,
 	}
 
 	start := time.Now()
+	queryFailed := false
 	for {
 		select {
 		case <-ctx.Done():
@@ -72,6 +73,7 @@ func (r *Reconciler) waitForRunningJobs(ctx context.Context, stack *core.Record,
 		active, err := jobscheduler.ActiveJobRunsForRepository(r.app, repoID)
 		if err != nil {
 			log.Printf("[reconciler] wait_running_jobs: failed to query active jobs for repo %s: %v", repoID, err)
+			queryFailed = true
 			break
 		}
 		if len(active) == 0 {
@@ -88,7 +90,11 @@ func (r *Reconciler) waitForRunningJobs(ctx context.Context, stack *core.Record,
 	}
 
 	if waitLog != nil {
-		_ = r.updateSyncLog(waitLog.Id, "success", fmt.Sprintf("proceeded after waiting %s for running jobs to finish", time.Since(start).Round(time.Second)), time.Since(start).Milliseconds())
+		if queryFailed {
+			_ = r.updateSyncLog(waitLog.Id, "success", fmt.Sprintf("proceeded after %s: failed to query active jobs, continuing best-effort", time.Since(start).Round(time.Second)), time.Since(start).Milliseconds())
+		} else {
+			_ = r.updateSyncLog(waitLog.Id, "success", fmt.Sprintf("proceeded after waiting %s for running jobs to finish", time.Since(start).Round(time.Second)), time.Since(start).Milliseconds())
+		}
 	}
 	return nil
 }

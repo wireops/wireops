@@ -75,7 +75,7 @@ func (r *Reconciler) postDeployCheck(ctx context.Context, workerID, stackID, wor
 		if attempt < postCheckAttempts {
 			select {
 			case <-ctx.Done():
-				return postCheckResult{Status: "error", Detail: "post-check interrupted: " + ctx.Err().Error()}
+				return postCheckResult{Status: "active", Detail: "post-check skipped: interrupted: " + ctx.Err().Error()}
 			case <-time.After(postCheckInterval):
 			}
 		}

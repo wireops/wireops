@@ -30,6 +30,14 @@ var (
 	completedDurableCommands  sync.Map // commandID -> durableResultEntry
 	completedDurableMu        sync.Mutex
 	completedDurableRetention = 30 * time.Minute
+
+	// claimedDurableCommands atomically reserves a CommandID for the duration
+	// of execution, closing the race where two redelivered copies of the same
+	// durable command (e.g. via DispatchThrottled's async dispatch) both pass
+	// the "not running yet" check before either has stored into
+	// ActiveCommands. Cleared in finishDurableCommand once the result is
+	// cached, so a later genuine redelivery is still served from the cache.
+	claimedDurableCommands sync.Map // commandID -> struct{}
 )
 
 type durableResultEntry struct {
@@ -73,6 +81,11 @@ func beginDurableCommand(sender Sender, commandID, messageID string) bool {
 		completedDurableCommands.Delete(commandID)
 	}
 
+	if _, alreadyClaimed := claimedDurableCommands.LoadOrStore(commandID, struct{}{}); alreadyClaimed {
+		log.Printf("[worker] ignoring duplicate delivery of in-flight command %s", commandID)
+		return false
+	}
+
 	return true
 }
 
@@ -81,6 +94,7 @@ func beginDurableCommand(sender Sender, commandID, messageID string) bool {
 // sweeps expired cache entries.
 func finishDurableCommand(commandID string, result protocol.CommandResult) {
 	completedDurableCommands.Store(commandID, durableResultEntry{result: result, at: time.Now()})
+	claimedDurableCommands.Delete(commandID)
 
 	if completedDurableMu.TryLock() {
 		defer completedDurableMu.Unlock()

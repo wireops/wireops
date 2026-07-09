@@ -91,7 +91,10 @@ func (s *Service) LogCommandQueued(ctx context.Context, workerID, commandID, ide
 
 	var record *core.Record
 	records, err := s.app.FindAllRecords("worker_commands", dbx.HashExp{"command_id": commandID})
-	if err == nil && len(records) > 0 {
+	if err != nil {
+		return nil, fmt.Errorf("LogCommandQueued: find record failed: %w", err)
+	}
+	if len(records) > 0 {
 		record = records[0]
 	} else {
 		record = core.NewRecord(collection)
@@ -132,7 +135,10 @@ func (s *Service) LogCommandAck(messageID string) error {
 		return nil
 	}
 	records, err := s.app.FindAllRecords("worker_commands", dbx.HashExp{"message_id": messageID})
-	if err != nil || len(records) == 0 {
+	if err != nil {
+		return err
+	}
+	if len(records) == 0 {
 		return nil
 	}
 

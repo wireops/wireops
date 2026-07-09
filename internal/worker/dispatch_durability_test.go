@@ -25,6 +25,9 @@ func dialWorker(t *testing.T, httpServerURL, workerToken string) *websocket.Conn
 		body := ""
 		if resp != nil {
 			body = resp.Status
+			if resp.Body != nil {
+				resp.Body.Close()
+			}
 		}
 		t.Fatalf("failed to dial worker ws: %v (resp=%s)", err, body)
 	}
