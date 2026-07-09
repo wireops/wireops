@@ -18,6 +18,8 @@ const statusColor = computed(() => {
     case 'queued':
     case 'stalled':
       return 'warning'
+    case 'noop':
+      return 'neutral'
     case 'syncing':
       return 'primary'
     default:

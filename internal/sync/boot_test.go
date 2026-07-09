@@ -34,7 +34,7 @@ func TestRecoverOrphanState(t *testing.T) {
 	// Setup sync_logs collection
 	syncLogs := core.NewBaseCollection("sync_logs")
 	syncLogs.Fields.Add(&core.RelationField{Name: "stack", CollectionId: stacks.Id, Required: true, MaxSelect: 1})
-	syncLogs.Fields.Add(&core.SelectField{Name: "status", Values: []string{"running", "success", "error", "queued"}})
+	syncLogs.Fields.Add(&core.SelectField{Name: "status", Values: []string{"running", "success", "error", "queued", "noop"}})
 	syncLogs.Fields.Add(&core.TextField{Name: "output"})
 	syncLogs.Fields.Add(&core.NumberField{Name: "duration_ms"})
 	if err := app.Save(syncLogs); err != nil {

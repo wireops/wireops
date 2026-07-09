@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
@@ -85,6 +86,48 @@ func TestRunJobVolumePathTraversal(t *testing.T) {
 	}
 }
 
+func TestPrepareComposeFileCleansWorkDirByDefault(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldStackDir := stackDir
+	stackDir = tmpDir
+	defer func() { stackDir = oldStackDir }()
+	t.Setenv("WORKER_KEEP_WORKDIR", "")
+
+	composeB64 := base64.StdEncoding.EncodeToString([]byte("services:\n  app:\n    image: nginx\n"))
+	workDir, composeFile, cleanup, err := prepareComposeFile("stack-1", "cmd-1", composeB64)
+	if err != nil {
+		t.Fatalf("prepareComposeFile failed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(workDir, composeFile)); err != nil {
+		t.Fatalf("expected compose file to exist before cleanup: %v", err)
+	}
+
+	cleanup()
+
+	if _, err := os.Stat(workDir); !os.IsNotExist(err) {
+		t.Fatalf("expected workdir to be removed, got err=%v", err)
+	}
+}
+
+func TestPrepareComposeFileCanKeepWorkDirForDebugging(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldStackDir := stackDir
+	stackDir = tmpDir
+	defer func() { stackDir = oldStackDir }()
+	t.Setenv("WORKER_KEEP_WORKDIR", "true")
+
+	composeB64 := base64.StdEncoding.EncodeToString([]byte("services:\n  app:\n    image: nginx\n"))
+	workDir, composeFile, cleanup, err := prepareComposeFile("stack-1", "cmd-1", composeB64)
+	if err != nil {
+		t.Fatalf("prepareComposeFile failed: %v", err)
+	}
+
+	cleanup()
+
+	if _, err := os.Stat(filepath.Join(workDir, composeFile)); err != nil {
+		t.Fatalf("expected compose file to be kept after cleanup: %v", err)
+	}
+}
 
 func TestSafeEnv(t *testing.T) {
 	// Set a custom environment variable to verify preservation

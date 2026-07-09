@@ -1,6 +1,8 @@
 package sync
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -61,6 +63,47 @@ func TestQueuePendingReconcilePersistsRecordAndQueuedLog(t *testing.T) {
 	}
 }
 
+func TestLogNoopSyncPersistsNoopStatus(t *testing.T) {
+	app, stack := newReconcilerPhase1TestApp(t)
+	r := &Reconciler{app: app}
+
+	if err := r.logNoopSync(context.Background(), stack, stack.Id, "manual", "abc123", "No changes", "No changes detected."); err != nil {
+		t.Fatalf("logNoopSync failed: %v", err)
+	}
+
+	logs, err := app.FindAllRecords("sync_logs", dbx.HashExp{"stack": stack.Id})
+	if err != nil {
+		t.Fatalf("failed to query sync logs: %v", err)
+	}
+	if len(logs) != 1 {
+		t.Fatalf("sync logs = %d, want 1", len(logs))
+	}
+	if got := logs[0].GetString("status"); got != "noop" {
+		t.Fatalf("sync log status = %q, want noop", got)
+	}
+	if got := logs[0].GetString("output"); got != "No changes detected." {
+		t.Fatalf("sync log output = %q, want no-op message", got)
+	}
+}
+
+func TestIsTransientGitError(t *testing.T) {
+	cases := []error{
+		context.DeadlineExceeded,
+		errors.New("failed to list remote refs: ssh: handshake failed: read tcp 172.18.0.4:51034->4.228.31.150:22: read: connection timed out"),
+		errors.New("git fetch failed: ssh: unexpected packet in response to channel open: <nil>"),
+	}
+
+	for _, err := range cases {
+		if !isTransientGitError(err) {
+			t.Fatalf("expected %q to be treated as transient", err)
+		}
+	}
+
+	if isTransientGitError(errors.New("authentication required")) {
+		t.Fatal("authentication errors should not be treated as transient")
+	}
+}
+
 func newReconcilerPhase1TestApp(t *testing.T) (*tests.TestApp, *core.Record) {
 	t.Helper()
 	app, err := tests.NewTestApp()
@@ -79,7 +122,7 @@ func newReconcilerPhase1TestApp(t *testing.T) (*tests.TestApp, *core.Record) {
 	syncLogs := core.NewBaseCollection("sync_logs")
 	syncLogs.Fields.Add(&core.RelationField{Name: "stack", CollectionId: stacks.Id, Required: true, MaxSelect: 1})
 	syncLogs.Fields.Add(&core.SelectField{Name: "trigger", Values: []string{"cron", "webhook", "manual", "redeploy", "rollback", "transfer", "queue"}})
-	syncLogs.Fields.Add(&core.SelectField{Name: "status", Values: []string{"running", "success", "error", "queued"}})
+	syncLogs.Fields.Add(&core.SelectField{Name: "status", Values: []string{"running", "success", "error", "queued", "noop"}})
 	syncLogs.Fields.Add(&core.TextField{Name: "commit_sha"})
 	syncLogs.Fields.Add(&core.TextField{Name: "commit_message"})
 	syncLogs.Fields.Add(&core.TextField{Name: "output"})

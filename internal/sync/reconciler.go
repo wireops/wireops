@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -127,7 +128,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		log.Printf("[reconciler] repo dir missing for %s, will clone fresh", repoID)
 	}
 
-	gitRepo, err := gitpkg.CloneOrFetchContext(ctx, repoID, gitURL, branch, gitAuth, workspace)
+	gitRepo, err := r.cloneOrFetchWithRetry(ctx, repoID, gitURL, branch, gitAuth, workspace)
 	if err != nil {
 		errMsg := fmt.Sprintf("git operation failed for repo %s (%s): %v", repo.GetString("name"), gitURL, err)
 		r.logFailure(stackID, trigger, "", errMsg)
@@ -136,14 +137,14 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		return fmt.Errorf("git operation failed: %w", err)
 	}
 
-	remoteSHA, err := gitpkg.RemoteHeadSHA(gitRepo, branch, gitAuth)
+	remoteSHA, err := gitpkg.LocalHeadSHA(gitRepo)
 	if err != nil {
-		errMsg := fmt.Sprintf("failed to get remote SHA for branch %s: %v", branch, err)
+		errMsg := fmt.Sprintf("failed to get local SHA after fetching branch %s: %v", branch, err)
 		_ = r.logFailure(stackID, trigger, "", errMsg)
-		if saveErr := r.saveRecordStatus(stack, "stacks", prevStatus, "restore status after remote SHA failure"); saveErr != nil {
+		if saveErr := r.saveRecordStatus(stack, "stacks", prevStatus, "restore status after local SHA failure"); saveErr != nil {
 			return saveErr
 		}
-		return fmt.Errorf("failed to get remote SHA: %w", err)
+		return fmt.Errorf("failed to get local SHA: %w", err)
 	}
 
 	lastSHA := repo.GetString("last_commit_sha")
@@ -261,16 +262,23 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		return fmt.Errorf("%s", errMsg)
 	}
 
-	// If the renderer found no changes (same checksum → same version returned),
+	// If the renderer found no changes (same checksum -> same version returned),
 	// the compose file content is identical to what's already deployed. Skip the
 	// deploy regardless of whether the commit SHA changed — a new commit may have
 	// only touched other files in the repo (e.g. README, job.yaml, etc.).
 	// The compose checksum is the definitive signal, not the commit SHA.
-	if trigger == "cron" && !neverSynced &&
-		renderRes.Checksum == prevChecksum && renderRes.Version == prevVersion {
-		log.Printf("[reconciler] cron skip: compose unchanged for stack %s (checksum=%s)", stackID, renderRes.Checksum)
+	if !neverSynced && renderRes.Checksum == prevChecksum && renderRes.Version == prevVersion {
+		log.Printf("[reconciler] %s skip: compose unchanged for stack %s (checksum=%s)", trigger, stackID, renderRes.Checksum)
 		if err := r.saveRecordStatus(stack, "stacks", prevStatus, "restore status after unchanged compose skip"); err != nil {
 			return err
+		}
+		if trigger != "cron" {
+			output := fmt.Sprintf(
+				"No changes detected.\n\nRendered compose checksum: %s\nRevision: v%d\nDeployment skipped because the active stack already matches the desired compose state.",
+				renderRes.Checksum,
+				renderRes.Version,
+			)
+			return r.logNoopSync(ctx, stack, stackID, trigger, remoteSHA, commitMsg, output)
 		}
 		return nil
 	}
@@ -604,52 +612,7 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 		return fmt.Errorf("%s: %w", errMsg, err)
 	}
 
-	workDir, err := r.stackWorkDir(stack, repoID)
-	if err != nil {
-		errMsg := fmt.Sprintf("invalid compose_path: %v", err)
-		r.logFailure(stackID, "redeploy", "", errMsg)
-		r.markError(stack, "stacks")
-		return fmt.Errorf("%s", errMsg)
-	}
-	composeFile := stack.GetString("compose_file")
-	if composeFile == "" {
-		composeFile = "docker-compose.yml"
-	}
-
 	lastSHA := repo.GetString("last_commit_sha")
-	envVars, envErr := r.loadEnvVars(ctx, stackID)
-	if envErr != nil {
-		errMsg := fmt.Sprintf("failed to load env vars: %v", envErr)
-		r.logFailure(stackID, "redeploy", lastSHA, errMsg)
-		r.markError(stack, "stacks")
-		return fmt.Errorf("%s", errMsg)
-	}
-
-	workerID, workerFingerprint, err := r.resolveWorker(stack)
-	if err != nil {
-		errMsg := fmt.Sprintf("worker resolution failed: %v", err)
-		r.logFailure(stackID, "redeploy", lastSHA, errMsg)
-		r.markError(stack, "stacks")
-		return fmt.Errorf("%s", errMsg)
-	}
-
-	// Write .env to workDir so that compose config (called inside
-	// GenerateRevision) can resolve ${VAR} interpolations from the repo file.
-	if envWriteErr := WriteEnvFile(workDir, envVars); envWriteErr != nil {
-		log.Printf("[reconciler] warning: failed to write .env to repo dir for stack %s (redeploy): %v", stackID, envWriteErr)
-	}
-	if giErr := EnsureGitignoreHasEnv(workDir); giErr != nil {
-		log.Printf("[reconciler] warning: failed to update .gitignore for stack %s (redeploy): %v", stackID, giErr)
-	}
-
-	renderRes, err := r.renderer.GenerateRevision(ctx, stack, repo, workDir, composeFile, envVars, lastSHA, true, workerID, workerFingerprint)
-	if err != nil {
-		errMsg := fmt.Sprintf("failed to generate label revision on redeploy: %v", err)
-		r.logFailure(stackID, "redeploy", lastSHA, errMsg)
-		r.markError(stack, "stacks")
-		return fmt.Errorf("%s", errMsg)
-	}
-
 	syncLog, err := r.createSyncLog(stackID, "redeploy", lastSHA, "force redeploy")
 	if err != nil {
 		_ = r.markError(stack, "stacks")
@@ -664,7 +627,65 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 		CommitSHA: lastSHA,
 	})
 
+	failRedeploy := func(errMsg string, duration int64) error {
+		if err := r.updateSyncLog(syncLog.Id, "error", errMsg, duration); err != nil {
+			_ = r.markError(stack, "stacks")
+			return err
+		}
+		r.notifier.Dispatch(ctx, notify.Payload{
+			Event:      notify.SyncError,
+			StackID:    stackID,
+			StackName:  stack.GetString("name"),
+			SyncLogID:  syncLog.Id,
+			Trigger:    "redeploy",
+			CommitSHA:  lastSHA,
+			DurationMs: duration,
+			Error:      errMsg,
+		})
+		if err := r.markError(stack, "stacks"); err != nil {
+			return err
+		}
+		return fmt.Errorf("%s", errMsg)
+	}
+
 	start := time.Now()
+
+	workDir, err := r.stackWorkDir(stack, repoID)
+	if err != nil {
+		errMsg := fmt.Sprintf("invalid compose_path: %v", err)
+		return failRedeploy(errMsg, time.Since(start).Milliseconds())
+	}
+	composeFile := stack.GetString("compose_file")
+	if composeFile == "" {
+		composeFile = "docker-compose.yml"
+	}
+
+	envVars, envErr := r.loadEnvVars(ctx, stackID)
+	if envErr != nil {
+		errMsg := fmt.Sprintf("failed to load env vars: %v", envErr)
+		return failRedeploy(errMsg, time.Since(start).Milliseconds())
+	}
+
+	workerID, workerFingerprint, err := r.resolveWorker(stack)
+	if err != nil {
+		errMsg := fmt.Sprintf("worker resolution failed: %v", err)
+		return failRedeploy(errMsg, time.Since(start).Milliseconds())
+	}
+
+	// Write .env to workDir so that compose config (called inside
+	// GenerateRevision) can resolve ${VAR} interpolations from the repo file.
+	if envWriteErr := WriteEnvFile(workDir, envVars); envWriteErr != nil {
+		log.Printf("[reconciler] warning: failed to write .env to repo dir for stack %s (redeploy): %v", stackID, envWriteErr)
+	}
+	if giErr := EnsureGitignoreHasEnv(workDir); giErr != nil {
+		log.Printf("[reconciler] warning: failed to update .gitignore for stack %s (redeploy): %v", stackID, giErr)
+	}
+
+	renderRes, err := r.renderer.GenerateRevision(ctx, stack, repo, workDir, composeFile, envVars, lastSHA, true, workerID, workerFingerprint)
+	if err != nil {
+		errMsg := fmt.Sprintf("failed to generate label revision on redeploy: %v", err)
+		return failRedeploy(errMsg, time.Since(start).Milliseconds())
+	}
 
 	renderedFilePath := r.renderer.GetRevisionFilePath(stackID, renderRes.Version)
 	var output string
@@ -672,7 +693,7 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 
 	composeContent, err := r.readRenderedCompose(stack, stackID, "redeploy", lastSHA, renderedFilePath)
 	if err != nil {
-		return err
+		return failRedeploy(err.Error(), time.Since(start).Milliseconds())
 	}
 	var cmdID string
 	if syncLog != nil {
@@ -702,24 +723,7 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 
 	if runErr != nil {
 		errOutput := buildErrorOutput(output, runErr)
-		if err := r.updateSyncLog(syncLog.Id, "error", errOutput, duration); err != nil {
-			_ = r.markError(stack, "stacks")
-			return err
-		}
-		r.notifier.Dispatch(ctx, notify.Payload{
-			Event:      notify.SyncError,
-			StackID:    stackID,
-			StackName:  stack.GetString("name"),
-			SyncLogID:  syncLog.Id,
-			Trigger:    "redeploy",
-			CommitSHA:  lastSHA,
-			DurationMs: duration,
-			Error:      runErr.Error(),
-		})
-		if err := r.markError(stack, "stacks"); err != nil {
-			return err
-		}
-		return runErr
+		return failRedeploy(errOutput, duration)
 	}
 
 	stack.Set("last_synced_at", time.Now().UTC().Format(time.RFC3339))
@@ -1054,6 +1058,67 @@ func (r *Reconciler) loadCredential(repoID string) (*gitpkg.Credential, error) {
 	return gitpkg.LoadRepositoryCredential(r.app, repoID)
 }
 
+func (r *Reconciler) cloneOrFetchWithRetry(ctx context.Context, repoID, gitURL, branch string, auth transport.AuthMethod, workspace string) (*gogit.Repository, error) {
+	const maxAttempts = 3
+
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		repo, err := gitpkg.CloneOrFetchContext(ctx, repoID, gitURL, branch, auth, workspace)
+		if err == nil {
+			if attempt > 1 {
+				log.Printf("[reconciler] git operation recovered for repo %s on attempt %d", repoID, attempt)
+			}
+			return repo, nil
+		}
+		lastErr = err
+		if attempt == maxAttempts || !isTransientGitError(err) {
+			break
+		}
+
+		delay := time.Duration(attempt*attempt) * time.Second
+		log.Printf("[reconciler] transient git operation failure for repo %s on attempt %d/%d: %v; retrying in %s", repoID, attempt, maxAttempts, err, delay)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(delay):
+		}
+	}
+
+	return nil, lastErr
+}
+
+func isTransientGitError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+
+	msg := strings.ToLower(err.Error())
+	transientMarkers := []string{
+		"connection reset",
+		"connection timed out",
+		"context deadline exceeded",
+		"deadline exceeded",
+		"handshake failed",
+		"i/o timeout",
+		"network is unreachable",
+		"no route to host",
+		"temporary",
+		"timeout",
+		"timed out",
+		"unexpected packet",
+		"eof",
+	}
+	for _, marker := range transientMarkers {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 func (r *Reconciler) loadEnvVars(ctx context.Context, stackID string) ([]string, error) {
 	return envvars.LoadStack(ctx, r.app, r.secretsRegistry, stackID)
 }
@@ -1113,6 +1178,38 @@ func (r *Reconciler) updateSyncLog(id, status, output string, durationMs int64) 
 	}
 	return nil
 }
+
+func (r *Reconciler) logNoopSync(ctx context.Context, stack *core.Record, stackID, trigger, commitSHA, commitMsg, output string) error {
+	syncLog, err := r.createSyncLog(stackID, trigger, commitSHA, commitMsg)
+	if err != nil {
+		return fmt.Errorf("failed to create no-op sync log: %w", err)
+	}
+	if r.notifier != nil {
+		r.notifier.Dispatch(ctx, notify.Payload{
+			Event:     notify.SyncStarted,
+			StackID:   stackID,
+			StackName: stack.GetString("name"),
+			SyncLogID: syncLog.Id,
+			Trigger:   trigger,
+			CommitSHA: commitSHA,
+		})
+	}
+	if err := r.updateSyncLog(syncLog.Id, "noop", output, 0); err != nil {
+		return err
+	}
+	if r.notifier != nil {
+		r.notifier.Dispatch(ctx, notify.Payload{
+			Event:     notify.SyncDone,
+			StackID:   stackID,
+			StackName: stack.GetString("name"),
+			SyncLogID: syncLog.Id,
+			Trigger:   trigger,
+			CommitSHA: commitSHA,
+		})
+	}
+	return nil
+}
+
 func (r *Reconciler) saveRecord(rec *core.Record, collection, op string) error {
 	if err := r.app.Save(rec); err != nil {
 		return fmt.Errorf("%s persistence failed collection=%s record=%s status=%s: %w", op, collection, rec.Id, rec.GetString("status"), err)

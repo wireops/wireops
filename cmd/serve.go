@@ -334,7 +334,7 @@ func Execute() error {
 		routes.RegisterServiceAccountRoutes(se.Router, app)
 		routes.RegisterSSOGroupRoleRoutes(se.Router, app)
 
-		se.Router.GET("/{path...}", apis.Static(os.DirFS("./pb_public"), false))
+		se.Router.GET("/{path...}", apis.Static(os.DirFS("./pb_public"), true))
 
 		if err := wiresync.RecoverOrphanState(app); err != nil {
 			log.Printf("Warning: orphan state recovery error: %v", err)

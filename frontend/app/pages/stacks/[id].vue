@@ -328,9 +328,11 @@ async function handleForceRedeploy() {
   try {
     await forceRedeploy(stackId, forceOpts.value)
     showForceRedeploy.value = false
+    activeTab.value = 'logs'
     toast.add({ title: 'Force redeploy triggered', color: 'info' })
     forceOpts.value = { recreate_containers: true, recreate_volumes: false, recreate_networks: false }
-    setTimeout(() => { refreshStack(); servicesCard.value?.refresh() }, 5000)
+    refreshLogs()
+    setTimeout(() => { refreshStack(); refreshLogs(); servicesCard.value?.refresh() }, 5000)
   } catch (e: any) {
     toast.add({ title: e?.message || 'Force redeploy failed', color: 'error' })
   }
@@ -666,6 +668,15 @@ onMounted(() => {
               description="The worker is currently offline. This update has been placed in the deployment queue and will automatically proceed when the worker reconnects."
               icon="i-lucide-list-todo"
               color="warning"
+              variant="subtle"
+              class="mt-2"
+            />
+            <UAlert
+              v-else-if="log.status === 'noop'"
+              title="No Changes"
+              :description="log.output || 'The rendered compose file is already current, so no deployment was run.'"
+              icon="i-lucide-minus-circle"
+              color="neutral"
               variant="subtle"
               class="mt-2"
             />
