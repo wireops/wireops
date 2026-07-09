@@ -131,6 +131,33 @@ func TestForceRedeployStackAllowsNilNotifierOnEarlyFailure(t *testing.T) {
 	}
 }
 
+func TestForceRedeployStackEarlyFailureLeavesDeployedStateUntouched(t *testing.T) {
+	app, stack := newForceRedeployNilNotifierTestApp(t)
+	r := &Reconciler{app: app}
+
+	err := r.ForceRedeployStack(context.Background(), stack.Id, true, false, false)
+	if err == nil {
+		t.Fatal("ForceRedeployStack succeeded, want invalid compose_path error")
+	}
+
+	refreshed, err := app.FindRecordById("stacks", stack.Id)
+	if err != nil {
+		t.Fatalf("failed to reload stack: %v", err)
+	}
+	if got := refreshed.GetInt("deployed_version"); got != 0 {
+		t.Fatalf("deployed_version = %d, want 0 (unset) on early failure", got)
+	}
+	if got := refreshed.GetString("deployed_commit"); got != "" {
+		t.Fatalf("deployed_commit = %q, want empty on early failure", got)
+	}
+	if got := refreshed.GetString("deployed_checksum"); got != "" {
+		t.Fatalf("deployed_checksum = %q, want empty on early failure", got)
+	}
+	if got := refreshed.GetString("status"); got != "error" {
+		t.Fatalf("status = %q, want error", got)
+	}
+}
+
 func newReconcilerPhase1TestApp(t *testing.T) (*tests.TestApp, *core.Record) {
 	t.Helper()
 	app, err := tests.NewTestApp()
@@ -196,6 +223,10 @@ func newForceRedeployNilNotifierTestApp(t *testing.T) (*tests.TestApp, *core.Rec
 	stacks.Fields.Add(&core.RelationField{Name: "repository", CollectionId: repos.Id, Required: true, MaxSelect: 1})
 	stacks.Fields.Add(&core.TextField{Name: "compose_path"})
 	stacks.Fields.Add(&core.SelectField{Name: "status", Values: []string{"active", "syncing", "paused", "error", "pending"}})
+	stacks.Fields.Add(&core.NumberField{Name: "deployed_version"})
+	stacks.Fields.Add(&core.TextField{Name: "deployed_commit"})
+	stacks.Fields.Add(&core.TextField{Name: "deployed_checksum"})
+	stacks.Fields.Add(&core.DateField{Name: "deployed_at"})
 	if err := app.Save(stacks); err != nil {
 		t.Fatalf("failed to create stacks collection: %v", err)
 	}

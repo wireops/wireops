@@ -262,11 +262,18 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 		if err := validateAssignedWorker(e.Record); err != nil {
 			return err
 		}
+		if err := encryptField(e.Record, "webhook_secret", secretKey); err != nil {
+			return err
+		}
 		return e.Next()
 	})
 
 	app.OnRecordUpdate("stacks").BindFunc(func(e *core.RecordEvent) error {
 		if err := validateAssignedWorker(e.Record); err != nil {
+			return err
+		}
+		preserveMaskedFieldValue(e.Record, "webhook_secret")
+		if err := encryptField(e.Record, "webhook_secret", secretKey); err != nil {
 			return err
 		}
 		return e.Next()
@@ -337,6 +344,10 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 	})
 
 	app.OnRecordEnrich("stacks").BindFunc(func(e *core.RecordEnrichEvent) error {
+		if e.Record.GetString("webhook_secret") != "" {
+			e.Record.Set("webhook_secret", "••••••••")
+		}
+
 		var composeContent []byte
 
 		// Prefer rendered revision content stored in the record (especially for local stacks
@@ -979,6 +990,27 @@ func normalizeEnvVarKey(record *core.Record) error {
 	}
 	record.Set("key", key)
 	return nil
+}
+
+// preserveMaskedFieldValue restores field to its previously stored value when
+// the incoming value is blank or the masked placeholder, so clients that
+// round-trip the masked value (or omit the field) never overwrite it with
+// an empty/placeholder string. Unlike preserveMaskedSecretValue, this does
+// not require a "secret" boolean flag on the record.
+func preserveMaskedFieldValue(record *core.Record, field string) {
+	val := record.GetString(field)
+	if val != "" && val != "••••••••" {
+		return
+	}
+	original := record.Original()
+	if original == nil {
+		return
+	}
+	originalValue := original.GetString(field)
+	if originalValue == "" {
+		return
+	}
+	record.Set(field, originalValue)
 }
 
 func preserveMaskedSecretValue(record *core.Record, field string) {
