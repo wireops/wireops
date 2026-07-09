@@ -618,30 +618,34 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 		_ = r.markError(stack, "stacks")
 		return err
 	}
-	r.notifier.Dispatch(ctx, notify.Payload{
-		Event:     notify.SyncStarted,
-		StackID:   stackID,
-		StackName: stack.GetString("name"),
-		SyncLogID: syncLog.Id,
-		Trigger:   "redeploy",
-		CommitSHA: lastSHA,
-	})
+	if r.notifier != nil {
+		r.notifier.Dispatch(ctx, notify.Payload{
+			Event:     notify.SyncStarted,
+			StackID:   stackID,
+			StackName: stack.GetString("name"),
+			SyncLogID: syncLog.Id,
+			Trigger:   "redeploy",
+			CommitSHA: lastSHA,
+		})
+	}
 
 	failRedeploy := func(errMsg string, duration int64) error {
 		if err := r.updateSyncLog(syncLog.Id, "error", errMsg, duration); err != nil {
 			_ = r.markError(stack, "stacks")
 			return err
 		}
-		r.notifier.Dispatch(ctx, notify.Payload{
-			Event:      notify.SyncError,
-			StackID:    stackID,
-			StackName:  stack.GetString("name"),
-			SyncLogID:  syncLog.Id,
-			Trigger:    "redeploy",
-			CommitSHA:  lastSHA,
-			DurationMs: duration,
-			Error:      errMsg,
-		})
+		if r.notifier != nil {
+			r.notifier.Dispatch(ctx, notify.Payload{
+				Event:      notify.SyncError,
+				StackID:    stackID,
+				StackName:  stack.GetString("name"),
+				SyncLogID:  syncLog.Id,
+				Trigger:    "redeploy",
+				CommitSHA:  lastSHA,
+				DurationMs: duration,
+				Error:      errMsg,
+			})
+		}
 		if err := r.markError(stack, "stacks"); err != nil {
 			return err
 		}
@@ -736,15 +740,17 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 		_ = r.markError(stack, "stacks")
 		return err
 	}
-	r.notifier.Dispatch(ctx, notify.Payload{
-		Event:      notify.SyncDone,
-		StackID:    stackID,
-		StackName:  stack.GetString("name"),
-		SyncLogID:  syncLog.Id,
-		Trigger:    "redeploy",
-		CommitSHA:  lastSHA,
-		DurationMs: duration,
-	})
+	if r.notifier != nil {
+		r.notifier.Dispatch(ctx, notify.Payload{
+			Event:      notify.SyncDone,
+			StackID:    stackID,
+			StackName:  stack.GetString("name"),
+			SyncLogID:  syncLog.Id,
+			Trigger:    "redeploy",
+			CommitSHA:  lastSHA,
+			DurationMs: duration,
+		})
+	}
 
 	return nil
 }
