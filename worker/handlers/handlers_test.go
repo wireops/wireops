@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -11,8 +12,9 @@ import (
 )
 
 type MockSender struct {
-	mu      sync.Mutex
-	results []protocol.CommandResult
+	mu        sync.Mutex
+	results   []protocol.CommandResult
+	envelopes []protocol.Envelope
 }
 
 func (m *MockSender) SendResult(res protocol.CommandResult) {
@@ -20,7 +22,11 @@ func (m *MockSender) SendResult(res protocol.CommandResult) {
 	defer m.mu.Unlock()
 	m.results = append(m.results, res)
 }
-func (m *MockSender) SendEnvelope(env protocol.Envelope)                  {}
+func (m *MockSender) SendEnvelope(env protocol.Envelope) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.envelopes = append(m.envelopes, env)
+}
 func (m *MockSender) ReportJobCompleted(msg protocol.JobCompletedMessage) {}
 func (m *MockSender) QueuedEnvelopesLen() int                             { return 0 }
 func (m *MockSender) QueuedJobsLen() int                                  { return 0 }
@@ -30,6 +36,14 @@ func (m *MockSender) Results() []protocol.CommandResult {
 	defer m.mu.Unlock()
 	out := make([]protocol.CommandResult, len(m.results))
 	copy(out, m.results)
+	return out
+}
+
+func (m *MockSender) Envelopes() []protocol.Envelope {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]protocol.Envelope, len(m.envelopes))
+	copy(out, m.envelopes)
 	return out
 }
 
@@ -262,3 +276,112 @@ func TestInitSemaphoresPanicsOnInvalidInteractive(t *testing.T) {
 	InitSemaphores(1, 1, 0, 1)
 }
 
+func TestBeginDurableCommandSendsAckWhenMessageIDPresent(t *testing.T) {
+	sender := &MockSender{}
+
+	proceed := beginDurableCommand(sender, "cmd-ack-1", "msg-ack-1")
+	if !proceed {
+		t.Fatal("expected first delivery to proceed")
+	}
+
+	envelopes := sender.Envelopes()
+	if len(envelopes) != 1 {
+		t.Fatalf("expected 1 ack envelope, got %d", len(envelopes))
+	}
+	if envelopes[0].Type != protocol.MsgAck {
+		t.Fatalf("expected MsgAck envelope, got %v", envelopes[0].Type)
+	}
+	ack, ok := envelopes[0].Payload.(protocol.AckMessage)
+	if !ok || ack.MessageID != "msg-ack-1" {
+		t.Fatalf("expected ack payload with message_id=msg-ack-1, got %+v", envelopes[0].Payload)
+	}
+}
+
+func TestBeginDurableCommandNoAckWithoutMessageID(t *testing.T) {
+	sender := &MockSender{}
+
+	if !beginDurableCommand(sender, "cmd-noack-1", "") {
+		t.Fatal("expected proceed=true")
+	}
+	if len(sender.Envelopes()) != 0 {
+		t.Fatalf("expected no ack envelope when messageID is empty, got %d", len(sender.Envelopes()))
+	}
+}
+
+func TestBeginDurableCommandSkipsWhileInFlight(t *testing.T) {
+	sender := &MockSender{}
+	commandID := "cmd-inflight-1"
+
+	_, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ActiveCommands.Store(commandID, cancel)
+	defer ActiveCommands.Delete(commandID)
+
+	if beginDurableCommand(sender, commandID, "msg-1") {
+		t.Fatal("expected redelivery of an in-flight command to be rejected")
+	}
+	// The in-flight duplicate should still be acked at the transport level...
+	if len(sender.Envelopes()) != 1 {
+		t.Fatalf("expected ack envelope even for duplicate, got %d", len(sender.Envelopes()))
+	}
+	// ...but must not produce a second CommandResult (no re-execution happened).
+	if len(sender.Results()) != 0 {
+		t.Fatalf("expected no result echoed for in-flight duplicate, got %d", len(sender.Results()))
+	}
+}
+
+func TestBeginDurableCommandReplaysCachedResultAfterFinish(t *testing.T) {
+	sender := &MockSender{}
+	commandID := "cmd-finished-1"
+
+	finishDurableCommand(commandID, protocol.CommandResult{CommandID: commandID, Output: "deployed"})
+	defer completedDurableCommands.Delete(commandID)
+
+	if beginDurableCommand(sender, commandID, "msg-2") {
+		t.Fatal("expected redelivery of an already-finished command to be rejected")
+	}
+
+	results := sender.Results()
+	if len(results) != 1 || results[0].Output != "deployed" {
+		t.Fatalf("expected cached result to be replayed, got %+v", results)
+	}
+}
+
+func TestBeginDurableCommandExpiresCachedResult(t *testing.T) {
+	sender := &MockSender{}
+	commandID := "cmd-expired-1"
+
+	completedDurableCommands.Store(commandID, durableResultEntry{
+		result: protocol.CommandResult{CommandID: commandID, Output: "stale"},
+		at:     time.Now().Add(-2 * completedDurableRetention),
+	})
+	defer completedDurableCommands.Delete(commandID)
+
+	if !beginDurableCommand(sender, commandID, "msg-3") {
+		t.Fatal("expected expired cache entry to allow re-execution")
+	}
+	if len(sender.Results()) != 0 {
+		t.Fatalf("expected no cached result replayed once expired, got %d", len(sender.Results()))
+	}
+}
+
+func TestHandleDeployDedupesRedeliveredDuplicate(t *testing.T) {
+	InitSemaphores(2, 2, 2, 2)
+	sender := &MockSender{}
+	commandID := "cmd-deploy-dup-1"
+
+	finishDurableCommand(commandID, protocol.CommandResult{CommandID: commandID, Output: "already-deployed"})
+	defer completedDurableCommands.Delete(commandID)
+
+	HandleDeploy(sender, map[string]interface{}{
+		"command_id":       commandID,
+		"message_id":       "msg-dup-1",
+		"stack_id":         "stack-1",
+		"compose_file_b64": "",
+	})
+
+	results := sender.Results()
+	if len(results) != 1 || results[0].Output != "already-deployed" {
+		t.Fatalf("expected cached deploy result to be replayed instead of re-executing, got %+v", results)
+	}
+}
