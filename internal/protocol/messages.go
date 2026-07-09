@@ -7,15 +7,15 @@ type MessageType string
 
 const (
 	// Server → Worker commands
-	MsgDeploy       MessageType = "deploy"
-	MsgRedeploy     MessageType = "redeploy"
-	MsgTeardown     MessageType = "teardown"
-	MsgProbe        MessageType = "probe"
-	MsgInspect      MessageType = "inspect"
-	MsgGetStatus    MessageType = "get_status"
-	MsgGetResources MessageType = "get_resources"
-	MsgStopContainer    MessageType = "stop_container"
-	MsgRestartContainer MessageType = "restart_container"
+	MsgDeploy            MessageType = "deploy"
+	MsgRedeploy          MessageType = "redeploy"
+	MsgTeardown          MessageType = "teardown"
+	MsgProbe             MessageType = "probe"
+	MsgInspect           MessageType = "inspect"
+	MsgGetStatus         MessageType = "get_status"
+	MsgGetResources      MessageType = "get_resources"
+	MsgStopContainer     MessageType = "stop_container"
+	MsgRestartContainer  MessageType = "restart_container"
 	MsgGetContainerStats MessageType = "get_container_stats"
 	MsgGetContainerLogs  MessageType = "get_container_logs"
 
@@ -47,8 +47,14 @@ type Envelope struct {
 
 // DeployCommand is sent from the server to a worker to run `docker compose up`.
 type DeployCommand struct {
-	// CommandID is a unique identifier for correlating the response.
+	// CommandID is a unique identifier for correlating the response. It stays
+	// stable across redelivery attempts of the same logical command and is
+	// used by the worker to detect and skip duplicate execution.
 	CommandID string `json:"command_id"`
+
+	// MessageID identifies this specific delivery attempt of the envelope
+	// (changes on every resend/redispatch) and is used for transport-level ack.
+	MessageID string `json:"message_id,omitempty"`
 
 	// StackID, CommitSHA, and Trigger are informational — used for worker-side logging.
 	StackID    string `json:"stack_id"`
@@ -78,8 +84,12 @@ type RedeployCommand struct {
 // TeardownCommand is sent from the server to a worker to run `docker compose down`.
 // The worker uses the rendered compose file so docker compose knows which containers to stop.
 type TeardownCommand struct {
-	// CommandID is a unique identifier for correlating the response.
+	// CommandID is a unique identifier for correlating the response. Stable
+	// across redelivery attempts of the same logical command.
 	CommandID string `json:"command_id"`
+
+	// MessageID identifies this specific delivery attempt of the envelope.
+	MessageID string `json:"message_id,omitempty"`
 
 	// StackID is informational, used for worker-side logging.
 	StackID string `json:"stack_id"`
@@ -245,8 +255,12 @@ type ReadFileCommand struct {
 // docker run job. The worker starts the container asynchronously and immediately
 // acks via CommandResult; the final outcome arrives as a JobCompletedMessage.
 type RunJobCommand struct {
-	// CommandID correlates the immediate ack response.
+	// CommandID correlates the immediate ack response. Stable across
+	// redelivery attempts of the same logical command.
 	CommandID string `json:"command_id"`
+
+	// MessageID identifies this specific delivery attempt of the envelope.
+	MessageID string `json:"message_id,omitempty"`
 
 	// DispatchedAt is the Unix millisecond timestamp when the server sent this command.
 	DispatchedAt int64 `json:"dispatched_at,omitempty"`
@@ -386,7 +400,7 @@ type HeartbeatPayload struct {
 }
 
 type WorkerInfo struct {
-	Version       string `json:"version,omitempty"`
+	Version        string `json:"version,omitempty"`
 	DockerVersion  string `json:"docker_version"`
 	ComposeVersion string `json:"compose_version"`
 	OS             string `json:"os"`

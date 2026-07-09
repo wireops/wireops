@@ -21,7 +21,92 @@ var (
 	InteractiveSemaphore chan struct{}
 	MaxQueueDepth        int
 	acceptingWork        atomic.Bool
+
+	// completedDurableCommands caches the final CommandResult of durable
+	// (deploy/redeploy/teardown) commands for a while so a redelivered copy
+	// of an already-finished command (e.g. resent after the server missed
+	// the original ack/result due to a reconnect) gets the cached outcome
+	// echoed back instead of re-running `docker compose` a second time.
+	completedDurableCommands  sync.Map // commandID -> durableResultEntry
+	completedDurableMu        sync.Mutex
+	completedDurableRetention = 30 * time.Minute
+
+	// claimedDurableCommands atomically reserves a CommandID for the duration
+	// of execution, closing the race where two redelivered copies of the same
+	// durable command (e.g. via DispatchThrottled's async dispatch) both pass
+	// the "not running yet" check before either has stored into
+	// ActiveCommands. Cleared in finishDurableCommand once the result is
+	// cached, so a later genuine redelivery is still served from the cache.
+	claimedDurableCommands sync.Map // commandID -> struct{}
 )
+
+type durableResultEntry struct {
+	result protocol.CommandResult
+	at     time.Time
+}
+
+// ackDurableCommand sends the transport-level receipt ack for a durable
+// command (if it carries a MessageID) before execution starts, so the
+// server can tell "worker got it" apart from "worker finished it".
+func ackDurableCommand(sender Sender, messageID string) {
+	if messageID == "" {
+		return
+	}
+	sender.SendEnvelope(protocol.Envelope{
+		Type:    protocol.MsgAck,
+		Payload: protocol.AckMessage{MessageID: messageID},
+	})
+}
+
+// beginDurableCommand acks receipt of a durable command and reports whether
+// the caller should proceed with execution. It returns false when the same
+// CommandID is already running or has already finished, in which case it
+// re-sends the appropriate response itself so a redelivered command never
+// re-executes a destructive operation twice.
+func beginDurableCommand(sender Sender, commandID, messageID string) bool {
+	ackDurableCommand(sender, messageID)
+
+	if _, running := ActiveCommands.Load(commandID); running {
+		log.Printf("[worker] ignoring duplicate delivery of in-flight command %s", commandID)
+		return false
+	}
+
+	if cached, ok := completedDurableCommands.Load(commandID); ok {
+		entry := cached.(durableResultEntry)
+		if time.Since(entry.at) <= completedDurableRetention {
+			log.Printf("[worker] replaying cached result for duplicate command %s", commandID)
+			sender.SendResult(entry.result)
+			return false
+		}
+		completedDurableCommands.Delete(commandID)
+	}
+
+	if _, alreadyClaimed := claimedDurableCommands.LoadOrStore(commandID, struct{}{}); alreadyClaimed {
+		log.Printf("[worker] ignoring duplicate delivery of in-flight command %s", commandID)
+		return false
+	}
+
+	return true
+}
+
+// finishDurableCommand caches the result of a durable command so a later
+// duplicate delivery can be answered without re-executing, and opportunistically
+// sweeps expired cache entries.
+func finishDurableCommand(commandID string, result protocol.CommandResult) {
+	completedDurableCommands.Store(commandID, durableResultEntry{result: result, at: time.Now()})
+	claimedDurableCommands.Delete(commandID)
+
+	if completedDurableMu.TryLock() {
+		defer completedDurableMu.Unlock()
+		now := time.Now()
+		completedDurableCommands.Range(func(k, v any) bool {
+			if now.Sub(v.(durableResultEntry).at) > completedDurableRetention {
+				completedDurableCommands.Delete(k)
+			}
+			return true
+		})
+	}
+}
 
 type Sender interface {
 	SendResult(res protocol.CommandResult)
@@ -103,6 +188,9 @@ func HandleDeploy(sender Sender, payload interface{}) {
 	if !ok {
 		return
 	}
+	if !beginDurableCommand(sender, cmd.CommandID, cmd.MessageID) {
+		return
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	ActiveCommands.Store(cmd.CommandID, cancel)
 	defer func() {
@@ -121,6 +209,7 @@ func HandleDeploy(sender Sender, payload interface{}) {
 		atomic.AddUint64(&metrics.TasksSuccess, 1)
 	}
 
+	finishDurableCommand(cmd.CommandID, result)
 	sender.SendResult(result)
 }
 
@@ -129,11 +218,15 @@ func HandleRedeploy(sender Sender, payload interface{}) {
 	if !ok {
 		return
 	}
+	commandID := cmd.DeployCommand.CommandID
+	if !beginDurableCommand(sender, commandID, cmd.MessageID) {
+		return
+	}
 	ctx, cancel := context.WithCancel(context.Background())
-	ActiveCommands.Store(cmd.DeployCommand.CommandID, cancel)
+	ActiveCommands.Store(commandID, cancel)
 	defer func() {
 		cancel()
-		ActiveCommands.Delete(cmd.DeployCommand.CommandID)
+		ActiveCommands.Delete(commandID)
 	}()
 	start := time.Now()
 	result := executor.Redeploy(ctx, cmd)
@@ -147,12 +240,16 @@ func HandleRedeploy(sender Sender, payload interface{}) {
 		atomic.AddUint64(&metrics.TasksSuccess, 1)
 	}
 
+	finishDurableCommand(commandID, result)
 	sender.SendResult(result)
 }
 
 func HandleTeardown(sender Sender, payload interface{}) {
 	cmd, ok := unmarshalPayloadOrReply[protocol.TeardownCommand](sender, payload, "")
 	if !ok {
+		return
+	}
+	if !beginDurableCommand(sender, cmd.CommandID, cmd.MessageID) {
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -173,6 +270,7 @@ func HandleTeardown(sender Sender, payload interface{}) {
 		atomic.AddUint64(&metrics.TasksSuccess, 1)
 	}
 
+	finishDurableCommand(cmd.CommandID, result)
 	sender.SendResult(result)
 }
 
@@ -365,6 +463,27 @@ func HandleRunJob(sender Sender, payload interface{}) {
 		return
 	}
 
+	ackDurableCommand(sender, cmd.MessageID)
+
+	if cached, ok := completedDurableCommands.Load(cmd.CommandID); ok {
+		entry := cached.(durableResultEntry)
+		if time.Since(entry.at) <= completedDurableRetention {
+			log.Printf("[worker] replaying cached accept result for duplicate run_job command %s", cmd.CommandID)
+			sender.SendResult(entry.result)
+			return
+		}
+		completedDurableCommands.Delete(cmd.CommandID)
+	}
+
+	if _, running := ActiveJobs.Load(cmd.JobRunID); running {
+		// Job container is already running: this is a redelivered copy of a
+		// command still in flight (e.g. resent after a reconnect). Re-ack the
+		// original "queued" acceptance instead of starting a second container.
+		log.Printf("[worker] job %s already running, re-acking duplicate run_job command %s", cmd.JobRunID, cmd.CommandID)
+		sender.SendResult(protocol.CommandResult{CommandID: cmd.CommandID, Output: "queued"})
+		return
+	}
+
 	receivedAt := time.Now()
 
 	accepted := TryScheduleThrottled(HeavySemaphore, protocol.MsgRunJob, func() {
@@ -412,7 +531,9 @@ func HandleRunJob(sender Sender, payload interface{}) {
 	}
 
 	// Immediate acknowledgment that the job was accepted and queued.
-	sender.SendResult(protocol.CommandResult{CommandID: cmd.CommandID, Output: "queued"})
+	acceptResult := protocol.CommandResult{CommandID: cmd.CommandID, Output: "queued"}
+	finishDurableCommand(cmd.CommandID, acceptResult)
+	sender.SendResult(acceptResult)
 }
 
 func HandleKillJob(sender Sender, payload interface{}) {

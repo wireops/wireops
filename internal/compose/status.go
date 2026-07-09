@@ -22,6 +22,20 @@ type ServiceStatus struct {
 	ContainerName string
 	Status        string
 	Labels        map[string]string
+
+	// Health is the Docker healthcheck status ("healthy", "unhealthy",
+	// "starting") when the container defines a healthcheck, or "none" when
+	// it doesn't. Populated via a per-container inspect since the list API
+	// doesn't expose structured health.
+	Health string
+
+	// RestartCount is the number of times Docker has restarted this
+	// container (visible via `docker inspect`), used to detect restart loops.
+	RestartCount int
+
+	// StartedAt is the RFC3339 timestamp of the container's last start,
+	// used alongside RestartCount to judge whether restarts are recent.
+	StartedAt string
 }
 
 type ContainerStats struct {
@@ -56,16 +70,39 @@ func GetStackStatus(ctx context.Context, cli *dockerclient.Client, projectName s
 			cID = cID[:12]
 		}
 
+		health, restartCount, startedAt := inspectHealthAndRestarts(ctx, cli, c.ID)
+
 		statuses = append(statuses, ServiceStatus{
 			ServiceName:   serviceName,
 			ContainerID:   cID,
 			ContainerName: name,
 			Status:        mapStatus(c.State),
 			Labels:        filterIntegrationLabels(c.Labels),
+			Health:        health,
+			RestartCount:  restartCount,
+			StartedAt:     startedAt,
 		})
 	}
 
 	return statuses, nil
+}
+
+// inspectHealthAndRestarts reads the structured healthcheck status and
+// restart count for a single container. Errors are swallowed (returning
+// zero values) since this augments best-effort status reporting and must
+// not fail the whole status listing if one container disappears mid-inspect.
+func inspectHealthAndRestarts(ctx context.Context, cli *dockerclient.Client, containerID string) (health string, restartCount int, startedAt string) {
+	inspect, err := cli.ContainerInspect(ctx, containerID)
+	if err != nil || inspect.State == nil {
+		return "none", 0, ""
+	}
+
+	health = "none"
+	if inspect.State.Health != nil {
+		health = inspect.State.Health.Status
+	}
+
+	return health, inspect.RestartCount, inspect.State.StartedAt
 }
 
 func GetContainerStats(ctx context.Context, cli *dockerclient.Client, containerID string) (*ContainerStats, error) {

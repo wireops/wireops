@@ -81,3 +81,20 @@ func IsComposeFile(data []byte) bool {
 	}
 	return len(doc.Services) > 0
 }
+
+// ExpectedServiceNames extracts the top-level service names from a rendered
+// compose file, used by post-deploy checks to know which containers should
+// exist after `docker compose up`.
+func ExpectedServiceNames(data []byte) ([]string, error) {
+	var doc struct {
+		Services map[string]any `yaml:"services"`
+	}
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, fmt.Errorf("failed to parse compose services: %w", err)
+	}
+	names := make([]string, 0, len(doc.Services))
+	for name := range doc.Services {
+		names = append(names, name)
+	}
+	return names, nil
+}

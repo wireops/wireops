@@ -56,6 +56,29 @@ func ensureWorkerCollections(t *testing.T, app core.App) {
 			t.Fatalf("failed to create worker_tokens collection: %v", err)
 		}
 	}
+
+	if _, err := app.FindCollectionByNameOrId("worker_commands"); err != nil {
+		col := core.NewBaseCollection("worker_commands")
+		col.Fields.Add(&core.TextField{Name: "worker"})
+		col.Fields.Add(&core.TextField{Name: "command_id", Required: true})
+		col.Fields.Add(&core.TextField{Name: "command_type"})
+		col.Fields.Add(&core.TextField{Name: "status"})
+		col.Fields.Add(&core.TextField{Name: "message_id"})
+		col.Fields.Add(&core.TextField{Name: "idempotency_key"})
+		col.Fields.Add(&core.NumberField{Name: "attempt_count"})
+		col.Fields.Add(&core.DateField{Name: "next_attempt_at"})
+		col.Fields.Add(&core.JSONField{Name: "payload"})
+		col.Fields.Add(&core.JSONField{Name: "result"})
+		col.Fields.Add(&core.NumberField{Name: "duration_ms"})
+		col.Fields.Add(&core.DateField{Name: "expires_at"})
+		col.Fields.Add(&core.TextField{Name: "created_by"})
+		col.Fields.Add(&core.AutodateField{Name: "created", OnCreate: true})
+		col.Fields.Add(&core.AutodateField{Name: "updated", OnCreate: true, OnUpdate: true})
+		col.Indexes = append(col.Indexes, "CREATE UNIQUE INDEX IF NOT EXISTS idx_worker_commands_command_id_test ON worker_commands (command_id)")
+		if err := app.Save(col); err != nil {
+			t.Fatalf("failed to create worker_commands collection: %v", err)
+		}
+	}
 }
 
 func TestIssueTokenCreatesStagingRecord(t *testing.T) {

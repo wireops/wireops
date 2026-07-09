@@ -2,7 +2,9 @@ package worker
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,9 +22,60 @@ import (
 	"github.com/wireops/wireops/pkg/logger"
 )
 
-// pendingResult holds the channel to send a CommandResult back to the waiting caller.
+// newDispatchMessageID generates a unique identifier for a single delivery
+// attempt of a server→worker command envelope.
+func newDispatchMessageID() string {
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return fmt.Sprintf("dmsg-%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(buf)
+}
+
+// withDispatchMessageID returns a copy of cmd with its MessageID field set,
+// for command types that participate in the durable server→worker queue
+// (deploy, redeploy, teardown, run_job). Other command types are returned
+// unchanged since they are not redelivered across reconnects.
+func withDispatchMessageID(cmd interface{}, messageID string) interface{} {
+	switch v := cmd.(type) {
+	case protocol.DeployCommand:
+		v.MessageID = messageID
+		return v
+	case protocol.RedeployCommand:
+		v.MessageID = messageID
+		return v
+	case protocol.TeardownCommand:
+		v.MessageID = messageID
+		return v
+	case protocol.RunJobCommand:
+		v.MessageID = messageID
+		return v
+	default:
+		return cmd
+	}
+}
+
+// isDurableCommand reports whether msgType participates in the durable
+// server→worker queue: persisted before send, redispatched verbatim if the
+// worker reconnects before acking, and deduped by CommandID on the worker.
+func isDurableCommand(msgType protocol.MessageType) bool {
+	switch msgType {
+	case protocol.MsgDeploy, protocol.MsgRedeploy, protocol.MsgTeardown, protocol.MsgRunJob:
+		return true
+	default:
+		return false
+	}
+}
+
+// pendingResult holds the channel to send a CommandResult back to the waiting
+// caller, plus enough of the original envelope to resend it verbatim if the
+// worker reconnects before the result arrives.
 type pendingResult struct {
-	ch chan protocol.CommandResult
+	ch        chan protocol.CommandResult
+	workerID  string
+	msgType   protocol.MessageType
+	commandID string
+	envelope  func(messageID string) protocol.Envelope
 }
 
 // WorkerServer handles authenticated connections from remote workers.
@@ -33,12 +86,12 @@ type WorkerServer struct {
 	upgrader  websocket.Upgrader
 
 	// connMu protects connections, connWriteMu, pending, and workerTags maps.
-	connMu      sync.RWMutex
-	connections map[string]*websocket.Conn // workerID → conn
-	connWriteMu map[string]*sync.Mutex     // workerID → write mutex
-	pending     map[string]*pendingResult  // commandID → pending
-	workerTags  map[string][]string        // workerID → tags declared via WORKER_TAGS
-	seenMu      sync.Mutex
+	connMu       sync.RWMutex
+	connections  map[string]*websocket.Conn // workerID → conn
+	connWriteMu  map[string]*sync.Mutex     // workerID → write mutex
+	pending      map[string]*pendingResult  // commandID → pending
+	workerTags   map[string][]string        // workerID → tags declared via WORKER_TAGS
+	seenMu       sync.Mutex
 	seenMessages map[string]time.Time
 
 	onConnect      func(workerID string)
@@ -156,10 +209,10 @@ func NewWorkerServer(app core.App, workerSvc *Service) *WorkerServer {
 				return true
 			},
 		},
-		connections: make(map[string]*websocket.Conn),
-		connWriteMu: make(map[string]*sync.Mutex),
-		pending:     make(map[string]*pendingResult),
-		workerTags:  make(map[string][]string),
+		connections:  make(map[string]*websocket.Conn),
+		connWriteMu:  make(map[string]*sync.Mutex),
+		pending:      make(map[string]*pendingResult),
+		workerTags:   make(map[string][]string),
 		seenMessages: make(map[string]time.Time),
 	}
 
@@ -278,10 +331,6 @@ func (s *WorkerServer) Dispatch(ctx context.Context, workerID string, cmd interf
 	writeMu := s.connWriteMu[workerID]
 	s.connMu.RUnlock()
 
-	if !ok {
-		return protocol.CommandResult{}, fmt.Errorf("worker %s is not connected", workerID)
-	}
-
 	var msgType protocol.MessageType
 	var commandID string
 	switch v := cmd.(type) {
@@ -341,12 +390,28 @@ func (s *WorkerServer) Dispatch(ctx context.Context, workerID string, cmd interf
 		return protocol.CommandResult{}, fmt.Errorf("unknown command type %T", cmd)
 	}
 
-	// Log command start in the database
-	if _, logErr := s.workerSvc.LogCommandStart(ctx, workerID, commandID, string(msgType), cmd); logErr != nil {
-		logger.SafeLogf("[WORKER] Failed to log command start: %v", logErr)
+	durable := isDurableCommand(msgType)
+
+	// Non-durable commands (probes, log tails, container actions, etc.) keep
+	// the original fail-fast behavior: no queueing, no redelivery.
+	if !durable && !ok {
+		return protocol.CommandResult{}, fmt.Errorf("worker %s is not connected", workerID)
 	}
 
-	pr := &pendingResult{ch: make(chan protocol.CommandResult, 1)}
+	messageID := newDispatchMessageID()
+	cmdWithMessageID := withDispatchMessageID(cmd, messageID)
+
+	envelopeBuilder := func(mid string) protocol.Envelope {
+		return protocol.Envelope{Type: msgType, Payload: withDispatchMessageID(cmd, mid)}
+	}
+
+	pr := &pendingResult{
+		ch:        make(chan protocol.CommandResult, 1),
+		workerID:  workerID,
+		msgType:   msgType,
+		commandID: commandID,
+		envelope:  envelopeBuilder,
+	}
 	s.connMu.Lock()
 	s.pending[commandID] = pr
 	s.connMu.Unlock()
@@ -356,23 +421,47 @@ func (s *WorkerServer) Dispatch(ctx context.Context, workerID string, cmd interf
 		s.connMu.Unlock()
 	}()
 
-	msg, err := json.Marshal(protocol.Envelope{Type: msgType, Payload: cmd})
-	if err != nil {
-		_ = s.workerSvc.LogCommandFinish(commandID, "error", map[string]string{"error": err.Error()}, 0)
-		return protocol.CommandResult{}, fmt.Errorf("failed to marshal command: %w", err)
-	}
-
 	start := time.Now()
-	writeMu.Lock()
-	_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-	err = conn.WriteMessage(websocket.TextMessage, msg)
-	writeMu.Unlock()
-	if err != nil {
-		elapsedMs := time.Since(start).Milliseconds()
-		// If conn.WriteMessage fails during Dispatch, we calculate the duration elapsed since start
-		// and pass it to s.workerSvc.LogCommandFinish to log the error for commandID and workerID.
-		_ = s.workerSvc.LogCommandFinish(commandID, "error", map[string]string{"error": err.Error()}, elapsedMs)
-		return protocol.CommandResult{}, fmt.Errorf("failed to send command to worker %s: %w", workerID, err)
+
+	if !ok {
+		// Durable command with the worker currently offline: persist as
+		// queued and rely on replayOnReconnect to send it once the worker
+		// reconnects (or on the wait loop below timing out/cancelling).
+		if _, logErr := s.workerSvc.LogCommandQueued(ctx, workerID, commandID, commandID, string(msgType), cmd, time.Now()); logErr != nil {
+			logger.SafeLogf("[WORKER] Failed to log queued command: %v", logErr)
+		}
+	} else {
+		// Log command start in the database
+		if _, logErr := s.workerSvc.LogCommandDispatch(ctx, workerID, commandID, commandID, messageID, string(msgType), cmd); logErr != nil {
+			logger.SafeLogf("[WORKER] Failed to log command start: %v", logErr)
+		}
+
+		msg, err := json.Marshal(protocol.Envelope{Type: msgType, Payload: cmdWithMessageID})
+		if err != nil {
+			_ = s.workerSvc.LogCommandFinish(commandID, "error", map[string]string{"error": err.Error()}, 0)
+			return protocol.CommandResult{}, fmt.Errorf("failed to marshal command: %w", err)
+		}
+
+		writeMu.Lock()
+		_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+		err = conn.WriteMessage(websocket.TextMessage, msg)
+		writeMu.Unlock()
+		if err != nil {
+			elapsedMs := time.Since(start).Milliseconds()
+			if !durable {
+				// If conn.WriteMessage fails during Dispatch, we calculate the duration elapsed since start
+				// and pass it to s.workerSvc.LogCommandFinish to log the error for commandID and workerID.
+				_ = s.workerSvc.LogCommandFinish(commandID, "error", map[string]string{"error": err.Error()}, elapsedMs)
+				return protocol.CommandResult{}, fmt.Errorf("failed to send command to worker %s: %w", workerID, err)
+			}
+			// Durable command: treat a write failure the same as "offline at
+			// dispatch time" — fall through to wait for a reconnect replay
+			// instead of losing the command.
+			logger.SafeLogf("[WORKER] Failed to send durable command %s to %s, will retry on reconnect: %v", commandID, workerID, err)
+			if _, logErr := s.workerSvc.LogCommandQueued(ctx, workerID, commandID, commandID, string(msgType), cmd, time.Now()); logErr != nil {
+				logger.SafeLogf("[WORKER] Failed to log queued command after send failure: %v", logErr)
+			}
+		}
 	}
 
 	var result protocol.CommandResult
@@ -412,6 +501,52 @@ func (s *WorkerServer) Dispatch(ctx context.Context, workerID string, cmd interf
 	_ = s.workerSvc.LogCommandFinish(commandID, status, result, durationMs)
 
 	return result, nil
+}
+
+// replayPendingOnReconnect resends, in original dispatch order, every
+// still-outstanding durable command for workerID over its new connection.
+// The original caller of Dispatch is still blocked on pr.ch (or has already
+// timed out, in which case the resend is harmless — the worker dedupes by
+// CommandID), so no new Dispatch call is needed: only the wire message must
+// go out again.
+func (s *WorkerServer) replayPendingOnReconnect(workerID string, conn *websocket.Conn, writeMu *sync.Mutex) {
+	s.connMu.RLock()
+	var toReplay []*pendingResult
+	for _, pr := range s.pending {
+		if pr.workerID == workerID {
+			toReplay = append(toReplay, pr)
+		}
+	}
+	s.connMu.RUnlock()
+
+	if len(toReplay) == 0 {
+		return
+	}
+
+	for _, pr := range toReplay {
+		messageID := newDispatchMessageID()
+		env := pr.envelope(messageID)
+
+		msg, err := json.Marshal(env)
+		if err != nil {
+			logger.SafeLogf("[WORKER] Failed to marshal replay envelope for command %s: %v", pr.commandID, err)
+			continue
+		}
+
+		if _, err := s.workerSvc.LogCommandDispatch(context.Background(), workerID, pr.commandID, pr.commandID, messageID, string(pr.msgType), env.Payload); err != nil {
+			logger.SafeLogf("[WORKER] Failed to log replay dispatch for command %s: %v", pr.commandID, err)
+		}
+
+		writeMu.Lock()
+		_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+		err = conn.WriteMessage(websocket.TextMessage, msg)
+		writeMu.Unlock()
+		if err != nil {
+			logger.SafeLogf("[WORKER] Failed to replay command %s to reconnected worker %s: %v", pr.commandID, workerID, err)
+			continue
+		}
+		logger.SafeLogf("[WORKER] Replayed pending command %s to reconnected worker %s (message %s)", pr.commandID, workerID, messageID)
+	}
 }
 
 func workerTokenFromRequest(r *http.Request) string {
@@ -546,6 +681,8 @@ func (s *WorkerServer) handleWebSocket(c *gin.Context) {
 		logger.SafeLogf("[WORKER] best_effort health failed worker_id=%s event=online error=%v", workerID, err)
 	}
 
+	s.replayPendingOnReconnect(workerID, conn, s.connWriteMu[workerID])
+
 	if s.onConnect != nil {
 		go s.onConnect(workerID)
 	}
@@ -589,6 +726,18 @@ func (s *WorkerServer) handleWebSocket(c *gin.Context) {
 		}
 
 		switch env.Type {
+		case protocol.MsgAck:
+			payloadBytes, _ := json.Marshal(env.Payload)
+			var ack protocol.AckMessage
+			if jsonErr := json.Unmarshal(payloadBytes, &ack); jsonErr == nil {
+				// Ack of a durable command's receipt (worker got it, about to
+				// execute). Distinct from the server's own MsgAck acking the
+				// worker's result/job_completed messages.
+				if err := s.workerSvc.LogCommandAck(ack.MessageID); err != nil {
+					logger.SafeLogf("[WORKER] Failed to record command ack message=%s worker=%s: %v", ack.MessageID, workerID, err)
+				}
+			}
+
 		case protocol.MsgHeartbeat:
 			if err := s.workerSvc.RecordHealthEvent(workerID, "online"); err != nil {
 				logger.SafeLogf("[WORKER] best_effort health failed worker_id=%s event=heartbeat error=%v", workerID, err)

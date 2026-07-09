@@ -213,6 +213,10 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		commitMsg = obj.Message
 	}
 
+	if err := r.waitForRunningJobs(ctx, stack, repoID, stackID, trigger, remoteSHA); err != nil {
+		return err
+	}
+
 	// --- compose deploy ---
 	workDir, err := r.stackWorkDir(stack, repoID)
 	if err != nil {
@@ -301,6 +305,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	var output string
 	var runErr error
 	var duration int64
+	var lastComposeContent []byte
 
 	maxRetries := 3
 	for attempt := 1; attempt <= maxRetries; attempt++ {
@@ -309,6 +314,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		if err != nil {
 			return err
 		}
+		lastComposeContent = composeContent
 		envFileB64, b64Err := buildEnvFileB64(envVars)
 		if b64Err != nil {
 			runErr = fmt.Errorf("failed to serialize env vars for remote deploy: %w", b64Err)
@@ -369,8 +375,11 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		return runErr
 	}
 
+	check := r.postDeployCheck(ctx, workerID, stackID, workDir, lastComposeContent)
+	output = output + "\n\n[post-check] " + check.Detail
+
 	stack.Set("last_synced_at", time.Now().UTC().Format(time.RFC3339))
-	stack.Set("status", "active")
+	stack.Set("status", check.Status)
 	stack.Set("deployed_version", renderRes.Version)
 	stack.Set("deployed_commit", remoteSHA)
 	stack.Set("deployed_checksum", renderRes.Checksum)
@@ -379,18 +388,29 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		_ = r.updateSyncLog(syncLog.Id, "error", "worker deploy succeeded but failed to persist stack success: "+err.Error(), duration)
 		return err
 	}
-	if err := r.updateSyncLog(syncLog.Id, "success", output, duration); err != nil {
+	logStatus := "success"
+	if check.Status != "active" {
+		logStatus = check.Status
+	}
+	if err := r.updateSyncLog(syncLog.Id, logStatus, output, duration); err != nil {
 		_ = r.markError(stack, "stacks")
 		return err
 	}
+	notifyEvent := notify.SyncDone
+	notifyErr := ""
+	if check.Status == "error" {
+		notifyEvent = notify.SyncError
+		notifyErr = check.Detail
+	}
 	r.notifier.Dispatch(ctx, notify.Payload{
-		Event:      notify.SyncDone,
+		Event:      notifyEvent,
 		StackID:    stackID,
 		StackName:  stack.GetString("name"),
 		SyncLogID:  syncLog.Id,
 		Trigger:    trigger,
 		CommitSHA:  remoteSHA,
 		DurationMs: duration,
+		Error:      notifyErr,
 	})
 
 	return nil
@@ -567,8 +587,19 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 		return err
 	}
 
+	check := r.postDeployCheck(ctx, workerID, stackID, workDir, composeContent)
+	output = output + "\n\n[post-check] " + check.Detail
+
+	// Rollback's terminal success state is historically "paused" (to avoid
+	// GitOps re-syncing it back to HEAD), not "active" — only remap it when
+	// the post-check found a real problem.
+	rollbackStatus := "paused"
+	if check.Status != "active" {
+		rollbackStatus = check.Status
+	}
+
 	stack.Set("last_synced_at", time.Now().UTC().Format(time.RFC3339))
-	stack.Set("status", "paused")
+	stack.Set("status", rollbackStatus)
 	stack.Set("deployed_version", renderRes.Version)
 	stack.Set("deployed_commit", commitSHA)
 	stack.Set("deployed_checksum", renderRes.Checksum)
@@ -577,18 +608,29 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 		_ = r.updateSyncLog(syncLog.Id, "error", "rollback succeeded but failed to persist stack state: "+err.Error(), duration)
 		return err
 	}
-	if err := r.updateSyncLog(syncLog.Id, "success", output, duration); err != nil {
+	logStatus := "success"
+	if check.Status != "active" {
+		logStatus = check.Status
+	}
+	if err := r.updateSyncLog(syncLog.Id, logStatus, output, duration); err != nil {
 		_ = r.markError(stack, "stacks")
 		return err
 	}
+	notifyEvent := notify.SyncDone
+	notifyErr := ""
+	if check.Status == "error" {
+		notifyEvent = notify.SyncError
+		notifyErr = check.Detail
+	}
 	r.notifier.Dispatch(ctx, notify.Payload{
-		Event:      notify.SyncDone,
+		Event:      notifyEvent,
 		StackID:    stackID,
 		StackName:  stack.GetString("name"),
 		SyncLogID:  syncLog.Id,
 		Trigger:    "manual",
 		CommitSHA:  commitSHA,
 		DurationMs: duration,
+		Error:      notifyErr,
 	})
 
 	return nil
@@ -738,8 +780,16 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 		return failRedeploy(errOutput, duration)
 	}
 
+	check := r.postDeployCheck(ctx, workerID, stackID, workDir, composeContent)
+	output = output + "\n\n[post-check] " + check.Detail
+
+	redeployStatus := "paused"
+	if check.Status != "active" {
+		redeployStatus = check.Status
+	}
+
 	stack.Set("last_synced_at", time.Now().UTC().Format(time.RFC3339))
-	stack.Set("status", "paused")
+	stack.Set("status", redeployStatus)
 	stack.Set("deployed_version", renderRes.Version)
 	stack.Set("deployed_commit", lastSHA)
 	stack.Set("deployed_checksum", renderRes.Checksum)
@@ -748,19 +798,30 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 		_ = r.updateSyncLog(syncLog.Id, "error", "redeploy succeeded but failed to persist stack state: "+err.Error(), duration)
 		return err
 	}
-	if err := r.updateSyncLog(syncLog.Id, "success", output, duration); err != nil {
+	logStatus := "success"
+	if check.Status != "active" {
+		logStatus = check.Status
+	}
+	if err := r.updateSyncLog(syncLog.Id, logStatus, output, duration); err != nil {
 		_ = r.markError(stack, "stacks")
 		return err
 	}
 	if r.notifier != nil {
+		notifyEvent := notify.SyncDone
+		notifyErr := ""
+		if check.Status == "error" {
+			notifyEvent = notify.SyncError
+			notifyErr = check.Detail
+		}
 		r.notifier.Dispatch(ctx, notify.Payload{
-			Event:      notify.SyncDone,
+			Event:      notifyEvent,
 			StackID:    stackID,
 			StackName:  stack.GetString("name"),
 			SyncLogID:  syncLog.Id,
 			Trigger:    "redeploy",
 			CommitSHA:  lastSHA,
 			DurationMs: duration,
+			Error:      notifyErr,
 		})
 	}
 
@@ -979,10 +1040,13 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 		return runErr
 	}
 
+	check := r.postDeployCheck(ctx, workerID, stackID, workDir, composeBytes)
+	output = output + "\n\n[post-check] " + check.Detail
+
 	// Update the stack's raw-file checksum after a successful deploy.
 	stack.Set("checksum", newChecksum)
 	stack.Set("last_synced_at", time.Now().UTC().Format(time.RFC3339))
-	stack.Set("status", "active")
+	stack.Set("status", check.Status)
 	stack.Set("deployed_version", renderRes.Version)
 	stack.Set("deployed_commit", "imported")
 	stack.Set("deployed_checksum", newChecksum)
@@ -991,7 +1055,11 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 		_ = r.updateSyncLog(syncLog.Id, "error", "local deploy succeeded but failed to persist stack success: "+err.Error(), duration)
 		return err
 	}
-	if err := r.updateSyncLog(syncLog.Id, "success", output, duration); err != nil {
+	logStatus := "success"
+	if check.Status != "active" {
+		logStatus = check.Status
+	}
+	if err := r.updateSyncLog(syncLog.Id, logStatus, output, duration); err != nil {
 		_ = r.markError(stack, "stacks")
 		return err
 	}
@@ -1606,27 +1674,48 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 
 	duration := time.Since(start).Milliseconds()
 
+	transferWorkDir, workDirErr := r.stackWorkDir(stack, stack.GetString("repository"))
+	checkStatus := "active"
+	checkDetail := "post-check skipped: could not resolve work dir for status query"
+	if workDirErr == nil {
+		check := r.postDeployCheck(ctx, targetWorkerID, stackID, transferWorkDir, composeContent)
+		checkStatus = check.Status
+		checkDetail = check.Detail
+	}
+	fmt.Fprintf(&outputBuf, "\n[post-check] %s\n", checkDetail)
+
 	// --- Step 3: Update stack record to point to the new agent ---
 	stack.Set("worker", targetWorkerID)
-	stack.Set("status", "active")
+	stack.Set("status", checkStatus)
 	stack.Set("last_synced_at", time.Now().UTC().Format(time.RFC3339))
 	if err := r.saveRecord(stack, "stacks", "complete transfer"); err != nil {
 		_ = r.updateSyncLog(syncLog.Id, "error", "transfer succeeded but failed to persist stack state: "+err.Error(), duration)
 		return err
 	}
 
-	if err := r.updateSyncLog(syncLog.Id, "success", outputBuf.String(), duration); err != nil {
+	logStatus := "success"
+	if checkStatus != "active" {
+		logStatus = checkStatus
+	}
+	if err := r.updateSyncLog(syncLog.Id, logStatus, outputBuf.String(), duration); err != nil {
 		_ = r.markError(stack, "stacks")
 		return err
 	}
 
+	notifyEvent := notify.SyncDone
+	notifyErr := ""
+	if checkStatus == "error" {
+		notifyEvent = notify.SyncError
+		notifyErr = checkDetail
+	}
 	r.notifier.Dispatch(ctx, notify.Payload{
-		Event:      notify.SyncDone,
+		Event:      notifyEvent,
 		StackID:    stackID,
 		StackName:  stack.GetString("name"),
 		SyncLogID:  syncLogID,
 		Trigger:    "transfer",
 		DurationMs: duration,
+		Error:      notifyErr,
 	})
 
 	log.Printf("[transfer] DONE stack=%s source_agent=%s target_agent=%s elapsed=%dms", stackID, sourceWorkerID, targetWorkerID, duration)
