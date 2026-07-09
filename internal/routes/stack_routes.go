@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -22,6 +23,7 @@ import (
 	"github.com/wireops/wireops/internal/safepath"
 	"github.com/wireops/wireops/internal/secrets"
 	"github.com/wireops/wireops/internal/sync"
+	"github.com/wireops/wireops/internal/webhook"
 )
 
 func (rr routeRegistrar) registerStackTriggerRoutes() {
@@ -73,6 +75,50 @@ func (rr routeRegistrar) registerStackTriggerRoutes() {
 		if id == "" {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "missing id"})
 		}
+
+		stack, err := rr.app.FindRecordById("stacks", id)
+		if err != nil {
+			return e.JSON(http.StatusNotFound, map[string]string{"error": "stack not found"})
+		}
+
+		encryptedSecret := stack.GetString("webhook_secret")
+		if encryptedSecret == "" {
+			return e.JSON(http.StatusForbidden, map[string]string{"error": "webhook not configured"})
+		}
+
+		body, err := io.ReadAll(e.Request.Body)
+		if err != nil {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		}
+
+		secretKey := crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))
+		plainSecret, err := crypto.Decrypt(encryptedSecret, secretKey)
+		if err != nil {
+			log.Printf("[webhook] failed to decrypt secret for stack %s: %v", id, err)
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "webhook misconfigured"})
+		}
+
+		if !webhook.VerifySignature(string(plainSecret), body, e.Request.Header.Get(webhook.GitHubSignatureHeader)) {
+			return e.JSON(http.StatusUnauthorized, map[string]string{"error": "invalid signature"})
+		}
+
+		ref, ok := webhook.RefFromPayload(body)
+		if !ok {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "malformed payload"})
+		}
+
+		if ref != "" {
+			if repo, err := rr.app.FindRecordById("repositories", stack.GetString("repository")); err == nil {
+				branch := repo.GetString("branch")
+				if branch == "" {
+					branch = "main"
+				}
+				if webhook.BranchFromRef(ref) != branch {
+					return e.JSON(http.StatusOK, map[string]string{"status": "skipped", "reason": "branch_mismatch"})
+				}
+			}
+		}
+
 		rr.scheduler.TriggerSync(id, "webhook", 0, "webhook")
 		return e.JSON(http.StatusOK, map[string]string{"status": "triggered"})
 	})

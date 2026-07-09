@@ -371,6 +371,10 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 
 	stack.Set("last_synced_at", time.Now().UTC().Format(time.RFC3339))
 	stack.Set("status", "active")
+	stack.Set("deployed_version", renderRes.Version)
+	stack.Set("deployed_commit", remoteSHA)
+	stack.Set("deployed_checksum", renderRes.Checksum)
+	stack.Set("deployed_at", time.Now().UTC().Format(time.RFC3339))
 	if err := r.saveRecord(stack, "stacks", "complete reconcile"); err != nil {
 		_ = r.updateSyncLog(syncLog.Id, "error", "worker deploy succeeded but failed to persist stack success: "+err.Error(), duration)
 		return err
@@ -565,6 +569,10 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 
 	stack.Set("last_synced_at", time.Now().UTC().Format(time.RFC3339))
 	stack.Set("status", "paused")
+	stack.Set("deployed_version", renderRes.Version)
+	stack.Set("deployed_commit", commitSHA)
+	stack.Set("deployed_checksum", renderRes.Checksum)
+	stack.Set("deployed_at", time.Now().UTC().Format(time.RFC3339))
 	if err := r.saveRecord(stack, "stacks", "complete rollback"); err != nil {
 		_ = r.updateSyncLog(syncLog.Id, "error", "rollback succeeded but failed to persist stack state: "+err.Error(), duration)
 		return err
@@ -732,6 +740,10 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 
 	stack.Set("last_synced_at", time.Now().UTC().Format(time.RFC3339))
 	stack.Set("status", "paused")
+	stack.Set("deployed_version", renderRes.Version)
+	stack.Set("deployed_commit", lastSHA)
+	stack.Set("deployed_checksum", renderRes.Checksum)
+	stack.Set("deployed_at", time.Now().UTC().Format(time.RFC3339))
 	if err := r.saveRecord(stack, "stacks", "complete force redeploy"); err != nil {
 		_ = r.updateSyncLog(syncLog.Id, "error", "redeploy succeeded but failed to persist stack state: "+err.Error(), duration)
 		return err
@@ -971,6 +983,10 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 	stack.Set("checksum", newChecksum)
 	stack.Set("last_synced_at", time.Now().UTC().Format(time.RFC3339))
 	stack.Set("status", "active")
+	stack.Set("deployed_version", renderRes.Version)
+	stack.Set("deployed_commit", "imported")
+	stack.Set("deployed_checksum", newChecksum)
+	stack.Set("deployed_at", time.Now().UTC().Format(time.RFC3339))
 	if err := r.saveRecord(stack, "stacks", "complete local reconcile"); err != nil {
 		_ = r.updateSyncLog(syncLog.Id, "error", "local deploy succeeded but failed to persist stack success: "+err.Error(), duration)
 		return err

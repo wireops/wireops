@@ -49,3 +49,4 @@ worker_bin
 .tmpbin
 .gomodcache
 .gocache
+docs/

@@ -12,6 +12,7 @@ const { getStackIntegrationActions } = useIntegrations()
 const { validateComposePath, validateComposeFile } = useValidation()
 const toast = useToast()
 const { platformIconUrl } = useRepositoryPlatform()
+const { canOperate } = usePermissions()
 
 const stackId = route.params.id as string
 
@@ -247,6 +248,30 @@ async function saveEdit() {
   })
   editing.value = false
   refreshStack()
+}
+
+// Webhook secret
+const webhookSecretConfigured = computed(() => !!stack.value?.webhook_secret)
+const webhookSecretInput = ref('')
+const savingWebhookSecret = ref(false)
+
+function generateWebhookSecret() {
+  webhookSecretInput.value = crypto.randomUUID().replace(/-/g, '')
+}
+
+async function saveWebhookSecret() {
+  if (!webhookSecretInput.value) return
+  savingWebhookSecret.value = true
+  try {
+    await $pb.collection('stacks').update(stackId, { webhook_secret: webhookSecretInput.value })
+    webhookSecretInput.value = ''
+    await refreshStack()
+    toast.add({ title: 'Webhook secret saved', color: 'success' })
+  } catch (err: any) {
+    toast.add({ title: 'Failed to save webhook secret', description: err?.message, color: 'error' })
+  } finally {
+    savingWebhookSecret.value = false
+  }
 }
 
 // Sync & rollback
@@ -562,16 +587,58 @@ onMounted(() => {
               />
             </div>
           </div>
+
+          <div v-if="canOperate">
+            <label class="text-xs text-gray-500 uppercase tracking-wide font-semibold">Webhook Secret</label>
+            <div class="flex items-center gap-2 mt-1">
+              <UInput
+                v-model="webhookSecretInput"
+                type="password"
+                class="flex-1 font-mono text-xs"
+                :placeholder="webhookSecretConfigured ? 'Configured — leave empty to keep current' : 'Not configured — required to enable this webhook'"
+              />
+              <UButton
+                icon="i-lucide-refresh-cw"
+                variant="outline"
+                size="sm"
+                title="Generate secret"
+                @click="generateWebhookSecret"
+              />
+              <UButton
+                size="sm"
+                :loading="savingWebhookSecret"
+                :disabled="!webhookSecretInput"
+                @click="saveWebhookSecret"
+              >
+                Save
+              </UButton>
+            </div>
+            <p class="text-xs text-gray-500 italic mt-1">
+              Required before this webhook accepts requests. GitHub sends this as the HMAC key for
+              <code>X-Hub-Signature-256</code>.
+            </p>
+          </div>
+          <p v-else-if="!webhookSecretConfigured" class="text-xs text-amber-600 dark:text-amber-400">
+            No webhook secret configured — this webhook will reject all requests until an operator sets one.
+          </p>
+
           <details class="text-xs">
             <summary class="cursor-pointer text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 font-medium">
               Show usage examples
             </summary>
             <div class="mt-2 space-y-2 text-gray-600 dark:text-gray-400">
               <div>
-                <p class="font-semibold mb-1">GitHub Actions / GitLab CI:</p>
-                <pre class="p-2 bg-gray-100 dark:bg-gray-800 rounded overflow-x-auto">curl -L -X POST {{ webhookUrl ?? '...' }}</pre>
+                <p class="font-semibold mb-1">GitHub:</p>
+                <pre class="p-2 bg-gray-100 dark:bg-gray-800 rounded overflow-x-auto">curl -X POST {{ webhookUrl ?? '...' }} \
+  -H "X-Hub-Signature-256: sha256=&lt;hmac-sha256 of body, keyed with the webhook secret&gt;" \
+  -H "Content-Type: application/json" \
+  -d '{"ref":"refs/heads/main"}'</pre>
               </div>
-              <p class="text-xs text-gray-500 italic">Trigger a sync whenever you push to your repository</p>
+              <p class="text-xs text-gray-500 italic">
+                Configure this URL and secret as a GitHub webhook (content type
+                <code>application/json</code>). Requests without a valid signature are rejected;
+                pushes to a branch other than the one tracked by this stack are accepted but skipped.
+              </p>
             </div>
           </details>
         </div>
