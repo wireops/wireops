@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, nextTick } from 'vue'
+import { ref, watch, nextTick } from 'vue'
 
 const list = defineModel<string[]>({ required: true })
 
@@ -16,6 +16,35 @@ const emit = defineEmits<{
 const activeEditIndex = ref<number | null>(null)
 const originalValues = ref<Record<number, string | undefined>>({})
 const containerEl = ref<HTMLElement | null>(null)
+
+// Stable per-row identity for v-for keys, independent of value/index so
+// input focus/lock state survives inserts and deletes elsewhere in the list.
+let idCounter = 0
+function genId() {
+  return idCounter++
+}
+const keys = ref<number[]>(list.value.map(() => genId()))
+
+// Parent reassigns the whole array on load/save (new reference) — resync keys then.
+// Internal push/splice below mutate the same reference and keep keys in lockstep.
+watch(
+  () => list.value,
+  (newList, oldList) => {
+    if (newList !== oldList) {
+      keys.value = newList.map(() => genId())
+    }
+  },
+)
+
+function pushEntry(value: string) {
+  list.value.push(value)
+  keys.value.push(genId())
+}
+
+function spliceEntry(index: number) {
+  list.value.splice(index, 1)
+  keys.value.splice(index, 1)
+}
 
 function focusInputAt(index: number) {
   nextTick(() => {
@@ -47,7 +76,7 @@ function addEntry() {
     focusInputAt(len - 1)
     return
   }
-  list.value.push('')
+  pushEntry('')
   activeEditIndex.value = list.value.length - 1
   focusInputAt(list.value.length - 1)
 }
@@ -64,7 +93,7 @@ function onBlurInput(val: string, index: number) {
   setTimeout(() => {
     if (index < list.value.length && typeof list.value[index] === 'string' && !list.value[index].trim()) {
       if (origVal.trim() === '') {
-        list.value.splice(index, 1)
+        spliceEntry(index)
       } else {
         list.value[index] = origVal
       }
@@ -90,7 +119,7 @@ function requestDelete(index: number, value: string) {
 }
 
 function executeDelete(index: number) {
-  list.value.splice(index, 1)
+  spliceEntry(index)
   emit('save')
   showDeleteRuleModal.value = false
   deleteRuleIndex.value = null
@@ -102,7 +131,7 @@ function executeDelete(index: number) {
     <div ref="containerEl" class="space-y-2">
       <div
         v-for="(_, i) in list"
-        :key="i"
+        :key="keys[i]"
         class="flex items-center gap-2"
       >
         <UInput

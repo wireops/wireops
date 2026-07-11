@@ -210,8 +210,14 @@ async function handleSavePolicy() {
     policyForm.value.allowed_devices = policyForm.value.allowed_devices.filter(d => d.trim() !== '')
     policyForm.value.allowed_security_opt = policyForm.value.allowed_security_opt.filter(s => s.trim() !== '')
 
+    // While inherit is on, allowed_cap_add/devices/security_opt hold the resolved
+    // *effective* (global) values for display only — send null so they stay
+    // inherited instead of being frozen as local overrides on save.
     await saveWorkerPolicy(workerId, {
-      ...policyForm.value
+      ...policyForm.value,
+      allowed_cap_add: policyForm.value.inherit ? null : policyForm.value.allowed_cap_add,
+      allowed_devices: policyForm.value.inherit ? null : policyForm.value.allowed_devices,
+      allowed_security_opt: policyForm.value.inherit ? null : policyForm.value.allowed_security_opt,
     })
     toast.add({ title: 'Policy saved', color: 'success' })
   } catch (e: any) {

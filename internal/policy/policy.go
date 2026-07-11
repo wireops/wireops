@@ -419,8 +419,15 @@ func (p *WorkerPolicy) ValidateDockerSocket(mounts []string) error {
 		return nil
 	}
 	for _, m := range mounts {
-		if dockerSocketPaths[filepath.Clean(m)] {
-			return fmt.Errorf("mount %q exposes the Docker socket, which is blocked by the worker policy", m)
+		src := filepath.Clean(strings.SplitN(m, ":", 2)[0])
+		prefix := src
+		if prefix != string(filepath.Separator) {
+			prefix += string(filepath.Separator)
+		}
+		for sockPath := range dockerSocketPaths {
+			if src == sockPath || strings.HasPrefix(sockPath, prefix) {
+				return fmt.Errorf("mount %q exposes the Docker socket, which is blocked by the worker policy", m)
+			}
 		}
 	}
 	return nil

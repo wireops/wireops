@@ -242,6 +242,7 @@ async function saveWorkerPolicyGlobal() {
 }
 
 async function applyStrictProductionPreset() {
+  workerPolicy.value.enabled = true
   workerPolicy.value.block_privileged = true
   workerPolicy.value.block_host_network = true
   workerPolicy.value.block_host_pid = true

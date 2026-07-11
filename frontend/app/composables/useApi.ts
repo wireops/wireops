@@ -239,8 +239,17 @@ export function useApi() {
     | 'block_host_pid'
     | 'block_host_ipc'
     | 'block_docker_socket'
-  type WorkerPolicyOverride = Omit<PolicyData, PolicyOverrideFlagKeys> & {
+  type PolicyOverrideNullableAllowlistKeys =
+    | 'allowed_cap_add'
+    | 'allowed_devices'
+    | 'allowed_security_opt'
+  type WorkerPolicyOverride = Omit<PolicyData, PolicyOverrideFlagKeys | PolicyOverrideNullableAllowlistKeys> & {
     inherit: boolean
+    // null means "inherit from global" — must not persist the resolved effective
+    // value as a local override, or future global changes stop propagating.
+    allowed_cap_add: string[] | null
+    allowed_devices: string[] | null
+    allowed_security_opt: string[] | null
     prevent_latest_images: boolean | null
     block_host_volumes: boolean | null
     block_privileged: boolean | null

@@ -289,7 +289,7 @@ Events: `sync.started`, `sync.done`, `sync.error`, `sync.test`.
 
 ## Testing & Coverage
 
-- Backend: `go test -coverprofile=coverage.out ./...` (excluding `worker/...`, run separately). Current baseline: ~29% statement coverage overall — uneven across packages (e.g. `internal/config`, `internal/webhook`, `internal/setup` are near/at 100%; `internal/routes`, `internal/sync`, `internal/compose` are thin).
+- Backend: `go test -coverprofile=coverage.out $(go list ./... | grep -v '^github.com/wireops/wireops/worker\(/\|$\)')` (excludes `worker/...`, run separately). Current baseline: ~29% statement coverage overall — uneven across packages (e.g. `internal/config`, `internal/webhook`, `internal/setup` are near/at 100%; `internal/routes`, `internal/sync`, `internal/compose` are thin).
 - Frontend: `npm run test:coverage` (vitest + `@vitest/coverage-v8`, reports `text` + `lcov` to `frontend/coverage/`). Current baseline: ~62% statement coverage.
 - Both are uploaded to Codacy via `.github/workflows/quality-codacy.yml` (`continue-on-error: true` — informational, not a merge gate).
 - **Minimum targets** (hobby/side-project pace, not enforced by CI — treat as a floor when touching a package, not a blanket requirement to backfill):

@@ -360,6 +360,24 @@ func TestValidateDockerSocketBlockedForKnownPaths(t *testing.T) {
 	}
 }
 
+func TestValidateDockerSocketBlockedForSourceTargetNotation(t *testing.T) {
+	p := &policy.WorkerPolicy{BlockDockerSocket: true}
+	for _, mount := range []string{"/var/run/docker.sock:/var/run/docker.sock", "/run/docker.sock:/run/docker.sock:ro"} {
+		if err := p.ValidateDockerSocket([]string{mount}); err == nil {
+			t.Errorf("expected docker socket mount %q (source:target notation) to be blocked", mount)
+		}
+	}
+}
+
+func TestValidateDockerSocketBlockedForAncestorDir(t *testing.T) {
+	p := &policy.WorkerPolicy{BlockDockerSocket: true}
+	for _, mount := range []string{"/var/run", "/run", "/var/run/", "/"} {
+		if err := p.ValidateDockerSocket([]string{mount}); err == nil {
+			t.Errorf("expected ancestor mount %q of docker socket to be blocked", mount)
+		}
+	}
+}
+
 func TestValidateDockerSocketAllowedForOtherPaths(t *testing.T) {
 	p := &policy.WorkerPolicy{BlockDockerSocket: true}
 	if err := p.ValidateDockerSocket([]string{"/data", "/var/run/other.sock"}); err != nil {

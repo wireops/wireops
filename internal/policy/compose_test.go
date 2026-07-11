@@ -298,6 +298,29 @@ func TestValidateComposeConfigHardenedOptions(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "docker socket via named volume blocked",
+			config: `{
+				"services": {
+					"web": {
+						"image": "nginx:1.25",
+						"volumes": [
+							"docker-sock:/var/run/docker.sock"
+						]
+					}
+				},
+				"volumes": {
+					"docker-sock": {
+						"driver_opts": {
+							"type": "none",
+							"o": "bind",
+							"device": "/var/run/docker.sock"
+						}
+					}
+				}
+			}`,
+			wantErr: true,
+		},
+		{
 			name: "cap_add not in allowlist blocked",
 			config: `{
 				"services": {
