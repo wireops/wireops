@@ -90,6 +90,40 @@ func TestResolveWireopsComposeFileNestedDir(t *testing.T) {
 	}
 }
 
+func TestResolveWireopsComposeFileRejectsPathTraversal(t *testing.T) {
+	parent := t.TempDir()
+	repoDir := filepath.Join(parent, "repo")
+	if err := os.MkdirAll(repoDir, 0755); err != nil {
+		t.Fatalf("failed to create repo dir: %v", err)
+	}
+	writeFile(t, parent, "secret.yml", "services:\n  admin:\n    image: super-secret\n")
+
+	def := &wireops.Definition{}
+	resolveWireopsComposeFile(repoDir, "../secret/wireops.yaml", def)
+
+	if def.ResolutionError == "" {
+		t.Fatal("expected resolution error for path traversal attempt")
+	}
+	if def.ResolvedComposeFile != "" {
+		t.Fatalf("expected no resolved compose file for path traversal attempt, got: %s", def.ResolvedComposeFile)
+	}
+}
+
+func TestResolveWireopsComposeFileRejectsAbsolutePath(t *testing.T) {
+	repoDir := t.TempDir()
+	writeFile(t, repoDir, "wireops.yaml", "version: wireops.v1\nname: api\n")
+
+	def := &wireops.Definition{}
+	resolveWireopsComposeFile(repoDir, "/etc/wireops.yaml", def)
+
+	if def.ResolutionError == "" {
+		t.Fatal("expected resolution error for absolute path attempt")
+	}
+	if def.ResolvedComposeFile != "" {
+		t.Fatalf("expected no resolved compose file for absolute path attempt, got: %s", def.ResolvedComposeFile)
+	}
+}
+
 func boolPtr(b bool) *bool { return &b }
 
 func TestResolveWireopsStackFieldsDefaults(t *testing.T) {

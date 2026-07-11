@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/wireops/wireops/internal/compose"
+	"github.com/wireops/wireops/internal/safepath"
 	"github.com/wireops/wireops/internal/wireops"
 )
 
@@ -26,7 +27,13 @@ func wireopsValidationErrors(err error) []string {
 // reported back via def.ResolutionError so the frontend can surface them
 // without treating a valid wireops.yaml as a 422.
 func resolveWireopsComposeFile(repoDir, wireopsFile string, def *wireops.Definition) {
-	dir := filepath.Dir(wireopsFile)
+	cleanWireopsFile, err := safepath.CleanRelativePath(wireopsFile)
+	if err != nil {
+		def.ResolutionError = fmt.Sprintf("invalid wireops file path %q: %v", wireopsFile, err)
+		return
+	}
+
+	dir := filepath.Dir(cleanWireopsFile)
 	absDir := filepath.Join(repoDir, dir)
 
 	entries, err := os.ReadDir(absDir)
