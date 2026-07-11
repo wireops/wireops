@@ -24,6 +24,7 @@ import (
 	"github.com/wireops/wireops/internal/secrets"
 	"github.com/wireops/wireops/internal/sync"
 	"github.com/wireops/wireops/internal/webhook"
+	"github.com/wireops/wireops/internal/wireops"
 )
 
 func (rr routeRegistrar) registerStackTriggerRoutes() {
@@ -700,4 +701,110 @@ func (rr routeRegistrar) registerImportRoutes() {
 		log.Printf("[routes] import stack=%s worker=%s path=%s", stack.Id, body.WorkerID, body.ImportPath)
 		return e.JSON(http.StatusOK, map[string]string{"id": stack.Id, "status": "import_triggered"})
 	}).BindFunc(rbac.Require(rbac.CapOperateStacks))
+}
+
+// registerCreateFromWireopsRoute creates a stack entirely from a wireops.yaml
+// found in a cloned repository. Unlike the manual create flow (raw PocketBase
+// collection.create from the frontend), the client only supplies repository,
+// worker, and the wireops.yaml path — every wireops.yaml-derived field (name,
+// compose_path/compose_file, remove_orphans, force_pull,
+// deploy_timeout_seconds, wait_running_jobs, worker_tags) is computed here by
+// re-parsing the file server-side, never trusted from client input. This
+// keeps a single source of truth (the file) and matches the immutability
+// rule enforced on update in internal/hooks/pb_hooks.go.
+// resolveWireopsStackFields applies the defaults for wireops.yaml fields that
+// are optional in the file: remove_orphans defaults to true (preserving the
+// pre-wireops.yaml unconditional `--remove-orphans` behavior), force_pull
+// defaults to false, wait_running_jobs maps the YAML bool to the stacks
+// select (true -> "always", absent/false -> "never"), and worker_tags
+// defaults to an empty (non-nil) slice.
+func resolveWireopsStackFields(def *wireops.Definition) (removeOrphans, forcePull bool, waitRunningJobs string, workerTags []string) {
+	removeOrphans = true
+	forcePull = false
+	if def.Compose != nil {
+		if def.Compose.RemoveOrphans != nil {
+			removeOrphans = *def.Compose.RemoveOrphans
+		}
+		if def.Compose.ForcePull != nil {
+			forcePull = *def.Compose.ForcePull
+		}
+	}
+
+	waitRunningJobs = "never"
+	if def.Jobs != nil && def.Jobs.WaitRunning != nil && *def.Jobs.WaitRunning {
+		waitRunningJobs = "always"
+	}
+
+	workerTags = []string{}
+	if def.Worker != nil && def.Worker.Tags != nil {
+		workerTags = def.Worker.Tags
+	}
+	return removeOrphans, forcePull, waitRunningJobs, workerTags
+}
+
+func (rr routeRegistrar) registerCreateFromWireopsRoute() {
+	rr.r.POST("/api/custom/stacks/from-wireops", func(e *core.RequestEvent) error {
+		var body struct {
+			Repository  string `json:"repository"`
+			Worker      string `json:"worker"`
+			WireopsFile string `json:"wireops_file"`
+		}
+		if err := json.NewDecoder(e.Request.Body).Decode(&body); err != nil {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		}
+		if body.Repository == "" || body.Worker == "" || body.WireopsFile == "" {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "repository, worker, and wireops_file are required"})
+		}
+
+		workerRecord, err := rr.app.FindRecordById("workers", body.Worker)
+		if err != nil {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "worker not found"})
+		}
+
+		repoDir, ok := rr.repoFilesSetupByID(e, body.Repository)
+		if !ok {
+			return nil
+		}
+
+		def, err := wireops.ParseWireopsFile(config.GetReposWorkspace(), body.Repository, body.WireopsFile)
+		if err != nil {
+			return e.JSON(http.StatusUnprocessableEntity, map[string]any{
+				"error":  err.Error(),
+				"errors": wireopsValidationErrors(err),
+			})
+		}
+		resolveWireopsComposeFile(repoDir, body.WireopsFile, def)
+		if def.ResolutionError != "" {
+			return e.JSON(http.StatusUnprocessableEntity, map[string]string{"error": def.ResolutionError})
+		}
+
+		removeOrphans, forcePull, waitRunningJobs, workerTags := resolveWireopsStackFields(def)
+
+		stacksCol, err := rr.app.FindCollectionByNameOrId("stacks")
+		if err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+		stack := core.NewRecord(stacksCol)
+		stack.Set("name", def.Name)
+		stack.Set("repository", body.Repository)
+		stack.Set("worker", body.Worker)
+		stack.Set("compose_path", def.ResolvedComposePath)
+		stack.Set("compose_file", def.ResolvedComposeFile)
+		stack.Set("auto_sync", true)
+		stack.Set("status", "pending")
+		stack.Set("remove_orphans", removeOrphans)
+		stack.Set("force_pull", forcePull)
+		stack.Set("deploy_timeout_seconds", def.DeployTimeoutSeconds)
+		stack.Set("sync_interval_seconds", def.SyncIntervalSeconds)
+		stack.Set("wait_running_jobs", waitRunningJobs)
+		stack.Set("worker_tags", workerTags)
+		stack.Set("config_source", "wireops_file")
+		stack.Set("wireops_file_path", body.WireopsFile)
+		if err := rr.app.Save(stack); err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+
+		log.Printf("[routes] create-from-wireops stack=%s repository=%s worker=%s file=%s", stack.Id, body.Repository, workerRecord.GetString("hostname"), body.WireopsFile)
+		return e.JSON(http.StatusOK, map[string]string{"id": stack.Id, "name": def.Name, "status": "pending"})
+	}).BindFunc(rbac.Require(rbac.CapManageRepos))
 }

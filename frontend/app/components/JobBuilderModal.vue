@@ -2,14 +2,29 @@
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { buildJobYaml } from '../utils/job-yaml-generator'
 
+interface JobBuilderWorker {
+  id: string
+  hostname: string
+  status: string
+  tags: string[]
+}
+
 const props = withDefaults(
   defineProps<{
     open?: boolean
+    workers?: JobBuilderWorker[]
   }>(),
   {
     open: false,
+    workers: () => [],
   }
 )
+
+const activeWorkers = computed(() => {
+  return [...props.workers]
+    .filter(w => w.status === 'ACTIVE')
+    .sort((a, b) => a.hostname.localeCompare(b.hostname))
+})
 
 const emit = defineEmits<{
   (e: 'update:open', value: boolean): void
@@ -191,6 +206,7 @@ const modeOptions = [
 ]
 
 const activeView = ref<'form' | 'yaml'>('form')
+const formTab = ref<'required' | 'optional'>('required')
 const isCommandFocused = ref(false)
 const isMobile = ref(false)
 
@@ -403,6 +419,27 @@ function handleImportYaml() {
             v-show="!isMobile || activeView === 'form'"
             class="p-3 sm:p-4 space-y-3 max-h-[70vh] overflow-y-auto"
           >
+            <!-- Required / Optional Tab Switcher -->
+            <div class="flex border border-gray-200 dark:border-carbon-800 rounded-lg bg-gray-100 dark:bg-carbon-900 p-0.5 text-xs">
+              <button
+                type="button"
+                class="flex-1 py-1.5 rounded transition-colors font-medium"
+                :class="formTab === 'required' ? 'bg-yellow-400 text-gray-950 shadow-sm' : 'text-gray-500 dark:text-wire-200/50 hover:text-gray-700 dark:hover:text-wire-200'"
+                @click="formTab = 'required'"
+              >
+                Required
+              </button>
+              <button
+                type="button"
+                class="flex-1 py-1.5 rounded transition-colors font-medium"
+                :class="formTab === 'optional' ? 'bg-yellow-400 text-gray-950 shadow-sm' : 'text-gray-500 dark:text-wire-200/50 hover:text-gray-700 dark:hover:text-wire-200'"
+                @click="formTab = 'optional'"
+              >
+                Optional
+              </button>
+            </div>
+
+            <div v-show="formTab === 'required'" class="space-y-3">
             <!-- Basic Info Card -->
             <div class="space-y-3 border border-gray-200 dark:border-carbon-800/60 rounded-lg p-3 bg-gray-50/50 dark:bg-carbon-900/10">
               <div class="flex items-center gap-1.5 border-b border-gray-150 dark:border-carbon-800/30 pb-1.5 mb-1">
@@ -410,10 +447,10 @@ function handleImportYaml() {
                 <span class="text-xs uppercase tracking-wider font-bold text-gray-500 dark:text-wire-200/50">Basic Info</span>
               </div>
               <UFormField label="Name" required class="w-full">
-                <UInput v-model="form.name" placeholder="e.g. database-backup" size="sm" class="w-full" />
+                <AppTextInput v-model="form.name" placeholder="e.g. database-backup" aria-label="Job name" />
               </UFormField>
               <UFormField label="Description" required class="w-full">
-                <UInput v-model="form.description" placeholder="e.g. Periodically backup production db" size="sm" class="w-full" />
+                <AppTextInput v-model="form.description" placeholder="e.g. Periodically backup production db" aria-label="Job description" />
               </UFormField>
             </div>
 
@@ -426,8 +463,16 @@ function handleImportYaml() {
 
               <!-- Docker Image (First item, full width) -->
               <UFormField label="Docker Image" required class="w-full">
-                <UInput v-model="form.image" placeholder="e.g. postgres:15-alpine" size="sm" class="w-full" />
+                <AppTextInput v-model="form.image" placeholder="e.g. postgres:15-alpine" aria-label="Docker image" />
               </UFormField>
+            </div>
+
+            <!-- Trigger Card -->
+            <div class="space-y-3 border border-gray-200 dark:border-carbon-800/60 rounded-lg p-3 bg-gray-50/50 dark:bg-carbon-900/10">
+              <div class="flex items-center gap-1.5 border-b border-gray-150 dark:border-carbon-800/30 pb-1.5 mb-1">
+                <UIcon name="i-lucide-calendar-clock" class="w-4 h-4 text-yellow-400 shrink-0" />
+                <span class="text-xs uppercase tracking-wider font-bold text-gray-500 dark:text-wire-200/50">Trigger</span>
+              </div>
 
               <!-- Cron Tabbed Selector -->
               <div class="space-y-2 border border-gray-200/60 dark:border-carbon-800/40 rounded bg-white dark:bg-carbon-900/40 p-2.5">
@@ -457,21 +502,17 @@ function handleImportYaml() {
                 </div>
 
                 <div v-show="cronTab === 'presets'">
-                  <USelect
+                  <AppSelectInput
                     v-model="selectedPreset"
                     :items="cronPresets"
                     placeholder="Select frequency preset"
-                    size="sm"
+                    :searchable="false"
+                    aria-label="Frequency preset"
                     class="w-full"
                   />
                 </div>
                 <div v-show="cronTab === 'custom'">
-                  <UInput
-                    v-model="form.cron"
-                    placeholder="e.g. */5 * * * *"
-                    size="sm"
-                    class="w-full"
-                  />
+                  <AppTextInput v-model="form.cron" placeholder="e.g. */5 * * * *" aria-label="Custom cron expression" />
                 </div>
                 <!-- Cron Translation Explanation -->
                 <div class="mt-1.5 flex items-center gap-1.5 px-1 text-[11px] font-mono text-gray-500 dark:text-wire-200/50">
@@ -479,37 +520,72 @@ function handleImportYaml() {
                   <span class="truncate">{{ cronExplanation }}</span>
                 </div>
               </div>
+            </div>
 
-              <!-- Mode (full width, with ? icon and tooltip) -->
+            <!-- Resources Card -->
+            <div class="space-y-3 border border-gray-200 dark:border-carbon-800/60 rounded-lg p-3 bg-gray-50/50 dark:bg-carbon-900/10">
+              <div class="flex items-center gap-1.5 border-b border-gray-150 dark:border-carbon-800/30 pb-1.5 mb-1">
+                <UIcon name="i-lucide-cpu" class="w-4 h-4 text-yellow-400 shrink-0" />
+                <span class="text-xs uppercase tracking-wider font-bold text-gray-500 dark:text-wire-200/50">Resources</span>
+              </div>
+
+              <div class="space-y-3">
+                <div class="grid grid-cols-2 gap-3">
+                  <UFormField label="CPU" required>
+                    <div class="flex gap-2 items-center w-full">
+                      <AppTextInput v-model="resourceForm.cpuVal" placeholder="0.5" aria-label="CPU value" class="flex-1 min-w-0" />
+                      <AppSelectInput v-model="resourceForm.cpuUnit" :items="cpuUnits" :searchable="false" disabled aria-label="CPU unit" class="w-fit shrink-0" />
+                    </div>
+                  </UFormField>
+                  <UFormField label="Memory" required>
+                    <div class="flex gap-2 items-center w-full">
+                      <AppTextInput v-model="resourceForm.memoryVal" placeholder="512" aria-label="Memory value" class="flex-1 min-w-0" />
+                      <AppSelectInput v-model="resourceForm.memoryUnit" :items="memoryUnits" :searchable="false" aria-label="Memory unit" class="w-fit shrink-0" />
+                    </div>
+                  </UFormField>
+                </div>
+                <UFormField label="Timeout" required>
+                  <div class="flex gap-2 items-center w-full">
+                    <AppTextInput v-model="resourceForm.timeoutVal" placeholder="5" aria-label="Timeout value" class="flex-1 min-w-0" />
+                    <AppSelectInput v-model="resourceForm.timeoutUnit" :items="timeoutUnits" :searchable="false" aria-label="Timeout unit" class="w-fit shrink-0" />
+                  </div>
+                </UFormField>
+              </div>
+            </div>
+            </div>
+
+            <div v-show="formTab === 'optional'" class="space-y-3">
+            <!-- Mode Card -->
+            <div class="space-y-3 border border-gray-200 dark:border-carbon-800/60 rounded-lg p-3 bg-gray-50/50 dark:bg-carbon-900/10">
+              <div class="flex items-center gap-1.5 border-b border-gray-150 dark:border-carbon-800/30 pb-1.5 mb-1">
+                <UIcon name="i-lucide-git-fork" class="w-4 h-4 text-yellow-400 shrink-0" />
+                <span class="text-xs uppercase tracking-wider font-bold text-gray-500 dark:text-wire-200/50">Mode</span>
+              </div>
+
               <UFormField class="w-full">
                 <template #label>
-                  <span class="flex items-center gap-1">
-                    Mode <span class="text-red-500">*</span>
-                    <UTooltip>
-                      <UIcon name="i-lucide-help-circle" class="w-3.5 h-3.5 text-gray-400 cursor-help" />
-                      <template #content>
-                        <div class="space-y-1 text-xs leading-normal">
-                          <p><strong class="text-yellow-400">once:</strong> dispatches to a single worker (round-robin).</p>
-                          <p><strong class="text-yellow-400">once_all:</strong> dispatches to all matching workers concurrently.</p>
-                        </div>
-                      </template>
-                    </UTooltip>
-                  </span>
+                  <span class="text-xs font-normal text-gray-500 dark:text-wire-200/50">How the job should be dispatched to matching workers</span>
                 </template>
-                <USelect v-model="form.mode" :items="modeOptions" placeholder="Select mode" size="sm" class="w-full" />
+                <URadioGroup
+                  v-model="form.mode"
+                  :items="modeOptions"
+                  orientation="horizontal"
+                />
               </UFormField>
+            </div>
 
-              <UFormField label="Command" class="w-full" :ui="{ label: 'w-full block' }">
+            <!-- Command Card -->
+            <div class="space-y-3 border border-gray-200 dark:border-carbon-800/60 rounded-lg p-3 bg-gray-50/50 dark:bg-carbon-900/10">
+              <div class="flex items-center gap-1.5 border-b border-gray-150 dark:border-carbon-800/30 pb-1.5 mb-1">
+                <UIcon name="i-lucide-terminal" class="w-4 h-4 text-yellow-400 shrink-0" />
+                <span class="text-xs uppercase tracking-wider font-bold text-gray-500 dark:text-wire-200/50">Command</span>
+              </div>
+
+              <UFormField class="w-full">
                 <template #label>
-                  <div class="flex items-center justify-between w-full">
-                    <span>Command</span>
-                    <label class="flex items-center gap-1.5 text-xs font-normal text-gray-500 dark:text-wire-200/60 cursor-pointer">
-                      <input v-model="form.commandAsArray" type="checkbox" class="rounded border-gray-300 dark:border-carbon-700 text-yellow-500 focus:ring-yellow-400">
-                      Format as Array
-                    </label>
-                  </div>
+                  <span class="text-xs font-normal text-gray-500 dark:text-wire-200/50">The command executed inside the container when the job runs</span>
                 </template>
-                <div 
+                <div
                   class="border rounded-lg overflow-hidden shadow-xs bg-carbon-950 text-wire-200 transition-all duration-200 w-full"
                   :class="isCommandFocused ? 'border-yellow-400/60 ring-1 ring-yellow-400/40' : 'border-gray-200 dark:border-carbon-800'"
                 >
@@ -526,30 +602,49 @@ function handleImportYaml() {
                       @focus="isCommandFocused = true"
                       @blur="isCommandFocused = false"
                     >
+                    <UTooltip text="Format as Array">
+                      <UButton
+                        icon="i-lucide-brackets"
+                        size="xs"
+                        variant="ghost"
+                        :color="form.commandAsArray ? 'primary' : 'neutral'"
+                        :class="form.commandAsArray ? 'text-yellow-400' : 'text-gray-500'"
+                        aria-label="Format as Array"
+                        @click="form.commandAsArray = !form.commandAsArray"
+                      />
+                    </UTooltip>
                   </div>
                 </div>
               </UFormField>
+            </div>
 
-              <UFormField label="Tags" class="w-full">
+            <!-- Worker Config Card -->
+            <div class="space-y-3 border border-gray-200 dark:border-carbon-800/60 rounded-lg p-3 bg-gray-50/50 dark:bg-carbon-900/10">
+              <div class="flex items-center gap-1.5 border-b border-gray-150 dark:border-carbon-800/30 pb-1.5 mb-1">
+                <UIcon name="i-lucide-server" class="w-4 h-4 text-yellow-400 shrink-0" />
+                <span class="text-xs uppercase tracking-wider font-bold text-gray-500 dark:text-wire-200/50">Worker Config</span>
+              </div>
+
+              <UFormField class="w-full">
                 <template #label>
                   <span class="flex items-center gap-2">
-                    Tags
+                    Filter Tags
                     <span class="text-xs font-normal text-gray-400 dark:text-wire-200/40">(Separated by space, comma or /)</span>
                   </span>
                 </template>
                 <div class="flex flex-wrap gap-1.5 p-1.5 border border-gray-200 dark:border-carbon-800 rounded-lg bg-white dark:bg-carbon-950/20 focus-within:border-yellow-400/60 focus-within:ring-1 focus-within:ring-yellow-400/40 transition-all duration-200 w-full min-h-[38px] items-center">
-                  <div 
-                    v-for="(tag, idx) in tagsArray" 
-                    :key="idx" 
+                  <div
+                    v-for="(tag, idx) in tagsArray"
+                    :key="idx"
                     class="bg-yellow-400/10 text-yellow-600 dark:text-yellow-400 text-xs px-2 py-0.5 rounded flex items-center gap-1 font-semibold border border-yellow-400/20"
                   >
                     <span>{{ tag }}</span>
-                    <UButton 
-                      icon="i-lucide-x" 
-                      size="xs" 
-                      variant="ghost" 
-                      class="p-0 h-3.5 w-3.5 hover:bg-transparent -my-0.5 text-yellow-600 dark:text-yellow-400 opacity-60 hover:opacity-100 transition-opacity" 
-                      @click="removeTag(idx)" 
+                    <UButton
+                      icon="i-lucide-x"
+                      size="xs"
+                      variant="ghost"
+                      class="p-0 h-3.5 w-3.5 hover:bg-transparent -my-0.5 text-yellow-600 dark:text-yellow-400 opacity-60 hover:opacity-100 transition-opacity"
+                      @click="removeTag(idx)"
                     />
                   </div>
                   <input
@@ -566,6 +661,35 @@ function handleImportYaml() {
                   >
                 </div>
               </UFormField>
+
+              <div class="space-y-1.5">
+                <span class="text-xs font-semibold text-gray-500 dark:text-wire-200/50">Known Workers</span>
+                <p v-if="activeWorkers.length === 0" class="text-xs text-gray-500 dark:text-wire-200/40 italic py-2 text-center border border-dashed border-gray-200 dark:border-carbon-800 rounded-lg bg-white/20 dark:bg-carbon-900/5">
+                  No active workers found.
+                </p>
+                <div v-else class="space-y-1.5">
+                  <div
+                    v-for="worker in activeWorkers"
+                    :key="worker.id"
+                    class="flex flex-wrap items-center gap-1.5 border border-gray-200/60 dark:border-carbon-800/40 rounded bg-white dark:bg-carbon-900/40 px-2 py-1.5"
+                  >
+                    <span class="text-xs font-medium text-gray-700 dark:text-wire-200 shrink-0">{{ worker.hostname }}</span>
+                    <template v-if="worker.tags.length">
+                      <UButton
+                        v-for="tag in worker.tags"
+                        :key="tag"
+                        :label="tag"
+                        size="xs"
+                        color="primary"
+                        variant="outline"
+                        class="rounded-full"
+                        @click="addTagsFromText(tag)"
+                      />
+                    </template>
+                    <span v-else class="text-xs text-gray-400 dark:text-wire-200/30 italic">no tags</span>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <!-- Volumes & Network Card -->
@@ -612,7 +736,7 @@ function handleImportYaml() {
                       <label class="text-[10px] font-semibold text-gray-500 dark:text-wire-200/40 uppercase tracking-wide">
                         Host Path
                       </label>
-                      <UInput v-model="vol.host" placeholder="e.g. /var/log" size="sm" class="w-full font-mono text-xs" />
+                      <AppTextInput v-model="vol.host" placeholder="e.g. /var/log" aria-label="Host path" class="font-mono" />
                       <p v-if="volumeWarnings[idx]" class="text-[10px] text-red-500 dark:text-red-400 mt-0.5 font-sans flex items-center gap-1">
                         <UIcon name="i-lucide-alert-triangle" class="w-3 h-3 shrink-0" />
                         {{ volumeWarnings[idx] }}
@@ -623,7 +747,7 @@ function handleImportYaml() {
                       <label class="text-[10px] font-semibold text-gray-500 dark:text-wire-200/40 uppercase tracking-wide">
                         Container Path
                       </label>
-                      <UInput v-model="vol.container" placeholder="e.g. /app/logs" size="sm" class="w-full font-mono text-xs" />
+                      <AppTextInput v-model="vol.container" placeholder="e.g. /app/logs" aria-label="Container path" class="font-mono" />
                     </div>
                   </div>
                 </div>
@@ -634,37 +758,9 @@ function handleImportYaml() {
               </div>
 
               <UFormField label="Network (Optional)" class="w-full">
-                <UInput v-model="form.network" placeholder="e.g. my-docker-network" size="sm" class="w-full" />
+                <AppTextInput v-model="form.network" placeholder="e.g. my-docker-network" aria-label="Network name" />
               </UFormField>
             </div>
-
-            <!-- Resources Card -->
-            <div class="space-y-3 border border-gray-200 dark:border-carbon-800/60 rounded-lg p-3 bg-gray-50/50 dark:bg-carbon-900/10">
-              <div class="flex items-center gap-1.5 border-b border-gray-150 dark:border-carbon-800/30 pb-1.5 mb-1">
-                <UIcon name="i-lucide-cpu" class="w-4 h-4 text-yellow-400 shrink-0" />
-                <span class="text-xs uppercase tracking-wider font-bold text-gray-500 dark:text-wire-200/50">Resources</span>
-              </div>
-
-              <div class="space-y-3">
-                <UFormField label="CPU" required>
-                  <div class="flex gap-2 items-center w-full">
-                    <UInput v-model="resourceForm.cpuVal" placeholder="0.5" size="sm" class="flex-1 min-w-0" />
-                    <USelect v-model="resourceForm.cpuUnit" :items="cpuUnits" size="sm" class="w-[110px] shrink-0" />
-                  </div>
-                </UFormField>
-                <UFormField label="Memory" required>
-                  <div class="flex gap-2 items-center w-full">
-                    <UInput v-model="resourceForm.memoryVal" placeholder="512" size="sm" class="flex-1 min-w-0" />
-                    <USelect v-model="resourceForm.memoryUnit" :items="memoryUnits" size="sm" class="w-[110px] shrink-0" />
-                  </div>
-                </UFormField>
-                <UFormField label="Timeout" required>
-                  <div class="flex gap-2 items-center w-full">
-                    <UInput v-model="resourceForm.timeoutVal" placeholder="5" size="sm" class="flex-1 min-w-0" />
-                    <USelect v-model="resourceForm.timeoutUnit" :items="timeoutUnits" size="sm" class="w-[110px] shrink-0" />
-                  </div>
-                </UFormField>
-              </div>
             </div>
           </div>
 
@@ -677,7 +773,7 @@ function handleImportYaml() {
               <div class="flex items-center justify-between mb-3 shrink-0">
                 <div class="flex items-center gap-2">
                   <UIcon name="i-lucide-terminal" class="w-4 h-4 text-yellow-400" />
-                  <span class="font-semibold text-sm text-gray-900 dark:text-wire-200">job.yaml Preview</span>
+                  <span class="font-semibold text-sm text-gray-900 dark:text-wire-200"><span class="opacity-50">Preview</span> job.yaml</span>
                 </div>
                 
                 <div class="flex items-center gap-2">

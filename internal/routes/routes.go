@@ -29,6 +29,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 	registrar.registerStackTransferRoute()
 	registrar.registerSystemRoutes()
 	registrar.registerImportRoutes()
+	registrar.registerCreateFromWireopsRoute()
 	registrar.registerIntegrationRoutes()
 
 	RegisterUserRoutes(r, app)

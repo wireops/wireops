@@ -11,6 +11,7 @@ import (
 
 	"github.com/pocketbase/pocketbase/core"
 
+	"github.com/wireops/wireops/internal/config"
 	"github.com/wireops/wireops/internal/contextutil"
 	"github.com/wireops/wireops/internal/notify"
 )
@@ -231,9 +232,12 @@ func (s *Scheduler) startJob(stack *core.Record) {
 
 func (s *Scheduler) startJobLocked(stack *core.Record) {
 	stackID := stack.Id
-	interval := stack.GetInt("poll_interval")
-	if interval <= 0 {
-		interval = 60
+
+	// wireops.yaml's sync.interval overrides the global SCAN_PERIOD for this
+	// stack; 0 (unset, or manually-configured stacks) falls back to it.
+	interval := config.GetScanPeriod()
+	if seconds := stack.GetInt("sync_interval_seconds"); seconds > 0 {
+		interval = time.Duration(seconds) * time.Second
 	}
 
 	// jobCtx is cancelled either when this specific job is unregistered
@@ -242,7 +246,7 @@ func (s *Scheduler) startJobLocked(stack *core.Record) {
 	s.jobs[stackID] = jobCancel
 
 	go func() {
-		ticker := time.NewTicker(time.Duration(interval) * time.Second)
+		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 
 		for {
@@ -254,8 +258,8 @@ func (s *Scheduler) startJobLocked(stack *core.Record) {
 					return
 				}
 				// Use a detached context with timeout so re-registering the stack
-				// (e.g. when user changes poll_interval) does not cancel in-flight
-				// reconciles. jobCtx is only for stopping the ticker loop.
+				// does not cancel in-flight reconciles. jobCtx is only for
+				// stopping the ticker loop.
 				reconcileCtx, cancel := context.WithTimeout(s.rootCtx, 10*time.Minute)
 				s.safeRun(reconcileCtx, fmt.Sprintf("cron[%s]", stackID), func() error {
 					defer cancel()

@@ -75,8 +75,10 @@ func Deploy(ctx context.Context, cmd protocol.DeployCommand) protocol.CommandRes
 
 	output, runErr := runInWorkDir(cmd.StackID, cmd.CommandID, cmd.ComposeFileB64, cmd.EnvFileB64, "deploy", func(workDir, composeFile string) (string, error) {
 		return compose.RunUp(ctx, compose.RunOptions{
-			WorkDir:     workDir,
-			ComposeFile: composeFile,
+			WorkDir:       workDir,
+			ComposeFile:   composeFile,
+			ForcePull:     cmd.ForcePull,
+			RemoveOrphans: cmd.RemoveOrphans,
 		})
 	})
 
@@ -108,8 +110,10 @@ func Redeploy(ctx context.Context, cmd protocol.RedeployCommand) protocol.Comman
 	output, runErr := runInWorkDir(cmd.StackID, cmd.CommandID, cmd.ComposeFileB64, cmd.EnvFileB64, "redeploy", func(workDir, composeFile string) (string, error) {
 		return compose.RunForceUp(ctx, compose.ForceUpOptions{
 			RunOptions: compose.RunOptions{
-				WorkDir:     workDir,
-				ComposeFile: composeFile,
+				WorkDir:       workDir,
+				ComposeFile:   composeFile,
+				ForcePull:     cmd.ForcePull,
+				RemoveOrphans: cmd.RemoveOrphans,
 			},
 			RecreateContainers: cmd.RecreateContainers,
 			RecreateVolumes:    cmd.RecreateVolumes,

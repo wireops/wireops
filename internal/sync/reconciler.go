@@ -73,6 +73,30 @@ func (r *Reconciler) resolveWorker(stack *core.Record) (workerID, fingerprint st
 	return workerID, worker.GetString("fingerprint"), nil
 }
 
+// resolveComposeRuntimeFlags resolves the force_pull/remove_orphans flags to
+// send with a deploy command. remove_orphans defaults to true (the
+// historical, unconditional behavior) for every stack except one explicitly
+// created from a wireops.yaml with remove_orphans: false.
+func resolveComposeRuntimeFlags(stack *core.Record) (forcePull, removeOrphans bool) {
+	forcePull = stack.GetBool("force_pull")
+	removeOrphans = true
+	if stack.GetString("config_source") == "wireops_file" && !stack.GetBool("remove_orphans") {
+		removeOrphans = false
+	}
+	return forcePull, removeOrphans
+}
+
+// withDeployTimeout wraps ctx with a deadline: the stack's own
+// deploy_timeout_seconds when positive (sourced from wireops.yaml's timeout
+// field), otherwise the global default from config.GetDeployTimeout().
+func withDeployTimeout(ctx context.Context, stack *core.Record) (context.Context, context.CancelFunc) {
+	seconds := stack.GetInt("deploy_timeout_seconds")
+	if seconds > 0 {
+		return context.WithTimeout(ctx, time.Duration(seconds)*time.Second)
+	}
+	return context.WithTimeout(ctx, config.GetDeployTimeout())
+}
+
 // ReconcileStack fetches the repo, checks for changes, and deploys the compose stack.
 func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger string, queueTotal int) error {
 	mu := r.stackMutex(stackID)
@@ -319,7 +343,9 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		if b64Err != nil {
 			runErr = fmt.Errorf("failed to serialize env vars for remote deploy: %w", b64Err)
 		} else {
-			result, dispatchErr := r.dispatcher.Dispatch(ctx, workerID, protocol.DeployCommand{
+			forcePull, removeOrphans := resolveComposeRuntimeFlags(stack)
+			dispatchCtx, cancelDispatch := withDeployTimeout(ctx, stack)
+			result, dispatchErr := r.dispatcher.Dispatch(dispatchCtx, workerID, protocol.DeployCommand{
 				CommandID:      syncLog.Id,
 				StackID:        stackID,
 				CommitSHA:      remoteSHA,
@@ -327,7 +353,10 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 				QueueTotal:     queueTotal,
 				ComposeFileB64: base64.StdEncoding.EncodeToString(composeContent),
 				EnvFileB64:     envFileB64,
+				ForcePull:      forcePull,
+				RemoveOrphans:  removeOrphans,
 			})
+			cancelDispatch()
 			output, runErr = extractDispatchResult(result, dispatchErr)
 		}
 
@@ -545,6 +574,7 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 	if b64Err != nil {
 		runErr = fmt.Errorf("failed to serialize env vars for remote rollback: %w", b64Err)
 	} else {
+		forcePull, removeOrphans := resolveComposeRuntimeFlags(stack)
 		result, dispatchErr := r.dispatcher.Dispatch(ctx, workerID, protocol.DeployCommand{
 			CommandID:      cmdID,
 			StackID:        stackID,
@@ -552,6 +582,8 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 			Trigger:        "rollback",
 			ComposeFileB64: base64.StdEncoding.EncodeToString(composeContent),
 			EnvFileB64:     envFileB64,
+			ForcePull:      forcePull,
+			RemoveOrphans:  removeOrphans,
 		})
 		output, runErr = extractDispatchResult(result, dispatchErr)
 	}
@@ -757,6 +789,7 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 	if b64Err != nil {
 		runErr = fmt.Errorf("failed to serialize env vars for remote redeploy: %w", b64Err)
 	} else {
+		forcePull, removeOrphans := resolveComposeRuntimeFlags(stack)
 		result, dispatchErr := r.dispatcher.Dispatch(ctx, workerID, protocol.RedeployCommand{
 			DeployCommand: protocol.DeployCommand{
 				CommandID:      cmdID,
@@ -765,6 +798,8 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 				Trigger:        "force-redeploy",
 				ComposeFileB64: base64.StdEncoding.EncodeToString(composeContent),
 				EnvFileB64:     envFileB64,
+				ForcePull:      forcePull,
+				RemoveOrphans:  removeOrphans,
 			},
 			RecreateContainers: recreateContainers,
 			RecreateVolumes:    recreateVolumes,
@@ -1001,6 +1036,7 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 	if b64Err != nil {
 		runErr = fmt.Errorf("failed to serialize env vars for remote local-sync: %w", b64Err)
 	} else if recreateContainers {
+		forcePull, removeOrphans := resolveComposeRuntimeFlags(stack)
 		result, dispatchErr := r.dispatcher.Dispatch(ctx, workerID, protocol.RedeployCommand{
 			DeployCommand: protocol.DeployCommand{
 				CommandID:      syncLog.Id,
@@ -1009,12 +1045,15 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 				Trigger:        trigger,
 				ComposeFileB64: b64,
 				EnvFileB64:     envFileB64,
+				ForcePull:      forcePull,
+				RemoveOrphans:  removeOrphans,
 			},
 			RecreateContainers: true,
 			RecreateVolumes:    recreateVolumes,
 		})
 		output, runErr = extractDispatchResult(result, dispatchErr)
 	} else {
+		forcePull, removeOrphans := resolveComposeRuntimeFlags(stack)
 		result, dispatchErr := r.dispatcher.Dispatch(ctx, workerID, protocol.DeployCommand{
 			CommandID:      syncLog.Id,
 			StackID:        stackID,
@@ -1022,6 +1061,8 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 			Trigger:        trigger,
 			ComposeFileB64: b64,
 			EnvFileB64:     envFileB64,
+			ForcePull:      forcePull,
+			RemoveOrphans:  removeOrphans,
 		})
 		output, runErr = extractDispatchResult(result, dispatchErr)
 	}
@@ -1584,12 +1625,15 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 	var dispatchErr error
 
 	log.Printf("[transfer] step 1/2: deploy dispatching to target_agent=%s (%s) stack=%s", targetWorkerID, targetHostname, stackID)
+	transferForcePull, transferRemoveOrphans := resolveComposeRuntimeFlags(stack)
 	deployResult, dErr := r.dispatcher.Dispatch(ctx, targetWorkerID, protocol.DeployCommand{
 		CommandID:      cmdID,
 		StackID:        stackID,
 		Trigger:        "transfer",
 		ComposeFileB64: composeB64,
 		EnvFileB64:     envFileB64,
+		ForcePull:      transferForcePull,
+		RemoveOrphans:  transferRemoveOrphans,
 	})
 	deployOutput = deployResult.Output
 	dispatchErr = dErr

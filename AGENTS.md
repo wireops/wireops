@@ -118,7 +118,7 @@ All collections are defined via Go migrations in `pb_migrations/`.
 |---|---|
 | `repositories` | `name`, `git_url`, `branch`, `status`, `last_commit_sha`, `platform` |
 | `repository_keys` | `repository`, `auth_type` (none/ssh_key/basic), `ssh_private_key`*, `git_password`* |
-| `stacks` | `name`, `repository`, `compose_path`, `poll_interval`, `auto_sync`, `status`, `worker`, `current_version` |
+| `stacks` | `name`, `repository`, `compose_path`, `auto_sync`, `status`, `worker`, `current_version` |
 | `stack_env_vars` | `stack`, `key`, `value`*, `secret` |
 | `stack_services` | `stack`, `service_name`, `container_name`, `status` |
 | `stack_revisions` | `stack`, `version` — numbered snapshots of rendered compose YAML |
@@ -145,7 +145,7 @@ repositories ─── 1:N ──→ scheduled_jobs ─── 1:N ──→ job_
 ## Key Business Flows
 
 ### GitOps Sync
-1. `sync/scheduler.go` polls each stack on its `poll_interval` (default 60s).
+1. `sync/scheduler.go` polls every stack on a global interval set by `SCAN_PERIOD` (default 10s, `internal/config.GetScanPeriod`).
 2. `sync/reconciler.go` runs `git.CloneOrFetch` and compares the latest commit SHA with the stored one.
 3. `sync/renderer.go` reads the compose YAML, injects `dev.wireops.*` labels, and writes a versioned revision file to `DATA_DIR/stacks/<id>/v<n>.yml`.
 4. The server base64-encodes the compose file, sends a `DeployCommand` over WebSocket to the worker assigned to the stack, and waits up to 5 minutes for `CommandResult`.

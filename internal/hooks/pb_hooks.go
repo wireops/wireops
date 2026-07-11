@@ -99,6 +99,51 @@ func validateRepositoryKeyTypeImmutable(app core.App, record *core.Record) error
 	}
 }
 
+// wireopsManagedStackFields are the fields sourced from a stack's
+// wireops.yaml at creation time. Once a stack has config_source ==
+// "wireops_file", these become immutable via the API — the only way to
+// change deploy behavior is to edit the wireops.yaml file in the repo and
+// recreate the stack. This is enforced server-side because the stacks
+// collection's Update rule allows any authenticated user to PATCH any field.
+var wireopsManagedStackFields = []string{
+	"compose_path",
+	"compose_file",
+	"remove_orphans",
+	"force_pull",
+	"deploy_timeout_seconds",
+	"sync_interval_seconds",
+	"wait_running_jobs",
+	"wait_running_jobs_timeout_seconds",
+	"worker_tags",
+	"wireops_file_path",
+	"config_source",
+}
+
+func validateWireopsFieldsImmutable(app core.App, record *core.Record) error {
+	original := record.Original()
+	if original == nil && strings.TrimSpace(record.Id) != "" {
+		persisted, err := app.FindRecordById("stacks", record.Id)
+		if err != nil {
+			return fmt.Errorf("find stack %s: %w", record.Id, err)
+		}
+		original = persisted
+	}
+	if original == nil || original.GetString("config_source") != "wireops_file" {
+		return nil
+	}
+
+	errs := validation.Errors{}
+	for _, field := range wireopsManagedStackFields {
+		if !reflect.DeepEqual(original.Get(field), record.Get(field)) {
+			errs[field] = validation.NewError("validation_wireops_field_immutable", "This field is managed by wireops.yaml and cannot be edited from the UI.")
+		}
+	}
+	if len(errs) > 0 {
+		return errs
+	}
+	return nil
+}
+
 func loadRepositoryTransportAuth(app core.App, repoID string) (transport.AuthMethod, bool, error) {
 	credential, err := git.LoadRepositoryCredential(app, repoID)
 	if err != nil {
@@ -270,6 +315,9 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 
 	app.OnRecordUpdate("stacks").BindFunc(func(e *core.RecordEvent) error {
 		if err := validateAssignedWorker(e.Record); err != nil {
+			return err
+		}
+		if err := validateWireopsFieldsImmutable(e.App, e.Record); err != nil {
 			return err
 		}
 		preserveMaskedFieldValue(e.Record, "webhook_secret")

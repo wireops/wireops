@@ -71,6 +71,16 @@ type DeployCommand struct {
 	// If empty, the worker should remove any existing .env file in the work dir.
 	// This keeps .env handling consistent across deploy commands.
 	EnvFileB64 string `json:"env_file_b64,omitempty"`
+
+	// ForcePull, when true, makes the worker run `docker compose pull`
+	// (image always re-pulled) before `up`. Sourced from a stack's
+	// wireops.yaml compose.force_pull; defaults to false.
+	ForcePull bool `json:"force_pull,omitempty"`
+
+	// RemoveOrphans controls whether `--remove-orphans` is passed to
+	// `docker compose up`. Defaults to true to preserve pre-existing
+	// behavior; only false when a stack's wireops.yaml explicitly opts out.
+	RemoveOrphans bool `json:"remove_orphans,omitempty"`
 }
 
 // RedeployCommand extends DeployCommand with force-recreate options.
