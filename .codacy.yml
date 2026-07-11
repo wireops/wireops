@@ -1,0 +1,9 @@
+# Codacy repository-level config.
+# https://docs.codacy.com/related-tools/analysis-configuration/local-configuration-files/
+
+exclude_paths:
+  # The pinned commit SHAs (40-char hex, same shape as an API key) on the
+  # SonarSource action refs here trip Codacy's secret-detection heuristic as
+  # a false-positive "SonarQube Docs API Key". They are git commit SHAs used
+  # to pin third-party GitHub Actions to an immutable release, not secrets.
+  - ".github/workflows/quality-sonar.yml"
