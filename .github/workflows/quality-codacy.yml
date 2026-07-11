@@ -59,6 +59,7 @@ jobs:
         with:
           api-token: ${{ secrets.CODACY_API_TOKEN }}
           coverage-reports: coverage.out
+          language: Go
 
   frontend-coverage:
     name: Codacy Coverage (Frontend)
