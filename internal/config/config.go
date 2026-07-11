@@ -3,7 +3,9 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // GetDataDir returns the root directory for all wireops runtime data.
@@ -62,6 +64,31 @@ func GetAppURL() string {
 
 	// Default to localhost with default PocketBase port
 	return "http://localhost:8090"
+}
+
+// GetScanPeriod returns the global interval at which every stack's repository
+// is polled for changes. Configured via SCAN_PERIOD (seconds), default 10s.
+func GetScanPeriod() time.Duration {
+	const defaultSeconds = 10
+	if raw := strings.TrimSpace(os.Getenv("SCAN_PERIOD")); raw != "" {
+		if val, err := strconv.Atoi(raw); err == nil && val > 0 {
+			return time.Duration(val) * time.Second
+		}
+	}
+	return defaultSeconds * time.Second
+}
+
+// GetDeployTimeout returns the global default deploy timeout applied when a
+// stack does not declare its own deploy_timeout_seconds (via wireops.yaml's
+// timeout field). Configured via DEPLOY_TIMEOUT (seconds), default 5m.
+func GetDeployTimeout() time.Duration {
+	const defaultSeconds = 5 * 60
+	if raw := strings.TrimSpace(os.Getenv("DEPLOY_TIMEOUT")); raw != "" {
+		if val, err := strconv.Atoi(raw); err == nil && val > 0 {
+			return time.Duration(val) * time.Second
+		}
+	}
+	return defaultSeconds * time.Second
 }
 
 // GetWebhookURL returns the full webhook URL for a given stack ID

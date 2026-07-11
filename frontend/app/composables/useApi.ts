@@ -109,6 +109,13 @@ export function useApi() {
     customGet<string[]>(`/api/custom/repositories/${repoId}/job-files`)
   const getJobDefinitionFromFile = (repoId: string, file: string) =>
     customGet<JobDefinition>(`/api/custom/repositories/${repoId}/job-definition?file=${encodeURIComponent(file)}`)
+  const getWireopsFiles = (repoId: string) =>
+    customGet<string[]>(`/api/custom/repositories/${repoId}/wireops-files`)
+  const getWireopsDefinitionFromFile = (repoId: string, file: string) =>
+    customGet<WireopsDefinition>(`/api/custom/repositories/${repoId}/wireops-definition?file=${encodeURIComponent(file)}`)
+  type CreateStackFromWireopsBody = { repository: string; worker: string; wireops_file: string }
+  const createStackFromWireops = (body: CreateStackFromWireopsBody) =>
+    customPost<{ id: string; name: string; status: string }>('/api/custom/stacks/from-wireops', body)
   const testCredentials = (body: any) => customPost('/api/custom/credentials/test', body)
   const keyscan = (host: string, port = 22) => customPost('/api/custom/credentials/keyscan', { host, port })
   const listOrphans = () => customGet<{ dir_name: string; compose_file: string; has_compose: boolean }[]>('/api/custom/orphans')
@@ -124,6 +131,18 @@ export function useApi() {
   }>('/api/custom/system/info')
 
 
+
+  type WireopsDefinition = {
+    version: string
+    name: string
+    deploy_timeout_seconds: number
+    compose?: { remove_orphans?: boolean; force_pull?: boolean }
+    jobs?: { wait_running?: boolean }
+    worker?: { tags?: string[] }
+    resolved_compose_path?: string
+    resolved_compose_file?: string
+    resolution_error?: string
+  }
 
   type DiscoveredProject = { project_name: string; compose_path: string; services: string[] }
   const discoverProjects = (workerId: string) =>
@@ -306,5 +325,5 @@ export function useApi() {
     return customGet<AuditLogResponse>(`/api/custom/audit-logs${query ? `?${query}` : ''}`)
   }
 
-  return { triggerSync, triggerRollback, forceRedeploy, getServices, getStackResources, stopContainer, restartContainer, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, getRepoFiles, getStackFiles, getJobFiles, getJobDefinitionFromFile, testCredentials, keyscan, listOrphans, purgeOrphan, getSystemInfo, customPost, customGet, customPut, customPatch, customDelete, getWorkers, createWorkerToken, revokeWorker, transferStack, discoverProjects, importStack, listJobs, triggerJobRun, cancelJobRun, deleteJobRun, getJobDefinition, getJobRaw, getWorkerPolicy, saveWorkerPolicy, resetWorkerPolicy, getGlobalWorkerPolicy, saveGlobalWorkerPolicy, getAppSettings, saveAppSettings, listAuditLogs }
+  return { triggerSync, triggerRollback, forceRedeploy, getServices, getStackResources, stopContainer, restartContainer, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, getRepoFiles, getStackFiles, getJobFiles, getJobDefinitionFromFile, getWireopsFiles, getWireopsDefinitionFromFile, createStackFromWireops, testCredentials, keyscan, listOrphans, purgeOrphan, getSystemInfo, customPost, customGet, customPut, customPatch, customDelete, getWorkers, createWorkerToken, revokeWorker, transferStack, discoverProjects, importStack, listJobs, triggerJobRun, cancelJobRun, deleteJobRun, getJobDefinition, getJobRaw, getWorkerPolicy, saveWorkerPolicy, resetWorkerPolicy, getGlobalWorkerPolicy, saveGlobalWorkerPolicy, getAppSettings, saveAppSettings, listAuditLogs }
 }
