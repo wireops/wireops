@@ -14,6 +14,25 @@ import (
 type RunOptions struct {
 	WorkDir     string
 	ComposeFile string
+
+	// ForcePull, when true, appends --pull always to `docker compose up`.
+	ForcePull bool
+	// RemoveOrphans, when true, appends --remove-orphans to `docker compose up`.
+	// Callers must resolve the desired default (historically always true)
+	// before constructing RunOptions — this struct has no implicit default.
+	RemoveOrphans bool
+}
+
+// buildUpArgs assembles the `docker compose ... up -d` argument list.
+func buildUpArgs(composeFile string, removeOrphans, forcePull bool) []string {
+	args := []string{"compose", "-f", composeFile, "up", "-d"}
+	if removeOrphans {
+		args = append(args, "--remove-orphans")
+	}
+	if forcePull {
+		args = append(args, "--pull", "always")
+	}
+	return args
 }
 
 func RunUp(ctx context.Context, opts RunOptions) (string, error) {
@@ -38,10 +57,8 @@ func RunUp(ctx context.Context, opts RunOptions) (string, error) {
 	}
 
 	// Use just the filename for -f since cmd.Dir is set to WorkDir
-	cmd := exec.CommandContext(ctx, dockerBin, "compose",
-		"-f", composeFile,
-		"up", "-d", "--remove-orphans",
-	)
+	args := buildUpArgs(composeFile, opts.RemoveOrphans, opts.ForcePull)
+	cmd := exec.CommandContext(ctx, dockerBin, args...)
 	cmd.Dir = opts.WorkDir
 	cmd.Env = safeEnv()
 
@@ -93,7 +110,9 @@ func RunForceUp(ctx context.Context, opts ForceUpOptions) (string, error) {
 		if opts.RecreateVolumes {
 			downArgs = append(downArgs, "-v")
 		}
-		downArgs = append(downArgs, "--remove-orphans")
+		if opts.RemoveOrphans {
+			downArgs = append(downArgs, "--remove-orphans")
+		}
 		downCmd := exec.CommandContext(ctx, dockerBin, downArgs...)
 		downCmd.Dir = opts.WorkDir
 		downCmd.Env = env
@@ -107,7 +126,7 @@ func RunForceUp(ctx context.Context, opts ForceUpOptions) (string, error) {
 		allOutput.WriteString("\n--- recreating ---\n")
 	}
 
-	upArgs := []string{"compose", "-f", composeFile, "up", "-d", "--remove-orphans"}
+	upArgs := buildUpArgs(composeFile, opts.RemoveOrphans, opts.ForcePull)
 	if opts.RecreateContainers {
 		upArgs = append(upArgs, "--force-recreate")
 	}

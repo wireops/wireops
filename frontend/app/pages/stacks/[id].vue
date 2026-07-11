@@ -231,23 +231,36 @@ function startEdit() {
   editing.value = true
 }
 const editErrors = ref<{ compose_path?: string; compose_file?: string }>({})
+const isWireopsManaged = computed(() => stack.value?.config_source === 'wireops_file')
 async function saveEdit() {
   editErrors.value = {}
-  const pathErr = validateComposePath(editForm.value.compose_path || '')
-  const fileErr = validateComposeFile(editForm.value.compose_file || '')
-  if (pathErr) editErrors.value.compose_path = pathErr
-  if (fileErr) editErrors.value.compose_file = fileErr
-  if (pathErr || fileErr) return
 
-  await $pb.collection('stacks').update(stackId, {
+  const payload: Record<string, any> = {
     name: editForm.value.name,
     worker: editForm.value.worker,
-    compose_path: editForm.value.compose_path,
-    compose_file: editForm.value.compose_file,
-    poll_interval: editForm.value.poll_interval,
-  })
-  editing.value = false
-  refreshStack()
+  }
+
+  // compose_path/compose_file (and other wireops.yaml-derived fields) are
+  // immutable once a stack is created from wireops.yaml — the backend
+  // rejects any attempt to change them, so don't even send them.
+  if (!isWireopsManaged.value) {
+    const pathErr = validateComposePath(editForm.value.compose_path || '')
+    const fileErr = validateComposeFile(editForm.value.compose_file || '')
+    if (pathErr) editErrors.value.compose_path = pathErr
+    if (fileErr) editErrors.value.compose_file = fileErr
+    if (pathErr || fileErr) return
+
+    payload.compose_path = editForm.value.compose_path
+    payload.compose_file = editForm.value.compose_file
+  }
+
+  try {
+    await $pb.collection('stacks').update(stackId, payload)
+    editing.value = false
+    refreshStack()
+  } catch (err: any) {
+    toast.add({ title: 'Failed to save stack', description: err?.message, color: 'error' })
+  }
 }
 
 // Webhook secret
@@ -522,7 +535,6 @@ onMounted(() => {
               @click="openComposeViewer"
             >{{ stack?.compose_file || 'docker-compose.yml' }}</button>
           </div>
-          <div><span class="text-gray-500">Poll Interval:</span> {{ stack?.poll_interval || 60 }}s</div>
           <div><span class="text-gray-500">Last Synced:</span> {{ stack?.last_synced_at ? new Date(stack.last_synced_at).toLocaleString() : 'Never' }}</div>
           <div class="col-span-2 flex items-center gap-2">
             <span class="text-gray-500">Revision:</span>
@@ -541,9 +553,15 @@ onMounted(() => {
         <form v-else class="grid grid-cols-1 sm:grid-cols-2 gap-4" @submit.prevent="saveEdit">
           <UFormField label="Name"><UInput v-model="editForm.name" /></UFormField>
           <UFormField label="Worker"><USelect v-model="editForm.worker" :items="workerOptions" /></UFormField>
-          <UFormField label="Compose Path" :error="editErrors.compose_path"><UInput v-model="editForm.compose_path" /></UFormField>
-          <UFormField label="Compose File" :error="editErrors.compose_file"><UInput v-model="editForm.compose_file" /></UFormField>
-          <UFormField label="Poll Interval (s)"><UInput v-model.number="editForm.poll_interval" type="number" /></UFormField>
+          <UFormField label="Compose Path" :error="editErrors.compose_path">
+            <UInput v-model="editForm.compose_path" :disabled="isWireopsManaged" />
+          </UFormField>
+          <UFormField label="Compose File" :error="editErrors.compose_file">
+            <UInput v-model="editForm.compose_file" :disabled="isWireopsManaged" />
+          </UFormField>
+          <div v-if="isWireopsManaged" class="col-span-2 text-xs text-gray-500">
+            Compose path/file are managed by <code>{{ stack?.wireops_file_path }}</code> and can't be edited here.
+          </div>
           <div class="col-span-2 flex justify-end gap-2">
             <UButton label="Cancel" variant="outline" @click="editing = false" />
             <UButton type="submit" label="Save" />

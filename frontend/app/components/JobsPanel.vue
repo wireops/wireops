@@ -1,12 +1,15 @@
 <script setup lang="ts">
 const { $pb } = useNuxtApp()
-const { listJobs, triggerJobRun } = useApi()
+const { listJobs, triggerJobRun, getWorkers } = useApi()
 const { subscribe } = useRealtime()
 const toast = useToast()
 const { isViewer } = usePermissions()
 
 const { data: repos, refresh: refreshRepos } = useAsyncData('repos_for_jobs', () =>
   $pb.collection('repositories').getFullList({ sort: 'name' })
+)
+const { data: jobWorkers } = useAsyncData('job_builder_workers', () =>
+  getWorkers().catch(() => [])
 )
 
 const { data: jobs, refresh, pending } = useAsyncData('jobs_list', () => listJobs())
@@ -97,7 +100,6 @@ function formatRelative(dateStr: string) {
           v-if="!isViewer"
           icon="i-lucide-wrench"
           label="Job Builder"
-          color="neutral"
           variant="outline"
           class="w-full justify-center sm:w-auto"
           @click="showBuilder = true"
@@ -261,5 +263,6 @@ function formatRelative(dateStr: string) {
 
     <JobBuilderModal
       v-model:open="showBuilder"
+      :workers="jobWorkers || []"
     />
   </template>

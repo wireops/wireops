@@ -49,6 +49,7 @@ onBeforeUnmount(() => {
 })
 
 const showCreate = ref(false)
+const showBuilder = ref(false)
 
 function openCreate() {
   showCreate.value = true
@@ -234,6 +235,7 @@ async function handlePurge(dirName: string) {
       <div v-if="!isViewer" class="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
         <UButton icon="i-lucide-plus" label="Add Stack" class="w-full justify-center shadow-[0_0_16px_rgba(255,198,0,0.35)] transition-shadow hover:shadow-[0_0_24px_rgba(255,198,0,0.55)] sm:w-auto" @click="openCreate()" />
         <UButton icon="i-lucide-package-plus" label="Import" variant="outline" class="w-full justify-center sm:w-auto" @click="showImport = true" />
+        <UButton icon="i-lucide-wrench" label="Stack Builder" variant="outline" class="w-full justify-center sm:w-auto" @click="showBuilder = true" />
       </div>
     </div>
 
@@ -400,6 +402,7 @@ async function handlePurge(dirName: string) {
     </UCard>
 
     <CreateStackModal v-model:open="showCreate" @created="onCreated" />
+    <StackBuilderModal v-model:open="showBuilder" :workers="workers || []" />
 
     <UModal v-model:open="showOrphans" title="Orphan Directories" description="Directories in the repos workspace not linked to any repository.">
       <template #body>

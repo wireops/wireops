@@ -31,6 +31,7 @@ import (
 	"github.com/wireops/wireops/internal/protocol"
 	"github.com/wireops/wireops/internal/rbac"
 	"github.com/wireops/wireops/internal/sync"
+	"github.com/wireops/wireops/internal/manifest"
 )
 
 type routeRegistrar struct {
@@ -149,6 +150,13 @@ func (rr routeRegistrar) resolveStackAndWorker(e *core.RequestEvent, stackID str
 	return stack, projectName, workerID, true
 }
 
+// skipDir reports whether a directory encountered during a repo file walk
+// should be skipped entirely (filepath.SkipDir), e.g. VCS metadata and
+// dependency directories that are never relevant to compose/job/wireops files.
+func skipDir(name string) bool {
+	return name == ".git" || name == "node_modules" || name == "vendor"
+}
+
 func (rr routeRegistrar) listYAMLFiles(repoDir string, filter func([]byte) bool) ([]string, error) {
 	var candidates []string
 	if err := filepath.WalkDir(repoDir, func(path string, d os.DirEntry, err error) error {
@@ -156,7 +164,7 @@ func (rr routeRegistrar) listYAMLFiles(repoDir string, filter func([]byte) bool)
 			return err
 		}
 		if d.IsDir() {
-			if d.Name() == ".git" || d.Name() == "node_modules" || d.Name() == "vendor" {
+			if skipDir(d.Name()) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -197,12 +205,46 @@ func (rr routeRegistrar) listYAMLFiles(repoDir string, filter func([]byte) bool)
 	return matched, nil
 }
 
+func (rr routeRegistrar) listFilesByBasename(repoDir string, match func(name string) bool) ([]string, error) {
+	var matched []string
+	if err := filepath.WalkDir(repoDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if skipDir(d.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !match(d.Name()) {
+			return nil
+		}
+		rel, err := filepath.Rel(repoDir, path)
+		if err != nil {
+			return nil
+		}
+		matched = append(matched, rel)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	sort.Strings(matched)
+	return matched, nil
+}
+
 func (rr routeRegistrar) repoFilesSetup(e *core.RequestEvent) (string, bool) {
 	repoID := e.Request.PathValue("id")
 	if repoID == "" {
 		_ = e.JSON(http.StatusBadRequest, map[string]string{"error": "missing id"})
 		return "", false
 	}
+	return rr.repoFilesSetupByID(e, repoID)
+}
+
+// repoFilesSetupByID is the repoFilesSetup logic for callers that already
+// have a repository ID (e.g. from a JSON body) instead of a URL path param.
+func (rr routeRegistrar) repoFilesSetupByID(e *core.RequestEvent, repoID string) (string, bool) {
 	repo, err := rr.app.FindRecordById("repositories", repoID)
 	if err != nil {
 		_ = e.JSON(http.StatusNotFound, map[string]string{"error": "repository not found"})
@@ -474,6 +516,46 @@ func (rr routeRegistrar) registerRepositoryRoutes() {
 				"errors": validationErrors(err),
 			})
 		}
+		return e.JSON(http.StatusOK, def)
+	}).BindFunc(rbac.Require(rbac.CapManageRepos))
+
+	rr.r.GET("/api/custom/repositories/{id}/wireops-files", func(e *core.RequestEvent) error {
+		repoDir, ok := rr.repoFilesSetup(e)
+		if !ok {
+			return nil
+		}
+		files, err := rr.listFilesByBasename(repoDir, manifest.IsWireopsFile)
+		if err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to list files"})
+		}
+		if files == nil {
+			files = []string{}
+		}
+		return e.JSON(http.StatusOK, files)
+	}).BindFunc(rbac.Require(rbac.CapManageRepos))
+
+	rr.r.GET("/api/custom/repositories/{id}/wireops-definition", func(e *core.RequestEvent) error {
+		repoDir, ok := rr.repoFilesSetup(e)
+		if !ok {
+			return nil
+		}
+
+		wireopsFile := e.Request.URL.Query().Get("file")
+		if wireopsFile == "" {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "missing file parameter"})
+		}
+
+		repoID := e.Request.PathValue("id")
+		def, err := manifest.ParseWireopsFile(config.GetReposWorkspace(), repoID, wireopsFile)
+		if err != nil {
+			return e.JSON(http.StatusUnprocessableEntity, map[string]any{
+				"error":  err.Error(),
+				"errors": wireopsValidationErrors(err),
+			})
+		}
+
+		resolveWireopsComposeFile(repoDir, wireopsFile, def)
+
 		return e.JSON(http.StatusOK, def)
 	}).BindFunc(rbac.Require(rbac.CapManageRepos))
 
