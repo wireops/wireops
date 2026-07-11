@@ -46,6 +46,8 @@ There is no repo-wide linter config for Go (no `.golangci.yml`); CI only runs `g
 
 Test function names must be CamelCase (not `Test_foo_bar`).
 
+Coverage minimums (informational, uploaded to Codacy, not a CI gate — see `AGENTS.md` § Testing & Coverage): backend **25%**, frontend **50%** statement coverage. New non-trivial logic should carry tests toward that floor.
+
 ## Architecture
 
 - **Server never touches Docker directly.** All `docker compose` / `docker run` execution happens on remote workers, dispatched over a persistent authenticated WebSocket (`internal/worker/server.go`, port `TLS_WORKER_PORT`/8443). The server's job is reconciliation, scheduling, and state — not execution.

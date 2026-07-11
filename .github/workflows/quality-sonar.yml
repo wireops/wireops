@@ -1,0 +1,32 @@
+name: Quality (Sonar)
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  sonarqube:
+    name: SonarQube
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@v6
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+      - name: SonarQube Quality Gate check
+        uses: SonarSource/sonarqube-quality-gate-action@v1
+        timeout-minutes: 5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

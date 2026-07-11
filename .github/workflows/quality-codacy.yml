@@ -1,0 +1,99 @@
+name: Quality (Codacy)
+
+env:
+  GO_VERSION: "1.25.3"
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  codacy:
+    name: Codacy
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Codacy Analysis
+        uses: codacy/codacy-analysis-cli-action@v4
+        with:
+          project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
+          upload: true
+
+  coverage:
+    name: Codacy Coverage
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Run tests with coverage
+        env:
+          CGO_ENABLED: 0
+        run: |
+          packages=$(go list ./... | grep -v '^github.com/wireops/wireops/worker\(/\|$\)')
+          go test -coverprofile=coverage.out $packages
+
+      - name: Upload coverage to Codacy
+        uses: codacy/codacy-coverage-reporter-action@v1
+        with:
+          project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
+          coverage-reports: coverage.out
+
+  frontend-coverage:
+    name: Codacy Coverage (Frontend)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./frontend
+        run: npm ci --ignore-scripts
+
+      - name: Run postinstall scripts
+        working-directory: ./frontend
+        run: npm run postinstall
+
+      - name: Run tests with coverage
+        working-directory: ./frontend
+        run: npm run test:coverage
+
+      - name: Upload coverage to Codacy
+        uses: codacy/codacy-coverage-reporter-action@v1
+        with:
+          project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
+          coverage-reports: frontend/coverage/lcov.info

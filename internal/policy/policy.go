@@ -29,15 +29,23 @@ import (
 
 // WorkerPolicy is the resolved effective policy for a specific worker.
 type WorkerPolicy struct {
-	Disabled        bool     // when true, the worker policy security system is disabled globally
+	Disabled bool // when true, the worker policy security system is disabled globally
 	// Allowlists — empty = open policy (all permitted).
-	AllowedVolumes  []string // host-path prefixes or exact named-volume names
-	AllowedNetworks []string // exact Docker network names
-	AllowedImages   []string // image patterns (glob wildcards via filepath.Match)
+	AllowedVolumes     []string // host-path prefixes or exact named-volume names
+	AllowedNetworks    []string // exact Docker network names
+	AllowedImages      []string // image patterns (glob wildcards via filepath.Match)
+	AllowedCapAdd      []string // exact Linux capability names (e.g. "NET_ADMIN")
+	AllowedDevices     []string // host device paths (e.g. "/dev/ttyUSB0")
+	AllowedSecurityOpt []string // exact security_opt entries (e.g. "no-new-privileges:true")
 
 	// Boolean flags — enforce specific restrictions independently of allowlists.
 	PreventLatestImages bool // when true, images without a tag or with ":latest" are rejected
 	BlockHostVolumes    bool // when true, bind-mounts (host paths) are rejected
+	BlockPrivileged     bool // when true, services with privileged: true are rejected
+	BlockHostNetwork    bool // when true, services with network_mode: host are rejected
+	BlockHostPID        bool // when true, services with pid: host are rejected
+	BlockHostIPC        bool // when true, services with ipc: host are rejected
+	BlockDockerSocket   bool // when true, mounting /var/run/docker.sock (or /run/docker.sock) is rejected
 }
 
 // policyFlags is the nullable wire format for per-worker boolean flag overrides.
@@ -45,6 +53,11 @@ type WorkerPolicy struct {
 type policyFlags struct {
 	PreventLatestImages *bool `json:"prevent_latest_images"`
 	BlockHostVolumes    *bool `json:"block_host_volumes"`
+	BlockPrivileged     *bool `json:"block_privileged"`
+	BlockHostNetwork    *bool `json:"block_host_network"`
+	BlockHostPID        *bool `json:"block_host_pid"`
+	BlockHostIPC        *bool `json:"block_host_ipc"`
+	BlockDockerSocket   *bool `json:"block_docker_socket"`
 }
 
 // Load returns the effective WorkerPolicy for the given workerID.
@@ -87,10 +100,13 @@ func Load(app core.App, workerID string) (*WorkerPolicy, error) {
 	}
 
 	// --- Allowlists ---
-	var localVolumes, localNetworks, localImages *[]string
+	var localVolumes, localNetworks, localImages, localCapAdd, localDevices, localSecurityOpt *[]string
 	_ = worker.UnmarshalJSONField("policy_volumes", &localVolumes)
 	_ = worker.UnmarshalJSONField("policy_networks", &localNetworks)
 	_ = worker.UnmarshalJSONField("policy_images", &localImages)
+	_ = worker.UnmarshalJSONField("policy_cap_add", &localCapAdd)
+	_ = worker.UnmarshalJSONField("policy_devices", &localDevices)
+	_ = worker.UnmarshalJSONField("policy_security_opt", &localSecurityOpt)
 
 	if localVolumes != nil {
 		local.AllowedVolumes = *localVolumes
@@ -116,6 +132,30 @@ func Load(app core.App, workerID string) (*WorkerPolicy, error) {
 		local.AllowedImages = []string{}
 	}
 
+	if localCapAdd != nil {
+		local.AllowedCapAdd = *localCapAdd
+	} else if inherit {
+		local.AllowedCapAdd = global.AllowedCapAdd
+	} else {
+		local.AllowedCapAdd = []string{}
+	}
+
+	if localDevices != nil {
+		local.AllowedDevices = *localDevices
+	} else if inherit {
+		local.AllowedDevices = global.AllowedDevices
+	} else {
+		local.AllowedDevices = []string{}
+	}
+
+	if localSecurityOpt != nil {
+		local.AllowedSecurityOpt = *localSecurityOpt
+	} else if inherit {
+		local.AllowedSecurityOpt = global.AllowedSecurityOpt
+	} else {
+		local.AllowedSecurityOpt = []string{}
+	}
+
 	// --- Boolean flags ---
 	var flags policyFlags
 	if raw := worker.GetString("policy_flags"); raw != "" {
@@ -124,6 +164,11 @@ func Load(app core.App, workerID string) (*WorkerPolicy, error) {
 
 	local.PreventLatestImages = resolveFlag(flags.PreventLatestImages, global.PreventLatestImages, inherit)
 	local.BlockHostVolumes = resolveFlag(flags.BlockHostVolumes, global.BlockHostVolumes, inherit)
+	local.BlockPrivileged = resolveFlag(flags.BlockPrivileged, global.BlockPrivileged, inherit)
+	local.BlockHostNetwork = resolveFlag(flags.BlockHostNetwork, global.BlockHostNetwork, inherit)
+	local.BlockHostPID = resolveFlag(flags.BlockHostPID, global.BlockHostPID, inherit)
+	local.BlockHostIPC = resolveFlag(flags.BlockHostIPC, global.BlockHostIPC, inherit)
+	local.BlockDockerSocket = resolveFlag(flags.BlockDockerSocket, global.BlockDockerSocket, inherit)
 
 	return local, nil
 }
@@ -168,8 +213,16 @@ func loadGlobal(app core.App) (*WorkerPolicy, error) {
 	_ = rec.UnmarshalJSONField("allowed_volumes", &p.AllowedVolumes)
 	_ = rec.UnmarshalJSONField("allowed_networks", &p.AllowedNetworks)
 	_ = rec.UnmarshalJSONField("allowed_images", &p.AllowedImages)
+	_ = rec.UnmarshalJSONField("allowed_cap_add", &p.AllowedCapAdd)
+	_ = rec.UnmarshalJSONField("allowed_devices", &p.AllowedDevices)
+	_ = rec.UnmarshalJSONField("allowed_security_opt", &p.AllowedSecurityOpt)
 	p.PreventLatestImages = rec.GetBool("prevent_latest_images")
 	p.BlockHostVolumes = rec.GetBool("block_host_volumes")
+	p.BlockPrivileged = rec.GetBool("block_privileged")
+	p.BlockHostNetwork = rec.GetBool("block_host_network")
+	p.BlockHostPID = rec.GetBool("block_host_pid")
+	p.BlockHostIPC = rec.GetBool("block_host_ipc")
+	p.BlockDockerSocket = rec.GetBool("block_docker_socket")
 	return p, nil
 }
 
@@ -321,14 +374,125 @@ func matchPattern(pattern, image string) bool {
 	return matched
 }
 
+// ValidatePrivileged rejects the policy if any of the given service names run privileged.
+func (p *WorkerPolicy) ValidatePrivileged(services []string) error {
+	if p.Disabled || !p.BlockPrivileged || len(services) == 0 {
+		return nil
+	}
+	return fmt.Errorf("service %q runs with privileged: true, which is blocked by the worker policy", services[0])
+}
+
+// ValidateHostNetwork rejects the policy if any of the given service names use network_mode: host.
+func (p *WorkerPolicy) ValidateHostNetwork(services []string) error {
+	if p.Disabled || !p.BlockHostNetwork || len(services) == 0 {
+		return nil
+	}
+	return fmt.Errorf("service %q uses network_mode: host, which is blocked by the worker policy", services[0])
+}
+
+// ValidateHostPID rejects the policy if any of the given service names use pid: host.
+func (p *WorkerPolicy) ValidateHostPID(services []string) error {
+	if p.Disabled || !p.BlockHostPID || len(services) == 0 {
+		return nil
+	}
+	return fmt.Errorf("service %q uses pid: host, which is blocked by the worker policy", services[0])
+}
+
+// ValidateHostIPC rejects the policy if any of the given service names use ipc: host.
+func (p *WorkerPolicy) ValidateHostIPC(services []string) error {
+	if p.Disabled || !p.BlockHostIPC || len(services) == 0 {
+		return nil
+	}
+	return fmt.Errorf("service %q uses ipc: host, which is blocked by the worker policy", services[0])
+}
+
+// dockerSocketPaths are the well-known host paths for the Docker daemon's Unix socket.
+var dockerSocketPaths = map[string]bool{
+	"/var/run/docker.sock": true,
+	"/run/docker.sock":     true,
+}
+
+// ValidateDockerSocket rejects the policy if any mount source (from volumes or devices)
+// targets the Docker daemon socket.
+func (p *WorkerPolicy) ValidateDockerSocket(mounts []string) error {
+	if p.Disabled || !p.BlockDockerSocket {
+		return nil
+	}
+	for _, m := range mounts {
+		if dockerSocketPaths[filepath.Clean(m)] {
+			return fmt.Errorf("mount %q exposes the Docker socket, which is blocked by the worker policy", m)
+		}
+	}
+	return nil
+}
+
+// ValidateCapAdd checks that every requested Linux capability is permitted by the policy.
+// Empty AllowedCapAdd means open policy (all permitted).
+func (p *WorkerPolicy) ValidateCapAdd(caps []string) error {
+	if p.Disabled || len(p.AllowedCapAdd) == 0 {
+		return nil
+	}
+	for _, c := range caps {
+		if !stringInList(c, p.AllowedCapAdd) {
+			return fmt.Errorf("capability %q is not in the worker's allowed cap_add list", c)
+		}
+	}
+	return nil
+}
+
+// ValidateDevices checks that every requested host device is permitted by the policy.
+// Empty AllowedDevices means open policy (all permitted).
+func (p *WorkerPolicy) ValidateDevices(devices []string) error {
+	if p.Disabled || len(p.AllowedDevices) == 0 {
+		return nil
+	}
+	for _, d := range devices {
+		if !stringInList(d, p.AllowedDevices) {
+			return fmt.Errorf("device %q is not in the worker's allowed device list", d)
+		}
+	}
+	return nil
+}
+
+// ValidateSecurityOpt checks that every requested security_opt entry is permitted by the policy.
+// Empty AllowedSecurityOpt means open policy (all permitted).
+func (p *WorkerPolicy) ValidateSecurityOpt(opts []string) error {
+	if p.Disabled || len(p.AllowedSecurityOpt) == 0 {
+		return nil
+	}
+	for _, o := range opts {
+		if !stringInList(o, p.AllowedSecurityOpt) {
+			return fmt.Errorf("security_opt %q is not in the worker's allowed security_opt list", o)
+		}
+	}
+	return nil
+}
+
+func stringInList(s string, list []string) bool {
+	for _, item := range list {
+		if item == s {
+			return true
+		}
+	}
+	return false
+}
+
 // PolicyJSON is the wire format used by the API for reading and writing global policies.
 type PolicyJSON struct {
 	Enabled             bool     `json:"enabled"`
 	AllowedVolumes      []string `json:"allowed_volumes"`
 	AllowedNetworks     []string `json:"allowed_networks"`
 	AllowedImages       []string `json:"allowed_images"`
+	AllowedCapAdd       []string `json:"allowed_cap_add"`
+	AllowedDevices      []string `json:"allowed_devices"`
+	AllowedSecurityOpt  []string `json:"allowed_security_opt"`
 	PreventLatestImages bool     `json:"prevent_latest_images"`
 	BlockHostVolumes    bool     `json:"block_host_volumes"`
+	BlockPrivileged     bool     `json:"block_privileged"`
+	BlockHostNetwork    bool     `json:"block_host_network"`
+	BlockHostPID        bool     `json:"block_host_pid"`
+	BlockHostIPC        bool     `json:"block_host_ipc"`
+	BlockDockerSocket   bool     `json:"block_docker_socket"`
 }
 
 // ToJSON converts a WorkerPolicy to the API wire format.
@@ -338,8 +502,16 @@ func (p *WorkerPolicy) ToJSON() PolicyJSON {
 		AllowedVolumes:      p.AllowedVolumes,
 		AllowedNetworks:     p.AllowedNetworks,
 		AllowedImages:       p.AllowedImages,
+		AllowedCapAdd:       p.AllowedCapAdd,
+		AllowedDevices:      p.AllowedDevices,
+		AllowedSecurityOpt:  p.AllowedSecurityOpt,
 		PreventLatestImages: p.PreventLatestImages,
 		BlockHostVolumes:    p.BlockHostVolumes,
+		BlockPrivileged:     p.BlockPrivileged,
+		BlockHostNetwork:    p.BlockHostNetwork,
+		BlockHostPID:        p.BlockHostPID,
+		BlockHostIPC:        p.BlockHostIPC,
+		BlockDockerSocket:   p.BlockDockerSocket,
 	}
 	if res.AllowedVolumes == nil {
 		res.AllowedVolumes = []string{}
@@ -350,18 +522,34 @@ func (p *WorkerPolicy) ToJSON() PolicyJSON {
 	if res.AllowedImages == nil {
 		res.AllowedImages = []string{}
 	}
+	if res.AllowedCapAdd == nil {
+		res.AllowedCapAdd = []string{}
+	}
+	if res.AllowedDevices == nil {
+		res.AllowedDevices = []string{}
+	}
+	if res.AllowedSecurityOpt == nil {
+		res.AllowedSecurityOpt = []string{}
+	}
 	return res
 }
 
 // WorkerPolicyOverrideJSON is the full wire format for per-worker policy,
 // including the inherit flag and nullable boolean flag overrides.
 type WorkerPolicyOverrideJSON struct {
-	Inherit             bool       `json:"inherit"`
-	AllowedVolumes      *[]string  `json:"allowed_volumes"`
-	AllowedNetworks     *[]string  `json:"allowed_networks"`
-	AllowedImages       *[]string  `json:"allowed_images"`
+	Inherit            bool      `json:"inherit"`
+	AllowedVolumes     *[]string `json:"allowed_volumes"`
+	AllowedNetworks    *[]string `json:"allowed_networks"`
+	AllowedImages      *[]string `json:"allowed_images"`
+	AllowedCapAdd      *[]string `json:"allowed_cap_add"`
+	AllowedDevices     *[]string `json:"allowed_devices"`
+	AllowedSecurityOpt *[]string `json:"allowed_security_opt"`
 	// Nullable booleans: use a pointer so null (unset/inherit) is distinguishable from false.
-	PreventLatestImages *bool    `json:"prevent_latest_images"`
-	BlockHostVolumes    *bool    `json:"block_host_volumes"`
+	PreventLatestImages *bool `json:"prevent_latest_images"`
+	BlockHostVolumes    *bool `json:"block_host_volumes"`
+	BlockPrivileged     *bool `json:"block_privileged"`
+	BlockHostNetwork    *bool `json:"block_host_network"`
+	BlockHostPID        *bool `json:"block_host_pid"`
+	BlockHostIPC        *bool `json:"block_host_ipc"`
+	BlockDockerSocket   *bool `json:"block_docker_socket"`
 }
-

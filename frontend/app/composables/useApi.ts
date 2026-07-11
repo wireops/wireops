@@ -201,13 +201,34 @@ export function useApi() {
     allowed_volumes: string[]
     allowed_networks: string[]
     allowed_images: string[]
+    allowed_cap_add: string[]
+    allowed_devices: string[]
+    allowed_security_opt: string[]
     prevent_latest_images: boolean
     block_host_volumes: boolean
+    block_privileged: boolean
+    block_host_network: boolean
+    block_host_pid: boolean
+    block_host_ipc: boolean
+    block_docker_socket: boolean
   }
-  type WorkerPolicyOverride = Omit<PolicyData, 'prevent_latest_images' | 'block_host_volumes'> & {
+  type PolicyOverrideFlagKeys =
+    | 'prevent_latest_images'
+    | 'block_host_volumes'
+    | 'block_privileged'
+    | 'block_host_network'
+    | 'block_host_pid'
+    | 'block_host_ipc'
+    | 'block_docker_socket'
+  type WorkerPolicyOverride = Omit<PolicyData, PolicyOverrideFlagKeys> & {
     inherit: boolean
     prevent_latest_images: boolean | null
     block_host_volumes: boolean | null
+    block_privileged: boolean | null
+    block_host_network: boolean | null
+    block_host_pid: boolean | null
+    block_host_ipc: boolean | null
+    block_docker_socket: boolean | null
   }
   type WorkerPolicyResponse = WorkerPolicyOverride & { effective: PolicyData }
 

@@ -129,15 +129,31 @@ const policyForm = ref<{
   allowed_images: string[]
   allowed_volumes: string[]
   allowed_networks: string[]
+  allowed_cap_add: string[]
+  allowed_devices: string[]
+  allowed_security_opt: string[]
   prevent_latest_images: boolean | null
   block_host_volumes: boolean | null
+  block_privileged: boolean | null
+  block_host_network: boolean | null
+  block_host_pid: boolean | null
+  block_host_ipc: boolean | null
+  block_docker_socket: boolean | null
 }>({
   inherit: false,
   allowed_images: [],
   allowed_volumes: [],
   allowed_networks: [],
+  allowed_cap_add: [],
+  allowed_devices: [],
+  allowed_security_opt: [],
   prevent_latest_images: null,
   block_host_volumes: null,
+  block_privileged: null,
+  block_host_network: null,
+  block_host_pid: null,
+  block_host_ipc: null,
+  block_docker_socket: null,
 })
 
 async function loadPolicy() {
@@ -149,13 +165,36 @@ async function loadPolicy() {
       allowed_images: data.effective?.allowed_images ?? [],
       allowed_volumes: data.effective?.allowed_volumes ?? [],
       allowed_networks: data.effective?.allowed_networks ?? [],
+      allowed_cap_add: data.effective?.allowed_cap_add ?? [],
+      allowed_devices: data.effective?.allowed_devices ?? [],
+      allowed_security_opt: data.effective?.allowed_security_opt ?? [],
       prevent_latest_images: data.prevent_latest_images !== undefined ? data.prevent_latest_images : null,
       block_host_volumes: data.block_host_volumes !== undefined ? data.block_host_volumes : null,
+      block_privileged: data.block_privileged !== undefined ? data.block_privileged : null,
+      block_host_network: data.block_host_network !== undefined ? data.block_host_network : null,
+      block_host_pid: data.block_host_pid !== undefined ? data.block_host_pid : null,
+      block_host_ipc: data.block_host_ipc !== undefined ? data.block_host_ipc : null,
+      block_docker_socket: data.block_docker_socket !== undefined ? data.block_docker_socket : null,
     }
     isGlobalPolicyEnabled.value = data.effective?.enabled ?? true
     policyLoaded.value = true
   } catch {
-    policyForm.value = { allowed_images: [], allowed_volumes: [], allowed_networks: [], prevent_latest_images: false, block_host_volumes: false }
+    policyForm.value = {
+      inherit: false,
+      allowed_images: [],
+      allowed_volumes: [],
+      allowed_networks: [],
+      allowed_cap_add: [],
+      allowed_devices: [],
+      allowed_security_opt: [],
+      prevent_latest_images: false,
+      block_host_volumes: false,
+      block_privileged: false,
+      block_host_network: false,
+      block_host_pid: false,
+      block_host_ipc: false,
+      block_docker_socket: false,
+    }
   } finally {
     policyLoading.value = false
   }
@@ -167,6 +206,9 @@ async function handleSavePolicy() {
     policyForm.value.allowed_images = policyForm.value.allowed_images.filter(i => i.trim() !== '')
     policyForm.value.allowed_volumes = policyForm.value.allowed_volumes.filter(v => v.trim() !== '')
     policyForm.value.allowed_networks = policyForm.value.allowed_networks.filter(n => n.trim() !== '')
+    policyForm.value.allowed_cap_add = policyForm.value.allowed_cap_add.filter(c => c.trim() !== '')
+    policyForm.value.allowed_devices = policyForm.value.allowed_devices.filter(d => d.trim() !== '')
+    policyForm.value.allowed_security_opt = policyForm.value.allowed_security_opt.filter(s => s.trim() !== '')
 
     await saveWorkerPolicy(workerId, {
       ...policyForm.value
