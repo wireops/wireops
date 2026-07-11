@@ -140,6 +140,7 @@ onUnmounted(() => document.removeEventListener('mousedown', onClickOutside))
           type="text"
           class="w-full bg-transparent border-0 p-1 focus:ring-0 focus:outline-hidden text-sm text-gray-900/90 dark:text-white/90 placeholder-gray-400 dark:placeholder-wire-200/30"
           :placeholder="searchPlaceholder"
+          :aria-label="searchPlaceholder"
           @keydown="onKeydown"
         >
       </div>

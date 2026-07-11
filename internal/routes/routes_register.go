@@ -31,7 +31,7 @@ import (
 	"github.com/wireops/wireops/internal/protocol"
 	"github.com/wireops/wireops/internal/rbac"
 	"github.com/wireops/wireops/internal/sync"
-	"github.com/wireops/wireops/internal/wireops"
+	"github.com/wireops/wireops/internal/manifest"
 )
 
 type routeRegistrar struct {
@@ -524,7 +524,7 @@ func (rr routeRegistrar) registerRepositoryRoutes() {
 		if !ok {
 			return nil
 		}
-		files, err := rr.listFilesByBasename(repoDir, wireops.IsWireopsFile)
+		files, err := rr.listFilesByBasename(repoDir, manifest.IsWireopsFile)
 		if err != nil {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to list files"})
 		}
@@ -546,7 +546,7 @@ func (rr routeRegistrar) registerRepositoryRoutes() {
 		}
 
 		repoID := e.Request.PathValue("id")
-		def, err := wireops.ParseWireopsFile(config.GetReposWorkspace(), repoID, wireopsFile)
+		def, err := manifest.ParseWireopsFile(config.GetReposWorkspace(), repoID, wireopsFile)
 		if err != nil {
 			return e.JSON(http.StatusUnprocessableEntity, map[string]any{
 				"error":  err.Error(),

@@ -1,4 +1,4 @@
-package wireops
+package manifest
 
 import (
 	"errors"
@@ -66,6 +66,35 @@ func TestDefinitionValidate(t *testing.T) {
 			name:    "Invalid timeout",
 			def:     Definition{Version: "wireops.v1", Name: "api", Timeout: "not-a-duration"},
 			wantErr: "timeout is invalid",
+		},
+		{
+			name: "Valid sync interval",
+			def:  Definition{Version: "wireops.v1", Name: "api", Sync: &SyncConfig{Interval: "5m"}},
+		},
+		{
+			name:    "Invalid sync interval format",
+			def:     Definition{Version: "wireops.v1", Name: "api", Sync: &SyncConfig{Interval: "not-a-duration"}},
+			wantErr: "sync.interval is invalid",
+		},
+		{
+			name:    "Zero sync interval",
+			def:     Definition{Version: "wireops.v1", Name: "api", Sync: &SyncConfig{Interval: "0s"}},
+			wantErr: "sync.interval must be at least 1s",
+		},
+		{
+			name:    "Negative sync interval",
+			def:     Definition{Version: "wireops.v1", Name: "api", Sync: &SyncConfig{Interval: "-5m"}},
+			wantErr: "sync.interval must be at least 1s",
+		},
+		{
+			name:    "Sub-second sync interval",
+			def:     Definition{Version: "wireops.v1", Name: "api", Sync: &SyncConfig{Interval: "500ms"}},
+			wantErr: "sync.interval must be at least 1s",
+		},
+		{
+			name:    "Sub-second timeout",
+			def:     Definition{Version: "wireops.v1", Name: "api", Timeout: "500ms"},
+			wantErr: "timeout must be at least 1s",
 		},
 	}
 
@@ -166,5 +195,13 @@ name: api
 
 	if _, err := ParseWireopsFile(tmpDir, "", "does-not-exist.yaml"); err == nil {
 		t.Errorf("expected error for missing file, got nil")
+	}
+
+	if _, err := ParseWireopsFile(tmpDir, "", "../wireops.yaml"); err == nil {
+		t.Errorf("expected error for path escaping repository directory, got nil")
+	}
+
+	if _, err := ParseWireopsFile(tmpDir, "", "/etc/passwd"); err == nil {
+		t.Errorf("expected error for absolute path, got nil")
 	}
 }

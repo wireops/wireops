@@ -1,7 +1,6 @@
 package sync
 
 import (
-	"os"
 	"testing"
 	"time"
 
@@ -49,10 +48,7 @@ func TestResolveSyncInterval(t *testing.T) {
 	})
 
 	t.Run("FallbackHonorsCustomScanPeriodEnv", func(t *testing.T) {
-		if err := os.Setenv("SCAN_PERIOD", "30"); err != nil {
-			t.Fatalf("failed to set SCAN_PERIOD: %v", err)
-		}
-		defer os.Unsetenv("SCAN_PERIOD")
+		t.Setenv("SCAN_PERIOD", "30")
 
 		stack := newSchedulerTestStack(t)
 

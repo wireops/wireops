@@ -1,8 +1,8 @@
-// Package wireops parses the declarative wireops.yaml/wireops.yml stack
+// Package manifest parses the declarative wireops.yaml/wireops.yml stack
 // config file (P1.3). Unlike internal/job's job.yaml, matching a candidate
 // file is done by exact basename ("wireops.yaml" or "wireops.yml"), not by
 // sniffing YAML content — the filename itself is the contract.
-package wireops
+package manifest
 
 import (
 	"bytes"
@@ -73,8 +73,21 @@ func ParseWireopsFile(repoWorkspace, repoID, filePath string) (*Definition, erro
 		return nil, fmt.Errorf("invalid wireops_file path: %w", err)
 	}
 
-	full := filepath.Join(repoWorkspace, repoID, clean)
-	data, err := os.ReadFile(full)
+	base := filepath.Join(repoWorkspace, repoID)
+	baseAbs, err := filepath.Abs(base)
+	if err != nil {
+		return nil, fmt.Errorf("cannot resolve repository base path: %w", err)
+	}
+	fullAbs, err := filepath.Abs(filepath.Join(baseAbs, clean))
+	if err != nil {
+		return nil, fmt.Errorf("cannot resolve wireops file path %q: %w", filePath, err)
+	}
+	rel, err := filepath.Rel(baseAbs, fullAbs)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return nil, fmt.Errorf("invalid wireops_file path: escapes repository directory: %q", filePath)
+	}
+
+	data, err := os.ReadFile(fullAbs)
 	if err != nil {
 		return nil, fmt.Errorf("cannot read wireops file %q: %w", filePath, err)
 	}
@@ -131,16 +144,18 @@ func (d *Definition) validate() error {
 	}
 
 	if d.Timeout != "" {
-		if _, err := time.ParseDuration(d.Timeout); err != nil {
+		if dur, err := time.ParseDuration(d.Timeout); err != nil {
 			errs = append(errs, fmt.Sprintf("timeout is invalid: %v", err))
+		} else if dur < time.Second {
+			errs = append(errs, "timeout must be at least 1s")
 		}
 	}
 
 	if d.Sync != nil && d.Sync.Interval != "" {
 		if dur, err := time.ParseDuration(d.Sync.Interval); err != nil {
 			errs = append(errs, fmt.Sprintf("sync.interval is invalid: %v", err))
-		} else if dur <= 0 {
-			errs = append(errs, "sync.interval must be positive")
+		} else if dur < time.Second {
+			errs = append(errs, "sync.interval must be at least 1s")
 		}
 	}
 

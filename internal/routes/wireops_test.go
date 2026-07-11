@@ -5,11 +5,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/wireops/wireops/internal/wireops"
+	"github.com/wireops/wireops/internal/manifest"
 )
 
 func TestWireopsValidationErrors(t *testing.T) {
-	err := &wireops.ValidationError{Errors: []string{"name is required", "version is required"}}
+	err := &manifest.ValidationError{Errors: []string{"name is required", "version is required"}}
 	got := wireopsValidationErrors(err)
 	if len(got) != 2 || got[0] != "name is required" || got[1] != "version is required" {
 		t.Fatalf("expected wrapped validation errors, got: %v", got)
@@ -27,7 +27,7 @@ func TestResolveWireopsComposeFileSingleMatch(t *testing.T) {
 	writeFile(t, repoDir, "wireops.yaml", "version: wireops.v1\nname: api\n")
 	writeFile(t, repoDir, "docker-compose.yml", "services:\n  web:\n    image: nginx\n")
 
-	def := &wireops.Definition{}
+	def := &manifest.Definition{}
 	resolveWireopsComposeFile(repoDir, "wireops.yaml", def)
 
 	if def.ResolutionError != "" {
@@ -42,7 +42,7 @@ func TestResolveWireopsComposeFileNoMatch(t *testing.T) {
 	repoDir := t.TempDir()
 	writeFile(t, repoDir, "wireops.yaml", "version: wireops.v1\nname: api\n")
 
-	def := &wireops.Definition{}
+	def := &manifest.Definition{}
 	resolveWireopsComposeFile(repoDir, "wireops.yaml", def)
 
 	if def.ResolutionError == "" {
@@ -59,7 +59,7 @@ func TestResolveWireopsComposeFileAmbiguous(t *testing.T) {
 	writeFile(t, repoDir, "docker-compose.yml", "services:\n  web:\n    image: nginx\n")
 	writeFile(t, repoDir, "compose.yml", "services:\n  api:\n    image: alpine\n")
 
-	def := &wireops.Definition{}
+	def := &manifest.Definition{}
 	resolveWireopsComposeFile(repoDir, "wireops.yaml", def)
 
 	if def.ResolutionError == "" {
@@ -79,7 +79,7 @@ func TestResolveWireopsComposeFileNestedDir(t *testing.T) {
 	writeFile(t, apiDir, "wireops.yaml", "version: wireops.v1\nname: api\n")
 	writeFile(t, apiDir, "compose.yml", "services:\n  web:\n    image: nginx\n")
 
-	def := &wireops.Definition{}
+	def := &manifest.Definition{}
 	resolveWireopsComposeFile(repoDir, "apps/api/wireops.yaml", def)
 
 	if def.ResolutionError != "" {
@@ -98,7 +98,7 @@ func TestResolveWireopsComposeFileRejectsPathTraversal(t *testing.T) {
 	}
 	writeFile(t, parent, "secret.yml", "services:\n  admin:\n    image: super-secret\n")
 
-	def := &wireops.Definition{}
+	def := &manifest.Definition{}
 	resolveWireopsComposeFile(repoDir, "../secret/wireops.yaml", def)
 
 	if def.ResolutionError == "" {
@@ -113,7 +113,7 @@ func TestResolveWireopsComposeFileRejectsAbsolutePath(t *testing.T) {
 	repoDir := t.TempDir()
 	writeFile(t, repoDir, "wireops.yaml", "version: wireops.v1\nname: api\n")
 
-	def := &wireops.Definition{}
+	def := &manifest.Definition{}
 	resolveWireopsComposeFile(repoDir, "/etc/wireops.yaml", def)
 
 	if def.ResolutionError == "" {
@@ -127,7 +127,7 @@ func TestResolveWireopsComposeFileRejectsAbsolutePath(t *testing.T) {
 func boolPtr(b bool) *bool { return &b }
 
 func TestResolveWireopsStackFieldsDefaults(t *testing.T) {
-	removeOrphans, forcePull, waitRunningJobs, workerTags := resolveWireopsStackFields(&wireops.Definition{})
+	removeOrphans, forcePull, waitRunningJobs, workerTags := resolveWireopsStackFields(&manifest.Definition{})
 
 	if !removeOrphans {
 		t.Error("expected remove_orphans to default to true")
@@ -144,15 +144,15 @@ func TestResolveWireopsStackFieldsDefaults(t *testing.T) {
 }
 
 func TestResolveWireopsStackFieldsExplicitValues(t *testing.T) {
-	def := &wireops.Definition{
-		Compose: &wireops.ComposeConfig{
+	def := &manifest.Definition{
+		Compose: &manifest.ComposeConfig{
 			RemoveOrphans: boolPtr(false),
 			ForcePull:     boolPtr(true),
 		},
-		Jobs: &wireops.JobsConfig{
+		Jobs: &manifest.JobsConfig{
 			WaitRunning: boolPtr(true),
 		},
-		Worker: &wireops.WorkerConfig{
+		Worker: &manifest.WorkerConfig{
 			Tags: []string{"prod", "amd64"},
 		},
 	}
@@ -174,7 +174,7 @@ func TestResolveWireopsStackFieldsExplicitValues(t *testing.T) {
 }
 
 func TestResolveWireopsStackFieldsWaitRunningFalseIsNever(t *testing.T) {
-	def := &wireops.Definition{Jobs: &wireops.JobsConfig{WaitRunning: boolPtr(false)}}
+	def := &manifest.Definition{Jobs: &manifest.JobsConfig{WaitRunning: boolPtr(false)}}
 	_, _, waitRunningJobs, _ := resolveWireopsStackFields(def)
 	if waitRunningJobs != "never" {
 		t.Errorf("expected wait_running_jobs='never' for explicit false, got %q", waitRunningJobs)

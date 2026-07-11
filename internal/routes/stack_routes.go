@@ -24,7 +24,7 @@ import (
 	"github.com/wireops/wireops/internal/secrets"
 	"github.com/wireops/wireops/internal/sync"
 	"github.com/wireops/wireops/internal/webhook"
-	"github.com/wireops/wireops/internal/wireops"
+	"github.com/wireops/wireops/internal/manifest"
 )
 
 func (rr routeRegistrar) registerStackTriggerRoutes() {
@@ -718,7 +718,7 @@ func (rr routeRegistrar) registerImportRoutes() {
 // defaults to false, wait_running_jobs maps the YAML bool to the stacks
 // select (true -> "always", absent/false -> "never"), and worker_tags
 // defaults to an empty (non-nil) slice.
-func resolveWireopsStackFields(def *wireops.Definition) (removeOrphans, forcePull bool, waitRunningJobs string, workerTags []string) {
+func resolveWireopsStackFields(def *manifest.Definition) (removeOrphans, forcePull bool, waitRunningJobs string, workerTags []string) {
 	removeOrphans = true
 	forcePull = false
 	if def.Compose != nil {
@@ -766,7 +766,7 @@ func (rr routeRegistrar) registerCreateFromWireopsRoute() {
 			return nil
 		}
 
-		def, err := wireops.ParseWireopsFile(config.GetReposWorkspace(), body.Repository, body.WireopsFile)
+		def, err := manifest.ParseWireopsFile(config.GetReposWorkspace(), body.Repository, body.WireopsFile)
 		if err != nil {
 			return e.JSON(http.StatusUnprocessableEntity, map[string]any{
 				"error":  err.Error(),

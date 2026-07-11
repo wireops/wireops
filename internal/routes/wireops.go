@@ -10,11 +10,11 @@ import (
 
 	"github.com/wireops/wireops/internal/compose"
 	"github.com/wireops/wireops/internal/safepath"
-	"github.com/wireops/wireops/internal/wireops"
+	"github.com/wireops/wireops/internal/manifest"
 )
 
 func wireopsValidationErrors(err error) []string {
-	var valErr *wireops.ValidationError
+	var valErr *manifest.ValidationError
 	if errors.As(err, &valErr) {
 		return valErr.Errors
 	}
@@ -26,7 +26,7 @@ func wireopsValidationErrors(err error) []string {
 // never returns a Go error for "not found"/"ambiguous" cases — those are
 // reported back via def.ResolutionError so the frontend can surface them
 // without treating a valid wireops.yaml as a 422.
-func resolveWireopsComposeFile(repoDir, wireopsFile string, def *wireops.Definition) {
+func resolveWireopsComposeFile(repoDir, wireopsFile string, def *manifest.Definition) {
 	cleanWireopsFile, err := safepath.CleanRelativePath(wireopsFile)
 	if err != nil {
 		def.ResolutionError = fmt.Sprintf("invalid wireops file path %q: %v", wireopsFile, err)
