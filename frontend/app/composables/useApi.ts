@@ -240,6 +240,9 @@ export function useApi() {
     | 'block_host_ipc'
     | 'block_docker_socket'
   type PolicyOverrideNullableAllowlistKeys =
+    | 'allowed_images'
+    | 'allowed_volumes'
+    | 'allowed_networks'
     | 'allowed_cap_add'
     | 'allowed_devices'
     | 'allowed_security_opt'
@@ -247,6 +250,9 @@ export function useApi() {
     inherit: boolean
     // null means "inherit from global" — must not persist the resolved effective
     // value as a local override, or future global changes stop propagating.
+    allowed_images: string[] | null
+    allowed_volumes: string[] | null
+    allowed_networks: string[] | null
     allowed_cap_add: string[] | null
     allowed_devices: string[] | null
     allowed_security_opt: string[] | null

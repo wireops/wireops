@@ -194,6 +194,7 @@ const workerPolicyLoading = ref(false)
 const workerPolicySaving = ref(false)
 const showConfirmToggleModal = ref(false)
 const pendingToggleValue = ref(false)
+const showStrictPresetModal = ref(false)
 
 async function loadWorkerPolicy() {
   workerPolicyLoading.value = true
@@ -241,6 +242,14 @@ async function saveWorkerPolicyGlobal() {
   }
 }
 
+function requestStrictProductionPreset() {
+  showStrictPresetModal.value = true
+}
+
+function cancelStrictProductionPreset() {
+  showStrictPresetModal.value = false
+}
+
 async function applyStrictProductionPreset() {
   workerPolicy.value.enabled = true
   workerPolicy.value.block_privileged = true
@@ -249,6 +258,7 @@ async function applyStrictProductionPreset() {
   workerPolicy.value.block_host_ipc = true
   workerPolicy.value.block_docker_socket = true
   await saveWorkerPolicyGlobal()
+  showStrictPresetModal.value = false
 }
 
 function onTogglePolicyClick(val: boolean) {
@@ -542,7 +552,7 @@ onMounted(async () => {
               color="error"
               label="Apply Strict Production Preset"
               :loading="workerPolicySaving"
-              @click="applyStrictProductionPreset"
+              @click="requestStrictProductionPreset"
             />
           </div>
         </UCard>
@@ -557,6 +567,17 @@ onMounted(async () => {
             :loading="workerPolicySaving"
             @confirm="confirmTogglePolicy"
             @cancel="cancelTogglePolicy"
+          />
+        </template>
+      </UModal>
+
+      <!-- Confirm Strict Production Preset Modal -->
+      <UModal v-model:open="showStrictPresetModal">
+        <template #content>
+          <ConfirmStrictPresetModal
+            :loading="workerPolicySaving"
+            @confirm="applyStrictProductionPreset"
+            @cancel="cancelStrictProductionPreset"
           />
         </template>
       </UModal>
