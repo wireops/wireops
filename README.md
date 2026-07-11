@@ -8,6 +8,7 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/wireops/wireops)](https://goreportcard.com/report/github.com/wireops/wireops)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/wireops/wireops)](go.mod)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+[![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/wireops/wireops?utm_source=oss&utm_medium=github&utm_campaign=wireops%2Fwireops&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)](https://coderabbit.ai)
 
 GitOps controller for Docker Compose stacks. Automatically sync and deploy your compose stacks from Git repositories, similar to Flux/ArgoCD for Kubernetes.
 
