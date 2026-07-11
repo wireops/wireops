@@ -32,7 +32,7 @@ go.work.sum
 # .vscode/
 
 # wireops build artifacts
-wireops
+/wireops
 pb_data/
 pb_public/
 frontend/.output/
