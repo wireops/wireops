@@ -185,15 +185,23 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 			inherit = rec.GetBool("policy_inherit")
 		}
 
-		var localVolumes, localNetworks, localImages *[]string
+		var localVolumes, localNetworks, localImages, localCapAdd, localDevices, localSecurityOpt *[]string
 		_ = rec.UnmarshalJSONField("policy_volumes", &localVolumes)
 		_ = rec.UnmarshalJSONField("policy_networks", &localNetworks)
 		_ = rec.UnmarshalJSONField("policy_images", &localImages)
+		_ = rec.UnmarshalJSONField("policy_cap_add", &localCapAdd)
+		_ = rec.UnmarshalJSONField("policy_devices", &localDevices)
+		_ = rec.UnmarshalJSONField("policy_security_opt", &localSecurityOpt)
 
 		// Read nullable boolean overrides from policy_flags.
 		type flagsType struct {
 			PreventLatestImages *bool `json:"prevent_latest_images"`
 			BlockHostVolumes    *bool `json:"block_host_volumes"`
+			BlockPrivileged     *bool `json:"block_privileged"`
+			BlockHostNetwork    *bool `json:"block_host_network"`
+			BlockHostPID        *bool `json:"block_host_pid"`
+			BlockHostIPC        *bool `json:"block_host_ipc"`
+			BlockDockerSocket   *bool `json:"block_docker_socket"`
 		}
 		var flagsOut flagsType
 		if raw := rec.GetString("policy_flags"); raw != "" {
@@ -210,8 +218,16 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 			"allowed_volumes":       localVolumes,
 			"allowed_networks":      localNetworks,
 			"allowed_images":        localImages,
+			"allowed_cap_add":       localCapAdd,
+			"allowed_devices":       localDevices,
+			"allowed_security_opt":  localSecurityOpt,
 			"prevent_latest_images": flagsOut.PreventLatestImages,
 			"block_host_volumes":    flagsOut.BlockHostVolumes,
+			"block_privileged":      flagsOut.BlockPrivileged,
+			"block_host_network":    flagsOut.BlockHostNetwork,
+			"block_host_pid":        flagsOut.BlockHostPID,
+			"block_host_ipc":        flagsOut.BlockHostIPC,
+			"block_docker_socket":   flagsOut.BlockDockerSocket,
 			"effective":             effective.ToJSON(),
 		})
 	}).BindFunc(rbac.Require(rbac.CapManageSettings))
@@ -234,15 +250,28 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 		rec.Set("policy_volumes", body.AllowedVolumes)
 		rec.Set("policy_networks", body.AllowedNetworks)
 		rec.Set("policy_images", body.AllowedImages)
+		rec.Set("policy_cap_add", body.AllowedCapAdd)
+		rec.Set("policy_devices", body.AllowedDevices)
+		rec.Set("policy_security_opt", body.AllowedSecurityOpt)
 
 		// Persist nullable boolean flags as a JSON object.
 		type flagsPayload struct {
 			PreventLatestImages *bool `json:"prevent_latest_images"`
 			BlockHostVolumes    *bool `json:"block_host_volumes"`
+			BlockPrivileged     *bool `json:"block_privileged"`
+			BlockHostNetwork    *bool `json:"block_host_network"`
+			BlockHostPID        *bool `json:"block_host_pid"`
+			BlockHostIPC        *bool `json:"block_host_ipc"`
+			BlockDockerSocket   *bool `json:"block_docker_socket"`
 		}
 		flags := flagsPayload{
 			PreventLatestImages: body.PreventLatestImages,
 			BlockHostVolumes:    body.BlockHostVolumes,
+			BlockPrivileged:     body.BlockPrivileged,
+			BlockHostNetwork:    body.BlockHostNetwork,
+			BlockHostPID:        body.BlockHostPID,
+			BlockHostIPC:        body.BlockHostIPC,
+			BlockDockerSocket:   body.BlockDockerSocket,
 		}
 		if flagsJSON, err := json.Marshal(flags); err == nil {
 			rec.Set("policy_flags", string(flagsJSON))
@@ -267,6 +296,9 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 		rec.Set("policy_volumes", []string{})
 		rec.Set("policy_networks", []string{})
 		rec.Set("policy_images", []string{})
+		rec.Set("policy_cap_add", []string{})
+		rec.Set("policy_devices", []string{})
+		rec.Set("policy_security_opt", []string{})
 		rec.Set("policy_flags", "")
 
 		if err := app.Save(rec); err != nil {
@@ -301,6 +333,15 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 		if body.AllowedImages == nil {
 			body.AllowedImages = []string{}
 		}
+		if body.AllowedCapAdd == nil {
+			body.AllowedCapAdd = []string{}
+		}
+		if body.AllowedDevices == nil {
+			body.AllowedDevices = []string{}
+		}
+		if body.AllowedSecurityOpt == nil {
+			body.AllowedSecurityOpt = []string{}
+		}
 
 		records, err := app.FindAllRecords("worker_policies")
 		if err != nil {
@@ -322,8 +363,16 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 		rec.Set("allowed_volumes", body.AllowedVolumes)
 		rec.Set("allowed_networks", body.AllowedNetworks)
 		rec.Set("allowed_images", body.AllowedImages)
+		rec.Set("allowed_cap_add", body.AllowedCapAdd)
+		rec.Set("allowed_devices", body.AllowedDevices)
+		rec.Set("allowed_security_opt", body.AllowedSecurityOpt)
 		rec.Set("prevent_latest_images", body.PreventLatestImages)
 		rec.Set("block_host_volumes", body.BlockHostVolumes)
+		rec.Set("block_privileged", body.BlockPrivileged)
+		rec.Set("block_host_network", body.BlockHostNetwork)
+		rec.Set("block_host_pid", body.BlockHostPID)
+		rec.Set("block_host_ipc", body.BlockHostIPC)
+		rec.Set("block_docker_socket", body.BlockDockerSocket)
 
 		if err := app.Save(rec); err != nil {
 			log.Printf("[POLICY] Failed to save global worker policy: %v", err)

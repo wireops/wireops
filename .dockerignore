@@ -46,3 +46,5 @@ pb_public/
 .vscode/
 .DS_Store
 Thumbs.db
+
+.bin

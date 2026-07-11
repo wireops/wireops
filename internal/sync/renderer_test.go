@@ -154,7 +154,7 @@ services:
 	if contains(contentStr, `dev.wireops.stack_id: spoofed-id`) {
 		t.Errorf("spoofed dev.wireops.stack_id must be stripped")
 	}
-	
+
 	// Annotations must also be scrubbed
 	if contains(contentStr, `dev.wireops.checksum: fake`) {
 		t.Errorf("spoofed dev.wireops.checksum in annotations must be stripped")
@@ -294,6 +294,14 @@ func createTestCollections(t *testing.T, app core.App) {
 	policies.Fields.Add(&core.JSONField{Name: "allowed_images"})
 	policies.Fields.Add(&core.BoolField{Name: "prevent_latest_images"})
 	policies.Fields.Add(&core.BoolField{Name: "block_host_volumes"})
+	policies.Fields.Add(&core.BoolField{Name: "block_privileged"})
+	policies.Fields.Add(&core.BoolField{Name: "block_host_network"})
+	policies.Fields.Add(&core.BoolField{Name: "block_host_pid"})
+	policies.Fields.Add(&core.BoolField{Name: "block_host_ipc"})
+	policies.Fields.Add(&core.BoolField{Name: "block_docker_socket"})
+	policies.Fields.Add(&core.JSONField{Name: "allowed_cap_add"})
+	policies.Fields.Add(&core.JSONField{Name: "allowed_devices"})
+	policies.Fields.Add(&core.JSONField{Name: "allowed_security_opt"})
 	if err := app.Save(policies); err != nil {
 		t.Fatalf("failed to create worker_policies collection: %v", err)
 	}
@@ -307,6 +315,9 @@ func createTestCollections(t *testing.T, app core.App) {
 	workers.Fields.Add(&core.JSONField{Name: "policy_volumes"})
 	workers.Fields.Add(&core.JSONField{Name: "policy_networks"})
 	workers.Fields.Add(&core.JSONField{Name: "policy_images"})
+	workers.Fields.Add(&core.JSONField{Name: "policy_cap_add"})
+	workers.Fields.Add(&core.JSONField{Name: "policy_devices"})
+	workers.Fields.Add(&core.JSONField{Name: "policy_security_opt"})
 	if err := app.Save(workers); err != nil {
 		t.Fatalf("failed to create workers collection: %v", err)
 	}
@@ -402,6 +413,7 @@ func TestRendererPolicyRejection(t *testing.T) {
 	globalPolicy.Set("enabled", true)
 	globalPolicy.Set("prevent_latest_images", true)
 	globalPolicy.Set("block_host_volumes", true)
+	globalPolicy.Set("block_privileged", true)
 	globalPolicy.Set("allowed_networks", `["safe_net"]`)
 	globalPolicy.Set("allowed_images", `["nginx:alpine", "postgres:15"]`)
 	if err := app.Save(globalPolicy); err != nil {
@@ -450,6 +462,16 @@ services:
     image: nginx:alpine
     networks:
       - malicious_net
+`,
+		},
+		{
+			name: "violates privileged mode",
+			compose: `
+name: policy_stack
+services:
+  web:
+    image: nginx:alpine
+    privileged: true
 `,
 		},
 	}

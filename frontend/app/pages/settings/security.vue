@@ -179,13 +179,22 @@ const workerPolicy = ref({
   allowed_volumes: [] as string[],
   allowed_networks: [] as string[],
   allowed_images: [] as string[],
+  allowed_cap_add: [] as string[],
+  allowed_devices: [] as string[],
+  allowed_security_opt: [] as string[],
   prevent_latest_images: false,
   block_host_volumes: false,
+  block_privileged: false,
+  block_host_network: false,
+  block_host_pid: false,
+  block_host_ipc: false,
+  block_docker_socket: false,
 })
 const workerPolicyLoading = ref(false)
 const workerPolicySaving = ref(false)
 const showConfirmToggleModal = ref(false)
 const pendingToggleValue = ref(false)
+const showStrictPresetModal = ref(false)
 
 async function loadWorkerPolicy() {
   workerPolicyLoading.value = true
@@ -196,8 +205,16 @@ async function loadWorkerPolicy() {
       allowed_volumes:       data?.allowed_volumes  ?? [],
       allowed_networks:      data?.allowed_networks ?? [],
       allowed_images:        data?.allowed_images   ?? [],
+      allowed_cap_add:       data?.allowed_cap_add  ?? [],
+      allowed_devices:       data?.allowed_devices  ?? [],
+      allowed_security_opt:  data?.allowed_security_opt ?? [],
       prevent_latest_images: data?.prevent_latest_images ?? false,
       block_host_volumes:    data?.block_host_volumes    ?? false,
+      block_privileged:      data?.block_privileged      ?? false,
+      block_host_network:    data?.block_host_network    ?? false,
+      block_host_pid:        data?.block_host_pid        ?? false,
+      block_host_ipc:        data?.block_host_ipc        ?? false,
+      block_docker_socket:   data?.block_docker_socket   ?? false,
     }
   } catch {
     // no policy yet — defaults are fine
@@ -212,6 +229,9 @@ async function saveWorkerPolicyGlobal() {
     workerPolicy.value.allowed_volumes = workerPolicy.value.allowed_volumes.filter(v => v.trim() !== '')
     workerPolicy.value.allowed_networks = workerPolicy.value.allowed_networks.filter(n => n.trim() !== '')
     workerPolicy.value.allowed_images = workerPolicy.value.allowed_images.filter(i => i.trim() !== '')
+    workerPolicy.value.allowed_cap_add = workerPolicy.value.allowed_cap_add.filter(c => c.trim() !== '')
+    workerPolicy.value.allowed_devices = workerPolicy.value.allowed_devices.filter(d => d.trim() !== '')
+    workerPolicy.value.allowed_security_opt = workerPolicy.value.allowed_security_opt.filter(s => s.trim() !== '')
 
     await saveGlobalWorkerPolicy(workerPolicy.value)
     toast.add({ title: 'Worker policy saved', color: 'success' })
@@ -220,6 +240,25 @@ async function saveWorkerPolicyGlobal() {
   } finally {
     workerPolicySaving.value = false
   }
+}
+
+function requestStrictProductionPreset() {
+  showStrictPresetModal.value = true
+}
+
+function cancelStrictProductionPreset() {
+  showStrictPresetModal.value = false
+}
+
+async function applyStrictProductionPreset() {
+  workerPolicy.value.enabled = true
+  workerPolicy.value.block_privileged = true
+  workerPolicy.value.block_host_network = true
+  workerPolicy.value.block_host_pid = true
+  workerPolicy.value.block_host_ipc = true
+  workerPolicy.value.block_docker_socket = true
+  await saveWorkerPolicyGlobal()
+  showStrictPresetModal.value = false
 }
 
 function onTogglePolicyClick(val: boolean) {
@@ -494,17 +533,27 @@ onMounted(async () => {
       <template v-else>
         <!-- Global Enable/Disable Toggle -->
         <UCard class="bg-gradient-to-r from-yellow-500/10 via-amber-500/5 to-transparent border border-yellow-500/20">
-          <div class="flex items-center justify-between">
+          <div class="flex items-center justify-between gap-4">
             <div class="space-y-1">
               <h3 class="font-semibold text-lg flex items-center gap-2 text-gray-900 dark:text-wire-200">
                 <UIcon name="i-lucide-shield-alert" class="w-5 h-5 text-yellow-500" />
                 Worker Policy Security System
               </h3>
               <p class="text-sm text-gray-500 dark:text-gray-400">
-                Enable or disable global security policy enforcement (volumes, networks, and images) across all workers.
+                Enable or disable global security policy enforcement (volumes, networks, images, and container isolation) across all workers.
               </p>
             </div>
             <USwitch :model-value="workerPolicy.enabled" size="lg" @update:model-value="onTogglePolicyClick" />
+          </div>
+          <div class="flex justify-end mt-4">
+            <UButton
+              icon="i-lucide-shield-check"
+              variant="outline"
+              color="error"
+              label="Apply Strict Production Preset"
+              :loading="workerPolicySaving"
+              @click="requestStrictProductionPreset"
+            />
           </div>
         </UCard>
         <WorkerPolicyForm v-model="workerPolicy" @save="saveWorkerPolicyGlobal" />
@@ -518,6 +567,17 @@ onMounted(async () => {
             :loading="workerPolicySaving"
             @confirm="confirmTogglePolicy"
             @cancel="cancelTogglePolicy"
+          />
+        </template>
+      </UModal>
+
+      <!-- Confirm Strict Production Preset Modal -->
+      <UModal v-model:open="showStrictPresetModal">
+        <template #content>
+          <ConfirmStrictPresetModal
+            :loading="workerPolicySaving"
+            @confirm="applyStrictProductionPreset"
+            @cancel="cancelStrictProductionPreset"
           />
         </template>
       </UModal>

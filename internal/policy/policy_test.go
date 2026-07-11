@@ -293,3 +293,183 @@ func TestValidateDisabledPolicyAllowsEverything(t *testing.T) {
 		t.Errorf("expected no volume error when policy is disabled, got: %v", err)
 	}
 }
+
+// --- ValidatePrivileged ---
+
+func TestValidatePrivilegedBlockedWhenFlagSet(t *testing.T) {
+	p := &policy.WorkerPolicy{BlockPrivileged: true}
+	if err := p.ValidatePrivileged([]string{"web"}); err == nil {
+		t.Error("expected error when a service is privileged and flag is set")
+	}
+}
+
+func TestValidatePrivilegedAllowedWhenFlagUnset(t *testing.T) {
+	p := &policy.WorkerPolicy{BlockPrivileged: false}
+	if err := p.ValidatePrivileged([]string{"web"}); err != nil {
+		t.Errorf("expected no error when flag is unset, got: %v", err)
+	}
+}
+
+func TestValidatePrivilegedAllowedWhenNoServices(t *testing.T) {
+	p := &policy.WorkerPolicy{BlockPrivileged: true}
+	if err := p.ValidatePrivileged(nil); err != nil {
+		t.Errorf("expected no error when no services are privileged, got: %v", err)
+	}
+}
+
+// --- ValidateHostNetwork ---
+
+func TestValidateHostNetworkBlockedWhenFlagSet(t *testing.T) {
+	p := &policy.WorkerPolicy{BlockHostNetwork: true}
+	if err := p.ValidateHostNetwork([]string{"web"}); err == nil {
+		t.Error("expected error for network_mode: host when flag is set")
+	}
+}
+
+func TestValidateHostNetworkAllowedWhenFlagUnset(t *testing.T) {
+	p := &policy.WorkerPolicy{BlockHostNetwork: false}
+	if err := p.ValidateHostNetwork([]string{"web"}); err != nil {
+		t.Errorf("expected no error when flag is unset, got: %v", err)
+	}
+}
+
+// --- ValidateHostPID / ValidateHostIPC ---
+
+func TestValidateHostPIDBlockedWhenFlagSet(t *testing.T) {
+	p := &policy.WorkerPolicy{BlockHostPID: true}
+	if err := p.ValidateHostPID([]string{"web"}); err == nil {
+		t.Error("expected error for pid: host when flag is set")
+	}
+}
+
+func TestValidateHostIPCBlockedWhenFlagSet(t *testing.T) {
+	p := &policy.WorkerPolicy{BlockHostIPC: true}
+	if err := p.ValidateHostIPC([]string{"web"}); err == nil {
+		t.Error("expected error for ipc: host when flag is set")
+	}
+}
+
+// --- ValidateDockerSocket ---
+
+func TestValidateDockerSocketBlockedForKnownPaths(t *testing.T) {
+	p := &policy.WorkerPolicy{BlockDockerSocket: true}
+	for _, path := range []string{"/var/run/docker.sock", "/run/docker.sock"} {
+		if err := p.ValidateDockerSocket([]string{path}); err == nil {
+			t.Errorf("expected docker socket mount %q to be blocked", path)
+		}
+	}
+}
+
+func TestValidateDockerSocketBlockedForSourceTargetNotation(t *testing.T) {
+	p := &policy.WorkerPolicy{BlockDockerSocket: true}
+	for _, mount := range []string{"/var/run/docker.sock:/var/run/docker.sock", "/run/docker.sock:/run/docker.sock:ro"} {
+		if err := p.ValidateDockerSocket([]string{mount}); err == nil {
+			t.Errorf("expected docker socket mount %q (source:target notation) to be blocked", mount)
+		}
+	}
+}
+
+func TestValidateDockerSocketBlockedForAncestorDir(t *testing.T) {
+	p := &policy.WorkerPolicy{BlockDockerSocket: true}
+	for _, mount := range []string{"/var/run", "/run", "/var/run/", "/"} {
+		if err := p.ValidateDockerSocket([]string{mount}); err == nil {
+			t.Errorf("expected ancestor mount %q of docker socket to be blocked", mount)
+		}
+	}
+}
+
+func TestValidateDockerSocketAllowedForOtherPaths(t *testing.T) {
+	p := &policy.WorkerPolicy{BlockDockerSocket: true}
+	if err := p.ValidateDockerSocket([]string{"/data", "/var/run/other.sock"}); err != nil {
+		t.Errorf("expected non-socket mounts to be allowed, got: %v", err)
+	}
+}
+
+func TestValidateDockerSocketAllowedWhenFlagUnset(t *testing.T) {
+	p := &policy.WorkerPolicy{BlockDockerSocket: false}
+	if err := p.ValidateDockerSocket([]string{"/var/run/docker.sock"}); err != nil {
+		t.Errorf("expected docker socket mount to be allowed when flag unset, got: %v", err)
+	}
+}
+
+// --- ValidateCapAdd / ValidateDevices / ValidateSecurityOpt ---
+
+func TestValidateCapAddEmptyAllowlistAllowsAll(t *testing.T) {
+	p := &policy.WorkerPolicy{AllowedCapAdd: []string{}}
+	if err := p.ValidateCapAdd([]string{"NET_ADMIN", "SYS_ADMIN"}); err != nil {
+		t.Errorf("expected no error with empty allowlist, got: %v", err)
+	}
+}
+
+func TestValidateCapAddNotInListBlocked(t *testing.T) {
+	p := &policy.WorkerPolicy{AllowedCapAdd: []string{"NET_ADMIN"}}
+	if err := p.ValidateCapAdd([]string{"SYS_ADMIN"}); err == nil {
+		t.Error("expected error for capability not in allowlist")
+	}
+}
+
+func TestValidateDevicesEmptyAllowlistAllowsAll(t *testing.T) {
+	p := &policy.WorkerPolicy{AllowedDevices: []string{}}
+	if err := p.ValidateDevices([]string{"/dev/ttyUSB0"}); err != nil {
+		t.Errorf("expected no error with empty allowlist, got: %v", err)
+	}
+}
+
+func TestValidateDevicesNotInListBlocked(t *testing.T) {
+	p := &policy.WorkerPolicy{AllowedDevices: []string{"/dev/ttyUSB0"}}
+	if err := p.ValidateDevices([]string{"/dev/sda"}); err == nil {
+		t.Error("expected error for device not in allowlist")
+	}
+}
+
+func TestValidateSecurityOptEmptyAllowlistAllowsAll(t *testing.T) {
+	p := &policy.WorkerPolicy{AllowedSecurityOpt: []string{}}
+	if err := p.ValidateSecurityOpt([]string{"seccomp:unconfined"}); err != nil {
+		t.Errorf("expected no error with empty allowlist, got: %v", err)
+	}
+}
+
+func TestValidateSecurityOptNotInListBlocked(t *testing.T) {
+	p := &policy.WorkerPolicy{AllowedSecurityOpt: []string{"no-new-privileges:true"}}
+	if err := p.ValidateSecurityOpt([]string{"seccomp:unconfined"}); err == nil {
+		t.Error("expected error for security_opt not in allowlist")
+	}
+}
+
+func TestValidateHardenedChecksDisabledPolicyAllowsEverything(t *testing.T) {
+	p := &policy.WorkerPolicy{
+		Disabled:           true,
+		BlockPrivileged:    true,
+		BlockHostNetwork:   true,
+		BlockHostPID:       true,
+		BlockHostIPC:       true,
+		BlockDockerSocket:  true,
+		AllowedCapAdd:      []string{"NET_ADMIN"},
+		AllowedDevices:     []string{"/dev/ttyUSB0"},
+		AllowedSecurityOpt: []string{"no-new-privileges:true"},
+	}
+	if err := p.ValidatePrivileged([]string{"web"}); err != nil {
+		t.Errorf("expected no error when policy is disabled, got: %v", err)
+	}
+	if err := p.ValidateHostNetwork([]string{"web"}); err != nil {
+		t.Errorf("expected no error when policy is disabled, got: %v", err)
+	}
+	if err := p.ValidateHostPID([]string{"web"}); err != nil {
+		t.Errorf("expected no error when policy is disabled, got: %v", err)
+	}
+	if err := p.ValidateHostIPC([]string{"web"}); err != nil {
+		t.Errorf("expected no error when policy is disabled, got: %v", err)
+	}
+	if err := p.ValidateDockerSocket([]string{"/var/run/docker.sock"}); err != nil {
+		t.Errorf("expected no error when policy is disabled, got: %v", err)
+	}
+	if err := p.ValidateCapAdd([]string{"SYS_ADMIN"}); err != nil {
+		t.Errorf("expected no error when policy is disabled, got: %v", err)
+	}
+	if err := p.ValidateDevices([]string{"/dev/sda"}); err != nil {
+		t.Errorf("expected no error when policy is disabled, got: %v", err)
+	}
+	if err := p.ValidateSecurityOpt([]string{"seccomp:unconfined"}); err != nil {
+		t.Errorf("expected no error when policy is disabled, got: %v", err)
+	}
+}

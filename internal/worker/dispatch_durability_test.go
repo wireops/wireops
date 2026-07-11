@@ -74,11 +74,12 @@ func TestDispatchConnectedWorkerSetsMessageIDAndSucceeds(t *testing.T) {
 	}
 
 	conn := dialWorker(t, httpServer.URL, token)
+	workerID := workerIDFromConnection(t, server)
 
 	resultCh := make(chan protocol.CommandResult, 1)
 	errCh := make(chan error, 1)
 	go func() {
-		res, err := server.Dispatch(context.Background(), workerIDFromConnection(t, server), protocol.DeployCommand{
+		res, err := server.Dispatch(context.Background(), workerID, protocol.DeployCommand{
 			CommandID: "cmd-connected-1",
 			StackID:   "stack-1",
 		})
@@ -218,14 +219,24 @@ func workerIDFromToken(t *testing.T, svc *Service, token string) string {
 }
 
 // workerIDFromConnection returns the worker ID bound to the currently (only)
-// connected worker, for tests that dial before calling Dispatch.
+// connected worker, for tests that dial before calling Dispatch. The server
+// registers the connection asynchronously after the client-side handshake
+// completes, so this polls briefly instead of assuming it's already visible.
+// Must be called from the test's own goroutine (not a spawned one) since it
+// may call t.Fatal.
 func workerIDFromConnection(t *testing.T, server *WorkerServer) string {
 	t.Helper()
-	server.connMu.RLock()
-	defer server.connMu.RUnlock()
-	for id := range server.connections {
-		return id
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		server.connMu.RLock()
+		for id := range server.connections {
+			server.connMu.RUnlock()
+			return id
+		}
+		server.connMu.RUnlock()
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for a connected worker")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatal("no connected worker found")
-	return ""
 }

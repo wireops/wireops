@@ -220,13 +220,49 @@ export function useApi() {
     allowed_volumes: string[]
     allowed_networks: string[]
     allowed_images: string[]
+    allowed_cap_add: string[]
+    allowed_devices: string[]
+    allowed_security_opt: string[]
     prevent_latest_images: boolean
     block_host_volumes: boolean
+    block_privileged: boolean
+    block_host_network: boolean
+    block_host_pid: boolean
+    block_host_ipc: boolean
+    block_docker_socket: boolean
   }
-  type WorkerPolicyOverride = Omit<PolicyData, 'prevent_latest_images' | 'block_host_volumes'> & {
+  type PolicyOverrideFlagKeys =
+    | 'prevent_latest_images'
+    | 'block_host_volumes'
+    | 'block_privileged'
+    | 'block_host_network'
+    | 'block_host_pid'
+    | 'block_host_ipc'
+    | 'block_docker_socket'
+  type PolicyOverrideNullableAllowlistKeys =
+    | 'allowed_images'
+    | 'allowed_volumes'
+    | 'allowed_networks'
+    | 'allowed_cap_add'
+    | 'allowed_devices'
+    | 'allowed_security_opt'
+  type WorkerPolicyOverride = Omit<PolicyData, PolicyOverrideFlagKeys | PolicyOverrideNullableAllowlistKeys> & {
     inherit: boolean
+    // null means "inherit from global" — must not persist the resolved effective
+    // value as a local override, or future global changes stop propagating.
+    allowed_images: string[] | null
+    allowed_volumes: string[] | null
+    allowed_networks: string[] | null
+    allowed_cap_add: string[] | null
+    allowed_devices: string[] | null
+    allowed_security_opt: string[] | null
     prevent_latest_images: boolean | null
     block_host_volumes: boolean | null
+    block_privileged: boolean | null
+    block_host_network: boolean | null
+    block_host_pid: boolean | null
+    block_host_ipc: boolean | null
+    block_docker_socket: boolean | null
   }
   type WorkerPolicyResponse = WorkerPolicyOverride & { effective: PolicyData }
 
