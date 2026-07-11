@@ -150,6 +150,13 @@ func (rr routeRegistrar) resolveStackAndWorker(e *core.RequestEvent, stackID str
 	return stack, projectName, workerID, true
 }
 
+// skipDir reports whether a directory encountered during a repo file walk
+// should be skipped entirely (filepath.SkipDir), e.g. VCS metadata and
+// dependency directories that are never relevant to compose/job/wireops files.
+func skipDir(name string) bool {
+	return name == ".git" || name == "node_modules" || name == "vendor"
+}
+
 func (rr routeRegistrar) listYAMLFiles(repoDir string, filter func([]byte) bool) ([]string, error) {
 	var candidates []string
 	if err := filepath.WalkDir(repoDir, func(path string, d os.DirEntry, err error) error {
@@ -157,7 +164,7 @@ func (rr routeRegistrar) listYAMLFiles(repoDir string, filter func([]byte) bool)
 			return err
 		}
 		if d.IsDir() {
-			if d.Name() == ".git" || d.Name() == "node_modules" || d.Name() == "vendor" {
+			if skipDir(d.Name()) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -205,7 +212,7 @@ func (rr routeRegistrar) listFilesByBasename(repoDir string, match func(name str
 			return err
 		}
 		if d.IsDir() {
-			if d.Name() == ".git" || d.Name() == "node_modules" || d.Name() == "vendor" {
+			if skipDir(d.Name()) {
 				return filepath.SkipDir
 			}
 			return nil

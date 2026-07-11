@@ -230,15 +230,19 @@ func (s *Scheduler) startJob(stack *core.Record) {
 	s.startJobLocked(stack)
 }
 
+// resolveSyncInterval returns the sync interval for a stack: wireops.yaml's
+// sync.interval (stored as sync_interval_seconds) overrides the global
+// SCAN_PERIOD; 0 (unset, or manually-configured stacks) falls back to it.
+func resolveSyncInterval(stack *core.Record) time.Duration {
+	if seconds := stack.GetInt("sync_interval_seconds"); seconds > 0 {
+		return time.Duration(seconds) * time.Second
+	}
+	return config.GetScanPeriod()
+}
+
 func (s *Scheduler) startJobLocked(stack *core.Record) {
 	stackID := stack.Id
-
-	// wireops.yaml's sync.interval overrides the global SCAN_PERIOD for this
-	// stack; 0 (unset, or manually-configured stacks) falls back to it.
-	interval := config.GetScanPeriod()
-	if seconds := stack.GetInt("sync_interval_seconds"); seconds > 0 {
-		interval = time.Duration(seconds) * time.Second
-	}
+	interval := resolveSyncInterval(stack)
 
 	// jobCtx is cancelled either when this specific job is unregistered
 	// OR when the root context (app shutdown) is cancelled.

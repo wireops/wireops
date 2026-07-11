@@ -66,22 +66,28 @@ function normalizeTag(t: unknown): string {
   return String(t ?? '').trim().toLowerCase()
 }
 
-const workerOptions = computed(() => {
+const matchedWorkers = computed(() => {
   const list = workers.value || []
   const rawTags = wireopsDefinition.value?.worker?.tags
   const wantedTags = Array.isArray(rawTags) ? rawTags.map(normalizeTag).filter(Boolean) : []
-  const filtered = wantedTags.length
-    ? list.filter((w: any) => {
-        const workerTags = Array.isArray(w.tags) ? w.tags.map(normalizeTag) : []
-        return wantedTags.some(t => workerTags.includes(t))
-      })
-    : list
+  if (!wantedTags.length) return list
+  return list.filter((w: any) => {
+    const workerTags = Array.isArray(w.tags) ? w.tags.map(normalizeTag) : []
+    return wantedTags.some(t => workerTags.includes(t))
+  })
+})
+
+// Fall back to every active worker when the tag filter matches none —
+// see the "No worker matches the required tags" UAlert below.
+const workerOptions = computed(() => {
+  const list = workers.value || []
+  const filtered = workerTagsFilterEmpty.value ? list : matchedWorkers.value
   return filtered.map((a: any) => ({ label: a.hostname, value: a.id }))
 })
 
 const workerTagsFilterEmpty = computed(() => {
   const tags = wireopsDefinition.value?.worker?.tags
-  return !!(Array.isArray(tags) && tags.length && workerOptions.value.length === 0)
+  return !!(Array.isArray(tags) && tags.length && matchedWorkers.value.length === 0)
 })
 
 const fileOptions = computed(() =>

@@ -202,6 +202,55 @@ describe('CreateStackModal', () => {
     })
   })
 
+  it('falls back to every active worker and warns when worker.tags matches none', async () => {
+    const { getWireopsDefinitionFromFile, createStackFromWireops, getWorkers } = setupGlobals()
+    getWorkers.mockResolvedValue([
+      { id: 'worker-1', hostname: 'worker-a', status: 'ACTIVE', tags: ['staging'] },
+      { id: 'worker-2', hostname: 'worker-b', status: 'ACTIVE', tags: [] },
+    ])
+    getWireopsDefinitionFromFile.mockResolvedValue({
+      version: 'wireops.v1',
+      name: 'api',
+      deploy_timeout_seconds: 300,
+      compose: { remove_orphans: true, force_pull: false },
+      jobs: { wait_running: false },
+      worker: { tags: ['prod'] },
+      resolved_compose_path: '.',
+      resolved_compose_file: 'docker-compose.yml',
+    })
+
+    const wrapper = await openInWireopsMode()
+
+    const repoSelect = wrapper.findAll('select')[0]!
+    await repoSelect.setValue('repo-1')
+    await flushPromises()
+
+    const fileSelect = wrapper.findAll('select').find(s => s.findAll('option').some(o => o.text() === 'wireops.yaml'))
+    await fileSelect!.setValue('wireops.yaml')
+    await flushPromises()
+
+    const nextButton = wrapper.findAll('button').find(b => b.text() === 'Next')
+    await nextButton!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('No worker matches the required tags')
+
+    const workerSelect = wrapper.findAll('select').find(s => s.findAll('option').some(o => o.text() === 'worker-a'))
+    expect(workerSelect).toBeTruthy()
+    // fallback to every active worker — worker-b (no tags) must still be selectable
+    expect(workerSelect!.findAll('option').some(o => o.text() === 'worker-b')).toBe(true)
+    await workerSelect!.setValue('worker-1')
+
+    await wrapper.find('form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createStackFromWireops).toHaveBeenCalledWith({
+      repository: 'repo-1',
+      worker: 'worker-1',
+      wireops_file: 'wireops.yaml',
+    })
+  })
+
   it('manual mode still shows an editable Name and creates via the raw stacks collection', async () => {
     const { createStack } = setupGlobals()
     const wrapper = await openInWireopsMode()

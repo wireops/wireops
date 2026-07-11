@@ -575,7 +575,9 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 		runErr = fmt.Errorf("failed to serialize env vars for remote rollback: %w", b64Err)
 	} else {
 		forcePull, removeOrphans := resolveComposeRuntimeFlags(stack)
-		result, dispatchErr := r.dispatcher.Dispatch(ctx, workerID, protocol.DeployCommand{
+		dispatchCtx, cancelDispatch := withDeployTimeout(ctx, stack)
+		defer cancelDispatch()
+		result, dispatchErr := r.dispatcher.Dispatch(dispatchCtx, workerID, protocol.DeployCommand{
 			CommandID:      cmdID,
 			StackID:        stackID,
 			CommitSHA:      commitSHA,
@@ -790,7 +792,9 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 		runErr = fmt.Errorf("failed to serialize env vars for remote redeploy: %w", b64Err)
 	} else {
 		forcePull, removeOrphans := resolveComposeRuntimeFlags(stack)
-		result, dispatchErr := r.dispatcher.Dispatch(ctx, workerID, protocol.RedeployCommand{
+		dispatchCtx, cancelDispatch := withDeployTimeout(ctx, stack)
+		defer cancelDispatch()
+		result, dispatchErr := r.dispatcher.Dispatch(dispatchCtx, workerID, protocol.RedeployCommand{
 			DeployCommand: protocol.DeployCommand{
 				CommandID:      cmdID,
 				StackID:        stackID,
@@ -1037,7 +1041,9 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 		runErr = fmt.Errorf("failed to serialize env vars for remote local-sync: %w", b64Err)
 	} else if recreateContainers {
 		forcePull, removeOrphans := resolveComposeRuntimeFlags(stack)
-		result, dispatchErr := r.dispatcher.Dispatch(ctx, workerID, protocol.RedeployCommand{
+		dispatchCtx, cancelDispatch := withDeployTimeout(ctx, stack)
+		defer cancelDispatch()
+		result, dispatchErr := r.dispatcher.Dispatch(dispatchCtx, workerID, protocol.RedeployCommand{
 			DeployCommand: protocol.DeployCommand{
 				CommandID:      syncLog.Id,
 				StackID:        stackID,
@@ -1054,7 +1060,9 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 		output, runErr = extractDispatchResult(result, dispatchErr)
 	} else {
 		forcePull, removeOrphans := resolveComposeRuntimeFlags(stack)
-		result, dispatchErr := r.dispatcher.Dispatch(ctx, workerID, protocol.DeployCommand{
+		dispatchCtx, cancelDispatch := withDeployTimeout(ctx, stack)
+		defer cancelDispatch()
+		result, dispatchErr := r.dispatcher.Dispatch(dispatchCtx, workerID, protocol.DeployCommand{
 			CommandID:      syncLog.Id,
 			StackID:        stackID,
 			CommitSHA:      "imported",
@@ -1626,7 +1634,9 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 
 	log.Printf("[transfer] step 1/2: deploy dispatching to target_agent=%s (%s) stack=%s", targetWorkerID, targetHostname, stackID)
 	transferForcePull, transferRemoveOrphans := resolveComposeRuntimeFlags(stack)
-	deployResult, dErr := r.dispatcher.Dispatch(ctx, targetWorkerID, protocol.DeployCommand{
+	transferDispatchCtx, cancelTransferDispatch := withDeployTimeout(ctx, stack)
+	defer cancelTransferDispatch()
+	deployResult, dErr := r.dispatcher.Dispatch(transferDispatchCtx, targetWorkerID, protocol.DeployCommand{
 		CommandID:      cmdID,
 		StackID:        stackID,
 		Trigger:        "transfer",

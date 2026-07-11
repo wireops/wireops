@@ -58,13 +58,15 @@ const timeoutUnits = [
 
 const computedTimeout = computed(() => {
   const val = timeoutForm.value.val.trim()
-  if (!val || Number(val) === 0) return ''
+  const num = Number(val)
+  if (!val || Number.isNaN(num) || num === 0) return ''
   return val + timeoutForm.value.unit
 })
 
 const computedSyncInterval = computed(() => {
   const val = syncForm.value.val.trim()
-  if (!val || Number(val) === 0) return ''
+  const num = Number(val)
+  if (!val || Number.isNaN(num) || num === 0) return ''
   return val + syncForm.value.unit
 })
 

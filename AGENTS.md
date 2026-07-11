@@ -145,7 +145,7 @@ repositories ─── 1:N ──→ scheduled_jobs ─── 1:N ──→ job_
 ## Key Business Flows
 
 ### GitOps Sync
-1. `sync/scheduler.go` polls every stack on a global interval set by `SCAN_PERIOD` (default 10s, `internal/config.GetScanPeriod`).
+1. `sync/scheduler.go` polls each stack on an interval set by `SCAN_PERIOD` (default 10s, `internal/config.GetScanPeriod`); a stack's own positive `sync_interval_seconds` (from wireops.yaml's `sync.interval`) overrides this fallback for that stack.
 2. `sync/reconciler.go` runs `git.CloneOrFetch` and compares the latest commit SHA with the stored one.
 3. `sync/renderer.go` reads the compose YAML, injects `dev.wireops.*` labels, and writes a versioned revision file to `DATA_DIR/stacks/<id>/v<n>.yml`.
 4. The server base64-encodes the compose file, sends a `DeployCommand` over WebSocket to the worker assigned to the stack, and waits up to 5 minutes for `CommandResult`.

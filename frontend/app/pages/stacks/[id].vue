@@ -254,9 +254,13 @@ async function saveEdit() {
     payload.compose_file = editForm.value.compose_file
   }
 
-  await $pb.collection('stacks').update(stackId, payload)
-  editing.value = false
-  refreshStack()
+  try {
+    await $pb.collection('stacks').update(stackId, payload)
+    editing.value = false
+    refreshStack()
+  } catch (err: any) {
+    toast.add({ title: 'Failed to save stack', description: err?.message, color: 'error' })
+  }
 }
 
 // Webhook secret

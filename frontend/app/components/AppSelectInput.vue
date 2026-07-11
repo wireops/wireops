@@ -36,6 +36,7 @@ const query = ref('')
 const activeIndex = ref(-1)
 const rootEl = ref<HTMLElement | null>(null)
 const searchEl = ref<HTMLInputElement | null>(null)
+const triggerEl = ref<HTMLButtonElement | null>(null)
 
 const selectedItem = computed(() =>
   props.items.find(item => item.value === props.modelValue)
@@ -58,8 +59,12 @@ function open() {
 }
 
 function close() {
+  const searchWasFocused = props.searchable && document.activeElement === searchEl.value
   isOpen.value = false
   activeIndex.value = -1
+  if (searchWasFocused) {
+    nextTick(() => triggerEl.value?.focus())
+  }
 }
 
 function toggle() {
@@ -106,6 +111,7 @@ onUnmounted(() => document.removeEventListener('mousedown', onClickOutside))
   <div ref="rootEl" class="relative">
     <button
       :id="id"
+      ref="triggerEl"
       type="button"
       class="flex items-center justify-between gap-1.5 px-2.5 border border-gray-200 dark:border-carbon-800 rounded-lg bg-white dark:bg-carbon-950/70 focus-within:border-yellow-400/60 focus:outline-hidden focus:border-yellow-400/60 focus:ring-1 focus:ring-yellow-400/40 transition-all duration-200 w-full h-[38px] text-sm disabled:opacity-50 disabled:cursor-not-allowed"
       :disabled="disabled"

@@ -110,7 +110,9 @@ func RunForceUp(ctx context.Context, opts ForceUpOptions) (string, error) {
 		if opts.RecreateVolumes {
 			downArgs = append(downArgs, "-v")
 		}
-		downArgs = append(downArgs, "--remove-orphans")
+		if opts.RemoveOrphans {
+			downArgs = append(downArgs, "--remove-orphans")
+		}
 		downCmd := exec.CommandContext(ctx, dockerBin, downArgs...)
 		downCmd.Dir = opts.WorkDir
 		downCmd.Env = env
