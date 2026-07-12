@@ -71,6 +71,7 @@ func ensureWorkerCollections(t *testing.T, app core.App) {
 		col.Fields.Add(&core.JSONField{Name: "result"})
 		col.Fields.Add(&core.NumberField{Name: "duration_ms"})
 		col.Fields.Add(&core.DateField{Name: "expires_at"})
+		col.Fields.Add(&core.DateField{Name: "acked_at"})
 		col.Fields.Add(&core.TextField{Name: "created_by"})
 		col.Fields.Add(&core.AutodateField{Name: "created", OnCreate: true})
 		col.Fields.Add(&core.AutodateField{Name: "updated", OnCreate: true, OnUpdate: true})

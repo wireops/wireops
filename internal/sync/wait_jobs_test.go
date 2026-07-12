@@ -47,6 +47,18 @@ func newWaitJobsTestApp(t *testing.T) (*tests.TestApp, *core.Record, *core.Recor
 		t.Fatalf("failed to create sync_logs collection: %v", err)
 	}
 
+	phases := core.NewBaseCollection("sync_log_phases")
+	phases.Fields.Add(&core.RelationField{Name: "sync_log", CollectionId: syncLogs.Id, Required: true, MaxSelect: 1})
+	phases.Fields.Add(&core.SelectField{Name: "phase", Required: true, MaxSelect: 1, Values: deployPhases})
+	phases.Fields.Add(&core.SelectField{Name: "status", Required: true, MaxSelect: 1, Values: []string{"running", "success", "error", "skipped"}})
+	phases.Fields.Add(&core.DateField{Name: "started_at", Required: true})
+	phases.Fields.Add(&core.NumberField{Name: "duration_ms"})
+	phases.Fields.Add(&core.TextField{Name: "detail"})
+	phases.Fields.Add(&core.NumberField{Name: "seq"})
+	if err := app.Save(phases); err != nil {
+		t.Fatalf("failed to create sync_log_phases collection: %v", err)
+	}
+
 	jobs := core.NewBaseCollection("scheduled_jobs")
 	jobs.Fields.Add(&core.RelationField{Name: "repository", CollectionId: repos.Id, Required: true, MaxSelect: 1})
 	jobs.Fields.Add(&core.TextField{Name: "job_file", Required: true})
@@ -122,7 +134,7 @@ func TestWaitForRunningJobsSkipsWhenPolicyNever(t *testing.T) {
 	createRunningJob(t, app, repo.Id)
 	r := &Reconciler{app: app}
 
-	if err := r.waitForRunningJobs(context.Background(), stack, repo.Id, stack.Id, "cron", "sha1"); err != nil {
+	if _, err := r.waitForRunningJobs(context.Background(), stack, repo.Id, stack.Id, "cron", "sha1"); err != nil {
 		t.Fatalf("waitForRunningJobs failed: %v", err)
 	}
 
@@ -141,7 +153,7 @@ func TestWaitForRunningJobsSkipsWhenNoActiveJobs(t *testing.T) {
 	r := &Reconciler{app: app}
 
 	start := time.Now()
-	if err := r.waitForRunningJobs(context.Background(), stack, repo.Id, stack.Id, "cron", "sha1"); err != nil {
+	if _, err := r.waitForRunningJobs(context.Background(), stack, repo.Id, stack.Id, "cron", "sha1"); err != nil {
 		t.Fatalf("waitForRunningJobs failed: %v", err)
 	}
 	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
@@ -159,9 +171,14 @@ func TestWaitForRunningJobsAlwaysBlocksUntilJobFinishes(t *testing.T) {
 	run := createRunningJob(t, app, repo.Id)
 	r := &Reconciler{app: app}
 
-	done := make(chan error, 1)
+	type waitResult struct {
+		rec *core.Record
+		err error
+	}
+	done := make(chan waitResult, 1)
 	go func() {
-		done <- r.waitForRunningJobs(context.Background(), stack, repo.Id, stack.Id, "cron", "sha1")
+		rec, err := r.waitForRunningJobs(context.Background(), stack, repo.Id, stack.Id, "cron", "sha1")
+		done <- waitResult{rec, err}
 	}()
 
 	select {
@@ -175,16 +192,24 @@ func TestWaitForRunningJobsAlwaysBlocksUntilJobFinishes(t *testing.T) {
 		t.Fatalf("failed to finish job run: %v", err)
 	}
 
+	var reused *core.Record
 	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("waitForRunningJobs returned error after job finished: %v", err)
+	case res := <-done:
+		if res.err != nil {
+			t.Fatalf("waitForRunningJobs returned error after job finished: %v", res.err)
 		}
+		reused = res.rec
 	case <-time.After(3 * time.Second):
 		t.Fatal("waitForRunningJobs did not return after job finished")
 	}
 
-	logs, _ := app.FindAllRecords("sync_logs", dbx.HashExp{"stack": stack.Id}, dbx.NewExp("status = 'success'"))
+	if reused == nil {
+		t.Fatal("expected waitForRunningJobs to return the reusable sync log it created")
+	}
+
+	// Status stays "running" (not a terminal "success"): the caller reuses
+	// this same row as the deploy's own sync log, the deploy isn't done yet.
+	logs, _ := app.FindAllRecords("sync_logs", dbx.HashExp{"stack": stack.Id, "status": "running"})
 	found := false
 	for _, l := range logs {
 		if strings.Contains(l.GetString("output"), "proceeded after waiting") {
@@ -193,6 +218,14 @@ func TestWaitForRunningJobsAlwaysBlocksUntilJobFinishes(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("expected a sync_log entry recording that the deploy proceeded after waiting")
+	}
+
+	phases, _ := app.FindAllRecords("sync_log_phases", dbx.HashExp{"sync_log": reused.Id, "phase": "policy_check"})
+	if len(phases) != 1 {
+		t.Fatalf("policy_check phase rows = %d, want 1", len(phases))
+	}
+	if got := phases[0].GetString("status"); got != "success" {
+		t.Fatalf("policy_check phase status = %q, want success", got)
 	}
 }
 
@@ -218,7 +251,7 @@ func TestWaitForRunningJobsTimeoutBlocksDeploy(t *testing.T) {
 	}
 
 	start := time.Now()
-	err := r.waitForRunningJobs(context.Background(), stack, repo.Id, stack.Id, "cron", "sha1")
+	reused, err := r.waitForRunningJobs(context.Background(), stack, repo.Id, stack.Id, "cron", "sha1")
 	elapsed := time.Since(start)
 
 	if err == nil {
@@ -240,6 +273,14 @@ func TestWaitForRunningJobsTimeoutBlocksDeploy(t *testing.T) {
 	if len(logs) == 0 {
 		t.Fatal("expected an error sync_log entry for the timed-out wait")
 	}
+
+	if reused == nil {
+		t.Fatal("expected the timed-out wait to still return the sync log it created")
+	}
+	phases, _ := app.FindAllRecords("sync_log_phases", dbx.HashExp{"sync_log": reused.Id, "phase": "policy_check", "status": "error"})
+	if len(phases) != 1 {
+		t.Fatalf("policy_check error phase rows = %d, want 1", len(phases))
+	}
 }
 
 func TestWaitForRunningJobsContextCancelStopsWaiting(t *testing.T) {
@@ -255,7 +296,8 @@ func TestWaitForRunningJobsContextCancelStopsWaiting(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- r.waitForRunningJobs(ctx, stack, repo.Id, stack.Id, "cron", "sha1")
+		_, err := r.waitForRunningJobs(ctx, stack, repo.Id, stack.Id, "cron", "sha1")
+		done <- err
 	}()
 
 	time.Sleep(50 * time.Millisecond)
