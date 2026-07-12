@@ -217,6 +217,15 @@ func TestUpdateWorkerInfoPersistsVersion(t *testing.T) {
 	if got := refreshed.GetString("docker_version"); got != "27.0.0" {
 		t.Fatalf("docker_version = %q, want %q", got, "27.0.0")
 	}
+	if got := refreshed.GetString("compose_version"); got != "2.27.0" {
+		t.Fatalf("compose_version = %q, want %q", got, "2.27.0")
+	}
+	if got := refreshed.GetString("os"); got != "linux" {
+		t.Fatalf("os = %q, want %q", got, "linux")
+	}
+	if got := refreshed.GetString("arch"); got != "amd64" {
+		t.Fatalf("arch = %q, want %q", got, "amd64")
+	}
 
 	if err := svc.UpdateWorkerInfo(record.Id, protocol.WorkerInfo{
 		DockerVersion: "27.0.0",
@@ -231,5 +240,11 @@ func TestUpdateWorkerInfoPersistsVersion(t *testing.T) {
 	}
 	if got := refreshed.GetString("version"); got != "" {
 		t.Fatalf("version = %q, want empty for legacy worker heartbeat", got)
+	}
+	if got := refreshed.GetString("os"); got != "linux" {
+		t.Fatalf("os = %q, want %q", got, "linux")
+	}
+	if got := refreshed.GetString("arch"); got != "amd64" {
+		t.Fatalf("arch = %q, want %q", got, "amd64")
 	}
 }

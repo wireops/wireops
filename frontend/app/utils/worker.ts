@@ -50,11 +50,11 @@ export function osIcon(os?: string): string {
   for (const [name, icon] of Object.entries(OS_ICONS)) {
     if (key.includes(name)) return icon
   }
-  return OS_ICONS.linux
+  return 'i-lucide-help-circle'
 }
 
 export function osLabel(os?: string): string {
-  return os && os.length > 0 ? os : 'linux'
+  return os && os.length > 0 ? os : 'unknown'
 }
 
 export function archIcon(_arch?: string): string {

@@ -218,15 +218,24 @@ All custom routes are prefixed `/api/custom/`. PocketBase also auto-exposes CRUD
 | `GET` | `/api/custom/workers` | List all workers (including pending tokens) |
 | `POST` | `/api/custom/worker/tokens` | Generate worker token |
 | `POST` | `/api/custom/workers/{id}/revoke` | Revoke worker or a pending token (using `pending:{tokenRecordId}`) |
-| `GET` | `/api/custom/workers/{id}/policy` | Resolved effective deploy security policy for a worker |
+
+### Worker Policy (`CapManageSettings`, not superuser-only)
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/custom/workers/{id}/policy` | Resolved effective deploy security policy for a worker, plus its local overrides |
+| `PUT` | `/api/custom/workers/{id}/policy` | Set per-worker policy overrides |
+| `DELETE` | `/api/custom/workers/{id}/policy` | Clear per-worker overrides (revert to inherit) |
 | `GET` | `/api/custom/settings/worker-policy` | Global `worker_policies` singleton |
+| `PUT` | `/api/custom/settings/worker-policy` | Update global `worker_policies` singleton |
 
 ### Audit (`admin` capability — `CapViewAuditLogs`)
+
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/api/custom/audit-logs` | Filterable audit log query (from/to/actor/action/resource/origin/status) |
 
 ### Users
+
 | Method | Path | Description |
 |---|---|---|
 | `POST` | `/api/custom/users/invite` | Invite a new user (`CapManageUsers`) |
@@ -324,6 +333,7 @@ Events: `sync.started`, `sync.done`, `sync.error`, `sync.test`.
 - Path safety for user-supplied file paths must go through `internal/safepath/`.
 - Frontend pages live in `frontend/app/pages/` (Nuxt file-based routing); shared composables in `frontend/app/composables/`.
 - Test function names must be in CamelCase.
+- **Vue Test Utils stubs must not use inline HTML-string `template:` fields.** Codacy's static analysis flags any `template: '<...>'` string literal as a generic XSS sink ("Non-HTML variable used to store raw HTML"), even in test-only mock components with no user input. Write stub components with `setup()` + `h()` from `vue` instead — see `frontend/app/components/_tests/WorkerEnvBadges.test.ts` and `WorkerSystemInfoCard.test.ts` for the pattern. This avoids the false positive entirely rather than suppressing it.
 
 ## Testing & Coverage
 
@@ -334,3 +344,5 @@ Events: `sync.started`, `sync.done`, `sync.error`, `sync.test`.
   - Backend: **25%** overall statement coverage. New/changed `internal/*` packages with non-trivial logic (parsing, reconciliation, auth/rbac, encryption) should carry tests; thin glue code (routes wiring, migrations) is exempt.
   - Frontend: **50%** overall statement coverage. Prioritize composables and utils (`frontend/app/composables/`, `frontend/app/utils/`) over component markup.
 - These are floors, not aspirational targets — raise them only once coverage comfortably clears them for a few months.
+- **Agent directive**: treat coverage as something to actively grow, not just avoid regressing. When you touch a package, look for nearby untested branches (error paths, edge cases) and add tests even if not strictly required by the floor.
+- **Agent directive — generated code**: whenever you generate new functions, handlers, composables, or components, think about how to make that code testable and write the corresponding test in the same change (table-driven Go tests for backend logic, vitest for frontend composables/utils). Don't ship new non-trivial logic without at least one test exercising its main path and one obvious edge case.

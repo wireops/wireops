@@ -1,14 +1,21 @@
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { h } from 'vue'
 import WorkerEnvBadges from '../WorkerEnvBadges.vue'
 
 describe('WorkerEnvBadges', () => {
   const stubs = {
     UBadge: {
-      template: '<span class="u-badge" :data-color="color"><slot />{{ label }}</span>',
       props: ['label', 'color', 'variant', 'size', 'icon'],
+      setup(props: { color?: string, label?: string }, { slots }: { slots: Record<string, () => unknown> }) {
+        return () => h('span', { class: 'u-badge', 'data-color': props.color }, [slots.default?.(), props.label])
+      },
     },
-    UTooltip: { template: '<div><slot /></div>' },
+    UTooltip: {
+      setup(_props: unknown, { slots }: { slots: Record<string, () => unknown> }) {
+        return () => h('div', slots.default?.())
+      },
+    },
   }
 
   it('renders badges for a fully reporting worker', () => {
@@ -23,10 +30,10 @@ describe('WorkerEnvBadges', () => {
     expect(wrapper.findAll('.u-badge[data-color="warning"]').length).toBe(0)
   })
 
-  it('falls back to the linux icon/label when os is unknown', () => {
+  it('falls back to the unknown label when os is unreported', () => {
     const worker = { docker_version: '27.0.0' }
     const wrapper = mount(WorkerEnvBadges, { props: { worker }, global: { stubs } })
-    expect(wrapper.text()).toContain('linux')
+    expect(wrapper.text()).toContain('unknown')
   })
 
   it('renders nothing for a legacy worker with no reported info', () => {

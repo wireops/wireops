@@ -17,7 +17,7 @@
 
 GitOps controller for Docker Compose stacks. Automatically sync and deploy your compose stacks from Git repositories, similar to Flux/ArgoCD for Kubernetes.
 
-> **Project status**: pre-1.0, actively developed (releases `v0.1.x`). Core GitOps sync, worker security policies, and RBAC are in daily use; a few features below (external secret providers, audited web terminal) are partially built or stubbed — see [Known Limitations](#known-limitations).
+> **Project status**: pre-1.0, actively developed (releases `v0.1.x`). Core GitOps sync, worker security policies, and RBAC are in daily use; external secret providers are stubbed, and the audited web terminal is intentionally not started yet — see [Known Limitations](#known-limitations).
 
 ## Features
 
@@ -352,11 +352,12 @@ npm run dev
 
 ## Integrations
 
-Wireops supports integrations that add external platform actions and shortcuts directly into the application's container list. By analyzing specific properties or labels on your containers, wireops can expose quick actions.
+Wireops ships two kinds of integration plugin, registered the same way (`internal/integrations/`) and enabled/configured from the same Settings screen, but functionally distinct:
 
-To use an integration, you need to enable and configure it in the application's UI settings. The integrations evaluate your active containers on-the-fly.
+- **Container-action integrations** (Reverse Proxy / Logging) inspect your running containers' labels and add clickable shortcuts to the container list — e.g. an "Open" link or a "Logs" link.
+- **Notification integrations** (category `Notification`) do **not** touch the container list at all — they only send a message when a sync event fires (`sync.started`, `sync.done`, `sync.error`, `sync.test`). Their `ResolveContainerActions` is a no-op by design.
 
-Currently supported integrations:
+### Container-action integrations
 
 | Integration | Category | What it adds |
 |---|---|---|
@@ -364,12 +365,17 @@ Currently supported integrations:
 | Caddy | Reverse Proxy | "Open" action from Caddy labels |
 | Nginx Proxy Manager | Reverse Proxy | "Open" action for NPM-fronted containers |
 | Dozzle | Logging | "Logs" action linking to a Dozzle instance |
-| Webhook | Notification | HMAC-signed HTTP POST on sync events |
-| Discord | Notification | Sync event messages to a Discord channel |
-| Slack | Notification | Sync event messages to a Slack channel |
-| Ntfy | Notification | Push notifications via ntfy.sh |
 
-Details for the two documented in depth below (Traefik, Dozzle) as examples; the others follow the same enable-in-Settings pattern.
+### Notification integrations (sync events only, no container actions)
+
+| Integration | What it does |
+|---|---|
+| Webhook | HMAC-signed HTTP POST on sync events |
+| Discord | Sync event messages to a Discord channel |
+| Slack | Sync event messages to a Slack channel |
+| Ntfy | Push notifications via ntfy.sh |
+
+Details for two container-action integrations (Traefik, Dozzle) are documented in depth below as examples; the rest follow the same enable-in-Settings pattern.
 
 ### Traefik
 

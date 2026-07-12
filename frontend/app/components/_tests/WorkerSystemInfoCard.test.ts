@@ -1,21 +1,46 @@
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { h } from 'vue'
 import WorkerSystemInfoCard from '../WorkerSystemInfoCard.vue'
+
+type Slots = Record<string, (() => unknown) | undefined>
 
 describe('WorkerSystemInfoCard', () => {
   const stubs = {
-    UCard: { template: '<div><slot name="header" /><slot /></div>' },
+    UCard: {
+      setup(_props: unknown, { slots }: { slots: Slots }) {
+        return () => h('div', [slots.header?.(), slots.default?.()])
+      },
+    },
     UAlert: {
-      template: '<div class="u-alert" :data-color="color"><span class="alert-title">{{ title }}</span></div>',
       props: ['color', 'variant', 'icon', 'title', 'description'],
+      setup(props: { color?: string, title?: string }) {
+        return () => h('div', { class: 'u-alert', 'data-color': props.color }, [h('span', { class: 'alert-title' }, props.title)])
+      },
     },
-    UBadge: { template: '<span class="u-badge">{{ label }}<slot /></span>', props: ['label', 'color', 'variant', 'size', 'icon'] },
+    UBadge: {
+      props: ['label', 'color', 'variant', 'size', 'icon'],
+      setup(props: { label?: string }, { slots }: { slots: Slots }) {
+        return () => h('span', { class: 'u-badge' }, [props.label, slots.default?.()])
+      },
+    },
     UProgress: {
-      template: '<div class="u-progress" :data-value="modelValue" :data-color="color"></div>',
       props: ['modelValue', 'size', 'color'],
+      setup(props: { modelValue?: number, color?: string }) {
+        return () => h('div', { class: 'u-progress', 'data-value': props.modelValue, 'data-color': props.color })
+      },
     },
-    UIcon: { template: '<span class="u-icon"></span>', props: ['name'] },
-    UTooltip: { template: '<div><slot /></div>' },
+    UIcon: {
+      props: ['name'],
+      setup() {
+        return () => h('span', { class: 'u-icon' })
+      },
+    },
+    UTooltip: {
+      setup(_props: unknown, { slots }: { slots: Slots }) {
+        return () => h('div', slots.default?.())
+      },
+    },
   }
 
   it('renders complete worker data without warnings', () => {

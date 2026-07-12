@@ -5,7 +5,6 @@ withDefaults(defineProps<{
   size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl'
 }>(), {
   dockerVersion: '',
-  dockerOnline: false,
   size: 'xs',
 })
 </script>
@@ -14,9 +13,9 @@ withDefaults(defineProps<{
   <UBadge
     v-if="dockerVersion"
     icon="i-lucide-container"
-    :label="dockerOnline ? `docker ${dockerVersion}` : 'docker offline'"
+    :label="dockerOnline === false ? 'docker offline' : `docker ${dockerVersion}`"
     variant="subtle"
-    :color="dockerOnline ? 'neutral' : 'error'"
+    :color="dockerOnline === false ? 'error' : 'neutral'"
     :size="size"
     class="font-mono"
   />

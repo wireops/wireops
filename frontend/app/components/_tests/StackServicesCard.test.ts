@@ -109,8 +109,9 @@ describe('StackServicesCard', () => {
     expect(text).not.toContain('0.0.0.0')
     expect(text).toContain('443/tcp')
     expect(text).toContain('80/tcp')
-    // unpublished port has no host badge
-    expect(text).toContain('-')
+    // unpublished port (443/tcp) renders a host badge showing the '-' placeholder
+    const hostBadges = wrapper.findAll('span').filter(span => span.text() === '-')
+    expect(hostBadges.length).toBe(1)
   })
 
   it('renders no port badges for a container with no ports', async () => {
