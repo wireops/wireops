@@ -48,6 +48,15 @@ func RecordPhaseDuration(phase, status string, durationMs int64) {
 	}
 }
 
+// ResetForTest clears accumulated phase stats. Test-only helper: package
+// state is process-global, so tests that record phase durations must reset
+// it (e.g. via t.Cleanup) to avoid bleeding into other tests.
+func ResetForTest() {
+	phaseStatsMu.Lock()
+	defer phaseStatsMu.Unlock()
+	phaseStats = map[string]*phaseStat{}
+}
+
 // Serialize renders the accumulated deploy-phase metrics as Prometheus text
 // exposition, following the same hand-rolled (no client library) format used
 // by worker/metrics/metrics.go.

@@ -111,15 +111,14 @@ func (r *Reconciler) waitForRunningJobs(ctx context.Context, stack *core.Record,
 		// Status goes back to "running" (not a terminal "success"): the
 		// deploy itself continues after this — this row is reused as the
 		// deploy's own sync log, not a standalone "wait" record anymore.
+		detail := fmt.Sprintf("proceeded after waiting %s for running jobs to finish", time.Since(start).Round(time.Second))
+		phaseStatus := constants.PhaseStatusSuccess
 		if queryFailed {
-			detail := fmt.Sprintf("proceeded after %s: failed to query active jobs, continuing best-effort", time.Since(start).Round(time.Second))
-			_ = pt.finish(constants.PhasePolicyCheck, constants.PhaseStatusSuccess, detail)
-			_ = r.updateSyncLog(waitLog.Id, "running", detail, time.Since(start).Milliseconds())
-		} else {
-			detail := fmt.Sprintf("proceeded after waiting %s for running jobs to finish", time.Since(start).Round(time.Second))
-			_ = pt.finish(constants.PhasePolicyCheck, constants.PhaseStatusSuccess, detail)
-			_ = r.updateSyncLog(waitLog.Id, "running", detail, time.Since(start).Milliseconds())
+			detail = fmt.Sprintf("proceeded after %s: failed to query active jobs, continuing best-effort", time.Since(start).Round(time.Second))
+			phaseStatus = constants.PhaseStatusSkipped
 		}
+		_ = pt.finish(constants.PhasePolicyCheck, phaseStatus, detail)
+		_ = r.updateSyncLog(waitLog.Id, "running", detail, time.Since(start).Milliseconds())
 	}
 	return waitLog, nil
 }

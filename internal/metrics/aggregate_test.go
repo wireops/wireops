@@ -183,6 +183,7 @@ func TestCollectAllConnectedWorkerInjectsLabels(t *testing.T) {
 func TestCollectAllMultipleWorkersEmitsDeployMetricsOnceWithoutWorkerLabels(t *testing.T) {
 	app := newMetricsTestApp(t)
 
+	t.Cleanup(deploymetrics.ResetForTest)
 	deploymetrics.RecordPhaseDuration("git_fetch", "success", 123)
 
 	workersCol, _ := app.FindCollectionByNameOrId("workers")
