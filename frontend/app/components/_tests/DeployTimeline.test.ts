@@ -1,16 +1,34 @@
 import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { ref } from 'vue'
+import { h, ref } from 'vue'
 import DeployTimeline from '../DeployTimeline.vue'
 
-const stubs = {
-  UIcon: { props: ['name'], template: '<i :class="name" />' },
+interface PhaseItem {
+  phase: string
+  status: string
+  duration_ms: number
+  seq: number
+  detail?: string
 }
 
-function stubGlobals(items: any[]) {
-  ;(globalThis as any).useNuxtApp = () => ({ $pb: { collection: () => ({}) } })
-  ;(globalThis as any).useRealtime = () => ({ subscribe: () => {} })
-  ;(globalThis as any).useAsyncData = () => ({
+const stubs = {
+  UIcon: {
+    props: ['name'],
+    setup(props: { name: string }) {
+      return () => h('i', { class: props.name })
+    },
+  },
+}
+
+function stubGlobals(items: PhaseItem[]) {
+  const globals = globalThis as unknown as {
+    useNuxtApp: () => unknown
+    useRealtime: () => unknown
+    useAsyncData: () => unknown
+  }
+  globals.useNuxtApp = () => ({ $pb: { collection: () => ({}) } })
+  globals.useRealtime = () => ({ subscribe: () => {} })
+  globals.useAsyncData = () => ({
     data: ref({ items }),
     refresh: () => {},
   })
