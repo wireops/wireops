@@ -180,6 +180,7 @@ func (rr routeRegistrar) registerStackInspectionRoutes() {
 						"status":         s.Status,
 						"container_id":   s.ContainerID,
 						"container_name": s.ContainerName,
+						"ports":          s.Ports,
 					})
 				}
 				return e.JSON(http.StatusOK, result)
@@ -192,6 +193,11 @@ func (rr routeRegistrar) registerStackInspectionRoutes() {
 		}
 		result := make([]map[string]interface{}, 0, len(services))
 		for _, s := range services {
+			// No "ports" key here: stack_services has no ports column, so
+			// this DB-backed fallback (worker offline) has no port data to
+			// report. Omitting the key lets the frontend tell "unknown"
+			// apart from "genuinely no ports published" — don't add a
+			// fabricated empty array.
 			result = append(result, map[string]interface{}{
 				"service_name":   s.GetString("service_name"),
 				"status":         s.GetString("status"),

@@ -7,6 +7,8 @@ import (
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
+
+	"github.com/wireops/wireops/internal/protocol"
 )
 
 func newWorkerTestApp(t *testing.T) *tests.TestApp {
@@ -35,6 +37,11 @@ func ensureWorkerCollections(t *testing.T, app core.App) {
 		})
 		col.Fields.Add(&core.AutodateField{Name: "last_seen", OnCreate: true, OnUpdate: true})
 		col.Fields.Add(&core.JSONField{Name: "health_history"})
+		col.Fields.Add(&core.TextField{Name: "version"})
+		col.Fields.Add(&core.TextField{Name: "docker_version"})
+		col.Fields.Add(&core.TextField{Name: "compose_version"})
+		col.Fields.Add(&core.TextField{Name: "os"})
+		col.Fields.Add(&core.TextField{Name: "arch"})
 		if err := app.Save(col); err != nil {
 			t.Fatalf("failed to create workers collection: %v", err)
 		}
@@ -171,5 +178,58 @@ func TestExpireStagingTokensMarksExpired(t *testing.T) {
 	}
 	if got := refreshed.GetString("status"); got != TokenStatusExpired {
 		t.Fatalf("status = %q, want %q", got, TokenStatusExpired)
+	}
+}
+
+func TestUpdateWorkerInfoPersistsVersion(t *testing.T) {
+	app := newWorkerTestApp(t)
+	svc := NewService(app)
+
+	col, err := app.FindCollectionByNameOrId("workers")
+	if err != nil {
+		t.Fatalf("failed to find workers collection: %v", err)
+	}
+	record := core.NewRecord(col)
+	record.Set("hostname", "host-a")
+	record.Set("fingerprint", "fp-a")
+	record.Set("status", "ACTIVE")
+	if err := app.Save(record); err != nil {
+		t.Fatalf("failed to create worker record: %v", err)
+	}
+
+	if err := svc.UpdateWorkerInfo(record.Id, protocol.WorkerInfo{
+		Version:        "1.2.3",
+		DockerVersion:  "27.0.0",
+		ComposeVersion: "2.27.0",
+		OS:             "linux",
+		Arch:           "amd64",
+	}); err != nil {
+		t.Fatalf("UpdateWorkerInfo failed: %v", err)
+	}
+
+	refreshed, err := app.FindRecordById("workers", record.Id)
+	if err != nil {
+		t.Fatalf("failed to reload worker: %v", err)
+	}
+	if got := refreshed.GetString("version"); got != "1.2.3" {
+		t.Fatalf("version = %q, want %q", got, "1.2.3")
+	}
+	if got := refreshed.GetString("docker_version"); got != "27.0.0" {
+		t.Fatalf("docker_version = %q, want %q", got, "27.0.0")
+	}
+
+	if err := svc.UpdateWorkerInfo(record.Id, protocol.WorkerInfo{
+		DockerVersion: "27.0.0",
+		OS:            "linux",
+		Arch:          "amd64",
+	}); err != nil {
+		t.Fatalf("UpdateWorkerInfo with empty version failed: %v", err)
+	}
+	refreshed, err = app.FindRecordById("workers", record.Id)
+	if err != nil {
+		t.Fatalf("failed to reload worker: %v", err)
+	}
+	if got := refreshed.GetString("version"); got != "" {
+		t.Fatalf("version = %q, want empty for legacy worker heartbeat", got)
 	}
 }

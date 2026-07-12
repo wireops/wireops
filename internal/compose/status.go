@@ -36,6 +36,11 @@ type ServiceStatus struct {
 	// StartedAt is the RFC3339 timestamp of the container's last start,
 	// used alongside RestartCount to judge whether restarts are recent.
 	StartedAt string
+
+	// Ports lists published/exposed container ports, mapped from the
+	// Docker API's container.Summary.Ports. Nil when the container
+	// defines no ports.
+	Ports []protocol.PortInfo
 }
 
 type ContainerStats struct {
@@ -81,10 +86,30 @@ func GetStackStatus(ctx context.Context, cli *dockerclient.Client, projectName s
 			Health:        health,
 			RestartCount:  restartCount,
 			StartedAt:     startedAt,
+			Ports:         mapDockerPorts(c.Ports),
 		})
 	}
 
 	return statuses, nil
+}
+
+// mapDockerPorts converts the Docker API's container.Port slice (from
+// container.Summary.Ports) into the wire-stable protocol.PortInfo slice.
+// Ports with PublicPort == 0 are exposed but not published to the host.
+func mapDockerPorts(ports []container.Port) []protocol.PortInfo {
+	if len(ports) == 0 {
+		return nil
+	}
+	infos := make([]protocol.PortInfo, 0, len(ports))
+	for _, p := range ports {
+		infos = append(infos, protocol.PortInfo{
+			ContainerPort: p.PrivatePort,
+			Protocol:      p.Type,
+			HostIP:        p.IP,
+			HostPort:      p.PublicPort,
+		})
+	}
+	return infos
 }
 
 // inspectHealthAndRestarts reads the structured healthcheck status and

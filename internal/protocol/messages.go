@@ -207,6 +207,16 @@ type NetworkInfo struct {
 	Gateway string `json:"gateway,omitempty"`
 }
 
+// PortInfo describes a single port mapping for a container, derived from
+// container.Summary.Ports. HostPort == 0 means the container port is
+// exposed but not published to the host.
+type PortInfo struct {
+	ContainerPort uint16 `json:"container_port"`
+	Protocol      string `json:"protocol"`
+	HostIP        string `json:"host_ip,omitempty"`
+	HostPort      uint16 `json:"host_port,omitempty"`
+}
+
 // GetResourcesResult is the JSON payload inside CommandResult.Output after a GetResourcesCommand.
 type GetResourcesResult struct {
 	Volumes  []VolumeInfo  `json:"volumes"`

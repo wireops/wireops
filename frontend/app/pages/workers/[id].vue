@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { WORKER_STATUS, TOKEN_STATUS, tokenBadgeColor } from '../../utils/worker'
+import { WORKER_STATUS, TOKEN_STATUS } from '../../utils/worker'
 
 const route = useRoute()
 const { $pb } = useNuxtApp()
@@ -28,6 +28,12 @@ const redirectingAfterRevoke = ref(false)
 
 const statusDotClass = computed(() => {
   if (isActive.value) return 'bg-yellow-400 shadow-[0_0_8px_rgba(255,198,0,0.7)]'
+  if (isRevoked.value) return 'bg-gray-400'
+  return 'bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.6)]'
+})
+
+const statusCardDotClass = computed(() => {
+  if (isActive.value) return 'bg-green-400 shadow-[0_0_8px_rgba(74,222,128,0.7)]'
   if (isRevoked.value) return 'bg-gray-400'
   return 'bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.6)]'
 })
@@ -87,14 +93,14 @@ function hasVisibleTokenExpiry(w: any) {
   return true
 }
 
-// Health history: last 20 entries, newest last
+// Health history: last 10 checks, newest last
 const healthHistory = computed(() => {
   const history: { status: string; timestamp: string }[] = worker.value?.health_history ?? []
-  return history.slice(-20)
+  return history.slice(-10)
 })
 
 function healthDotClass(status: string) {
-  if (status === 'online') return 'bg-yellow-400'
+  if (status === 'online') return 'bg-green-400 shadow-[0_0_6px_rgba(74,222,128,0.6)]'
   if (status === 'offline') return 'bg-red-500'
   return 'bg-gray-400'
 }
@@ -339,7 +345,7 @@ onUnmounted(() => {
           <UCard class="text-center">
             <div class="text-xs text-gray-500 dark:text-wire-200/50 uppercase tracking-wide font-semibold mb-1">Status</div>
             <div class="flex items-center justify-center gap-2">
-              <div class="w-2 h-2 rounded-full" :class="statusDotClass" />
+              <div class="w-2 h-2 rounded-full" :class="statusCardDotClass" />
               <span class="font-semibold text-sm text-gray-900 dark:text-wire-200">{{ worker.status }}</span>
             </div>
           </UCard>
@@ -356,92 +362,15 @@ onUnmounted(() => {
             <span class="text-sm font-medium text-gray-900 dark:text-wire-200">{{ formatRelative(worker.last_seen) }}</span>
           </UCard>
           <UCard class="text-center">
-            <div class="text-xs text-gray-500 dark:text-wire-200/50 uppercase tracking-wide font-semibold mb-1">Token</div>
-            <UBadge
-              :label="worker.token_status || 'UNKNOWN'"
-              :color="tokenBadgeColor(worker.token_status)"
-              variant="outline"
-              size="sm"
-              class="uppercase"
-            />
-          </UCard>
-        </div>
-
-        <!-- Info -->
-        <UCard>
-          <template #header>
-            <h3 class="font-semibold">Worker Information</h3>
-          </template>
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
-            <div>
-              <span class="text-gray-500 dark:text-wire-200/50">Hostname</span>
-              <div class="mt-0.5 font-medium text-gray-900 dark:text-wire-200">{{ worker.hostname }}</div>
-            </div>
-            <div>
-              <span class="text-gray-500 dark:text-wire-200/50">Worker ID</span>
-              <div class="mt-0.5 flex items-center gap-2">
-                <code class="text-xs font-mono text-gray-700 dark:text-wire-200/80 bg-gray-100 dark:bg-carbon-800 px-1.5 py-0.5 rounded break-all">{{ worker.id }}</code>
-                <UButton icon="i-lucide-copy" variant="ghost" size="xs" color="neutral" @click="copy(worker.id, 'Worker ID')" />
-              </div>
-            </div>
-            <div v-if="worker.fingerprint">
-              <span class="text-gray-500 dark:text-wire-200/50">Fingerprint</span>
-              <div class="mt-0.5 flex items-center gap-2">
-                <code class="text-xs font-mono text-gray-700 dark:text-wire-200/80 bg-gray-100 dark:bg-carbon-800 px-1.5 py-0.5 rounded break-all">{{ worker.fingerprint }}</code>
-                <UButton icon="i-lucide-copy" variant="ghost" size="xs" color="neutral" @click="copy(worker.fingerprint, 'Fingerprint')" />
-              </div>
-            </div>
-            <div>
-              <span class="text-gray-500 dark:text-wire-200/50">Last Seen</span>
-              <div class="mt-0.5 font-medium text-gray-900 dark:text-wire-200">
-                {{ formatDate(worker.last_seen) }}
-              </div>
-            </div>
-            <div v-if="hasVisibleTokenExpiry(worker)">
-              <span class="text-gray-500 dark:text-wire-200/50">Token Expires</span>
-              <div class="mt-0.5 font-medium text-gray-900 dark:text-wire-200">{{ formatDateISO(worker.token_expires) }}</div>
-            </div>
-            <div v-if="worker.token_last_used && !worker.token_last_used.startsWith('0001')">
-              <span class="text-gray-500 dark:text-wire-200/50">Token Last Used</span>
-              <div class="mt-0.5 font-medium text-gray-900 dark:text-wire-200">{{ formatDate(worker.token_last_used) }}</div>
-            </div>
-          </div>
-
-          <!-- Tags -->
-          <div v-if="worker.tags?.length" class="mt-4 pt-4 border-t border-gray-200 dark:border-carbon-700">
-            <span class="text-xs text-gray-500 dark:text-wire-200/50 uppercase tracking-wide font-semibold block mb-2">Tags</span>
-            <div class="flex flex-wrap gap-1.5">
-              <UBadge
-                v-for="tag in worker.tags"
-                :key="tag"
-                :label="tag"
-                variant="subtle"
-                color="neutral"
-                size="sm"
-                class="font-mono"
-              />
-            </div>
-          </div>
-        </UCard>
-
-        <!-- Health History -->
-        <UCard v-if="healthHistory.length > 0">
-          <template #header>
-            <div class="flex items-center justify-between">
-              <h3 class="font-semibold">Health History</h3>
-              <span class="text-xs text-gray-400 dark:text-wire-200/40">Last {{ healthHistory.length }} checks</span>
-            </div>
-          </template>
-          <div class="space-y-3">
-            <!-- Sparkline-style bar -->
-            <div class="flex items-end gap-1 h-10">
+            <div class="text-xs text-gray-500 dark:text-wire-200/50 uppercase tracking-wide font-semibold mb-1">Health</div>
+            <div v-if="healthHistory.length" class="flex items-end justify-center gap-1 h-8">
               <UTooltip
                 v-for="(entry, i) in healthHistory"
                 :key="i"
                 :text="`${entry.status} · ${formatDate(entry.timestamp)}`"
               >
                 <div
-                  class="flex-1 rounded-sm min-h-[4px] cursor-default transition-all"
+                  class="w-1.5 rounded-sm min-h-[4px] cursor-default transition-all"
                   :class="[
                     healthDotClass(entry.status),
                     entry.status === 'online' ? 'h-full' : 'h-1/3 opacity-70'
@@ -449,37 +378,73 @@ onUnmounted(() => {
                 />
               </UTooltip>
             </div>
-            <!-- Legend -->
-            <div class="flex items-center gap-4 text-xs text-gray-400 dark:text-wire-200/40">
-              <div class="flex items-center gap-1.5">
-                <div class="w-2 h-2 rounded-sm bg-yellow-400" />
-                <span>Online</span>
+            <span v-else class="text-sm text-gray-400 dark:text-wire-200/40">No data</span>
+          </UCard>
+        </div>
+
+        <!-- System Info & Worker Information -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 items-stretch">
+          <WorkerSystemInfoCard :worker="worker" class="h-full" />
+
+          <UCard class="h-full">
+            <template #header>
+              <div class="flex items-center gap-2">
+                <h3 class="font-semibold">Worker Information</h3>
+                <WorkerVersionBadge :version="worker.version" size="sm" />
               </div>
-              <div class="flex items-center gap-1.5">
-                <div class="w-2 h-2 rounded-sm bg-red-500" />
-                <span>Offline</span>
+            </template>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+              <div>
+                <span class="text-gray-500 dark:text-wire-200/50">Hostname</span>
+                <div class="mt-0.5 font-medium text-gray-900 dark:text-wire-200">{{ worker.hostname }}</div>
               </div>
-              <div class="flex items-center gap-1.5">
-                <div class="w-2 h-2 rounded-sm bg-gray-400" />
-                <span>Unknown</span>
-              </div>
-            </div>
-            <!-- Recent entries list -->
-            <div class="divide-y divide-gray-100 dark:divide-carbon-800">
-              <div
-                v-for="(entry, i) in [...healthHistory].reverse().slice(0, 5)"
-                :key="i"
-                class="flex items-center justify-between py-2"
-              >
-                <div class="flex items-center gap-2">
-                  <div class="w-2 h-2 rounded-full" :class="healthDotClass(entry.status)" />
-                  <span class="text-sm capitalize text-gray-700 dark:text-wire-200/80">{{ entry.status }}</span>
+              <div>
+                <span class="text-gray-500 dark:text-wire-200/50">Worker ID</span>
+                <div class="mt-0.5 flex items-center gap-2">
+                  <code class="text-xs font-mono text-gray-700 dark:text-wire-200/80 bg-gray-100 dark:bg-carbon-800 px-1.5 py-0.5 rounded break-all">{{ worker.id }}</code>
+                  <UButton icon="i-lucide-copy" variant="ghost" size="xs" color="neutral" @click="copy(worker.id, 'Worker ID')" />
                 </div>
-                <span class="text-xs text-gray-400 dark:text-wire-200/40">{{ formatDate(entry.timestamp) }}</span>
+              </div>
+              <div v-if="worker.fingerprint">
+                <span class="text-gray-500 dark:text-wire-200/50">Fingerprint</span>
+                <div class="mt-0.5 flex items-center gap-2">
+                  <code class="text-xs font-mono text-gray-700 dark:text-wire-200/80 bg-gray-100 dark:bg-carbon-800 px-1.5 py-0.5 rounded break-all">{{ worker.fingerprint }}</code>
+                  <UButton icon="i-lucide-copy" variant="ghost" size="xs" color="neutral" @click="copy(worker.fingerprint, 'Fingerprint')" />
+                </div>
+              </div>
+              <div>
+                <span class="text-gray-500 dark:text-wire-200/50">Last Seen</span>
+                <div class="mt-0.5 font-medium text-gray-900 dark:text-wire-200">
+                  {{ formatDate(worker.last_seen) }}
+                </div>
+              </div>
+              <div v-if="hasVisibleTokenExpiry(worker)">
+                <span class="text-gray-500 dark:text-wire-200/50">Token Expires</span>
+                <div class="mt-0.5 font-medium text-gray-900 dark:text-wire-200">{{ formatDateISO(worker.token_expires) }}</div>
+              </div>
+              <div v-if="worker.token_last_used && !worker.token_last_used.startsWith('0001')">
+                <span class="text-gray-500 dark:text-wire-200/50">Token Last Used</span>
+                <div class="mt-0.5 font-medium text-gray-900 dark:text-wire-200">{{ formatDate(worker.token_last_used) }}</div>
               </div>
             </div>
-          </div>
-        </UCard>
+
+            <!-- Tags -->
+            <div v-if="worker.tags?.length" class="mt-4 pt-4 border-t border-gray-200 dark:border-carbon-700">
+              <span class="text-xs text-gray-500 dark:text-wire-200/50 uppercase tracking-wide font-semibold block mb-2">Tags</span>
+              <div class="flex flex-wrap gap-1.5">
+                <UBadge
+                  v-for="tag in worker.tags"
+                  :key="tag"
+                  :label="tag"
+                  variant="subtle"
+                  color="neutral"
+                  size="sm"
+                  class="font-mono"
+                />
+              </div>
+            </div>
+          </UCard>
+        </div>
 
         <!-- Danger Zone -->
         <AccordionCard
