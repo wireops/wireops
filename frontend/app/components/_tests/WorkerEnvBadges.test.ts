@@ -7,12 +7,12 @@ describe('WorkerEnvBadges', () => {
   const stubs = {
     UBadge: {
       props: ['label', 'color', 'variant', 'size', 'icon'],
-      setup(props: { color?: string, label?: string }, { slots }: { slots: Record<string, () => unknown> }) {
+      setup(props: { color?: string, label?: string }, { slots }: { slots: Record<string, (() => unknown) | undefined> }) {
         return () => h('span', { class: 'u-badge', 'data-color': props.color }, [slots.default?.(), props.label])
       },
     },
     UTooltip: {
-      setup(_props: unknown, { slots }: { slots: Record<string, () => unknown> }) {
+      setup(_props: unknown, { slots }: { slots: Record<string, (() => unknown) | undefined> }) {
         return () => h('div', slots.default?.())
       },
     },
