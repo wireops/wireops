@@ -66,7 +66,13 @@ func init() {
 			Name:      "phase",
 			Required:  true,
 			MaxSelect: 1,
-			Values:    constants.DeployPhaseOrder,
+			// Snapshot of constants.DeployPhaseOrder at migration time —
+			// do not reference the constant here, so future phase changes
+			// don't rewrite this historical migration.
+			Values: []string{
+				"git_fetch", "render", "policy_check", "dispatch",
+				"worker_ack", "compose_up", "post_check", "notify",
+			},
 		})
 		col.Fields.Add(&core.SelectField{
 			Name:      "status",

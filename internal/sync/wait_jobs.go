@@ -78,6 +78,11 @@ func (r *Reconciler) waitForRunningJobs(ctx context.Context, stack *core.Record,
 	for {
 		select {
 		case <-ctx.Done():
+			if waitLog != nil {
+				errMsg := ctx.Err().Error()
+				_ = pt.finish(constants.PhasePolicyCheck, constants.PhaseStatusError, errMsg)
+				_ = r.updateSyncLog(waitLog.Id, "error", errMsg, time.Since(start).Milliseconds())
+			}
 			return waitLog, ctx.Err()
 		case <-time.After(waitJobsPollInterval):
 		}

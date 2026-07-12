@@ -56,9 +56,11 @@ const { data: logs, refresh: refreshLogs } = useAsyncData(`logs_${stackId}`, () 
 // re-apply that expression and snap a user-toggled details closed again.
 // Track open state ourselves instead, seeded open by default for every log.
 const expandedTimelineLogIds = ref<Set<string>>(new Set())
+const seenTimelineLogIds = ref<Set<string>>(new Set())
 watch(logs, (val) => {
   for (const log of val?.items || []) {
-    if (!expandedTimelineLogIds.value.has(log.id)) {
+    if (!seenTimelineLogIds.value.has(log.id)) {
+      seenTimelineLogIds.value.add(log.id)
       expandedTimelineLogIds.value.add(log.id)
     }
   }

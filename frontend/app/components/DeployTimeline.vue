@@ -27,7 +27,7 @@ const PHASE_LABELS: Record<string, string> = {
   notify: 'Notify',
 }
 
-const { data: phasesResult, refresh: refreshPhases } = useAsyncData(
+const { data: phasesResult, error: phasesError, refresh: refreshPhases } = useAsyncData(
   `sync_log_phases_${props.syncLogId}`,
   () => $pb.collection('sync_log_phases').getList(1, 20, {
     filter: `sync_log = "${props.syncLogId}"`,
@@ -125,5 +125,6 @@ function formatDuration(ms: number | undefined) {
       </tr>
     </tbody>
   </table>
+  <p v-else-if="phasesError" class="text-xs text-red-500">Failed to load deploy timeline.</p>
   <p v-else-if="loaded" class="text-xs text-gray-400">No timeline data for this deploy.</p>
 </template>

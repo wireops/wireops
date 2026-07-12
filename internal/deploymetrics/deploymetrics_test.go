@@ -8,10 +8,18 @@ import (
 )
 
 func TestRecordPhaseDurationAccumulatesAndSerializes(t *testing.T) {
-	// Reset global state so this test is independent of others in the package.
+	// Reset global state so this test is independent of others in the package,
+	// then restore it afterward so later tests/packages don't inherit this
+	// test's modified state.
 	phaseStatsMu.Lock()
+	original := phaseStats
 	phaseStats = map[string]*phaseStat{}
 	phaseStatsMu.Unlock()
+	t.Cleanup(func() {
+		phaseStatsMu.Lock()
+		phaseStats = original
+		phaseStatsMu.Unlock()
+	})
 
 	RecordPhaseDuration(constants.PhaseGitFetch, constants.PhaseStatusSuccess, 100)
 	RecordPhaseDuration(constants.PhaseGitFetch, constants.PhaseStatusError, 50)
