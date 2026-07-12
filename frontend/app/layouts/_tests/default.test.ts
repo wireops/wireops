@@ -30,7 +30,7 @@ describe('default layout accessibility', () => {
       const val = opts?.default ? opts.default() : undefined
       return { value: val }
     }
-    ;(globalThis as any).useHead = vi.fn()
+    ;(globalThis as unknown as Record<string, unknown>).useHead = vi.fn()
   })
 
   it('renders a single main landmark with the skip-link target id', async () => {
