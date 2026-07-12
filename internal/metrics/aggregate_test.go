@@ -9,6 +9,7 @@ import (
 
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
+	"github.com/wireops/wireops/internal/deploymetrics"
 	"github.com/wireops/wireops/internal/protocol"
 )
 
@@ -176,6 +177,63 @@ func TestCollectAllConnectedWorkerInjectsLabels(t *testing.T) {
 	want := `wireops_worker_active_jobs{worker="` + rec.Id + `",hostname="online-node"} 1`
 	if !strings.Contains(out, want) {
 		t.Fatalf("expected rewritten worker metrics, got:\n%s", out)
+	}
+}
+
+func TestCollectAllMultipleWorkersEmitsDeployMetricsOnceWithoutWorkerLabels(t *testing.T) {
+	app := newMetricsTestApp(t)
+
+	t.Cleanup(deploymetrics.ResetForTest)
+	deploymetrics.RecordPhaseDuration("git_fetch", "success", 123)
+
+	workersCol, _ := app.FindCollectionByNameOrId("workers")
+
+	rec1 := core.NewRecord(workersCol)
+	rec1.Set("hostname", "node-a")
+	rec1.Set("fingerprint", "fp-a")
+	if err := app.Save(rec1); err != nil {
+		t.Fatalf("save worker 1: %v", err)
+	}
+
+	rec2 := core.NewRecord(workersCol)
+	rec2.Set("hostname", "node-b")
+	rec2.Set("fingerprint", "fp-b")
+	if err := app.Save(rec2); err != nil {
+		t.Fatalf("save worker 2: %v", err)
+	}
+
+	dispatcher := &fakeDispatcher{
+		connected: map[string]bool{rec1.Id: true, rec2.Id: true},
+		outputs: map[string]string{
+			rec1.Id: "wireops_worker_active_jobs 1\n",
+			rec2.Id: "wireops_worker_active_jobs 2\n",
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	out, err := CollectAll(ctx, app, dispatcher)
+	if err != nil {
+		t.Fatalf("CollectAll: %v", err)
+	}
+
+	// Per-worker metrics still get worker/hostname labels injected.
+	if !strings.Contains(out, `wireops_worker_active_jobs{worker="`+rec1.Id+`",hostname="node-a"} 1`) {
+		t.Fatalf("expected worker 1 metrics, got:\n%s", out)
+	}
+	if !strings.Contains(out, `wireops_worker_active_jobs{worker="`+rec2.Id+`",hostname="node-b"} 2`) {
+		t.Fatalf("expected worker 2 metrics, got:\n%s", out)
+	}
+
+	// Control-plane deploy metrics must appear exactly once (not per worker)
+	// and must never carry worker-specific labels.
+	deployMetricLine := `wireops_deploy_phase_duration_ms_sum{phase="git_fetch"}`
+	if count := strings.Count(out, deployMetricLine); count != 1 {
+		t.Fatalf("expected deploy metric emitted exactly once, found %d times:\n%s", count, out)
+	}
+	if strings.Contains(out, `wireops_deploy_phase_duration_ms_sum{phase="git_fetch",worker=`) {
+		t.Fatalf("deploy metrics must not carry worker labels, got:\n%s", out)
 	}
 }
 

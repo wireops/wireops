@@ -121,6 +121,12 @@ type CommandResult struct {
 	Output    string `json:"output"`
 	// Error is non-empty if the command failed.
 	Error string `json:"error,omitempty"`
+	// ComposeUpMs is the wall-clock duration of the actual `docker compose
+	// up` (or equivalent) execution on the worker, in milliseconds. Optional:
+	// zero means the worker didn't report it (e.g. an older worker version,
+	// or a command type that doesn't run compose up), in which case the
+	// server treats compose_up as "unknown" rather than showing a false 0ms.
+	ComposeUpMs int64 `json:"compose_up_ms,omitempty"`
 }
 
 // ProbeCommand is sent from the server to a worker to check whether a compose

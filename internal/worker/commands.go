@@ -148,6 +148,11 @@ func (s *Service) LogCommandAck(messageID string) error {
 		return nil
 	}
 	record.Set("status", "acked")
+	// acked_at is a durable timestamp, unlike the "acked" status value which
+	// gets overwritten once the command reaches a terminal state — needed to
+	// compute the deploy timeline's worker_ack phase duration after the
+	// command has already finished.
+	record.Set("acked_at", time.Now())
 	return s.app.Save(record)
 }
 

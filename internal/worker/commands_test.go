@@ -100,6 +100,9 @@ func TestLogCommandAckIsNoopForUnknownOrTerminalCommand(t *testing.T) {
 	if got := updated.GetString("status"); got != "acked" {
 		t.Fatalf("status = %q, want acked", got)
 	}
+	if updated.GetDateTime("acked_at").Time().IsZero() {
+		t.Fatal("acked_at should be set once the worker acknowledges receipt")
+	}
 
 	// Once the command reaches a terminal state, a late/duplicate ack must
 	// not regress the status back to 'acked'.

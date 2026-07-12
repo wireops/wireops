@@ -8,6 +8,7 @@ import (
 
 	"github.com/pocketbase/pocketbase/core"
 
+	"github.com/wireops/wireops/internal/constants"
 	"github.com/wireops/wireops/internal/jobscheduler"
 )
 
@@ -26,26 +27,37 @@ const defaultWaitRunningJobsTimeoutSeconds = 300
 //
 // A failure to query active jobs does not block the deploy — it's treated as
 // best-effort the same way the rest of the reconciler treats status lookups.
-func (r *Reconciler) waitForRunningJobs(ctx context.Context, stack *core.Record, repoID, stackID, trigger, commitSHA string) error {
+//
+// When it actually has to wait (active jobs found), it eagerly creates the
+// deploy's sync_logs row (so the operator can see "waiting" in real time
+// instead of only after the fact) and records a policy_check phase on it.
+// The caller reuses the returned record as the deploy's sync log instead of
+// creating a second one, avoiding the old two-rows-per-deploy artifact. When
+// no wait is needed (the common case), it returns (nil, nil) and the caller
+// records policy_check itself once its own sync log exists.
+func (r *Reconciler) waitForRunningJobs(ctx context.Context, stack *core.Record, repoID, stackID, trigger, commitSHA string) (*core.Record, error) {
 	policy := stack.GetString("wait_running_jobs")
 	if policy == "" || policy == "never" {
-		return nil
+		return nil, nil
 	}
 
 	active, err := jobscheduler.ActiveJobRunsForRepository(r.app, repoID)
 	if err != nil {
 		log.Printf("[reconciler] wait_running_jobs: failed to query active jobs for repo %s: %v", repoID, err)
-		return nil
+		return nil, nil
 	}
 	if len(active) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	log.Printf("[reconciler] wait_running_jobs: stack %s deploy waiting on %d active job(s) for repo %s (policy=%s)", stackID, len(active), repoID, policy)
 
 	var waitLog *core.Record
+	var pt *phaseTracker
 	if rec, logErr := r.createSyncLog(stackID, trigger, commitSHA, fmt.Sprintf("waiting for %d running job(s) on repository", len(active))); logErr == nil {
 		waitLog = rec
+		pt = newPhaseTracker(r.app, rec.Id)
+		_ = pt.start(constants.PhasePolicyCheck)
 		_ = r.updateSyncLog(rec.Id, "waiting_jobs", fmt.Sprintf("deploy paused: %d job(s) currently running on this repository", len(active)), 0)
 	} else {
 		log.Printf("[reconciler] wait_running_jobs: failed to create waiting sync log for stack %s: %v", stackID, logErr)
@@ -66,7 +78,12 @@ func (r *Reconciler) waitForRunningJobs(ctx context.Context, stack *core.Record,
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			if waitLog != nil {
+				errMsg := ctx.Err().Error()
+				_ = pt.finish(constants.PhasePolicyCheck, constants.PhaseStatusError, errMsg)
+				_ = r.updateSyncLog(waitLog.Id, "error", errMsg, time.Since(start).Milliseconds())
+			}
+			return waitLog, ctx.Err()
 		case <-time.After(waitJobsPollInterval):
 		}
 
@@ -82,19 +99,26 @@ func (r *Reconciler) waitForRunningJobs(ctx context.Context, stack *core.Record,
 		if hasDeadline && time.Now().After(deadline) {
 			errMsg := fmt.Sprintf("timeout waiting %s for %d running job(s) on repository to finish before deploy", time.Since(start).Round(time.Second), len(active))
 			if waitLog != nil {
+				_ = pt.finish(constants.PhasePolicyCheck, constants.PhaseStatusError, errMsg)
 				_ = r.updateSyncLog(waitLog.Id, "error", errMsg, time.Since(start).Milliseconds())
 			}
 			_ = r.markError(stack, "stacks")
-			return fmt.Errorf("%s", errMsg)
+			return waitLog, fmt.Errorf("%s", errMsg)
 		}
 	}
 
 	if waitLog != nil {
+		// Status goes back to "running" (not a terminal "success"): the
+		// deploy itself continues after this — this row is reused as the
+		// deploy's own sync log, not a standalone "wait" record anymore.
+		detail := fmt.Sprintf("proceeded after waiting %s for running jobs to finish", time.Since(start).Round(time.Second))
+		phaseStatus := constants.PhaseStatusSuccess
 		if queryFailed {
-			_ = r.updateSyncLog(waitLog.Id, "success", fmt.Sprintf("proceeded after %s: failed to query active jobs, continuing best-effort", time.Since(start).Round(time.Second)), time.Since(start).Milliseconds())
-		} else {
-			_ = r.updateSyncLog(waitLog.Id, "success", fmt.Sprintf("proceeded after waiting %s for running jobs to finish", time.Since(start).Round(time.Second)), time.Since(start).Milliseconds())
+			detail = fmt.Sprintf("proceeded after %s: failed to query active jobs, continuing best-effort", time.Since(start).Round(time.Second))
+			phaseStatus = constants.PhaseStatusSkipped
 		}
+		_ = pt.finish(constants.PhasePolicyCheck, phaseStatus, detail)
+		_ = r.updateSyncLog(waitLog.Id, "running", detail, time.Since(start).Milliseconds())
 	}
-	return nil
+	return waitLog, nil
 }

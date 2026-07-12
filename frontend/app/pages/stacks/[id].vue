@@ -51,6 +51,27 @@ const { data: logs, refresh: refreshLogs } = useAsyncData(`logs_${stackId}`, () 
   })
 )
 
+// <details :open> can't be bound directly to a derived expression — every
+// reactive re-render (worker refresh timer, realtime subscriptions) would
+// re-apply that expression and snap a user-toggled details closed again.
+// Track open state ourselves instead, seeded open by default for every log.
+const expandedTimelineLogIds = ref<Set<string>>(new Set())
+const seenTimelineLogIds = ref<Set<string>>(new Set())
+watch(logs, (val) => {
+  for (const log of val?.items || []) {
+    if (!seenTimelineLogIds.value.has(log.id)) {
+      seenTimelineLogIds.value.add(log.id)
+      expandedTimelineLogIds.value.add(log.id)
+    }
+  }
+}, { immediate: true })
+
+function toggleTimeline(logId: string, event: Event) {
+  const open = (event.target as HTMLDetailsElement).open
+  if (open) expandedTimelineLogIds.value.add(logId)
+  else expandedTimelineLogIds.value.delete(logId)
+}
+
 const localEnvKeys = ref<string[]>([])
 
 const { data: webhookUrl } = useAsyncData(`webhook_url_${stackId}`, () => getWebhookUrl(stackId))
@@ -740,8 +761,12 @@ onMounted(() => {
               </div>
             </div>
             <p v-if="log.commit_message" class="text-xs text-gray-500 truncate">{{ log.commit_message }}</p>
-            <ErrorDisplay 
-              v-if="log.status === 'error' && log.output" 
+            <details class="text-xs" :open="expandedTimelineLogIds.has(log.id)" @toggle="toggleTimeline(log.id, $event)">
+              <summary class="cursor-pointer text-gray-400 hover:text-gray-600">Show timeline</summary>
+              <DeployTimeline :sync-log-id="log.id" class="mt-2" />
+            </details>
+            <ErrorDisplay
+              v-if="log.status === 'error' && log.output"
               :error="log.output"
               :show-retry="true"
               class="mt-2"

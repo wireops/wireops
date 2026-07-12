@@ -377,7 +377,11 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 	// Stacks trigger scheduler registration
 	app.OnRecordAfterCreateSuccess("stacks").BindFunc(func(e *core.RecordEvent) error {
 		scheduler.RegisterStack(e.Record)
-		scheduler.TriggerSync(e.Record.Id, "webhook", 0, "system")
+		// "manual" here, not "webhook": this fires for every stack creation
+		// (UI create, wireops.yaml import, local import), none of which are
+		// an actual git webhook delivery — "webhook" is reserved for real
+		// POST /api/custom/webhook/{id} deliveries (stack_routes.go).
+		scheduler.TriggerSync(e.Record.Id, "manual", 0, "system")
 		return e.Next()
 	})
 

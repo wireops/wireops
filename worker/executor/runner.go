@@ -82,12 +82,13 @@ func Deploy(ctx context.Context, cmd protocol.DeployCommand) protocol.CommandRes
 		})
 	})
 
-	result := protocol.CommandResult{CommandID: cmd.CommandID, Output: output}
+	elapsed := time.Since(start).Milliseconds()
+	result := protocol.CommandResult{CommandID: cmd.CommandID, Output: output, ComposeUpMs: elapsed}
 	if runErr != nil {
 		result.Error = runErr.Error()
-		log.Printf("[executor] deploy error stack=%s trigger=%s elapsed=%dms: %v", cmd.StackID, trigger, time.Since(start).Milliseconds(), runErr)
+		log.Printf("[executor] deploy error stack=%s trigger=%s elapsed=%dms: %v", cmd.StackID, trigger, elapsed, runErr)
 	} else {
-		log.Printf("[executor] deploy done stack=%s trigger=%s elapsed=%dms", cmd.StackID, trigger, time.Since(start).Milliseconds())
+		log.Printf("[executor] deploy done stack=%s trigger=%s elapsed=%dms", cmd.StackID, trigger, elapsed)
 	}
 	return result
 }
@@ -121,12 +122,13 @@ func Redeploy(ctx context.Context, cmd protocol.RedeployCommand) protocol.Comman
 		})
 	})
 
-	result := protocol.CommandResult{CommandID: cmd.CommandID, Output: output}
+	elapsed := time.Since(start).Milliseconds()
+	result := protocol.CommandResult{CommandID: cmd.CommandID, Output: output, ComposeUpMs: elapsed}
 	if runErr != nil {
 		result.Error = runErr.Error()
-		log.Printf("[executor] redeploy error stack=%s trigger=%s elapsed=%dms: %v", cmd.StackID, trigger, time.Since(start).Milliseconds(), runErr)
+		log.Printf("[executor] redeploy error stack=%s trigger=%s elapsed=%dms: %v", cmd.StackID, trigger, elapsed, runErr)
 	} else {
-		log.Printf("[executor] redeploy done stack=%s trigger=%s elapsed=%dms", cmd.StackID, trigger, time.Since(start).Milliseconds())
+		log.Printf("[executor] redeploy done stack=%s trigger=%s elapsed=%dms", cmd.StackID, trigger, elapsed)
 	}
 	return result
 }

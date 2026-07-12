@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/pocketbase/pocketbase/core"
+	"github.com/wireops/wireops/internal/deploymetrics"
 	"github.com/wireops/wireops/internal/protocol"
 	"github.com/wireops/wireops/internal/sync"
 )
@@ -107,6 +108,11 @@ func CollectAll(ctx context.Context, app core.App, dispatcher sync.WorkerDispatc
 
 	var sb strings.Builder
 	writeAggregateHeaders(&sb)
+
+	// Server-side (control-plane) deploy timeline metrics — not per-worker,
+	// so they're written once here rather than per-connection like the
+	// worker-sourced metrics below.
+	sb.WriteString(deploymetrics.Serialize())
 
 	for res := range ch {
 		if res.err != nil {
