@@ -25,7 +25,7 @@ export default defineNuxtConfig({
 
   app: {
     head: {
-      title: 'Wireops',
+      title: 'WireOps',
       titleTemplate: 'WireOps - %s',
       link: [
         { rel: 'icon', type: 'image/x-icon', href: '/favicon.ico' },

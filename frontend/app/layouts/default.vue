@@ -143,7 +143,7 @@ watch(mobileMenuOpen, (isOpen) => {
               </div>
             </div>
             <NuxtLink to="/" class="flex items-center gap-2" aria-label="Go to dashboard">
-              <img src="~/assets/img/logo.png" alt="wireops" class="h-5 w-5 object-contain">
+              <img src="~/assets/img/logo.png" alt="" class="h-5 w-5 object-contain">
               <span class="font-black text-sm tracking-[0.28em] uppercase text-yellow-400">wireops</span>
             </NuxtLink>
           </div>

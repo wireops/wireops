@@ -27,7 +27,7 @@ function truncatePath(path: string): string {
     <div class="flex flex-col items-center text-center space-y-6">
       <div class="relative">
         <div class="w-36 h-36 flex items-center justify-center">
-          <img src="~/assets/img/logo.png" alt="wireops" class="w-28 h-28 object-contain drop-shadow-[0_0_12px_rgba(255,198,0,0.5)]">
+          <img src="~/assets/img/logo.png" alt="" class="w-28 h-28 object-contain drop-shadow-[0_0_12px_rgba(255,198,0,0.5)]">
         </div>
         <div class="absolute -inset-4 rounded-3xl bg-yellow-400/5 blur-xl pointer-events-none" />
       </div>
