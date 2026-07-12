@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="frontend/app/assets/img/logo.png" alt="wireops logo" width="120">
+</p>
+
 # wireops
 
 [![Latest Release](https://img.shields.io/github/v/release/wireops/wireops?sort=semver)](https://github.com/wireops/wireops/releases/latest)

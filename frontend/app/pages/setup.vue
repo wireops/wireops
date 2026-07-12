@@ -3,6 +3,7 @@ import type { SetupStatus } from '~/types/setup'
 import { invalidateInstanceSetupStatus } from '~/composables/useSetupStatus'
 import { getSetupBlockedMessage, mapSetupError, validateSetupPassword } from '~/utils/setup'
 definePageMeta({ layout: false })
+useHead({ title: 'Setup' })
 
 const { customGet, customPost } = useApi()
 const { login } = useAuth()

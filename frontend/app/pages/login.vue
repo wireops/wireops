@@ -2,6 +2,7 @@
 import { watch } from 'vue'
 
 definePageMeta({ layout: false })
+useHead({ title: 'Login' })
 
 const { login, getSSOProviders, loginWithSSO } = useAuth()
 const { announce } = useA11yAnnouncer()

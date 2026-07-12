@@ -1,5 +1,6 @@
 <script setup lang="ts">
 definePageMeta({ layout: false })
+useHead({ title: 'Forgot Password' })
 
 const { $pb } = useNuxtApp()
 const { announce } = useA11yAnnouncer()
