@@ -207,6 +207,15 @@ export function useApi() {
     token_last_used: string
     job_count: number
     jobs: WorkerJobSummary[]
+    version?: string
+    docker_version?: string
+    compose_version?: string
+    os?: string
+    arch?: string
+    cpu_usage?: number
+    memory_usage?: number
+    disk_usage?: number
+    docker_online?: boolean
   }
   const getWorkers = () => customGet<WorkerInfo[]>('/api/custom/workers')
   const createWorkerToken = () => customPost<{ token: string; token_id: string; status: string; expires_at: string }>('/api/custom/worker/tokens')

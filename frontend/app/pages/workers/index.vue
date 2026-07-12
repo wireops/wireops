@@ -216,6 +216,7 @@ onUnmounted(() => {
                 </p>
               </template>
             </div>
+            <WorkerEnvBadges :worker="worker" class="mt-1.5" />
             <div v-if="worker.tags?.length" class="flex flex-wrap items-center gap-1 mt-1.5">
               <UBadge v-for="tag in worker.tags" :key="tag" :label="tag" variant="subtle" color="neutral" size="xs" class="font-mono" />
             </div>

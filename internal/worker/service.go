@@ -334,6 +334,7 @@ func (s *Service) UpdateWorkerInfo(workerID string, info protocol.WorkerInfo) er
 	if err != nil {
 		return err
 	}
+	record.Set("version", info.Version)
 	record.Set("docker_version", info.DockerVersion)
 	record.Set("compose_version", info.ComposeVersion)
 	record.Set("os", info.OS)

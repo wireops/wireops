@@ -66,5 +66,76 @@ describe('StackServicesCard', () => {
 
     await wrapper.find('.show-logs').trigger('click')
     expect(wrapper.emitted('show-logs')?.[0]).toEqual(['abcdef1234567890', 'api-1'])
+
+    await wrapper.find('button[title="Copy container ID"]').trigger('click')
+    expect(wrapper.emitted('copy-container-id')?.[0]).toEqual(['abcdef1234567890'])
+  })
+
+  it('formats and displays published ports once the container row is expanded', async () => {
+    getStackResources.mockResolvedValue({ volumes: [], networks: [] })
+
+    const wrapper = mount(StackServicesCard, {
+      props: {
+        stackId: 'stack-1',
+        services: [
+          {
+            service_name: 'web',
+            container_id: 'abcdef1234567890',
+            container_name: 'web-1',
+            status: 'running',
+            ports: [
+              { container_port: 80, protocol: 'tcp', host_ip: '127.0.0.1', host_port: 8080 },
+              { container_port: 80, protocol: 'tcp', host_ip: '::1', host_port: 8443 },
+              { container_port: 53, protocol: 'udp', host_ip: '0.0.0.0', host_port: 53 },
+              { container_port: 443, protocol: 'tcp' },
+            ],
+          },
+        ],
+        containerStats: {},
+        integrationActions: {},
+      },
+      global: { stubs },
+    })
+
+    await Promise.resolve()
+    await Promise.resolve()
+    await wrapper.findAll('button')[0].trigger('click')
+    await Promise.resolve()
+
+    const text = wrapper.text()
+    expect(text).toContain('127.0.0.1:8080')
+    expect(text).toContain('[::1]:8443')
+    expect(text).toContain('53/udp')
+    expect(text).not.toContain('0.0.0.0')
+    expect(text).toContain('443/tcp')
+    expect(text).toContain('80/tcp')
+    // unpublished port (443/tcp) renders a host badge showing the '-' placeholder
+    const hostBadges = wrapper.findAll('span').filter(span => span.text() === '-')
+    expect(hostBadges.length).toBe(1)
+  })
+
+  it('renders no port badges for a container with no ports', async () => {
+    getStackResources.mockResolvedValue({ volumes: [], networks: [] })
+
+    const wrapper = mount(StackServicesCard, {
+      props: {
+        stackId: 'stack-1',
+        services: [
+          { service_name: 'web', container_id: 'abcdef1234567890', container_name: 'web-1', status: 'running' },
+        ],
+        containerStats: {},
+        integrationActions: {},
+      },
+      global: { stubs },
+    })
+
+    await Promise.resolve()
+    await Promise.resolve()
+    await wrapper.findAll('button')[0].trigger('click')
+    await Promise.resolve()
+
+    expect(wrapper.text()).not.toContain('->')
+    expect(wrapper.text()).not.toContain('/tcp')
+    expect(wrapper.text()).not.toContain('/udp')
   })
 })

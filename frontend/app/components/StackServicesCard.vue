@@ -3,11 +3,14 @@ import { computed, ref, watch } from 'vue'
 import ContainerIcon from './ContainerIcon.vue'
 import type { IntegrationAction } from '~/composables/useIntegrations'
 
+type PortInfo = { container_port: number, protocol: string, host_ip?: string, host_port?: number }
+
 interface ServiceContainer {
   service_name: string
   container_id: string
   container_name?: string
   status: string
+  ports?: PortInfo[]
 }
 
 interface ContainerStats {
@@ -56,6 +59,18 @@ function formatUptime(startedAt?: string): string {
   if (days > 0) return `${days}d ${hours}h`
   if (hours > 0) return `${hours}h ${mins}m`
   return `${mins}m`
+}
+
+function formatContainerPort(port: PortInfo): string {
+  const proto = (port.protocol || 'tcp').toLowerCase()
+  return `${port.container_port}/${proto}`
+}
+
+function formatHostPort(port: PortInfo): string {
+  if (!port.host_port) return '-'
+  const wildcard = !port.host_ip || port.host_ip === '0.0.0.0' || port.host_ip === '::'
+  const ip = wildcard ? '' : (port.host_ip!.includes(':') ? `[${port.host_ip}]` : port.host_ip)
+  return ip ? `${ip}:${port.host_port}` : `${port.host_port}`
 }
 
 function formatBytes(bytes?: number): string {
@@ -198,6 +213,20 @@ watch(() => props.stackId, refreshResources, { immediate: true })
                   {{ container.container_id.slice(0, 12) }}
                 </code>
 
+                <!-- Copy container ID -->
+                <div class="hidden sm:inline-flex shrink-0" @click.stop>
+                  <UTooltip text="Copy container ID">
+                    <UButton
+                      icon="i-lucide-copy"
+                      variant="ghost"
+                      size="xs"
+                      color="neutral"
+                      title="Copy container ID"
+                      @click="emit('copy-container-id', container.container_id)"
+                    />
+                  </UTooltip>
+                </div>
+
                 <!-- Action buttons — @click.stop prevents accordion toggle -->
                 <div class="flex items-center gap-0.5 shrink-0 ml-1" @click.stop>
                   <ContainerIntegrationActions
@@ -242,43 +271,75 @@ watch(() => props.stackId, refreshResources, { immediate: true })
                 v-if="openContainers[container.container_id]"
                 class="px-3 pb-3 pt-2.5 border-t border-gray-200 dark:border-gray-700/60 bg-gray-50/50 dark:bg-gray-800/20"
               >
-                <div
-                  v-if="containerStats[container.container_id]"
-                  class="grid grid-cols-2 sm:grid-cols-3 gap-2"
-                >
-                  <!-- CPU stat -->
-                  <div class="flex flex-col gap-1 bg-white dark:bg-gray-900/60 rounded-lg px-3 py-2 border border-gray-100 dark:border-gray-700/40">
-                    <div class="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
-                      <UIcon name="i-lucide-cpu" class="w-3.5 h-3.5" />
-                      <span>CPU</span>
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  <template v-if="containerStats[container.container_id]">
+                    <!-- CPU stat -->
+                    <div class="flex flex-col gap-1 bg-white dark:bg-gray-900/60 rounded-lg px-3 py-2 border border-gray-100 dark:border-gray-700/40">
+                      <div class="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
+                        <UIcon name="i-lucide-cpu" class="w-3.5 h-3.5" />
+                        <span>CPU</span>
+                      </div>
+                      <span class="text-sm font-semibold text-gray-900 dark:text-white tabular-nums">
+                        {{ containerStats[container.container_id].cpu_percent != null
+                          ? containerStats[container.container_id].cpu_percent!.toFixed(2) + '%'
+                          : '-' }}
+                      </span>
                     </div>
-                    <span class="text-sm font-semibold text-gray-900 dark:text-white tabular-nums">
-                      {{ containerStats[container.container_id].cpu_percent != null
-                        ? containerStats[container.container_id].cpu_percent!.toFixed(2) + '%'
-                        : '-' }}
-                    </span>
+
+                    <!-- Memory stat -->
+                    <div class="flex flex-col gap-1 bg-white dark:bg-gray-900/60 rounded-lg px-3 py-2 border border-gray-100 dark:border-gray-700/40">
+                      <div class="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
+                        <UIcon name="i-lucide-memory-stick" class="w-3.5 h-3.5" />
+                        <span>Memory</span>
+                      </div>
+                      <span class="text-sm font-semibold text-gray-900 dark:text-white tabular-nums">
+                        {{ formatBytes(containerStats[container.container_id].mem_usage) }}
+                        <span class="text-xs font-normal text-gray-400">/ {{ formatBytes(containerStats[container.container_id].mem_limit) }}</span>
+                      </span>
+                      <span
+                        v-if="containerStats[container.container_id].mem_usage != null && containerStats[container.container_id].mem_limit"
+                        class="text-xs text-gray-500 dark:text-gray-400"
+                      >
+                        {{ formatMemPercent(containerStats[container.container_id].mem_usage, containerStats[container.container_id].mem_limit) }}
+                      </span>
+                    </div>
+
+                  </template>
+
+                  <!-- No stats fallback -->
+                  <p v-else class="col-span-2 sm:col-span-4 text-xs text-gray-400 italic py-1">
+                    No runtime stats available for this container.
+                  </p>
+
+                  <!-- Published ports (sits alongside the other stat cards) -->
+                  <div
+                    v-if="container.ports && container.ports.length"
+                    class="flex flex-col gap-1 bg-white dark:bg-gray-900/60 rounded-lg px-3 py-2 border border-gray-100 dark:border-gray-700/40"
+                    :class="containerStats[container.container_id] ? '' : 'col-span-2 sm:col-span-4'"
+                  >
+                    <div class="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
+                      <UIcon name="i-lucide-ethernet-port" class="w-3.5 h-3.5" />
+                      <span>Ports</span>
+                    </div>
+                    <div class="flex flex-col gap-1.5">
+                      <div
+                        v-for="(port, idx) in container.ports"
+                        :key="idx"
+                        class="flex items-center gap-1.5"
+                      >
+                        <UBadge :label="formatHostPort(port)" variant="subtle" size="xs" color="neutral" class="font-mono" />
+                        <UIcon name="i-lucide-arrow-right" class="w-3 h-3 text-gray-400 shrink-0" />
+                        <UBadge :label="formatContainerPort(port)" variant="subtle" size="xs" color="neutral" class="font-mono" />
+                      </div>
+                    </div>
                   </div>
 
-                  <!-- Memory stat -->
-                  <div class="flex flex-col gap-1 bg-white dark:bg-gray-900/60 rounded-lg px-3 py-2 border border-gray-100 dark:border-gray-700/40">
-                    <div class="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
-                      <UIcon name="i-lucide-memory-stick" class="w-3.5 h-3.5" />
-                      <span>Memory</span>
-                    </div>
-                    <span class="text-sm font-semibold text-gray-900 dark:text-white tabular-nums">
-                      {{ formatBytes(containerStats[container.container_id].mem_usage) }}
-                      <span class="text-xs font-normal text-gray-400">/ {{ formatBytes(containerStats[container.container_id].mem_limit) }}</span>
-                    </span>
-                    <span
-                      v-if="containerStats[container.container_id].mem_usage != null && containerStats[container.container_id].mem_limit"
-                      class="text-xs text-gray-500 dark:text-gray-400"
-                    >
-                      {{ formatMemPercent(containerStats[container.container_id].mem_usage, containerStats[container.container_id].mem_limit) }}
-                    </span>
-                  </div>
-
-                  <!-- Uptime stat -->
-                  <div class="flex flex-col gap-1 bg-white dark:bg-gray-900/60 rounded-lg px-3 py-2 border border-gray-100 dark:border-gray-700/40 col-span-2 sm:col-span-1">
+                  <!-- Uptime stat (always the last card) -->
+                  <div
+                    v-if="containerStats[container.container_id]"
+                    class="flex flex-col gap-1 bg-white dark:bg-gray-900/60 rounded-lg px-3 py-2 border border-gray-100 dark:border-gray-700/40"
+                    :class="container.ports && container.ports.length ? '' : 'col-span-2 sm:col-span-1'"
+                  >
                     <div class="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
                       <UIcon name="i-lucide-clock" class="w-3.5 h-3.5" />
                       <span>Uptime</span>
@@ -288,11 +349,6 @@ watch(() => props.stackId, refreshResources, { immediate: true })
                     </span>
                   </div>
                 </div>
-
-                <!-- No stats fallback -->
-                <p v-else class="text-xs text-gray-400 italic py-1">
-                  No runtime stats available for this container.
-                </p>
               </div>
             </div>
           </template>

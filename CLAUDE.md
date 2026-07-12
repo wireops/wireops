@@ -48,6 +48,8 @@ Test function names must be CamelCase (not `Test_foo_bar`).
 
 Coverage minimums (informational, uploaded to Codacy, not a CI gate — see `AGENTS.md` § Testing & Coverage): backend **25%**, frontend **50%** statement coverage. New non-trivial logic should carry tests toward that floor.
 
+Vue Test Utils stubs: never use inline `template: '<...>'` HTML-string fields — Codacy flags these as XSS even in test-only mocks. Use `setup()` + `h()` from `vue` instead — see `AGENTS.md` § Coding Conventions.
+
 ## Architecture
 
 - **Server never touches Docker directly.** All `docker compose` / `docker run` execution happens on remote workers, dispatched over a persistent authenticated WebSocket (`internal/worker/server.go`, port `TLS_WORKER_PORT`/8443). The server's job is reconciliation, scheduling, and state — not execution.
