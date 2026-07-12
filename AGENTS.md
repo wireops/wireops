@@ -2,6 +2,8 @@
 
 Self-hosted GitOps platform for managing Docker Compose stacks and scheduled Docker-based jobs. It watches Git repositories for changes and deploys updates on remote hosts through token-authenticated WebSocket workers.
 
+**Project status**: pre-1.0 (tags `v0.1.0`–`v0.1.15`), active hobby/side-project pace. Core GitOps sync, worker deploy security policy, and RBAC/audit are implemented and in daily use. `internal/secrets` has only the `internal` (AES-GCM) provider working — `vault`/`infisical` are unimplemented stubs; `internal/backup` is test-scaffolding only with no real implementation. Don't describe stub features as shipped in docs or responses without checking the source first.
+
 ---
 
 ## Repository Layout
@@ -29,11 +31,19 @@ Self-hosted GitOps platform for managing Docker Compose stacks and scheduled Doc
 │   ├── docker/client.go          # Docker Engine API client wrapper
 │   ├── git/                      # Clone, fetch, SSH/Basic auth
 │   ├── hooks/pb_hooks.go         # PocketBase lifecycle hooks
-│   ├── integrations/             # Plugin registry (Traefik, Dozzle, …)
+│   ├── integrations/             # Plugin registry (Traefik, Caddy, Nginx Proxy Manager, Dozzle, Webhook, Discord, Slack, Ntfy)
 │   ├── job/parser.go             # job.yaml parsing & validation
 │   ├── jobscheduler/scheduler.go # Cron scheduler for Docker-based jobs
-│   ├── notify/                   # Outbound notifications (webhook / ntfy)
+│   ├── manifest/parser.go        # Parses declarative `.wireops.yml` stack config
+│   ├── notify/                   # Outbound notifications (webhook / ntfy) — superseded by integrations/ notification plugins for new work
+│   ├── policy/                   # Worker-level deploy security policies (block privileged/host-network/docker.sock/host-PID/host-IPC, allowlists)
 │   ├── protocol/messages.go      # WebSocket message types (shared)
+│   ├── rbac/rbac.go              # Role definitions (viewer/operator/admin/monitoring) and capability checks
+│   ├── audit/audit.go            # Request/system audit log recording + retention purge
+│   ├── secrets/                  # Pluggable secret providers (internal/AES-GCM; vault & infisical are unimplemented stubs)
+│   ├── oidc/collection.go        # OIDC PocketBase collection support (client secret hydration)
+│   ├── setup/service.go          # First-admin bootstrap (`/setup`) service
+│   ├── backup/                   # Backup/restore — test scaffolding only, no implementation yet
 │   ├── routes/                   # HTTP route handlers
 │   │   ├── routes.go             # Stack / repo / credential / integration routes
 │   │   ├── worker.go             # Worker management routes
@@ -208,6 +218,18 @@ All custom routes are prefixed `/api/custom/`. PocketBase also auto-exposes CRUD
 | `GET` | `/api/custom/workers` | List all workers (including pending tokens) |
 | `POST` | `/api/custom/worker/tokens` | Generate worker token |
 | `POST` | `/api/custom/workers/{id}/revoke` | Revoke worker or a pending token (using `pending:{tokenRecordId}`) |
+| `GET` | `/api/custom/workers/{id}/policy` | Resolved effective deploy security policy for a worker |
+| `GET` | `/api/custom/settings/worker-policy` | Global `worker_policies` singleton |
+
+### Audit (`admin` capability — `CapViewAuditLogs`)
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/custom/audit-logs` | Filterable audit log query (from/to/actor/action/resource/origin/status) |
+
+### Users
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/custom/users/invite` | Invite a new user (`CapManageUsers`) |
 
 ### Metrics (`monitoring` role or higher; API key on service account)
 | Method | Path | Description |
@@ -262,18 +284,34 @@ type Integration interface {
 ```
 
 Registered via `init()` and `integrations.Register()`. Current plugins:
-- **Traefik** (`traefik`) — reads router labels and builds clickable "Open" links.
-- **Dozzle** (`dozzle`) — adds "Logs" links pointing to a self-hosted Dozzle instance.
+- **Traefik** (`traefik`) — Reverse Proxy — reads router labels and builds clickable "Open" links.
+- **Caddy** (`caddy`) — Reverse Proxy — same pattern as Traefik for Caddy labels.
+- **Nginx Proxy Manager** (`nginxproxymanager`) — Reverse Proxy.
+- **Dozzle** (`dozzle`) — Logging — adds "Logs" links pointing to a self-hosted Dozzle instance.
+- **Webhook** (`webhook`) — Notification — HMAC-SHA256 signed HTTP POST.
+- **Discord** (`discord`) — Notification.
+- **Slack** (`slack`) — Notification.
+- **Ntfy** (`ntfy`) — Notification — push via ntfy.sh.
 
 ---
 
 ## Notifications
 
-Configured via the `stack_sync_events` collection (singleton). Supported providers:
-- **Webhook** — HTTP POST with HMAC-SHA256 signature and custom headers.
-- **Ntfy** — push notifications via ntfy.sh (configurable topic, user, template).
+Historically configured via the `stack_sync_events` singleton collection with two built-in providers (Webhook, Ntfy). Discord and Slack were added as `internal/integrations/` notification plugins rather than extending `stack_sync_events` directly — treat `integrations/` as the current extension point for new notification channels; `internal/notify/` remains for the original webhook/ntfy wiring.
 
 Events: `sync.started`, `sync.done`, `sync.error`, `sync.test`.
+
+---
+
+## Access Control, Policy & Audit
+
+- **RBAC** (`internal/rbac/rbac.go`): four roles — `viewer` < `operator` < `admin`, plus a separate `monitoring` role scoped to metrics-only access. Capabilities (`CapViewStacks`, `CapOperateStacks`, `CapManageSettings`, `CapManageSecurity`, `CapViewAuditLogs`, …) map to a minimum required role; route handlers check capabilities, not raw role strings.
+- **Worker deploy policy** (`internal/policy/`): resolves an effective `WorkerPolicy` per worker from the `worker_policies` singleton (global) with optional per-worker overrides. Enforces allowlists (volumes/networks/images/cap-add/devices/security-opt) and boolean blocks (`BlockPrivileged`, `BlockHostNetwork`, `BlockHostPID`, `BlockHostIPC`, `BlockDockerSocket`, `PreventLatestImages`, `BlockHostVolumes`). Empty allowlist = open; first entry added = allowlist-only from then on. `policy_inherit` controls whether a worker without a local override falls back to the global value.
+- **Audit log** (`internal/audit/audit.go`): records custom-route requests and system events (actor, action, resource, status, origin) with a configurable retention window, purged by a periodic sweep. Exposed via `GET /api/custom/audit-logs` (filterable by `from`/`to`/`actor_type`/`actor_id`/`action`/`resource_type`/`resource_id`/`origin`/`status`).
+- **Secrets providers** (`internal/secrets/`): pluggable `SecretProvider` registry. Only `internal` (AES-GCM, `SECRET_KEY`) is in `ValidProviders` and functional. `vault` and `infisical` are registered so legacy records get a clear provider-specific error, but their `Resolve()` always returns `not yet implemented` — do not present them as usable in docs or UI copy without checking `internal/secrets/vault.go` / `infisical.go` first.
+- **OIDC / SSO** (`internal/oidc/collection.go`): PocketBase collection glue for OIDC client secret hydration; see README's OIDC env var table for the user-facing setup and the SSO role-override warning.
+- **Setup/bootstrap** (`internal/setup/service.go`): backs the `/setup` first-admin flow gated by `BOOTSTRAP_TOKEN`.
+- **Backup** (`internal/backup/`): only test scaffolding exists (`backup_restore_test.go`); there is no shipped backup/restore implementation — do not document this as a feature.
 
 ---
 

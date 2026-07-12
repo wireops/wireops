@@ -17,21 +17,27 @@
 
 GitOps controller for Docker Compose stacks. Automatically sync and deploy your compose stacks from Git repositories, similar to Flux/ArgoCD for Kubernetes.
 
+> **Project status**: pre-1.0, actively developed (releases `v0.1.x`). Core GitOps sync, worker security policies, and RBAC are in daily use; a few features below (external secret providers, audited web terminal) are partially built or stubbed — see [Known Limitations](#known-limitations).
+
 ## Features
 
 - 🔄 Automatic synchronization from Git repositories
 - 🐳 Docker Compose stack management
-- 📊 Real-time container monitoring
-- 🔐 Encrypted credentials (SSH keys, passwords)
-- 🌐 Webhook support for CI/CD integration
+- 📊 Real-time container monitoring (with worker runtime info and container ports)
+- 🔐 Encrypted credentials (SSH keys, passwords) + pluggable secret providers
+- 🛡️ Role-based access control (viewer/operator/admin/monitoring) and audit logging
+- 🚧 Worker-side deploy security policies (block privileged/host-network/docker.sock/host-PID/host-IPC)
+- 🔑 SSO login via any OIDC provider
+- 🌐 Webhook, Discord, Slack, and ntfy notifications
 - 📝 Environment variable management
 - 🔄 Rollback to previous commits
 - 🚀 Force redeploy with recreate options
+- 🗓️ Cron-scheduled one-shot Docker jobs (`job.yaml`)
 
 ## Tech Stack
 
 - **Backend**: Go + PocketBase
-- **Frontend**: Nuxt 3 + Vue 3 + Nuxt UI
+- **Frontend**: Nuxt 4 + Vue 3 + Nuxt UI
 - **Container Runtime**: Docker + Docker Compose
 - **Database**: SQLite (via PocketBase)
 
@@ -352,6 +358,19 @@ To use an integration, you need to enable and configure it in the application's 
 
 Currently supported integrations:
 
+| Integration | Category | What it adds |
+|---|---|---|
+| Traefik | Reverse Proxy | "Open" action from router host rule labels |
+| Caddy | Reverse Proxy | "Open" action from Caddy labels |
+| Nginx Proxy Manager | Reverse Proxy | "Open" action for NPM-fronted containers |
+| Dozzle | Logging | "Logs" action linking to a Dozzle instance |
+| Webhook | Notification | HMAC-signed HTTP POST on sync events |
+| Discord | Notification | Sync event messages to a Discord channel |
+| Slack | Notification | Sync event messages to a Slack channel |
+| Ntfy | Notification | Push notifications via ntfy.sh |
+
+Details for the two documented in depth below (Traefik, Dozzle) as examples; the others follow the same enable-in-Settings pattern.
+
 ### Traefik
 
 The Traefik integration reads Traefik HTTP router rules from container labels and generates an "Open" action linking straight to the configured host.
@@ -395,6 +414,13 @@ services:
 
 ---
 
+## Known Limitations
+
+- **External secret providers are stubbed**: only the `internal` (AES-GCM, local `SECRET_KEY`) provider is functional. `vault` and `infisical` providers exist in the schema/UI but `Resolve()` always returns an error — do not select them yet.
+- **`internal/backup`** (config/data backup & restore) has test scaffolding but no shipped implementation.
+- **Audited web terminal**: intentionally not started — requires the RBAC system to be fully wired first to avoid shipping a high-risk feature half-done.
+- No OCI-artifact source, Docker Swarm/multi-node, or canary/preview deploys yet (tracked as strategic backlog with no ETA).
+
 ## Backlog / Future Enhancements
 
 ### 🎓 Onboarding Experience
@@ -406,45 +432,41 @@ services:
 ### 📋 Logs & Debugging
 - Advanced log viewer with syntax highlighting
 - Search/filter within logs
-- Auto-scroll toggle and log streaming
 - Download logs functionality
 - Diff viewer for commit comparisons
-- Real-time log streaming using SSE endpoint
 
 ### 🔄 Bulk Operations
 - Multi-select stacks with checkboxes
 - Bulk actions: "Sync All", "Pause All", "Resume All"
 - Progress tracking for batch operations
-- "Sync All Active Stacks" button on dashboard
 
 ### 🌍 Environment Variables Management
 - Bulk edit mode (text editor format KEY=VALUE)
 - Import/export .env files
 - Copy env vars between stacks
 - Templates for common variables
-- Auto-complete for variable keys
 - Detect required variables from compose file
-- Highlight unused variables
 
 ### 🐳 Container Management
 - "Restart All" / "Stop All" buttons per service
-- Better container stats with fallback handling
-- Improved container logs (pagination, more lines)
-- Follow logs mode (auto-scroll)
 - Bulk container operations
 
 ### ⚙️ User Preferences
 - Configurable auto-refresh interval
-- Default poll interval for new stacks
 - Theme preferences
-- Notification settings
 - UI density options (compact/comfortable)
+
+### 🔒 Security & Ops (strategic)
+- Finish `vault` / `infisical` secret providers; SOPS+age support
+- Git auth hardening, deploy metrics/alerts
+- Audited web terminal (blocked on RBAC completeness)
+- docker-run → compose converter, OCI artifact sources, Swarm/multi-node, canary deploys
 
 ---
 
 ## License
 
-MIT
+GPLv3 — see [LICENSE](LICENSE)
 
 ## Contributing
 
