@@ -1,5 +1,6 @@
 <script setup lang="ts">
 definePageMeta({ layout: false })
+useHead({ title: 'Invite' })
 
 const { $pb } = useNuxtApp()
 const route = useRoute()

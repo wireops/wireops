@@ -22,4 +22,15 @@ export default defineNuxtConfig({
   },
 
   devtools: { enabled: true },
+
+  app: {
+    head: {
+      title: 'WireOps',
+      titleTemplate: 'WireOps - %s',
+      link: [
+        { rel: 'icon', type: 'image/x-icon', href: '/favicon.ico' },
+        { rel: 'icon', type: 'image/png', href: '/favicon.png' },
+      ],
+    },
+  },
 })

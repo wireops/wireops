@@ -65,6 +65,8 @@ const activeNavLabel = computed(() => {
   return 'Menu'
 })
 
+useHead({ title: activeNavLabel })
+
 function toggleTheme() {
   colorMode.preference = colorMode.value === 'dark' ? 'light' : 'dark'
 }
@@ -141,7 +143,7 @@ watch(mobileMenuOpen, (isOpen) => {
               </div>
             </div>
             <NuxtLink to="/" class="flex items-center gap-2" aria-label="Go to dashboard">
-              <UIcon name="i-lucide-zap" class="h-5 w-5 text-yellow-400" />
+              <img src="~/assets/img/logo.png" alt="" class="h-5 w-5 object-contain">
               <span class="font-black text-sm tracking-[0.28em] uppercase text-yellow-400">wireops</span>
             </NuxtLink>
           </div>

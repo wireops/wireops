@@ -78,7 +78,7 @@ const sidebarClasses = computed(() => {
   return `dark hidden lg:flex ${width} lg:flex-col lg:border-r lg:border-carbon-800 lg:bg-carbon-900 lg:sticky lg:top-0 lg:h-screen transition-[width] duration-300 ease-in-out z-40`
 })
 
-const brandSubtitle = computed(() => props.mobile ? 'Navigation' : 'Control Center')
+const brandSubtitle = computed(() => props.mobile ? 'Navigation' : 'Control Plane')
 
 function resolveButtonElement(target: { $el?: HTMLElement } | HTMLElement | null) {
   if (!target) return null
@@ -126,8 +126,8 @@ watch(
     <aside id="mobile-navigation" :class="sidebarClasses">
       <div class="flex items-center justify-between border-b border-carbon-800 px-5 py-5">
         <NuxtLink to="/" class="flex items-center gap-3" aria-label="Go to dashboard" @click="emit('close')">
-          <div class="flex h-10 w-10 items-center justify-center rounded-2xl bg-yellow-400/10 ring-1 ring-yellow-400/20">
-            <UIcon name="i-lucide-zap" class="h-5 w-5 text-yellow-400" />
+          <div class="flex h-10 w-10 items-center justify-center rounded-2xl overflow-hidden">
+            <img src="~/assets/img/logo.png" alt="wireops" class="h-7 w-7 object-contain">
           </div>
           <div>
             <span class="block font-black text-base tracking-[0.24em] uppercase text-yellow-400">wireops</span>
@@ -264,8 +264,8 @@ watch(
   <aside v-else :class="sidebarClasses">
     <div :class="['flex h-20 items-center border-b border-carbon-800 shrink-0 relative transition-all duration-300', collapsed ? 'justify-center px-0' : 'justify-between px-6']">
       <NuxtLink to="/" class="flex items-center gap-3 shrink-0" aria-label="Go to dashboard">
-        <div :class="['flex shrink-0 items-center justify-center rounded-2xl bg-yellow-400/10 ring-1 ring-yellow-400/20 transition-all duration-300', collapsed ? 'h-10 w-10' : 'h-11 w-11']">
-          <UIcon name="i-lucide-zap" class="h-6 w-6 text-yellow-400 drop-shadow-[0_0_6px_rgba(255,198,0,0.6)]" />
+        <div :class="['flex shrink-0 items-center justify-center rounded-2xl transition-all duration-300 overflow-hidden', collapsed ? 'h-10 w-10' : 'h-11 w-11']">
+          <img src="~/assets/img/logo.png" alt="wireops" class="h-8 w-8 object-contain">
         </div>
         <div v-show="!collapsed" class="whitespace-nowrap transition-opacity duration-300">
           <span class="block font-black text-lg tracking-widest uppercase text-yellow-400 drop-shadow-[0_0_8px_rgba(255,198,0,0.4)]">

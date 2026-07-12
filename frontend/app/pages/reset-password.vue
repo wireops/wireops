@@ -1,5 +1,6 @@
 <script setup lang="ts">
 definePageMeta({ layout: false })
+useHead({ title: 'Reset Password' })
 
 const { $pb } = useNuxtApp()
 const route = useRoute()
