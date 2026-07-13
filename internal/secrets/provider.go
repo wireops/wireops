@@ -1,20 +1,21 @@
 // Package secrets defines the SecretProvider interface and a Registry
 // for resolving encrypted or externally-managed secret values at deploy time.
 //
-// Current implementation: "internal" (AES-GCM, local key).
-// Future: "vault" and "infisical" stubs ready for implementation.
+// Implementations: "internal" (AES-GCM, local key), "vault" (HashiCorp
+// Vault KV v2), "infisical" (Infisical Universal Auth).
 package secrets
 
 import (
 	"context"
 	"fmt"
+
+	"github.com/pocketbase/pocketbase/core"
 )
 
 // ValidProviders lists the names of providers whose Resolve is fully implemented.
-// Stub providers (vault, infisical) are excluded until their integration is complete.
 // Both the schema migration constraint and the hook-level validation reference this list
 // to ensure that only resolvable providers can be persisted.
-var ValidProviders = []string{"internal"}
+var ValidProviders = []string{"internal", "vault", "infisical"}
 
 // SecretProvider resolves a raw stored secret value into its plaintext form.
 // Each implementation handles a specific backend (internal local key, Vault, Infisical, etc.).
@@ -40,14 +41,14 @@ func NewRegistry() *Registry {
 }
 
 // NewDefaultRegistry returns the providers available to deploy/runtime
-// resolution. Only providers in ValidProviders are accepted by write-time
-// validation; the stubs are registered so older records fail with a clear
-// provider-specific error instead of "unknown provider".
-func NewDefaultRegistry(secretKey []byte) *Registry {
+// resolution. Vault and Infisical look up their connection config from the
+// integrations collection lazily (at Resolve time) rather than at
+// construction, so config changes take effect without a server restart.
+func NewDefaultRegistry(app core.App, secretKey []byte) *Registry {
 	reg := NewRegistry()
 	reg.Register(NewInternalProvider(secretKey))
-	reg.Register(NewVaultProvider())
-	reg.Register(NewInfisicalProvider())
+	reg.Register(NewVaultProvider(app))
+	reg.Register(NewInfisicalProvider(app))
 	return reg
 }
 

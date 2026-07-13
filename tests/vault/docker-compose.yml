@@ -1,0 +1,18 @@
+services:
+  vault:
+    image: hashicorp/vault:1.17
+    container_name: wireops-test-vault
+    restart: unless-stopped
+    cap_add:
+      - IPC_LOCK
+    ports:
+      - "8200:8200"
+    environment:
+      - VAULT_DEV_ROOT_TOKEN_ID=${VAULT_DEV_ROOT_TOKEN_ID:-root}
+      - VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200
+    volumes:
+      # Dev mode is in-memory (no unseal, no real storage backend) — this
+      # mount just gives it a local place to write its default audit log
+      # if you ever enable one, so it lands in ./.data instead of the
+      # container's throwaway filesystem.
+      - ./.data:/vault/logs

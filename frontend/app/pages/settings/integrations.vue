@@ -8,6 +8,8 @@ import webhookIcon from '~/assets/img/icons/integrations/webhook.svg'
 import ntfyIcon from '~/assets/img/icons/integrations/ntfy.svg'
 import discordIcon from '~/assets/img/icons/integrations/discord.svg'
 import slackIcon from '~/assets/img/icons/integrations/slack.svg'
+import vaultIcon from '~/assets/img/icons/integrations/hashicorp-vault.svg'
+import infisicalIcon from '~/assets/img/icons/integrations/infisical.svg'
 
 const toast = useToast()
 const { getIntegrations, saveIntegration } = useIntegrations()
@@ -37,6 +39,17 @@ const caddyIntegration = ref<any>(null)
 
 const showNginxProxyManagerModal = ref(false)
 const nginxProxyManagerIntegration = ref<any>(null)
+
+const showVaultModal = ref(false)
+const vaultIntegration = ref<any>(null)
+
+const showInfisicalModal = ref(false)
+const infisicalIntegration = ref<any>(null)
+
+const configurableSlugs = [
+  'webhook', 'ntfy', 'discord', 'slack', 'dozzle', 'traefik', 'caddy',
+  'nginx-proxy-manager', 'vault', 'infisical',
+]
 
 
 const groupedIntegrations = computed(() => {
@@ -115,6 +128,12 @@ function configureIntegration(integration: any) {
   } else if (integration.slug === 'nginx-proxy-manager') {
     nginxProxyManagerIntegration.value = integration
     showNginxProxyManagerModal.value = true
+  } else if (integration.slug === 'vault') {
+    vaultIntegration.value = integration
+    showVaultModal.value = true
+  } else if (integration.slug === 'infisical') {
+    infisicalIntegration.value = integration
+    showInfisicalModal.value = true
   }
 }
 
@@ -127,7 +146,14 @@ function getIntegrationIcon(slug: string) {
   if (slug === 'ntfy') return ntfyIcon
   if (slug === 'discord') return discordIcon
   if (slug === 'slack') return slackIcon
+  if (slug === 'vault') return vaultIcon
+  if (slug === 'infisical') return infisicalIcon
   return ''
+}
+
+// Fallback for any future integration without a bundled SVG asset yet.
+function getIntegrationFallbackIcon() {
+  return 'i-lucide-puzzle'
 }
 
 function getIntegrationDescription(slug: string) {
@@ -139,6 +165,8 @@ function getIntegrationDescription(slug: string) {
   if (slug === 'ntfy') return 'Push notifications to ntfy.sh or self-hosted topics.'
   if (slug === 'discord') return 'Send sync notifications to a Discord channel.'
   if (slug === 'slack') return 'Send sync notifications to a Slack channel.'
+  if (slug === 'vault') return 'Resolve secret env vars from a Vault KV v2 secrets engine.'
+  if (slug === 'infisical') return 'Resolve secret env vars from Infisical via Universal Auth.'
   return ''
 }
 
@@ -151,6 +179,8 @@ function getIntegrationDocLink(slug: string) {
   if (slug === 'webhook') return 'https://webhook.site'
   if (slug === 'discord') return 'https://support.discord.com/hc/en-us/articles/228383668-Intro-to-Webhooks'
   if (slug === 'slack') return 'https://api.slack.com/messaging/webhooks'
+  if (slug === 'vault') return 'https://developer.hashicorp.com/vault/docs'
+  if (slug === 'infisical') return 'https://infisical.com/docs'
   return ''
 }
 
@@ -194,9 +224,9 @@ onMounted(() => {
                     <h3 class="font-bold text-base text-gray-950 dark:text-wire-200">{{ integration.name }}</h3>
                     <div class="flex items-center gap-2">
                       <USwitch v-model="integration.enabled" @update:model-value="handleSaveIntegration(integration, true)" />
-                      <UButton 
-                        v-if="integration.slug === 'webhook' || integration.slug === 'ntfy' || integration.slug === 'discord' || integration.slug === 'slack' || integration.slug === 'dozzle' || integration.slug === 'traefik' || integration.slug === 'caddy' || integration.slug === 'nginx-proxy-manager'"
-                        icon="i-lucide-settings" 
+                      <UButton
+                        v-if="configurableSlugs.includes(integration.slug)"
+                        icon="i-lucide-settings"
                         size="xs" 
                         variant="ghost" 
                         color="neutral"
@@ -219,7 +249,8 @@ onMounted(() => {
                 <div class="flex flex-col items-center justify-center p-6 space-y-4">
                   <!-- Large Icon -->
                   <div class="w-20 h-20 rounded-2xl bg-gray-50 dark:bg-carbon-800 flex items-center justify-center p-4 shadow-inner">
-                    <img :src="getIntegrationIcon(integration.slug)" class="w-12 h-12 object-contain" alt="">
+                    <img v-if="getIntegrationIcon(integration.slug)" :src="getIntegrationIcon(integration.slug)" class="w-12 h-12 object-contain" alt="">
+                    <UIcon v-else :name="getIntegrationFallbackIcon()" class="w-10 h-10 text-primary-500" />
                   </div>
                   
                   <!-- Discrete Description -->
@@ -279,6 +310,18 @@ onMounted(() => {
     <IntegrationsNginxProxyManagerConfigModal
       v-model:open="showNginxProxyManagerModal"
       :integration="nginxProxyManagerIntegration"
+      @saved="loadIntegrations"
+    />
+
+    <IntegrationsVaultConfigModal
+      v-model:open="showVaultModal"
+      :integration="vaultIntegration"
+      @saved="loadIntegrations"
+    />
+
+    <IntegrationsInfisicalConfigModal
+      v-model:open="showInfisicalModal"
+      :integration="infisicalIntegration"
       @saved="loadIntegrations"
     />
   </div>

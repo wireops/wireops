@@ -465,6 +465,9 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 		if err := preventEnvSecretDowngrade(e.Record); err != nil {
 			return err
 		}
+		if err := preventEnvSecretProviderChange(e.Record); err != nil {
+			return err
+		}
 		if err := prepareEnvSecretRecord(e.Record, secretKey); err != nil {
 			return err
 		}
@@ -473,7 +476,7 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 
 	// Mask secret env var values on API responses
 	app.OnRecordEnrich("stack_env_vars").BindFunc(func(e *core.RecordEnrichEvent) error {
-		if e.Record.GetBool("secret") {
+		if e.Record.GetBool("secret") && isInternalSecretProvider(e.Record.GetString("secret_provider")) {
 			e.Record.Set("value", "")
 		}
 		return e.Next()
@@ -488,6 +491,9 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 
 	app.OnRecordUpdate("global_env_vars").BindFunc(func(e *core.RecordEvent) error {
 		if err := preventEnvSecretDowngrade(e.Record); err != nil {
+			return err
+		}
+		if err := preventEnvSecretProviderChange(e.Record); err != nil {
 			return err
 		}
 		if err := prepareEnvSecretRecord(e.Record, secretKey); err != nil {
@@ -512,7 +518,7 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 	})
 
 	app.OnRecordEnrich("global_env_vars").BindFunc(func(e *core.RecordEnrichEvent) error {
-		if e.Record.GetBool("secret") {
+		if e.Record.GetBool("secret") && isInternalSecretProvider(e.Record.GetString("secret_provider")) {
 			e.Record.Set("value", "")
 		}
 		return e.Next()
@@ -633,6 +639,9 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 		if err := preventEnvSecretDowngrade(e.Record); err != nil {
 			return err
 		}
+		if err := preventEnvSecretProviderChange(e.Record); err != nil {
+			return err
+		}
 		if err := prepareEnvSecretRecord(e.Record, secretKey); err != nil {
 			return err
 		}
@@ -641,7 +650,7 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 
 	// Mask secret job env var values on API responses
 	app.OnRecordEnrich("job_env_vars").BindFunc(func(e *core.RecordEnrichEvent) error {
-		if e.Record.GetBool("secret") {
+		if e.Record.GetBool("secret") && isInternalSecretProvider(e.Record.GetString("secret_provider")) {
 			e.Record.Set("value", "")
 		}
 		return e.Next()
@@ -1024,13 +1033,26 @@ func prepareEnvSecretRecord(record *core.Record, key []byte) error {
 	} else if record.GetBool("secret") && record.Collection().Fields.GetByName("secret_provider") != nil {
 		record.Set("secret_provider", "internal")
 	}
-	if record.GetBool("secret") {
+	// Only the "internal" provider's "value" is the confidential payload
+	// (AES-GCM ciphertext, decrypted at Resolve time). vault/infisical (and
+	// any other external provider) store a locator string in "value" —
+	// e.g. "mount/data/path#field" — that points at where the secret lives
+	// but isn't the secret itself, so it must not be encrypted, blanked, or
+	// masked like a real secret.
+	if record.GetBool("secret") && isInternalSecretProvider(record.GetString("secret_provider")) {
 		preserveMaskedSecretValue(record, "value")
 		if err := encryptField(record, "value", key); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// isInternalSecretProvider reports whether provider stores its "value" as
+// confidential AES-GCM ciphertext (empty defaults to "internal" for
+// collections/records predating the secret_provider field).
+func isInternalSecretProvider(provider string) bool {
+	return provider == "" || provider == "internal"
 }
 
 func normalizeEnvVarKey(record *core.Record) error {
@@ -1089,6 +1111,31 @@ func preventEnvSecretDowngrade(record *core.Record) error {
 	if original.GetBool("secret") && !record.GetBool("secret") {
 		return validation.Errors{
 			"secret": validation.NewError("validation_secret_downgrade", "Secrets cannot be converted to plain text."),
+		}
+	}
+	return nil
+}
+
+// preventEnvSecretProviderChange locks secret_provider once a var is stored
+// as a secret: switching a secret from e.g. "internal" to "vault" would
+// silently reinterpret its stored value (an encrypted blob vs. a plaintext
+// reference), so once created the provider is immutable.
+func preventEnvSecretProviderChange(record *core.Record) error {
+	original := record.Original()
+	if original == nil || !original.GetBool("secret") {
+		return nil
+	}
+	originalProvider := original.GetString("secret_provider")
+	if originalProvider == "" {
+		originalProvider = "internal"
+	}
+	newProvider := record.GetString("secret_provider")
+	if newProvider == "" {
+		newProvider = "internal"
+	}
+	if originalProvider != newProvider {
+		return validation.Errors{
+			"secret_provider": validation.NewError("validation_secret_provider_locked", "The secret provider cannot be changed once a secret is created."),
 		}
 	}
 	return nil

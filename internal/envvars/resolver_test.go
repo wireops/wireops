@@ -38,7 +38,7 @@ func TestLoadStackMergesGlobalsAndLocalOverrides(t *testing.T) {
 		"value": "local",
 	})
 
-	got, err := LoadStack(context.Background(), app, secrets.NewDefaultRegistry([]byte(strings.Repeat("x", 32))), stack.Id)
+	got, err := LoadStack(context.Background(), app, secrets.NewDefaultRegistry(app, []byte(strings.Repeat("x", 32))), stack.Id)
 	if err != nil {
 		t.Fatalf("LoadStack failed: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestLoadJobResolvesGlobalSecret(t *testing.T) {
 	})
 	mustCreateEnvRecord(t, app, "job_global_env_vars", map[string]any{"job": job.Id, "global_env_var": globalSecret.Id})
 
-	got, err := LoadJob(context.Background(), app, secrets.NewDefaultRegistry(key), job.Id)
+	got, err := LoadJob(context.Background(), app, secrets.NewDefaultRegistry(app, key), job.Id)
 	if err != nil {
 		t.Fatalf("LoadJob failed: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestLoadJobMergesGlobalsAndLocalOverrides(t *testing.T) {
 	mustCreateEnvRecord(t, app, "job_global_env_vars", map[string]any{"job": job.Id, "global_env_var": globalShared.Id})
 	mustCreateEnvRecord(t, app, "job_global_env_vars", map[string]any{"job": job.Id, "global_env_var": globalOnly.Id})
 
-	got, err := LoadJob(context.Background(), app, secrets.NewDefaultRegistry([]byte(strings.Repeat("x", 32))), job.Id)
+	got, err := LoadJob(context.Background(), app, secrets.NewDefaultRegistry(app, []byte(strings.Repeat("x", 32))), job.Id)
 	if err != nil {
 		t.Fatalf("LoadJob failed: %v", err)
 	}
@@ -149,6 +149,7 @@ func newEnvVarsTestApp(t *testing.T) *tests.TestApp {
 	jobEnv.Fields.Add(&core.TextField{Name: "key"})
 	jobEnv.Fields.Add(&core.TextField{Name: "value"})
 	jobEnv.Fields.Add(&core.BoolField{Name: "secret"})
+	jobEnv.Fields.Add(&core.TextField{Name: "secret_provider"})
 	mustSaveEnvCollection(t, app, jobEnv)
 
 	stackGlobals := core.NewBaseCollection("stack_global_env_vars")
@@ -160,6 +161,12 @@ func newEnvVarsTestApp(t *testing.T) *tests.TestApp {
 	jobGlobals.Fields.Add(&core.RelationField{Name: "job", CollectionId: jobs.Id, MaxSelect: 1})
 	jobGlobals.Fields.Add(&core.RelationField{Name: "global_env_var", CollectionId: globals.Id, MaxSelect: 1})
 	mustSaveEnvCollection(t, app, jobGlobals)
+
+	integrations := core.NewBaseCollection("integrations")
+	integrations.Fields.Add(&core.TextField{Name: "slug", Required: true})
+	integrations.Fields.Add(&core.BoolField{Name: "enabled"})
+	integrations.Fields.Add(&core.JSONField{Name: "config"})
+	mustSaveEnvCollection(t, app, integrations)
 
 	return app
 }

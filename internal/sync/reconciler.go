@@ -50,7 +50,7 @@ type Reconciler struct {
 func NewReconciler(app core.App, notifier *notify.Notifier, dispatcher WorkerDispatcher) *Reconciler {
 	key := crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))
 
-	reg := secrets.NewDefaultRegistry(key)
+	reg := secrets.NewDefaultRegistry(app, key)
 
 	return &Reconciler{
 		app:             app,
@@ -118,6 +118,10 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 
 	if stack.GetString("source_type") == "local" {
 		return r.reconcileLocalStack(ctx, stackID, stack, trigger)
+	}
+
+	if err := r.checkSecretBackends(stackID, trigger, "", stack); err != nil {
+		return err
 	}
 
 	prevStatus := stack.GetString("status")
@@ -503,6 +507,10 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 		return fmt.Errorf("stack not found: %w", err)
 	}
 
+	if err := r.checkSecretBackends(stackID, "manual", commitSHA, stack); err != nil {
+		return err
+	}
+
 	if err := r.saveRecordStatus(stack, "stacks", "syncing", "start rollback"); err != nil {
 		return err
 	}
@@ -756,6 +764,10 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 		return fmt.Errorf("stack not found: %w", err)
 	}
 
+	if err := r.checkSecretBackends(stackID, "redeploy", "", stack); err != nil {
+		return err
+	}
+
 	if err := r.saveRecordStatus(stack, "stacks", "syncing", "start force redeploy"); err != nil {
 		return err
 	}
@@ -987,6 +999,10 @@ func (r *Reconciler) stackWorkDir(stack *core.Record, repoID string) (string, er
 // reconcileLocalStack handles the reconcile loop for stacks imported from a local
 // filesystem path (source_type=local), bypassing the git fetch flow.
 func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, stack *core.Record, trigger string) (retErr error) {
+	if err := r.checkSecretBackends(stackID, trigger, "", stack); err != nil {
+		return err
+	}
+
 	importPath := stack.GetString("import_path")
 	if importPath == "" {
 		errMsg := "import_path is required for local stacks"
@@ -1589,6 +1605,23 @@ func (r *Reconciler) logFailureWithPhase(stackID, trigger, commitSHA, errMsg, ph
 	return nil
 }
 
+// checkSecretBackends is a fast pre-flight gate: it rejects the deploy
+// immediately if any of the stack's secret env vars reference a
+// vault/infisical backend that is currently disabled or unconfigured,
+// before any git fetch/render work happens. Tagged as PhasePolicyCheck —
+// otherwise unused in most of these flows — so it shows up as a clean
+// "Policy Check" failure in the deploy timeline instead of a deep,
+// confusing PhaseRender error from env var resolution.
+func (r *Reconciler) checkSecretBackends(stackID, trigger, commitSHA string, stack *core.Record) error {
+	if err := envvars.CheckStackSecretBackends(r.app, stackID); err != nil {
+		errMsg := fmt.Sprintf("cannot deploy: %v", err)
+		_ = r.logFailureWithPhase(stackID, trigger, commitSHA, errMsg, constants.PhasePolicyCheck, time.Now())
+		r.markError(stack, "stacks")
+		return fmt.Errorf("%s", errMsg)
+	}
+	return nil
+}
+
 // recordWorkerAckAndComposeUpPhases backfills the worker_ack and compose_up
 // phases for a deploy/redeploy command once it has completed successfully.
 // worker_ack duration is reconstructed from worker_commands.acked_at (set by
@@ -1707,6 +1740,10 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 	stack, err := r.app.FindRecordById("stacks", stackID)
 	if err != nil {
 		return fmt.Errorf("stack not found: %w", err)
+	}
+
+	if err := r.checkSecretBackends(stackID, "transfer", "", stack); err != nil {
+		return err
 	}
 
 	sourceWorkerID := stack.GetString("worker")

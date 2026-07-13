@@ -1,9 +1,12 @@
 package routes
 
 import (
+	"os"
+
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/router"
 
+	"github.com/wireops/wireops/internal/crypto"
 	"github.com/wireops/wireops/internal/sync"
 )
 
@@ -30,7 +33,10 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 	registrar.registerSystemRoutes()
 	registrar.registerImportRoutes()
 	registrar.registerCreateFromWireopsRoute()
-	registrar.registerIntegrationRoutes()
+	secretKey := crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))
+	registrar.registerIntegrationRoutes(secretKey)
+	registrar.registerVaultBrowseRoutes()
+	registrar.registerInfisicalBrowseRoutes()
 
 	RegisterUserRoutes(r, app)
 }

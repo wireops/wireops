@@ -273,8 +273,14 @@ func ensureJobSchedulerCollections(t *testing.T, app core.App) {
 	env.Fields.Add(&core.TextField{Name: "key"})
 	env.Fields.Add(&core.TextField{Name: "value"})
 	env.Fields.Add(&core.BoolField{Name: "secret"})
+	env.Fields.Add(&core.TextField{Name: "secret_provider"})
 	mustSaveCollection(t, app, env)
 
+	integrations := core.NewBaseCollection("integrations")
+	integrations.Fields.Add(&core.TextField{Name: "slug", Required: true})
+	integrations.Fields.Add(&core.BoolField{Name: "enabled"})
+	integrations.Fields.Add(&core.JSONField{Name: "config"})
+	mustSaveCollection(t, app, integrations)
 }
 
 func createJobRepoRecord(t *testing.T, app core.App) *core.Record {

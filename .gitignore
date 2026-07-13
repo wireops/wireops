@@ -44,6 +44,8 @@ frontend/node_modules/
 data/
 repos/
 stacks/
+tests/*/.data/
+tests/infisical/.env
 __debug_bin*
 docs/roadmap
 worker_bin

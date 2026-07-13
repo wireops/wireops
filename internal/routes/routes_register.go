@@ -24,6 +24,7 @@ import (
 
 	"github.com/wireops/wireops/internal/compose"
 	"github.com/wireops/wireops/internal/config"
+	"github.com/wireops/wireops/internal/crypto"
 	"github.com/wireops/wireops/internal/git"
 	"github.com/wireops/wireops/internal/integrations"
 	"github.com/wireops/wireops/internal/job"
@@ -51,9 +52,82 @@ func sensitiveIntegrationConfigKeys(slug string) []string {
 		return []string{"url"}
 	case "webhook", "ntfy":
 		return []string{"secret"}
+	case "vault":
+		return []string{"token"}
+	case "infisical":
+		return []string{"client_secret"}
 	default:
 		return nil
 	}
+}
+
+// encryptedIntegrationConfigKeys is a subset of sensitiveIntegrationConfigKeys:
+// the keys that must actually be AES-GCM encrypted at rest (not just masked
+// in API responses), because they grant direct read access to an external
+// secret backend. webhook/ntfy/discord/slack sensitive values remain
+// plaintext at rest, matching existing behavior — only widen this list
+// deliberately.
+func encryptedIntegrationConfigKeys(slug string) []string {
+	switch slug {
+	case "vault", "infisical":
+		return sensitiveIntegrationConfigKeys(slug)
+	default:
+		return nil
+	}
+}
+
+// encryptIntegrationConfig AES-GCM encrypts encryptedIntegrationConfigKeys
+// fields in-place before the config JSON is persisted, mirroring how
+// git_password/ssh_private_key are handled for stack credentials.
+//
+// alreadyEncryptedKeys names keys resolveMaskedIntegrationConfig carried over
+// verbatim from the existing stored record (already ciphertext) — those must
+// be skipped, everything else gets encrypted unconditionally. This used to
+// rely on crypto.IsEncrypted to content-sniff "does this already look like
+// ciphertext", but that heuristic (valid base64 + length>12) false-positives
+// on plenty of real plaintext secrets — e.g. a 64-hex-char client_secret is
+// valid base64 alphabet at a length divisible by 4, so it silently skipped
+// encryption and persisted the secret in plaintext.
+func encryptIntegrationConfig(slug string, cfg map[string]interface{}, secretKey []byte, alreadyEncryptedKeys map[string]bool) error {
+	if len(secretKey) != 32 {
+		return nil
+	}
+	for _, key := range encryptedIntegrationConfigKeys(slug) {
+		if alreadyEncryptedKeys[key] {
+			continue
+		}
+		val, ok := cfg[key].(string)
+		if !ok || val == "" {
+			continue
+		}
+		encrypted, err := crypto.Encrypt([]byte(val), secretKey)
+		if err != nil {
+			return fmt.Errorf("failed to encrypt %s: %w", key, err)
+		}
+		cfg[key] = encrypted
+	}
+	return nil
+}
+
+func requiredIntegrationConfigKeys(slug string) []string {
+	switch slug {
+	case "vault":
+		return []string{"address", "token"}
+	case "infisical":
+		return []string{"client_id", "client_secret"}
+	default:
+		return nil
+	}
+}
+
+func validateRequiredIntegrationConfig(slug string, cfg map[string]interface{}) error {
+	for _, key := range requiredIntegrationConfigKeys(slug) {
+		val, _ := cfg[key].(string)
+		if strings.TrimSpace(val) == "" {
+			return fmt.Errorf("%s is required", key)
+		}
+	}
+	return nil
 }
 
 func maskIntegrationConfig(slug string, cfg map[string]interface{}) {
@@ -64,9 +138,15 @@ func maskIntegrationConfig(slug string, cfg map[string]interface{}) {
 	}
 }
 
-func (rr routeRegistrar) resolveMaskedIntegrationConfig(slug string, cfg map[string]interface{}) error {
+// resolveMaskedIntegrationConfig replaces any masked placeholder ("••••••••")
+// in cfg with the corresponding value from the existing stored record, and
+// returns the set of keys it resolved that way — those already hold whatever
+// encrypted-or-not form they were persisted in, so encryptIntegrationConfig
+// must skip re-processing them rather than guessing from their content.
+func (rr routeRegistrar) resolveMaskedIntegrationConfig(slug string, cfg map[string]interface{}) (map[string]bool, error) {
+	resolved := map[string]bool{}
 	if cfg == nil {
-		return nil
+		return resolved, nil
 	}
 
 	var savedConfig map[string]interface{}
@@ -79,26 +159,27 @@ func (rr routeRegistrar) resolveMaskedIntegrationConfig(slug string, cfg map[str
 		if savedConfig == nil {
 			recs, err := rr.app.FindAllRecords("integrations", dbx.HashExp{"slug": slug})
 			if err != nil {
-				return fmt.Errorf("failed to query existing integration record: %w", err)
+				return nil, fmt.Errorf("failed to query existing integration record: %w", err)
 			}
 			if len(recs) == 0 {
-				return fmt.Errorf("cannot resolve masked %s: no existing integration record found", key)
+				return nil, fmt.Errorf("cannot resolve masked %s: no existing integration record found", key)
 			}
 			if err := recs[0].UnmarshalJSONField("config", &savedConfig); err != nil {
-				return fmt.Errorf("failed to unmarshal existing configuration: %w", err)
+				return nil, fmt.Errorf("failed to unmarshal existing configuration: %w", err)
 			}
 			if savedConfig == nil {
-				return fmt.Errorf("cannot resolve masked %s: existing configuration is empty", key)
+				return nil, fmt.Errorf("cannot resolve masked %s: existing configuration is empty", key)
 			}
 		}
 
 		savedVal, ok := savedConfig[key].(string)
 		if !ok || savedVal == "" {
-			return fmt.Errorf("cannot resolve masked %s: no saved value found in existing configuration", key)
+			return nil, fmt.Errorf("cannot resolve masked %s: no saved value found in existing configuration", key)
 		}
 		cfg[key] = savedVal
+		resolved[key] = true
 	}
-	return nil
+	return resolved, nil
 }
 
 func (rr routeRegistrar) resolveWorker(workerID string) (*core.Record, error) {
@@ -672,7 +753,7 @@ func (rr routeRegistrar) registerSystemRoutes() {
 	}).BindFunc(rbac.Require(rbac.CapManageSettings))
 }
 
-func (rr routeRegistrar) registerIntegrationRoutes() {
+func (rr routeRegistrar) registerIntegrationRoutes(secretKey []byte) {
 	rr.r.GET("/api/custom/integrations", func(e *core.RequestEvent) error {
 		recs, err := rr.app.FindAllRecords("integrations", dbx.NewExp("1=1"))
 		if err != nil {
@@ -728,11 +809,23 @@ func (rr routeRegistrar) registerIntegrationRoutes() {
 		if err := json.NewDecoder(e.Request.Body).Decode(&body); err != nil {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid body"})
 		}
-		if err := rr.resolveMaskedIntegrationConfig(slug, body.Config); err != nil {
+		if body.Config == nil {
+			body.Config = map[string]interface{}{}
+		}
+		alreadyEncryptedKeys, err := rr.resolveMaskedIntegrationConfig(slug, body.Config)
+		if err != nil {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 		}
 		if err := notify.ValidateIntegrationConfig(slug, body.Config); err != nil {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+		}
+		if body.Enabled {
+			if err := validateRequiredIntegrationConfig(slug, body.Config); err != nil {
+				return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+			}
+		}
+		if err := encryptIntegrationConfig(slug, body.Config, secretKey, alreadyEncryptedKeys); err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
 
 		col, err := rr.app.FindCollectionByNameOrId("integrations")
@@ -877,7 +970,7 @@ func (rr routeRegistrar) registerIntegrationRoutes() {
 		if body.Config == nil {
 			body.Config = map[string]interface{}{}
 		}
-		if err := rr.resolveMaskedIntegrationConfig(slug, body.Config); err != nil {
+		if _, err := rr.resolveMaskedIntegrationConfig(slug, body.Config); err != nil {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 		}
 		if err := notify.ValidateIntegrationConfig(slug, body.Config); err != nil {
