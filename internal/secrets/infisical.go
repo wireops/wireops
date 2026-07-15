@@ -83,7 +83,7 @@ func (p *InfisicalSecretProvider) Resolve(ctx context.Context, rawValue string) 
 		SecretPath:  secretPath,
 	})
 	if err != nil {
-		return "", fmt.Errorf("infisical: failed to retrieve secret %q: %w", secretName, err)
+		return "", fmt.Errorf("infisical: failed to retrieve secret: %w", err)
 	}
 	return secret.SecretValue, nil
 }

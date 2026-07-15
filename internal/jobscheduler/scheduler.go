@@ -285,8 +285,11 @@ func (s *Scheduler) executeJob(jobID, trigger string, userID string) {
 
 	envMap, err := s.loadEnvVars(ctx, jobID)
 	if err != nil {
+		// Detail (err) may originate from secret-provider resolution (decrypt
+		// failures, Vault/Infisical errors) — keep it out of process logs and
+		// persist it only to the job_run record, which is access-controlled.
+		log.Printf("[jobscheduler] executeJob: cannot load env vars for job %s", jobID)
 		msg := fmt.Sprintf("cannot load env vars for job %s: %v", jobID, err)
-		log.Printf("[jobscheduler] executeJob: %s", msg)
 		if _, saveErr := s.createJobRun(jobID, "", trigger, "error", msg); saveErr != nil {
 			log.Printf("[jobscheduler] executeJob: failed to persist env error job=%s: %v", jobID, saveErr)
 		}
