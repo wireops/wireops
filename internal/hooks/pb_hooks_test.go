@@ -1,13 +1,18 @@
 package hooks
 
 import (
+	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
 	"github.com/pocketbase/pocketbase/tools/auth"
+	"github.com/pocketbase/pocketbase/tools/router"
 	"github.com/pocketbase/pocketbase/tools/types"
 
 	"github.com/wireops/wireops/internal/crypto"
@@ -169,6 +174,82 @@ func TestEnvSecretMaskedUpdatePreservesEncryptedValue(t *testing.T) {
 	}
 	if got := updated.GetString("value"); got != encryptedValue {
 		t.Fatalf("secret value changed on masked update: got %q, want %q", got, encryptedValue)
+	}
+}
+
+// TestEnvSecretExternalProviderValueNotEncrypted guards against a
+// regression where prepareEnvSecretRecord unconditionally AES-GCM encrypted
+// "value" for any secret=true record. Only the "internal" provider decrypts
+// it at Resolve time — vault/infisical expect their raw reference string
+// ("mount/data/path#field", "project/env#NAME") stored verbatim, so
+// encrypting it here would make Resolve() fail trying to parse ciphertext
+// as a reference.
+func TestEnvSecretExternalProviderValueNotEncrypted(t *testing.T) {
+	t.Setenv("SECRET_KEY", "12345678901234567890123456789012")
+
+	app, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatalf("new test app: %v", err)
+	}
+	t.Cleanup(func() { app.Cleanup() })
+
+	envVars := core.NewBaseCollection("stack_env_vars")
+	envVars.Fields.Add(&core.TextField{Name: "key"})
+	envVars.Fields.Add(&core.TextField{Name: "value"})
+	envVars.Fields.Add(&core.BoolField{Name: "secret"})
+	envVars.Fields.Add(&core.TextField{Name: "secret_provider"})
+	if err := app.Save(envVars); err != nil {
+		t.Fatalf("save stack_env_vars collection: %v", err)
+	}
+
+	Register(app, nil, nil)
+
+	rec := core.NewRecord(envVars)
+	rec.Set("key", "DB_PASS")
+	rec.Set("value", "secret/data/myapp#DB_PASS")
+	rec.Set("secret", true)
+	rec.Set("secret_provider", "vault")
+	if err := app.Save(rec); err != nil {
+		t.Fatalf("save vault-provider secret env var: %v", err)
+	}
+
+	saved, err := app.FindRecordById("stack_env_vars", rec.Id)
+	if err != nil {
+		t.Fatalf("find saved secret env var: %v", err)
+	}
+	if got := saved.GetString("value"); got != "secret/data/myapp#DB_PASS" {
+		t.Fatalf("vault reference was mangled: got %q, want raw reference", got)
+	}
+	if crypto.IsEncrypted(saved.GetString("value")) {
+		t.Fatal("vault reference must not be AES-GCM encrypted at rest")
+	}
+
+	// The API-facing enrich step must not blank an external provider's
+	// value either — it's a locator, not the secret, so the frontend needs
+	// to see and edit it like a normal field. Internal-provider secrets
+	// still get blanked (asserted below).
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
+	e := &core.RequestEvent{App: app, Event: router.Event{Response: httptest.NewRecorder(), Request: req}}
+	if err := apis.EnrichRecord(e, saved); err != nil {
+		t.Fatalf("enrich vault-provider record: %v", err)
+	}
+	if got := saved.GetString("value"); got != "secret/data/myapp#DB_PASS" {
+		t.Fatalf("vault reference was blanked by enrich: got %q", got)
+	}
+
+	internalRec := core.NewRecord(envVars)
+	internalRec.Set("key", "INTERNAL_TOKEN")
+	internalRec.Set("value", "s3cr3t")
+	internalRec.Set("secret", true)
+	internalRec.Set("secret_provider", "internal")
+	if err := app.Save(internalRec); err != nil {
+		t.Fatalf("save internal-provider secret env var: %v", err)
+	}
+	if err := apis.EnrichRecord(e, internalRec); err != nil {
+		t.Fatalf("enrich internal-provider record: %v", err)
+	}
+	if got := internalRec.GetString("value"); got != "" {
+		t.Fatalf("internal-provider secret was not blanked by enrich: got %q", got)
 	}
 }
 

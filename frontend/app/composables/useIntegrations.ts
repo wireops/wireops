@@ -39,6 +39,14 @@ export function useIntegrations() {
         })
     }
 
+    async function testVaultIntegration(config: Record<string, any>) {
+        return customPost<{ success: string; error?: string }>('/api/custom/integrations/vault/test', config)
+    }
+
+    async function testInfisicalIntegration(config: Record<string, any>) {
+        return customPost<{ success: string; error?: string }>('/api/custom/integrations/infisical/test', config)
+    }
+
     async function getStackIntegrationActions(stackId: string) {
         return customGet<Record<string, IntegrationAction[]>>(
             `/api/custom/stacks/${stackId}/integration-actions`
@@ -50,6 +58,8 @@ export function useIntegrations() {
         saveIntegration,
         deleteIntegration,
         testIntegration,
+        testVaultIntegration,
+        testInfisicalIntegration,
         getStackIntegrationActions,
     }
 }

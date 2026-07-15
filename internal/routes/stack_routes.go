@@ -515,7 +515,7 @@ func (rr routeRegistrar) registerStackDeleteRoute() {
 		if len(composeContent) > 0 && agentIsOnline {
 			var teardownEnvFileB64 string
 			secretKey := crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))
-			envVars, envLoadErr := envvars.LoadStack(e.Request.Context(), rr.app, secrets.NewDefaultRegistry(secretKey), stackID)
+			envVars, envLoadErr := envvars.LoadStack(e.Request.Context(), rr.app, secrets.NewDefaultRegistry(rr.app, secretKey), stackID)
 			if envLoadErr != nil {
 				return e.JSON(http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("failed to load env vars for teardown: %v", envLoadErr)})
 			}

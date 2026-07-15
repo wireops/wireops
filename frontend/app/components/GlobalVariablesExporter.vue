@@ -15,6 +15,11 @@ const { $pb } = useNuxtApp()
 const { canOperate } = usePermissions()
 const { subscribe } = useRealtime()
 const toast = useToast()
+const { iconFor, avatarFor, labelFor } = useSecretProviderOptions()
+
+function providerOf(variable: any) {
+  return variable.secret_provider || 'internal'
+}
 
 const globals = ref<any[]>([])
 const bindings = ref<any[]>([])
@@ -152,9 +157,18 @@ onMounted(() => {
     <div v-if="attachedVariables.length" class="divide-y divide-gray-200 dark:divide-carbon-800">
       <div v-for="variable in attachedVariables" :key="variable.id" class="py-2">
         <div class="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2rem_2rem_2rem] sm:items-center">
-          <UInput :model-value="variable.key" disabled class="font-mono opacity-60" />
-          <UInput v-if="variable.secret" model-value="••••••••" disabled type="password" class="font-mono opacity-60" />
-          <UInput v-else :model-value="variable.value" disabled class="font-mono opacity-60" />
+          <AppTextInput :model-value="variable.key" disabled class="font-mono" />
+          <AppTextInput
+            v-if="variable.secret"
+            model-value="••••••••"
+            disabled
+            type="password"
+            :icon="iconFor(providerOf(variable))"
+            :avatar="avatarFor(providerOf(variable))"
+            :title="`Stored via ${labelFor(providerOf(variable))}`"
+            class="font-mono"
+          />
+          <AppTextInput v-else :model-value="variable.value" disabled class="font-mono" />
           <div class="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-2 sm:contents">
             <div
               class="flex h-8 w-full items-center justify-center rounded-md bg-gray-100 text-gray-500 sm:w-8 sm:bg-transparent dark:bg-carbon-800 dark:text-gray-400 sm:dark:bg-transparent"
@@ -200,11 +214,11 @@ onMounted(() => {
           </template>
 
           <div class="w-full space-y-4">
-            <UInput v-model="addSearch" icon="i-lucide-search" placeholder="Search global variables..." class="w-full" />
+            <AppTextInput v-model="addSearch" icon="i-lucide-search" placeholder="Search global variables..." />
 
             <div v-if="filteredAvailableVariables.length" class="max-h-80 divide-y divide-gray-200 overflow-y-auto dark:divide-carbon-800">
               <div v-for="variable in filteredAvailableVariables" :key="variable.id" class="grid grid-cols-1 gap-2 py-3 sm:grid-cols-[minmax(0,1fr)_2rem_auto] sm:items-center">
-                <UInput :model-value="variable.key" disabled class="font-mono opacity-60" />
+                <AppTextInput :model-value="variable.key" disabled class="font-mono" />
                 <div class="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-2 sm:contents">
                   <div
                     class="flex h-8 w-full items-center justify-center rounded-md bg-gray-100 text-gray-500 sm:w-8 sm:bg-transparent dark:bg-carbon-800 dark:text-gray-400 sm:dark:bg-transparent"

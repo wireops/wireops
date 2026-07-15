@@ -8,6 +8,8 @@ import webhookIcon from '~/assets/img/icons/integrations/webhook.svg'
 import ntfyIcon from '~/assets/img/icons/integrations/ntfy.svg'
 import discordIcon from '~/assets/img/icons/integrations/discord.svg'
 import slackIcon from '~/assets/img/icons/integrations/slack.svg'
+import vaultIcon from '~/assets/img/icons/integrations/hashicorp-vault.svg'
+import infisicalIcon from '~/assets/img/icons/integrations/infisical.svg'
 
 const toast = useToast()
 const { getIntegrations, saveIntegration } = useIntegrations()
@@ -37,6 +39,84 @@ const caddyIntegration = ref<any>(null)
 
 const showNginxProxyManagerModal = ref(false)
 const nginxProxyManagerIntegration = ref<any>(null)
+
+const showVaultModal = ref(false)
+const vaultIntegration = ref<any>(null)
+
+const showInfisicalModal = ref(false)
+const infisicalIntegration = ref<any>(null)
+
+interface IntegrationMeta {
+  icon: string
+  description: string
+  docLink: string
+  open: (integration: any) => void
+}
+
+const integrationMeta: Record<string, IntegrationMeta> = {
+  ntfy: {
+    icon: ntfyIcon,
+    description: 'Push notifications to ntfy.sh or self-hosted topics.',
+    docLink: 'https://ntfy.sh',
+    open: integration => { ntfyIntegration.value = integration; showNtfyModal.value = true }
+  },
+  webhook: {
+    icon: webhookIcon,
+    description: 'Send event payloads to custom HTTP endpoints.',
+    docLink: 'https://webhook.site',
+    open: integration => { webhookIntegration.value = integration; showWebhookModal.value = true }
+  },
+  discord: {
+    icon: discordIcon,
+    description: 'Send sync notifications to a Discord channel.',
+    docLink: 'https://support.discord.com/hc/en-us/articles/228383668-Intro-to-Webhooks',
+    open: integration => { discordIntegration.value = integration; showDiscordModal.value = true }
+  },
+  slack: {
+    icon: slackIcon,
+    description: 'Send sync notifications to a Slack channel.',
+    docLink: 'https://api.slack.com/messaging/webhooks',
+    open: integration => { slackIntegration.value = integration; showSlackModal.value = true }
+  },
+  dozzle: {
+    icon: dozzleIcon,
+    description: 'Realtime log viewer for Docker containers.',
+    docLink: 'https://dozzle.dev',
+    open: integration => { dozzleIntegration.value = integration; showDozzleModal.value = true }
+  },
+  traefik: {
+    icon: traefikIcon,
+    description: 'HTTP reverse proxy and load balancer.',
+    docLink: 'https://doc.traefik.io/traefik/',
+    open: integration => { traefikIntegration.value = integration; showTraefikModal.value = true }
+  },
+  caddy: {
+    icon: caddyIcon,
+    description: 'Discover Caddy Docker Proxy routes from labels.',
+    docLink: 'https://github.com/lucaslorentz/caddy-docker-proxy',
+    open: integration => { caddyIntegration.value = integration; showCaddyModal.value = true }
+  },
+  'nginx-proxy-manager': {
+    icon: nginxProxyManagerIcon,
+    description: 'Open Nginx Proxy Manager routes from wireops labels.',
+    docLink: 'https://nginxproxymanager.com/guide/',
+    open: integration => { nginxProxyManagerIntegration.value = integration; showNginxProxyManagerModal.value = true }
+  },
+  vault: {
+    icon: vaultIcon,
+    description: 'Resolve secret env vars from a Vault KV v2 secrets engine.',
+    docLink: 'https://developer.hashicorp.com/vault/docs',
+    open: integration => { vaultIntegration.value = integration; showVaultModal.value = true }
+  },
+  infisical: {
+    icon: infisicalIcon,
+    description: 'Resolve secret env vars from Infisical via Universal Auth.',
+    docLink: 'https://infisical.com/docs',
+    open: integration => { infisicalIntegration.value = integration; showInfisicalModal.value = true }
+  }
+}
+
+const configurableSlugs = Object.keys(integrationMeta)
 
 
 const groupedIntegrations = computed(() => {
@@ -91,67 +171,24 @@ async function handleSaveIntegration(integration: any, isToggle = false) {
 }
 
 function configureIntegration(integration: any) {
-  if (integration.slug === 'ntfy') {
-    ntfyIntegration.value = integration
-    showNtfyModal.value = true
-  } else if (integration.slug === 'webhook') {
-    webhookIntegration.value = integration
-    showWebhookModal.value = true
-  } else if (integration.slug === 'discord') {
-    discordIntegration.value = integration
-    showDiscordModal.value = true
-  } else if (integration.slug === 'slack') {
-    slackIntegration.value = integration
-    showSlackModal.value = true
-  } else if (integration.slug === 'dozzle') {
-    dozzleIntegration.value = integration
-    showDozzleModal.value = true
-  } else if (integration.slug === 'traefik') {
-    traefikIntegration.value = integration
-    showTraefikModal.value = true
-  } else if (integration.slug === 'caddy') {
-    caddyIntegration.value = integration
-    showCaddyModal.value = true
-  } else if (integration.slug === 'nginx-proxy-manager') {
-    nginxProxyManagerIntegration.value = integration
-    showNginxProxyManagerModal.value = true
-  }
+  integrationMeta[integration.slug]?.open(integration)
 }
 
 function getIntegrationIcon(slug: string) {
-  if (slug === 'dozzle') return dozzleIcon
-  if (slug === 'traefik') return traefikIcon
-  if (slug === 'caddy') return caddyIcon
-  if (slug === 'nginx-proxy-manager') return nginxProxyManagerIcon
-  if (slug === 'webhook') return webhookIcon
-  if (slug === 'ntfy') return ntfyIcon
-  if (slug === 'discord') return discordIcon
-  if (slug === 'slack') return slackIcon
-  return ''
+  return integrationMeta[slug]?.icon ?? ''
+}
+
+// Fallback for any future integration without a bundled SVG asset yet.
+function getIntegrationFallbackIcon() {
+  return 'i-lucide-puzzle'
 }
 
 function getIntegrationDescription(slug: string) {
-  if (slug === 'dozzle') return 'Realtime log viewer for Docker containers.'
-  if (slug === 'traefik') return 'HTTP reverse proxy and load balancer.'
-  if (slug === 'caddy') return 'Discover Caddy Docker Proxy routes from labels.'
-  if (slug === 'nginx-proxy-manager') return 'Open Nginx Proxy Manager routes from wireops labels.'
-  if (slug === 'webhook') return 'Send event payloads to custom HTTP endpoints.'
-  if (slug === 'ntfy') return 'Push notifications to ntfy.sh or self-hosted topics.'
-  if (slug === 'discord') return 'Send sync notifications to a Discord channel.'
-  if (slug === 'slack') return 'Send sync notifications to a Slack channel.'
-  return ''
+  return integrationMeta[slug]?.description ?? ''
 }
 
 function getIntegrationDocLink(slug: string) {
-  if (slug === 'dozzle') return 'https://dozzle.dev'
-  if (slug === 'traefik') return 'https://doc.traefik.io/traefik/'
-  if (slug === 'caddy') return 'https://github.com/lucaslorentz/caddy-docker-proxy'
-  if (slug === 'nginx-proxy-manager') return 'https://nginxproxymanager.com/guide/'
-  if (slug === 'ntfy') return 'https://ntfy.sh'
-  if (slug === 'webhook') return 'https://webhook.site'
-  if (slug === 'discord') return 'https://support.discord.com/hc/en-us/articles/228383668-Intro-to-Webhooks'
-  if (slug === 'slack') return 'https://api.slack.com/messaging/webhooks'
-  return ''
+  return integrationMeta[slug]?.docLink ?? ''
 }
 
 onMounted(() => {
@@ -194,9 +231,9 @@ onMounted(() => {
                     <h3 class="font-bold text-base text-gray-950 dark:text-wire-200">{{ integration.name }}</h3>
                     <div class="flex items-center gap-2">
                       <USwitch v-model="integration.enabled" @update:model-value="handleSaveIntegration(integration, true)" />
-                      <UButton 
-                        v-if="integration.slug === 'webhook' || integration.slug === 'ntfy' || integration.slug === 'discord' || integration.slug === 'slack' || integration.slug === 'dozzle' || integration.slug === 'traefik' || integration.slug === 'caddy' || integration.slug === 'nginx-proxy-manager'"
-                        icon="i-lucide-settings" 
+                      <UButton
+                        v-if="configurableSlugs.includes(integration.slug)"
+                        icon="i-lucide-settings"
                         size="xs" 
                         variant="ghost" 
                         color="neutral"
@@ -219,7 +256,8 @@ onMounted(() => {
                 <div class="flex flex-col items-center justify-center p-6 space-y-4">
                   <!-- Large Icon -->
                   <div class="w-20 h-20 rounded-2xl bg-gray-50 dark:bg-carbon-800 flex items-center justify-center p-4 shadow-inner">
-                    <img :src="getIntegrationIcon(integration.slug)" class="w-12 h-12 object-contain" alt="">
+                    <img v-if="getIntegrationIcon(integration.slug)" :src="getIntegrationIcon(integration.slug)" class="w-12 h-12 object-contain" alt="">
+                    <UIcon v-else :name="getIntegrationFallbackIcon()" class="w-10 h-10 text-primary-500" />
                   </div>
                   
                   <!-- Discrete Description -->
@@ -279,6 +317,18 @@ onMounted(() => {
     <IntegrationsNginxProxyManagerConfigModal
       v-model:open="showNginxProxyManagerModal"
       :integration="nginxProxyManagerIntegration"
+      @saved="loadIntegrations"
+    />
+
+    <IntegrationsVaultConfigModal
+      v-model:open="showVaultModal"
+      :integration="vaultIntegration"
+      @saved="loadIntegrations"
+    />
+
+    <IntegrationsInfisicalConfigModal
+      v-model:open="showInfisicalModal"
+      :integration="infisicalIntegration"
       @saved="loadIntegrations"
     />
   </div>

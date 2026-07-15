@@ -75,7 +75,7 @@ func NewScheduler(app core.App, dispatcher WorkerDispatcher, repoWorkspace strin
 		app:             app,
 		dispatcher:      dispatcher,
 		repoWorkspace:   repoWorkspace,
-		secretsRegistry: secrets.NewDefaultRegistry(secretKey),
+		secretsRegistry: secrets.NewDefaultRegistry(app, secretKey),
 		entries:         make(map[string]cron.EntryID),
 		rootCtx:         rootCtx,
 		rootCancel:      rootCancel,
@@ -242,6 +242,21 @@ func (s *Scheduler) executeJob(jobID, trigger string, userID string) {
 		return
 	}
 
+	// Fast pre-flight gate: reject immediately if a referenced vault/infisical
+	// backend is disabled, before parsing job.yaml or picking a worker —
+	// otherwise this is only discovered later inside loadEnvVars.
+	if err := envvars.CheckJobSecretBackends(s.app, jobID); err != nil {
+		msg := fmt.Sprintf("secret backend unavailable for job %s: %v", jobID, err)
+		log.Printf("[jobscheduler] executeJob: %s", msg)
+		if _, saveErr := s.createJobRun(jobID, "", trigger, "error", msg); saveErr != nil {
+			log.Printf("[jobscheduler] executeJob: failed to persist secret backend error job=%s: %v", jobID, saveErr)
+		}
+		if saveErr := s.setScheduledJobStatus(jobID, "error"); saveErr != nil {
+			log.Printf("[jobscheduler] executeJob: failed to mark job error job=%s: %v", jobID, saveErr)
+		}
+		return
+	}
+
 	repoID := rec.GetString("repository")
 	jobFile := rec.GetString("job_file")
 
@@ -270,8 +285,11 @@ func (s *Scheduler) executeJob(jobID, trigger string, userID string) {
 
 	envMap, err := s.loadEnvVars(ctx, jobID)
 	if err != nil {
+		// Detail (err) may originate from secret-provider resolution (decrypt
+		// failures, Vault/Infisical errors) — keep it out of process logs and
+		// persist it only to the job_run record, which is access-controlled.
+		log.Printf("[jobscheduler] executeJob: cannot load env vars for job %s", jobID)
 		msg := fmt.Sprintf("cannot load env vars for job %s: %v", jobID, err)
-		log.Printf("[jobscheduler] executeJob: %s", msg)
 		if _, saveErr := s.createJobRun(jobID, "", trigger, "error", msg); saveErr != nil {
 			log.Printf("[jobscheduler] executeJob: failed to persist env error job=%s: %v", jobID, saveErr)
 		}

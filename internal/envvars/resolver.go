@@ -17,6 +17,7 @@ import (
 // LoadStack resolves the effective environment for a stack. Global variables
 // are loaded first and stack-local variables override them by key.
 func LoadStack(ctx context.Context, app core.App, registry *secrets.Registry, stackID string) ([]string, error) {
+	ctx = secrets.WithResolveCache(ctx)
 	values, err := loadEffective(ctx, app, registry, "stack_env_vars", "stack", stackID, "stack_global_env_vars")
 	if err != nil {
 		return nil, err
@@ -27,6 +28,7 @@ func LoadStack(ctx context.Context, app core.App, registry *secrets.Registry, st
 // LoadJob resolves the effective environment for a scheduled job. Global
 // variables are loaded first and job-local variables override them by key.
 func LoadJob(ctx context.Context, app core.App, registry *secrets.Registry, jobID string) (map[string]string, error) {
+	ctx = secrets.WithResolveCache(ctx)
 	return loadEffective(ctx, app, registry, "job_env_vars", "job", jobID, "job_global_env_vars")
 }
 

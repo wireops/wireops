@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { ref, computed, onMounted, watch } from 'vue'
+
 type TargetType = 'stack' | 'job'
 
 const props = defineProps<{
@@ -13,6 +15,7 @@ const emit = defineEmits<{
 const { $pb } = useNuxtApp()
 const { subscribe } = useRealtime()
 const toast = useToast()
+const { load: loadProviderOptions, providerOptions, hasActiveBackends, iconFor, avatarFor, labelFor } = useSecretProviderOptions()
 
 const envVars = ref<any[]>([])
 const loading = ref(false)
@@ -26,9 +29,28 @@ const envToDelete = ref<any | null>(null)
 const newEnvKey = ref('')
 const newEnvValue = ref('')
 const newEnvSecret = ref(true)
+const newEnvProvider = ref('internal')
 const editEnvKey = ref('')
 const editEnvValue = ref('')
 const editEnvSecret = ref(false)
+const editEnvProvider = ref('internal')
+
+// vault/infisical "value" is just a reference to where the secret lives
+// (e.g. "mount/data/path#field") — not the secret itself — so it isn't
+// sensitive and shouldn't be masked/hidden like an internal-provider secret.
+function isInternalSecret(env: any) {
+  return env.secret && (!env.secret_provider || env.secret_provider === 'internal')
+}
+
+function providerOf(env: any) {
+  return env.secret_provider || 'internal'
+}
+
+// Once a secret var is stored under a provider, its provider is locked —
+// only newly-created vars, or plain vars being converted to secret for the
+// first time, get to pick one.
+const editingOriginal = computed(() => envVars.value.find(env => env.id === editingEnvId.value))
+const canChangeEditProvider = computed(() => !editingOriginal.value?.secret)
 
 const collection = computed(() => props.targetType === 'stack' ? 'stack_env_vars' : 'job_env_vars')
 const targetField = computed(() => props.targetType === 'stack' ? 'stack' : 'job')
@@ -41,6 +63,7 @@ function resetNewEnv() {
   newEnvKey.value = ''
   newEnvValue.value = ''
   newEnvSecret.value = true
+  newEnvProvider.value = 'internal'
 }
 
 function startCreateEnv() {
@@ -89,6 +112,7 @@ async function addEnvVar() {
       key: newEnvKey.value.trim(),
       value: newEnvValue.value,
       secret: newEnvSecret.value,
+      secret_provider: newEnvSecret.value ? newEnvProvider.value : '',
     }, { requestKey: null })
     resetNewEnv()
     creating.value = false
@@ -107,8 +131,9 @@ function startEditEnv(env: any) {
   showCreateModal.value = false
   editingEnvId.value = env.id
   editEnvKey.value = env.key
-  editEnvValue.value = env.secret ? '' : env.value
+  editEnvValue.value = isInternalSecret(env) ? '' : env.value
   editEnvSecret.value = env.secret
+  editEnvProvider.value = env.secret_provider || 'internal'
 }
 
 function cancelEditEnv() {
@@ -123,6 +148,7 @@ async function saveEditEnv(id: string) {
     const data: Record<string, any> = {
       key: editEnvKey.value.trim(),
       secret: editEnvSecret.value,
+      secret_provider: editEnvSecret.value ? editEnvProvider.value : '',
     }
     if (!editEnvSecret.value || !original?.secret || editEnvValue.value !== '') {
       data.value = editEnvValue.value
@@ -163,6 +189,7 @@ async function confirmDeleteEnvVar() {
 
 onMounted(() => {
   load()
+  loadProviderOptions()
   subscribe(collection.value, (event: any) => {
     if (event.record?.[targetField.value] === props.targetId) load()
   })
@@ -193,8 +220,28 @@ watch(showCreateModal, (open) => {
     <div>
       <div v-if="creating || envVars.length" class="divide-y divide-gray-200 dark:divide-gray-800">
         <form v-if="creating" class="grid grid-cols-1 gap-2 py-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2rem_2rem_2rem] sm:items-center" @submit.prevent="addEnvVar">
-          <UInput v-model="newEnvKey" placeholder="KEY" class="font-mono" />
-          <UInput v-model="newEnvValue" placeholder="value" :type="newEnvSecret ? 'password' : 'text'" class="font-mono" />
+          <AppTextInput v-model="newEnvKey" placeholder="KEY" class="font-mono" />
+          <div class="flex items-center gap-1">
+            <AppSelectInput
+              v-if="newEnvSecret && hasActiveBackends"
+              v-model="newEnvProvider"
+              :items="providerOptions"
+              :searchable="false"
+              content-width
+              class="font-mono shrink-0"
+            />
+            <IntegrationsVaultReferencePicker v-if="newEnvSecret && newEnvProvider === 'vault'" v-model="newEnvValue" />
+            <IntegrationsInfisicalReferencePicker v-else-if="newEnvSecret && newEnvProvider === 'infisical'" v-model="newEnvValue" />
+            <AppTextInput
+              v-else
+              v-model="newEnvValue"
+              placeholder="value"
+              :type="newEnvSecret ? 'password' : 'text'"
+              :icon="newEnvSecret ? iconFor(newEnvProvider) : undefined"
+              :avatar="newEnvSecret ? avatarFor(newEnvProvider) : undefined"
+              class="font-mono w-full"
+            />
+          </div>
           <div class="grid grid-cols-3 gap-2 sm:contents">
             <UButton
               type="button"
@@ -217,8 +264,29 @@ watch(showCreateModal, (open) => {
         <div v-for="env in envVars" :key="env.id" class="py-2">
           <template v-if="editingEnvId === env.id">
             <div class="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2rem_2rem_2rem] sm:items-center">
-              <UInput v-model="editEnvKey" placeholder="KEY" class="font-mono" />
-              <UInput v-model="editEnvValue" :placeholder="env.secret ? '(unchanged if empty)' : 'value'" :type="editEnvSecret ? 'password' : 'text'" class="font-mono" />
+              <AppTextInput v-model="editEnvKey" placeholder="KEY" class="font-mono" />
+              <div class="flex items-center gap-1">
+                <AppSelectInput
+                  v-if="editEnvSecret && hasActiveBackends && canChangeEditProvider"
+                  v-model="editEnvProvider"
+                  :items="providerOptions"
+                  :searchable="false"
+                  content-width
+                  class="font-mono shrink-0"
+                />
+                <IntegrationsVaultReferencePicker v-if="editEnvSecret && editEnvProvider === 'vault'" v-model="editEnvValue" />
+                <IntegrationsInfisicalReferencePicker v-else-if="editEnvSecret && editEnvProvider === 'infisical'" v-model="editEnvValue" />
+                <AppTextInput
+                  v-else
+                  v-model="editEnvValue"
+                  :placeholder="editEnvSecret ? '(unchanged if empty)' : 'value'"
+                  :type="editEnvSecret ? 'password' : 'text'"
+                  :icon="editEnvSecret ? iconFor(editEnvProvider) : undefined"
+                  :avatar="editEnvSecret ? avatarFor(editEnvProvider) : undefined"
+                  :title="editEnvSecret ? (!canChangeEditProvider ? `Locked to ${labelFor(editEnvProvider)}` : labelFor(editEnvProvider)) : undefined"
+                  class="font-mono w-full"
+                />
+              </div>
               <UButton
                 type="button"
                 :icon="editEnvSecret ? 'i-lucide-lock' : 'i-lucide-variable'"
@@ -239,9 +307,25 @@ watch(showCreateModal, (open) => {
 
           <template v-else>
             <div class="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2rem_2rem_2rem] sm:items-center">
-              <UInput :model-value="env.key" disabled class="font-mono opacity-60" />
-              <UInput v-if="env.secret" model-value="••••••••" disabled type="password" class="font-mono opacity-60" />
-              <UInput v-else :model-value="env.value" disabled class="font-mono opacity-60" />
+              <AppTextInput :model-value="env.key" disabled class="font-mono" />
+              <AppTextInput
+                v-if="isInternalSecret(env)"
+                model-value="••••••••"
+                disabled
+                type="password"
+                :icon="iconFor(providerOf(env))"
+                :title="`Stored via ${labelFor(providerOf(env))}`"
+                class="font-mono"
+              />
+              <AppTextInput
+                v-else
+                :model-value="env.value"
+                disabled
+                :icon="env.secret ? iconFor(providerOf(env)) : undefined"
+                :avatar="env.secret ? avatarFor(providerOf(env)) : undefined"
+                :title="env.secret ? `Stored via ${labelFor(providerOf(env))}` : undefined"
+                class="font-mono"
+              />
               <div class="grid grid-cols-3 gap-2 sm:contents">
                 <div
                   class="flex h-8 w-full items-center justify-center rounded-md bg-gray-100 text-gray-500 sm:w-8 sm:bg-transparent dark:bg-carbon-800 dark:text-gray-400 sm:dark:bg-transparent"
@@ -250,7 +334,7 @@ watch(showCreateModal, (open) => {
                   <UIcon
                     :name="env.secret ? 'i-lucide-lock' : 'i-lucide-variable'"
                     class="h-4 w-4"
-                    :title="env.secret ? 'Secret' : 'Plain text'"
+                    :title="env.secret ? (isInternalSecret(env) ? 'Secret' : `Secret (${env.secret_provider} reference)`) : 'Plain text'"
                   />
                 </div>
                 <UButton icon="i-lucide-pencil" variant="ghost" size="xs" class="h-8 w-full justify-center bg-sky-500/10 p-0 text-sky-600 hover:bg-sky-500/15 sm:w-8 sm:bg-transparent sm:text-inherit sm:hover:bg-transparent dark:text-sky-400" aria-label="Edit environment variable" @click="startEditEnv(env)" />
@@ -275,11 +359,25 @@ watch(showCreateModal, (open) => {
 
           <form class="space-y-4" @submit.prevent="addEnvVar">
             <UFormField label="Key" required>
-              <UInput v-model="newEnvKey" placeholder="KEY" class="w-full font-mono" />
+              <AppTextInput v-model="newEnvKey" placeholder="KEY" class="font-mono" />
+            </UFormField>
+
+            <UFormField v-if="newEnvSecret && hasActiveBackends" label="Provider">
+              <AppSelectInput v-model="newEnvProvider" :items="providerOptions" :searchable="false" class="w-full" />
             </UFormField>
 
             <UFormField label="Value">
-              <UInput v-model="newEnvValue" placeholder="value" :type="newEnvSecret ? 'password' : 'text'" class="w-full font-mono" />
+              <IntegrationsVaultReferencePicker v-if="newEnvSecret && newEnvProvider === 'vault'" v-model="newEnvValue" />
+              <IntegrationsInfisicalReferencePicker v-else-if="newEnvSecret && newEnvProvider === 'infisical'" v-model="newEnvValue" />
+              <AppTextInput
+                v-else
+                v-model="newEnvValue"
+                placeholder="value"
+                :type="newEnvSecret ? 'password' : 'text'"
+                :icon="newEnvSecret ? iconFor(newEnvProvider) : undefined"
+                :avatar="newEnvSecret ? avatarFor(newEnvProvider) : undefined"
+                class="font-mono"
+              />
             </UFormField>
 
             <UButton

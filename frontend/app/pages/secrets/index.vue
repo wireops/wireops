@@ -22,10 +22,13 @@ const creating = ref(false)
 const showCreateModal = ref(false)
 const variableToDelete = ref<any | null>(null)
 
+const { load: loadProviderOptions, providerOptions, hasActiveBackends, iconFor, avatarFor, labelFor } = useSecretProviderOptions()
+
 const form = ref({
   key: '',
   value: '',
   secret: true,
+  secret_provider: 'internal',
 })
 
 const editingId = ref('')
@@ -33,7 +36,25 @@ const editForm = ref({
   key: '',
   value: '',
   secret: false,
+  secret_provider: 'internal',
 })
+
+// vault/infisical "value" is just a reference to where the secret lives
+// (e.g. "mount/data/path#field") — not the secret itself — so it isn't
+// sensitive and shouldn't be masked/hidden like an internal-provider secret.
+function isInternalSecret(variable: any) {
+  return variable.secret && (!variable.secret_provider || variable.secret_provider === 'internal')
+}
+
+function providerOf(variable: any) {
+  return variable.secret_provider || 'internal'
+}
+
+// Once a secret var is stored under a provider, its provider is locked —
+// only newly-created vars, or plain vars being converted to secret for the
+// first time, get to pick one.
+const editingOriginal = computed(() => globals.value.find(v => v.id === editingId.value))
+const canChangeEditProvider = computed(() => !editingOriginal.value?.secret)
 
 const usage = computed(() => {
   const counts: Record<string, { stacks: number, jobs: number }> = {}
@@ -106,7 +127,7 @@ watch(showCreateModal, (open) => {
 })
 
 function resetForm() {
-  form.value = { key: '', value: '', secret: true }
+  form.value = { key: '', value: '', secret: true, secret_provider: 'internal' }
 }
 
 function startCreate() {
@@ -137,6 +158,7 @@ async function createVariable() {
       key: form.value.key.trim(),
       value: form.value.value,
       secret: form.value.secret,
+      secret_provider: form.value.secret ? form.value.secret_provider : '',
     }, {
       requestKey: null,
     })
@@ -158,8 +180,9 @@ function startEdit(variable: any) {
   editingId.value = variable.id
   editForm.value = {
     key: variable.key,
-    value: variable.secret ? '' : variable.value,
+    value: isInternalSecret(variable) ? '' : variable.value,
     secret: variable.secret,
+    secret_provider: variable.secret_provider || 'internal',
   }
 }
 
@@ -174,6 +197,7 @@ async function saveEdit(variable: any) {
     const payload: Record<string, any> = {
       key: editForm.value.key.trim(),
       secret: editForm.value.secret,
+      secret_provider: editForm.value.secret ? editForm.value.secret_provider : '',
     }
     if (!variable.secret || editForm.value.value || variable.secret !== editForm.value.secret) {
       payload.value = editForm.value.value
@@ -217,6 +241,7 @@ async function confirmDeleteVariable() {
 
 onMounted(() => {
   load()
+  loadProviderOptions()
   subscribe('global_env_vars', () => load())
   subscribe('stack_global_env_vars', () => load())
   subscribe('job_global_env_vars', () => load())
@@ -270,8 +295,28 @@ onMounted(() => {
 
       <div v-if="creating || globals.length" class="divide-y divide-gray-200 dark:divide-carbon-800">
         <form v-if="creating" class="grid grid-cols-1 gap-2 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2rem_2rem_2rem] sm:items-center" @submit.prevent="createVariable">
-          <UInput v-model="form.key" placeholder="KEY" class="font-mono" />
-          <UInput v-model="form.value" placeholder="value" :type="form.secret ? 'password' : 'text'" class="font-mono" />
+          <AppTextInput v-model="form.key" placeholder="KEY" class="font-mono" />
+          <div class="flex items-center gap-1">
+            <AppSelectInput
+              v-if="form.secret && hasActiveBackends"
+              v-model="form.secret_provider"
+              :items="providerOptions"
+              :searchable="false"
+              content-width
+              class="font-mono shrink-0"
+            />
+            <IntegrationsVaultReferencePicker v-if="form.secret && form.secret_provider === 'vault'" v-model="form.value" />
+            <IntegrationsInfisicalReferencePicker v-else-if="form.secret && form.secret_provider === 'infisical'" v-model="form.value" />
+            <AppTextInput
+              v-else
+              v-model="form.value"
+              placeholder="value"
+              :type="form.secret ? 'password' : 'text'"
+              :icon="form.secret ? iconFor(form.secret_provider) : undefined"
+              :avatar="form.secret ? avatarFor(form.secret_provider) : undefined"
+              class="font-mono w-full"
+            />
+          </div>
           <div class="grid grid-cols-3 gap-2 sm:contents">
             <UButton
               type="button"
@@ -293,8 +338,29 @@ onMounted(() => {
 
         <div v-for="variable in globals" :key="variable.id" class="py-2">
           <div v-if="editingId === variable.id" class="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2rem_2rem_2rem] sm:items-center">
-            <UInput v-model="editForm.key" placeholder="KEY" class="font-mono" />
-            <UInput v-model="editForm.value" :placeholder="variable.secret ? '(unchanged if empty)' : 'value'" :type="editForm.secret ? 'password' : 'text'" class="font-mono" />
+            <AppTextInput v-model="editForm.key" placeholder="KEY" class="font-mono" />
+            <div class="flex items-center gap-1">
+              <AppSelectInput
+                v-if="editForm.secret && hasActiveBackends && canChangeEditProvider"
+                v-model="editForm.secret_provider"
+                :items="providerOptions"
+                :searchable="false"
+                content-width
+                class="font-mono shrink-0"
+              />
+              <IntegrationsVaultReferencePicker v-if="editForm.secret && editForm.secret_provider === 'vault'" v-model="editForm.value" />
+              <IntegrationsInfisicalReferencePicker v-else-if="editForm.secret && editForm.secret_provider === 'infisical'" v-model="editForm.value" />
+              <AppTextInput
+                v-else
+                v-model="editForm.value"
+                :placeholder="editForm.secret ? '(unchanged if empty)' : 'value'"
+                :type="editForm.secret ? 'password' : 'text'"
+                :icon="editForm.secret ? iconFor(editForm.secret_provider) : undefined"
+                :avatar="editForm.secret ? avatarFor(editForm.secret_provider) : undefined"
+                :title="editForm.secret ? (!canChangeEditProvider ? `Locked to ${labelFor(editForm.secret_provider)}` : labelFor(editForm.secret_provider)) : undefined"
+                class="font-mono w-full"
+              />
+            </div>
             <UButton
               type="button"
               :icon="editForm.secret ? 'i-lucide-lock' : 'i-lucide-variable'"
@@ -313,9 +379,25 @@ onMounted(() => {
           </div>
 
           <div v-else class="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2rem_2rem_2rem] sm:items-center">
-            <UInput :model-value="variable.key" disabled class="font-mono opacity-60" />
-            <UInput v-if="variable.secret" model-value="••••••••" disabled type="password" class="font-mono opacity-60" />
-            <UInput v-else :model-value="variable.value" disabled class="font-mono opacity-60" />
+            <AppTextInput :model-value="variable.key" disabled class="font-mono" />
+            <AppTextInput
+              v-if="isInternalSecret(variable)"
+              model-value="••••••••"
+              disabled
+              type="password"
+              :icon="iconFor(providerOf(variable))"
+              :title="`Stored via ${labelFor(providerOf(variable))}`"
+              class="font-mono"
+            />
+            <AppTextInput
+              v-else
+              :model-value="variable.value"
+              disabled
+              :icon="variable.secret ? iconFor(providerOf(variable)) : undefined"
+              :avatar="variable.secret ? avatarFor(providerOf(variable)) : undefined"
+              :title="variable.secret ? `Stored via ${labelFor(providerOf(variable))}` : undefined"
+              class="font-mono"
+            />
             <div class="grid grid-cols-3 gap-2 sm:contents">
               <div
                 class="flex h-8 w-full items-center justify-center rounded-md bg-gray-100 text-gray-500 sm:w-8 sm:bg-transparent dark:bg-carbon-800 dark:text-gray-400 sm:dark:bg-transparent"
@@ -324,7 +406,7 @@ onMounted(() => {
                 <UIcon
                   :name="variable.secret ? 'i-lucide-lock' : 'i-lucide-variable'"
                   class="h-4 w-4"
-                  :title="variable.secret ? 'Secret' : 'Plain text'"
+                  :title="variable.secret ? (isInternalSecret(variable) ? 'Secret' : `Secret (${variable.secret_provider} reference)`) : 'Plain text'"
                 />
               </div>
               <UButton v-if="canOperate" icon="i-lucide-pencil" variant="ghost" color="neutral" size="xs" class="h-8 w-full justify-center bg-sky-500/10 p-0 text-sky-600 hover:bg-sky-500/15 sm:w-8 sm:bg-transparent sm:text-inherit sm:hover:bg-transparent dark:text-sky-400" aria-label="Edit variable" @click="startEdit(variable)" />
@@ -367,11 +449,25 @@ onMounted(() => {
 
           <form class="space-y-4" @submit.prevent="createVariable">
             <UFormField label="Key" required>
-              <UInput v-model="form.key" placeholder="KEY" class="w-full font-mono" />
+              <AppTextInput v-model="form.key" placeholder="KEY" class="font-mono" />
+            </UFormField>
+
+            <UFormField v-if="form.secret && hasActiveBackends" label="Provider">
+              <AppSelectInput v-model="form.secret_provider" :items="providerOptions" :searchable="false" class="w-full" />
             </UFormField>
 
             <UFormField label="Value">
-              <UInput v-model="form.value" placeholder="value" :type="form.secret ? 'password' : 'text'" class="w-full font-mono" />
+              <IntegrationsVaultReferencePicker v-if="form.secret && form.secret_provider === 'vault'" v-model="form.value" />
+              <IntegrationsInfisicalReferencePicker v-else-if="form.secret && form.secret_provider === 'infisical'" v-model="form.value" />
+              <AppTextInput
+                v-else
+                v-model="form.value"
+                placeholder="value"
+                :type="form.secret ? 'password' : 'text'"
+                :icon="form.secret ? iconFor(form.secret_provider) : undefined"
+                :avatar="form.secret ? avatarFor(form.secret_provider) : undefined"
+                class="font-mono"
+              />
             </UFormField>
 
             <UButton
