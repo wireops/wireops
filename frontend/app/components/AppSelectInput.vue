@@ -55,16 +55,17 @@ const filteredItems = computed(() => {
 })
 
 function onOpenChange(open: boolean) {
-  if (open && (props.disabled || props.loading)) return
-  isOpen.value = open
-  if (open) {
-    query.value = ''
-    activeIndex.value = props.items.findIndex(item => item.value === props.modelValue)
-    if (props.searchable) {
-      nextTick(() => searchEl.value?.focus())
-    }
-  } else {
+  if (!open) {
+    isOpen.value = false
     activeIndex.value = -1
+    return
+  }
+  if (props.disabled || props.loading) return
+  isOpen.value = true
+  query.value = ''
+  activeIndex.value = props.items.findIndex(item => item.value === props.modelValue)
+  if (props.searchable) {
+    nextTick(() => searchEl.value?.focus())
   }
 }
 
@@ -110,7 +111,6 @@ watch(query, () => { activeIndex.value = 0 })
         :disabled="disabled || loading"
         :aria-label="ariaLabel"
         :aria-expanded="isOpen"
-        @keydown="!searchable && onKeydown($event)"
       >
         <span class="flex items-center gap-1.5 min-w-0">
           <UIcon v-if="selectedItem?.icon" :name="selectedItem.icon" class="w-4 h-4 shrink-0 text-gray-400 dark:text-wire-200/30" />
@@ -133,6 +133,7 @@ watch(query, () => { activeIndex.value = 0 })
         class="z-50 w-max border border-gray-200 dark:border-carbon-800 rounded-lg bg-white dark:bg-carbon-950 shadow-lg overflow-hidden"
         :class="contentWidth ? '' : 'min-w-[var(--reka-popper-anchor-width)]'"
         @open-auto-focus="searchable ? $event.preventDefault() : undefined"
+        @keydown="!searchable && onKeydown($event)"
       >
         <div v-if="searchable" class="p-1.5 border-b border-gray-200 dark:border-carbon-800">
           <input

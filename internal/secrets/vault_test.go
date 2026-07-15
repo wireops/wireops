@@ -197,3 +197,74 @@ func TestVaultResolveSecretNotFound(t *testing.T) {
 		t.Fatal("expected error for 404 secret, got nil")
 	}
 }
+
+func TestParseVaultReference(t *testing.T) {
+	tests := []struct {
+		name          string
+		rawValue      string
+		wantMountPath string
+		wantField     string
+		wantErr       bool
+	}{
+		{
+			name:          "valid reference",
+			rawValue:      "secret/data/myapp#DB_PASS",
+			wantMountPath: "secret/data/myapp",
+			wantField:     "DB_PASS",
+		},
+		{
+			name:          "valid reference with nested path",
+			rawValue:      "secret/data/team/myapp#DB_PASS",
+			wantMountPath: "secret/data/team/myapp",
+			wantField:     "DB_PASS",
+		},
+		{
+			name:     "missing field separator",
+			rawValue: "secret/data/myapp",
+			wantErr:  true,
+		},
+		{
+			name:     "empty field after separator",
+			rawValue: "secret/data/myapp#",
+			wantErr:  true,
+		},
+		{
+			name:     "missing /data/ segment",
+			rawValue: "secret/myapp#DB_PASS",
+			wantErr:  true,
+		},
+		{
+			name:     "empty mount before /data/",
+			rawValue: "/data/myapp#DB_PASS",
+			wantErr:  true,
+		},
+		{
+			name:     "empty path after /data/",
+			rawValue: "secret/data/#DB_PASS",
+			wantErr:  true,
+		},
+		{
+			name:     "no data segment at all, plain field",
+			rawValue: "secret#DB_PASS",
+			wantErr:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mountPath, field, err := parseVaultReference(tt.rawValue)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for %q, got nil", tt.rawValue)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error for %q: %v", tt.rawValue, err)
+			}
+			if mountPath != tt.wantMountPath || field != tt.wantField {
+				t.Fatalf("parseVaultReference(%q) = (%q, %q), want (%q, %q)", tt.rawValue, mountPath, field, tt.wantMountPath, tt.wantField)
+			}
+		})
+	}
+}

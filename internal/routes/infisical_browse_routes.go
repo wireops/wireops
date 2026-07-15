@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
+	"time"
 
 	infisical "github.com/infisical/go-sdk"
 	"github.com/pocketbase/pocketbase/core"
@@ -16,6 +16,15 @@ import (
 	"github.com/wireops/wireops/internal/rbac"
 	"github.com/wireops/wireops/internal/secrets"
 )
+
+// infisicalAPIClientTimeout bounds infisicalAPIGet the same way
+// secrets.BuildInfisicalClient bounds the SDK client — a slow/unreachable
+// Infisical instance must fail fast rather than tying up the request
+// goroutine for as long as the caller's context stays open (e.g. a caller
+// context with no deadline).
+const infisicalAPIClientTimeout = 10 * time.Second
+
+var infisicalAPIClient = &http.Client{Timeout: infisicalAPIClientTimeout}
 
 // Infisical project/environment/secret browsing.
 //
@@ -53,7 +62,7 @@ type infisicalBrowseEntry struct {
 	IsFolder bool   `json:"is_folder"`
 }
 
-func (rr routeRegistrar) registerInfisicalBrowseRoutes() {
+func (rr routeRegistrar) registerInfisicalBrowseRoutes(secretKey []byte) {
 	rr.r.GET("/api/custom/integrations/infisical/projects", func(e *core.RequestEvent) error {
 		client, siteURL, allowedProjectID, cancel, err := secrets.BuildInfisicalClient(e.Request.Context(), rr.app)
 		if err != nil {
@@ -149,7 +158,7 @@ func (rr routeRegistrar) registerInfisicalBrowseRoutes() {
 			return e.JSON(http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("infisical: failed to list folders at %q: %v", secretPath, err)})
 		}
 
-		secretList, err := client.Secrets().List(infisical.ListSecretsOptions{
+		secretList, err := client.Secrets().ListSecrets(infisical.ListSecretsOptions{
 			ProjectID:   projectID,
 			Environment: environment,
 			SecretPath:  secretPath,
@@ -159,11 +168,11 @@ func (rr routeRegistrar) registerInfisicalBrowseRoutes() {
 			return e.JSON(http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("infisical: failed to list secrets at %q: %v", secretPath, err)})
 		}
 
-		out := make([]infisicalBrowseEntry, 0, len(folders)+len(secretList))
+		out := make([]infisicalBrowseEntry, 0, len(folders)+len(secretList.Secrets))
 		for _, f := range folders {
 			out = append(out, infisicalBrowseEntry{Name: f.Name, IsFolder: true})
 		}
-		for _, s := range secretList {
+		for _, s := range secretList.Secrets {
 			out = append(out, infisicalBrowseEntry{Name: s.SecretKey, IsFolder: false})
 		}
 		return e.JSON(http.StatusOK, out)
@@ -187,7 +196,7 @@ func (rr routeRegistrar) registerInfisicalBrowseRoutes() {
 		}
 		clientSecret, _ := cfg["client_secret"].(string)
 		if resolved["client_secret"] {
-			secretBytes, err := crypto.Decrypt(clientSecret, crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY")))
+			secretBytes, err := crypto.Decrypt(clientSecret, secretKey)
 			if err != nil {
 				return e.JSON(http.StatusOK, map[string]string{"success": "false", "error": fmt.Sprintf("failed to decrypt stored client_secret: %v", err)})
 			}
@@ -228,7 +237,7 @@ func infisicalAPIGet(ctx context.Context, siteURL, path, accessToken string, out
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := infisicalAPIClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("infisical: request to %q failed: %w", path, err)
 	}

@@ -1,6 +1,6 @@
 services:
   vault:
-    image: hashicorp/vault:1.17
+    image: hashicorp/vault:1.21.4
     container_name: wireops-test-vault
     restart: unless-stopped
     cap_add:

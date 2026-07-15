@@ -89,9 +89,6 @@ func encryptedIntegrationConfigKeys(slug string) []string {
 // valid base64 alphabet at a length divisible by 4, so it silently skipped
 // encryption and persisted the secret in plaintext.
 func encryptIntegrationConfig(slug string, cfg map[string]interface{}, secretKey []byte, alreadyEncryptedKeys map[string]bool) error {
-	if len(secretKey) != 32 {
-		return nil
-	}
 	for _, key := range encryptedIntegrationConfigKeys(slug) {
 		if alreadyEncryptedKeys[key] {
 			continue
@@ -99,6 +96,9 @@ func encryptIntegrationConfig(slug string, cfg map[string]interface{}, secretKey
 		val, ok := cfg[key].(string)
 		if !ok || val == "" {
 			continue
+		}
+		if len(secretKey) != 32 {
+			return fmt.Errorf("SECRET_KEY must be exactly 32 bytes to encrypt %s (got %d)", key, len(secretKey))
 		}
 		encrypted, err := crypto.Encrypt([]byte(val), secretKey)
 		if err != nil {

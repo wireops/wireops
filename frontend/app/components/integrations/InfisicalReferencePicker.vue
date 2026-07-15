@@ -119,9 +119,46 @@ function goToRoot() {
   loadCurrentFolder()
 }
 
-function openDialog() {
+// Parses a "<projectId>/<environment>/<path>#<field>" reference (path
+// segments optional). Mirrors parseInfisicalReference in
+// internal/secrets/infisical.go.
+function parseReference(value: string) {
+  const hashIdx = value.lastIndexOf('#')
+  if (hashIdx === -1 || hashIdx === value.length - 1) return null
+  const field = value.slice(hashIdx + 1)
+  const locator = value.slice(0, hashIdx)
+  const parts = locator.split('/')
+  if (parts.length < 2 || !parts[0] || !parts[1]) return null
+  return {
+    projectId: parts[0],
+    environment: parts[1],
+    path: parts.slice(2).filter(Boolean),
+    field
+  }
+}
+
+async function openDialog() {
   dialogOpen.value = true
-  if (!listAttempted.value) attemptListProjects()
+
+  const parsed = parseReference(modelValue.value)
+  if (!parsed) {
+    if (!listAttempted.value) attemptListProjects()
+    return
+  }
+
+  if (!listAttempted.value) await attemptListProjects()
+  if (!project.value || project.value.id !== parsed.projectId) {
+    try {
+      project.value = await getInfisicalProject(parsed.projectId)
+      selectedProjectId.value = parsed.projectId
+    } catch {
+      return
+    }
+  }
+
+  selectedEnvironment.value = parsed.environment
+  pathSegments.value = parsed.path
+  await loadCurrentFolder()
 }
 </script>
 

@@ -35,7 +35,7 @@ func setupInfisicalBrowseTestApp(t *testing.T) (core.App, http.Handler) {
 
 	rr := routeRegistrar{r: r, app: app}
 	rr.registerIntegrationRoutes(crypto.NormalizeSecretKey(testSecretBackendKey))
-	rr.registerInfisicalBrowseRoutes()
+	rr.registerInfisicalBrowseRoutes(crypto.NormalizeSecretKey(testSecretBackendKey))
 
 	mux, err := r.BuildMux()
 	if err != nil {
@@ -62,7 +62,7 @@ func setupInfisicalBrowseTestAppAuthenticated(t *testing.T) (core.App, http.Hand
 
 	rr := routeRegistrar{r: r, app: app}
 	rr.registerIntegrationRoutes(crypto.NormalizeSecretKey(testSecretBackendKey))
-	rr.registerInfisicalBrowseRoutes()
+	rr.registerInfisicalBrowseRoutes(crypto.NormalizeSecretKey(testSecretBackendKey))
 
 	mux, err := r.BuildMux()
 	if err != nil {
@@ -154,7 +154,7 @@ func TestInfisicalBrowseFieldExtractionNeverLeaksValues(t *testing.T) {
 	}
 	defer cancel()
 
-	entries, err := client.Secrets().List(infisical.ListSecretsOptions{
+	result, err := client.Secrets().ListSecrets(infisical.ListSecretsOptions{
 		ProjectID:   "proj123",
 		Environment: "dev",
 		SecretPath:  "/",
@@ -163,8 +163,8 @@ func TestInfisicalBrowseFieldExtractionNeverLeaksValues(t *testing.T) {
 		t.Fatalf("list secrets: %v", err)
 	}
 
-	names := make([]string, 0, len(entries))
-	for _, s := range entries {
+	names := make([]string, 0, len(result.Secrets))
+	for _, s := range result.Secrets {
 		names = append(names, s.SecretKey)
 	}
 	joined := strings.Join(names, ",")

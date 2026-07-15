@@ -34,6 +34,13 @@ func NewVaultProvider(app core.App) *VaultSecretProvider { return &VaultSecretPr
 // Name implements SecretProvider.
 func (p *VaultSecretProvider) Name() string { return "vault" }
 
+// vaultConn is the per-pass cached connection: a built client plus its
+// allowed-mount restriction, keyed in the resolve cache under "vault".
+type vaultConn struct {
+	client       *vaultapi.Client
+	allowedMount string
+}
+
 // Resolve reads the secret at the KV v2 path encoded in rawValue and returns
 // the requested field's plaintext value.
 func (p *VaultSecretProvider) Resolve(ctx context.Context, rawValue string) (string, error) {
@@ -42,10 +49,14 @@ func (p *VaultSecretProvider) Resolve(ctx context.Context, rawValue string) (str
 		return "", err
 	}
 
-	client, allowedMount, err := BuildVaultClient(p.app)
+	conn, err := loadCachedConn(ctx, "vault", func() (vaultConn, error) {
+		client, allowedMount, err := BuildVaultClient(p.app)
+		return vaultConn{client: client, allowedMount: allowedMount}, err
+	})
 	if err != nil {
 		return "", err
 	}
+	client, allowedMount := conn.client, conn.allowedMount
 	if allowedMount != "" {
 		mount := strings.SplitN(mountPath, "/", 2)[0]
 		if mount != allowedMount {
@@ -81,15 +92,28 @@ func (p *VaultSecretProvider) Resolve(ctx context.Context, rawValue string) (str
 // parseVaultReference splits a "<mount>/data/<path>#<field>" rawValue into
 // the KV v2 read path ("<mount>/data/<path>") and the field name.
 func parseVaultReference(rawValue string) (mountPath, field string, err error) {
+	invalid := fmt.Errorf(`vault: invalid reference %q, expected "<mount>/data/<path>#<field>"`, rawValue)
+
 	idx := strings.LastIndex(rawValue, "#")
 	if idx == -1 || idx == len(rawValue)-1 {
-		return "", "", fmt.Errorf(`vault: invalid reference %q, expected "<mount>/data/<path>#<field>"`, rawValue)
+		return "", "", invalid
 	}
 	mountPath = rawValue[:idx]
 	field = rawValue[idx+1:]
 	if mountPath == "" || field == "" {
-		return "", "", fmt.Errorf(`vault: invalid reference %q, expected "<mount>/data/<path>#<field>"`, rawValue)
+		return "", "", invalid
 	}
+
+	dataIdx := strings.Index(mountPath, "/data/")
+	if dataIdx == -1 {
+		return "", "", invalid
+	}
+	mount := mountPath[:dataIdx]
+	secretPath := mountPath[dataIdx+len("/data/"):]
+	if mount == "" || secretPath == "" {
+		return "", "", invalid
+	}
+
 	return mountPath, field, nil
 }
 

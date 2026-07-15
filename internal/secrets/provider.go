@@ -8,6 +8,8 @@ package secrets
 import (
 	"context"
 	"fmt"
+	"strings"
+	"sync"
 
 	"github.com/pocketbase/pocketbase/core"
 )
@@ -72,4 +74,76 @@ func (r *Registry) Get(name string) (SecretProvider, error) {
 		return nil, fmt.Errorf("secrets: unknown provider %q", name)
 	}
 	return p, nil
+}
+
+// resolveCacheKey is the context key WithResolveCache attaches a
+// *resolveCache under.
+type resolveCacheKey struct{}
+
+// resolveCache caches each external provider's built connection (a Vault
+// client + scoping config, or an authenticated Infisical client) for the
+// lifetime of a single LoadStack/LoadJob resolution pass. Without it,
+// VaultSecretProvider and InfisicalSecretProvider rebuild their connection —
+// a DB read plus, for Infisical, a full Universal Auth network login — on
+// every secret env var resolved, even when several secrets in the same pass
+// share a backend.
+type resolveCache struct {
+	mu    sync.Mutex
+	items map[string]any
+}
+
+// WithResolveCache returns a context carrying a fresh per-pass connection
+// cache for Vault/Infisical providers. Call it once per LoadStack/LoadJob
+// invocation — never store the resulting context beyond that single pass —
+// so each pass re-reads the integrations collection and observes config
+// changes; the cache only avoids rebuilding a connection *within* one pass.
+func WithResolveCache(ctx context.Context) context.Context {
+	return context.WithValue(ctx, resolveCacheKey{}, &resolveCache{items: make(map[string]any)})
+}
+
+type cachedConn[T any] struct {
+	val T
+	err error
+}
+
+// loadCachedConn returns the cached value for key from ctx's resolve cache,
+// calling build to populate it the first time key is requested in this pass.
+// If ctx carries no resolve cache (e.g. a Resolve call outside
+// LoadStack/LoadJob), build runs uncached on every call.
+func loadCachedConn[T any](ctx context.Context, key string, build func() (T, error)) (T, error) {
+	cache, _ := ctx.Value(resolveCacheKey{}).(*resolveCache)
+	if cache == nil {
+		return build()
+	}
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	if v, ok := cache.items[key]; ok {
+		entry := v.(cachedConn[T])
+		return entry.val, entry.err
+	}
+	val, err := build()
+	cache.items[key] = cachedConn[T]{val: val, err: err}
+	return val, err
+}
+
+// ValidateReference checks that rawValue is a well-formed, non-empty locator
+// for the given external provider (vault/infisical), without contacting the
+// backend. It rejects blank values and values that don't match the
+// provider's "<...>#<field>" reference syntax, so a plaintext secret
+// accidentally pasted into the value field is caught at save time instead of
+// silently persisting unencrypted and only failing at deploy-time Resolve.
+func ValidateReference(provider, rawValue string) error {
+	if strings.TrimSpace(rawValue) == "" {
+		return fmt.Errorf("secrets: %s reference must not be empty", provider)
+	}
+	switch provider {
+	case "vault":
+		_, _, err := parseVaultReference(rawValue)
+		return err
+	case "infisical":
+		_, _, _, _, err := parseInfisicalReference(rawValue)
+		return err
+	default:
+		return fmt.Errorf("secrets: %q is not an external provider", provider)
+	}
 }

@@ -1,6 +1,7 @@
 package hooks
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -227,7 +228,7 @@ func TestEnvSecretExternalProviderValueNotEncrypted(t *testing.T) {
 	// value either — it's a locator, not the secret, so the frontend needs
 	// to see and edit it like a normal field. Internal-provider secrets
 	// still get blanked (asserted below).
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
 	e := &core.RequestEvent{App: app, Event: router.Event{Response: httptest.NewRecorder(), Request: req}}
 	if err := apis.EnrichRecord(e, saved); err != nil {
 		t.Fatalf("enrich vault-provider record: %v", err)

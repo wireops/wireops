@@ -86,6 +86,36 @@ func TestEncryptIntegrationConfigSkipsAlreadyEncryptedKeys(t *testing.T) {
 	}
 }
 
+// TestEncryptIntegrationConfigRejectsInvalidSecretKey guards against
+// silently persisting a vault/infisical secret in plaintext when SECRET_KEY
+// is missing or malformed — encryptIntegrationConfig used to just skip
+// encryption and return nil in that case instead of failing the save.
+func TestEncryptIntegrationConfigRejectsInvalidSecretKey(t *testing.T) {
+	vaultCfg := map[string]interface{}{"address": "https://vault.example.com", "token": "s.mytoken"}
+	if err := encryptIntegrationConfig("vault", vaultCfg, nil, nil); err == nil {
+		t.Fatal("expected error encrypting vault config with a nil secret key")
+	}
+	if vaultCfg["token"] != "s.mytoken" {
+		t.Fatal("vault token must not be persisted when encryption fails")
+	}
+
+	shortKey := []byte("too-short")
+	infisicalCfg := map[string]interface{}{"client_id": "cid", "client_secret": "csecret"}
+	if err := encryptIntegrationConfig("infisical", infisicalCfg, shortKey, nil); err == nil {
+		t.Fatal("expected error encrypting infisical config with a non-32-byte secret key")
+	}
+	if infisicalCfg["client_secret"] != "csecret" {
+		t.Fatal("infisical client_secret must not be persisted when encryption fails")
+	}
+
+	// Non-vault/infisical integrations have nothing that needs encrypting, so
+	// an invalid key must not block their save.
+	webhookCfg := map[string]interface{}{"url": "https://hooks.example.com", "secret": "hmac-secret"}
+	if err := encryptIntegrationConfig("webhook", webhookCfg, nil, nil); err != nil {
+		t.Fatalf("webhook config must save without a secret key: %v", err)
+	}
+}
+
 func TestValidateRequiredIntegrationConfig(t *testing.T) {
 	if err := validateRequiredIntegrationConfig("vault", map[string]interface{}{"address": "x"}); err == nil {
 		t.Fatal("expected error when vault token is missing")

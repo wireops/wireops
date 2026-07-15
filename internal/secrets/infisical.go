@@ -41,6 +41,18 @@ func NewInfisicalProvider(app core.App) *InfisicalSecretProvider {
 // Name implements SecretProvider.
 func (p *InfisicalSecretProvider) Name() string { return "infisical" }
 
+// infisicalConn is the per-pass cached connection: an authenticated client
+// plus its allowed-project restriction, keyed in the resolve cache under
+// "infisical". The client's cancel func is inert once obtained (Universal
+// Auth login already happened and AutoTokenRefresh is disabled, so no
+// background goroutine depends on it staying uncancelled) — it's released
+// via context.AfterFunc when the pass context ends, rather than the
+// immediate defer a one-shot build would use.
+type infisicalConn struct {
+	client           infisical.InfisicalClientInterface
+	allowedProjectID string
+}
+
 // Resolve authenticates against Infisical via Universal Auth and retrieves
 // the plaintext value of the secret encoded in rawValue.
 func (p *InfisicalSecretProvider) Resolve(ctx context.Context, rawValue string) (string, error) {
@@ -49,16 +61,22 @@ func (p *InfisicalSecretProvider) Resolve(ctx context.Context, rawValue string) 
 		return "", err
 	}
 
-	client, _, allowedProjectID, cancel, err := BuildInfisicalClient(ctx, p.app)
+	conn, err := loadCachedConn(ctx, "infisical", func() (infisicalConn, error) {
+		client, _, allowedProjectID, cancel, err := BuildInfisicalClient(ctx, p.app)
+		if err != nil {
+			return infisicalConn{}, err
+		}
+		context.AfterFunc(ctx, cancel)
+		return infisicalConn{client: client, allowedProjectID: allowedProjectID}, nil
+	})
 	if err != nil {
 		return "", err
 	}
-	defer cancel()
-	if allowedProjectID != "" && projectID != allowedProjectID {
-		return "", fmt.Errorf("infisical: project %q is not permitted (backend is restricted to project %q)", projectID, allowedProjectID)
+	if conn.allowedProjectID != "" && projectID != conn.allowedProjectID {
+		return "", fmt.Errorf("infisical: project %q is not permitted (backend is restricted to project %q)", projectID, conn.allowedProjectID)
 	}
 
-	secret, err := client.Secrets().Retrieve(infisical.RetrieveSecretOptions{
+	secret, err := conn.client.Secrets().Retrieve(infisical.RetrieveSecretOptions{
 		SecretKey:   secretName,
 		ProjectID:   projectID,
 		Environment: environment,
@@ -166,8 +184,10 @@ func NewInfisicalClientForConfig(ctx context.Context, siteURL, clientID, clientS
 func buildInfisicalClientFromParts(ctx context.Context, siteURL, clientID, clientSecret string) (infisical.InfisicalClientInterface, context.CancelFunc, error) {
 	callCtx, cancel := context.WithTimeout(ctx, infisicalClientTimeout)
 
-	// AutoTokenRefresh is disabled: this client is one-shot (built fresh per
-	// call, per the no-caching design), so the SDK's background
+	// AutoTokenRefresh is disabled: each call to this function performs its
+	// own Universal Auth login and builds a new client (InfisicalSecretProvider
+	// caches the result across a single LoadStack/LoadJob pass via
+	// loadCachedConn, but never across passes), so the SDK's background
 	// token-refresh goroutine would otherwise leak for the lifetime of ctx.
 	client := infisical.NewInfisicalClient(callCtx, infisical.Config{
 		SiteUrl:          siteURL,

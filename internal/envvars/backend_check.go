@@ -1,6 +1,8 @@
 package envvars
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -75,6 +77,9 @@ func checkSecretBackends(app core.App, localCollection, targetField, targetID, b
 	var disabled []string
 	for _, provider := range providers {
 		rec, err := app.FindFirstRecordByFilter("integrations", "slug = {:slug}", dbx.Params{"slug": provider})
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
 		enabled := err == nil && rec.GetBool("enabled")
 		if !enabled {
 			keys := offenders[provider]

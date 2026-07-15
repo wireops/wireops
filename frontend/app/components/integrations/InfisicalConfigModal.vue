@@ -115,7 +115,7 @@ async function testConnection() {
         <UFormField label="Client Secret" required>
           <AppTextInput
             v-model="form.client_secret"
-            :type="hasClientSecret && form.client_secret === '••••••••' ? 'password' : 'text'"
+            type="password"
             placeholder="machine identity client secret"
             class="font-mono text-sm"
             @focus="onClientSecretFocus"

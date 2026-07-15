@@ -16,7 +16,6 @@ import (
 
 	"github.com/wireops/wireops/internal/crypto"
 	"github.com/wireops/wireops/internal/rbac"
-	"github.com/wireops/wireops/internal/secrets"
 )
 
 const testSecretBackendKey = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" // 32 bytes
@@ -36,7 +35,7 @@ func setupVaultBrowseTestApp(t *testing.T) (core.App, http.Handler) {
 
 	rr := routeRegistrar{r: r, app: app}
 	rr.registerIntegrationRoutes(crypto.NormalizeSecretKey(testSecretBackendKey))
-	rr.registerVaultBrowseRoutes()
+	rr.registerVaultBrowseRoutes(crypto.NormalizeSecretKey(testSecretBackendKey))
 
 	mux, err := r.BuildMux()
 	if err != nil {
@@ -63,7 +62,7 @@ func setupVaultBrowseTestAppAuthenticated(t *testing.T) (core.App, http.Handler,
 
 	rr := routeRegistrar{r: r, app: app}
 	rr.registerIntegrationRoutes(crypto.NormalizeSecretKey(testSecretBackendKey))
-	rr.registerVaultBrowseRoutes()
+	rr.registerVaultBrowseRoutes(crypto.NormalizeSecretKey(testSecretBackendKey))
 
 	mux, err := r.BuildMux()
 	if err != nil {
@@ -108,52 +107,46 @@ func TestVaultIntegrationRoutesRequireAuth(t *testing.T) {
 // values — since this browse endpoint must not become a way to exfiltrate
 // secret contents.
 func TestVaultFieldsExtractionNeverLeaksValues(t *testing.T) {
-	t.Setenv("SECRET_KEY", testSecretBackendKey)
-
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"data":{"data":{"DB_PASS":"s3cr3t-value-must-not-leak","API_KEY":"another-secret-value"}}}`))
 	}))
 	defer srv.Close()
 
-	app := newSetupTestApp(t)
-	integrationsCol, err := app.FindCollectionByNameOrId("integrations")
-	if err != nil {
-		t.Fatalf("find integrations collection: %v", err)
-	}
-	rec := core.NewRecord(integrationsCol)
-	rec.Set("slug", "vault")
-	rec.Set("enabled", true)
-	rec.Set("config", map[string]any{
+	app, mux, _ := setupVaultBrowseTestAppAuthenticated(t)
+	setVaultBackendConfig(t, app, map[string]any{
 		"address": srv.URL,
 		"token":   mustEncryptForRouteTest(t, "s.mytoken"),
 	})
-	if err := app.Save(rec); err != nil {
-		t.Fatalf("save vault integration config: %v", err)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/custom/integrations/vault/fields?mount=secret&path=myapp", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	client, _, err := secrets.BuildVaultClient(app)
-	if err != nil {
-		t.Fatalf("build vault client: %v", err)
-	}
-	secret, err := client.Logical().ReadWithContext(t.Context(), "secret/data/myapp")
-	if err != nil {
-		t.Fatalf("read secret: %v", err)
-	}
-	data := secret.Data["data"].(map[string]interface{})
-
-	fields := make([]string, 0, len(data))
-	for k := range data {
-		fields = append(fields, k)
+	var fields []string
+	if err := json.Unmarshal(rec.Body.Bytes(), &fields); err != nil {
+		t.Fatalf("decode response: %v", err)
 	}
 	joined := strings.Join(fields, ",")
 
 	if strings.Contains(joined, "s3cr3t-value-must-not-leak") || strings.Contains(joined, "another-secret-value") {
 		t.Fatalf("field name list leaked a secret value: %v", fields)
 	}
-	if len(fields) != 2 {
-		t.Fatalf("expected 2 field names, got %v", fields)
+	if len(fields) != 2 || !contains(fields, "DB_PASS") || !contains(fields, "API_KEY") {
+		t.Fatalf("expected [DB_PASS API_KEY] field names, got %v", fields)
 	}
+}
+
+func contains(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }
 
 func setVaultBackendConfig(t *testing.T, app core.App, config map[string]any) {

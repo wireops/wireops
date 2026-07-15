@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -28,7 +27,7 @@ type vaultMountInfo struct {
 	Version string `json:"version"`
 }
 
-func (rr routeRegistrar) registerVaultBrowseRoutes() {
+func (rr routeRegistrar) registerVaultBrowseRoutes(secretKey []byte) {
 	rr.r.GET("/api/custom/integrations/vault/mounts", func(e *core.RequestEvent) error {
 		client, allowedMount, err := secrets.BuildVaultClient(rr.app)
 		if err != nil {
@@ -158,7 +157,7 @@ func (rr routeRegistrar) registerVaultBrowseRoutes() {
 		}
 		token, _ := cfg["token"].(string)
 		if resolved["token"] {
-			tokenBytes, err := crypto.Decrypt(token, crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY")))
+			tokenBytes, err := crypto.Decrypt(token, secretKey)
 			if err != nil {
 				return e.JSON(http.StatusOK, map[string]string{"success": "false", "error": fmt.Sprintf("failed to decrypt stored token: %v", err)})
 			}

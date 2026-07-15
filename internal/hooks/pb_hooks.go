@@ -1039,10 +1039,16 @@ func prepareEnvSecretRecord(record *core.Record, key []byte) error {
 	// e.g. "mount/data/path#field" — that points at where the secret lives
 	// but isn't the secret itself, so it must not be encrypted, blanked, or
 	// masked like a real secret.
-	if record.GetBool("secret") && isInternalSecretProvider(record.GetString("secret_provider")) {
-		preserveMaskedSecretValue(record, "value")
-		if err := encryptField(record, "value", key); err != nil {
-			return err
+	if record.GetBool("secret") {
+		if isInternalSecretProvider(record.GetString("secret_provider")) {
+			preserveMaskedSecretValue(record, "value")
+			if err := encryptField(record, "value", key); err != nil {
+				return err
+			}
+		} else if err := secrets.ValidateReference(record.GetString("secret_provider"), record.GetString("value")); err != nil {
+			return validation.Errors{
+				"value": validation.NewError("validation_invalid_secret_reference", err.Error()),
+			}
 		}
 	}
 	return nil

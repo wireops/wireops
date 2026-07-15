@@ -35,8 +35,8 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 	registrar.registerCreateFromWireopsRoute()
 	secretKey := crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))
 	registrar.registerIntegrationRoutes(secretKey)
-	registrar.registerVaultBrowseRoutes()
-	registrar.registerInfisicalBrowseRoutes()
+	registrar.registerVaultBrowseRoutes(secretKey)
+	registrar.registerInfisicalBrowseRoutes(secretKey)
 
 	RegisterUserRoutes(r, app)
 }
