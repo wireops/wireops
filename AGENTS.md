@@ -259,6 +259,7 @@ All custom routes are prefixed `/api/custom/`. PocketBase also auto-exposes CRUD
 | `DELETE` | `/job-runs/{runId}` | Delete stalled run |
 
 ### Secret Backend Browse (superuser only, read-only — never returns raw credentials)
+
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/api/custom/integrations/vault/mounts` | List KV v2 mounts |

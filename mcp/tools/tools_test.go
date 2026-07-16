@@ -62,9 +62,9 @@ func TestListStacksMissingAPIKey(t *testing.T) {
 }
 
 func TestGetStackStatusPathEscapesID(t *testing.T) {
-	var gotPath string
+	var gotEscapedPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
+		gotEscapedPath = r.URL.EscapedPath()
 		w.Write([]byte(`{"id":"a/b"}`))
 	}))
 	defer srv.Close()
@@ -74,12 +74,11 @@ func TestGetStackStatusPathEscapesID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// r.URL.Path is the server-side decoded form; the wire request actually
-	// carried the escaped "a%2Fb" segment (verified indirectly: a bare "/"
-	// would have been split into two path segments instead of reaching this
-	// single-route handler at all).
-	if gotPath != "/api/collections/stacks/records/a/b" {
-		t.Fatalf("expected decoded stack id in path, got %q", gotPath)
+	// EscapedPath() reflects the wire form of the request, so this directly
+	// confirms the stack id was sent as the single encoded segment "a%2Fb"
+	// rather than as a literal "/" that would split into two path segments.
+	if gotEscapedPath != "/api/collections/stacks/records/a%2Fb" {
+		t.Fatalf("expected escaped stack id in path, got %q", gotEscapedPath)
 	}
 }
 

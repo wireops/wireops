@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -133,6 +134,35 @@ func TestReadStackLiveLogsReturnsLatestOutput(t *testing.T) {
 	}
 	if len(result.Contents) != 1 || result.Contents[0].Text != "deploy ok" {
 		t.Fatalf("unexpected result: %+v", result)
+	}
+}
+
+func TestReadStackLiveLogsEscapesStackIDInFilter(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.Write([]byte(`{"items":[]}`))
+	}))
+	defer srv.Close()
+
+	handler := readStackLiveLogs(client.New(srv.URL))
+	// A stack id containing a bare quote must not be able to close the
+	// filter's string literal early and splice in extra clauses.
+	_, err := handler(ctxWithKey(), &mcp.ReadResourceRequest{
+		Params: &mcp.ReadResourceParams{URI: "wireops://stacks/stack1' || status='success/logs/live"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	unescaped, err := url.QueryUnescape(gotQuery)
+	if err != nil {
+		t.Fatalf("unescape query: %v", err)
+	}
+	if strings.Contains(unescaped, "filter=stack='stack1' ||") {
+		t.Fatalf("stack id was not escaped, filter injection possible: %s", unescaped)
+	}
+	if !strings.Contains(unescaped, `stack1\' || status=\'success`) {
+		t.Fatalf("expected escaped quotes in filter, got: %s", unescaped)
 	}
 }
 

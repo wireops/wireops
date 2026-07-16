@@ -95,6 +95,7 @@ func Run() {
 		Addr:              listenAddr,
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
 	}
 
 	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())

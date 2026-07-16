@@ -296,6 +296,73 @@ func TestEnvVarKeyIsTrimmedAndBlankRejected(t *testing.T) {
 	}
 }
 
+func TestPublishSyncLogEventFansOutToBroker(t *testing.T) {
+	app, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatalf("new test app: %v", err)
+	}
+	t.Cleanup(func() { app.Cleanup() })
+
+	syncLogs := core.NewBaseCollection("sync_logs")
+	syncLogs.Fields.Add(&core.TextField{Name: "stack"})
+	syncLogs.Fields.Add(&core.TextField{Name: "output"})
+	syncLogs.Fields.Add(&core.TextField{Name: "status"})
+	if err := app.Save(syncLogs); err != nil {
+		t.Fatalf("save sync_logs collection: %v", err)
+	}
+
+	broker := logstream.New()
+	Register(app, nil, nil, broker)
+
+	const stackID = "stack-under-test"
+	ch, unsubscribe := broker.Subscribe(stackID)
+	t.Cleanup(unsubscribe)
+
+	rec := core.NewRecord(syncLogs)
+	rec.Set("stack", stackID)
+	rec.Set("output", "cloning repo\n")
+	rec.Set("status", "running")
+	if err := app.Save(rec); err != nil {
+		t.Fatalf("create sync_log: %v", err)
+	}
+
+	select {
+	case ev := <-ch:
+		if ev.RecordID != rec.Id {
+			t.Fatalf("create event RecordID = %q, want %q", ev.RecordID, rec.Id)
+		}
+		if ev.Output != "cloning repo\n" {
+			t.Fatalf("create event Output = %q, want %q", ev.Output, "cloning repo\n")
+		}
+		if ev.Status != "running" {
+			t.Fatalf("create event Status = %q, want %q", ev.Status, "running")
+		}
+	default:
+		t.Fatal("expected broker event on create, got none")
+	}
+
+	rec.Set("output", "cloning repo\ndeploy complete\n")
+	rec.Set("status", "success")
+	if err := app.Save(rec); err != nil {
+		t.Fatalf("update sync_log: %v", err)
+	}
+
+	select {
+	case ev := <-ch:
+		if ev.RecordID != rec.Id {
+			t.Fatalf("update event RecordID = %q, want %q", ev.RecordID, rec.Id)
+		}
+		if ev.Output != "cloning repo\ndeploy complete\n" {
+			t.Fatalf("update event Output = %q, want %q", ev.Output, "cloning repo\ndeploy complete\n")
+		}
+		if ev.Status != "success" {
+			t.Fatalf("update event Status = %q, want %q", ev.Status, "success")
+		}
+	default:
+		t.Fatal("expected broker event on update, got none")
+	}
+}
+
 func TestIsSSHGitURL(t *testing.T) {
 	tests := []struct {
 		name   string

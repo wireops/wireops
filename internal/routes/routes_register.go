@@ -409,6 +409,13 @@ func (rr routeRegistrar) registerBackupAndStreamRoutes() {
 		e.Response.Header().Set("Cache-Control", "no-cache")
 		e.Response.Header().Set("Connection", "keep-alive")
 
+		// Subscribe before loading the historical snapshot so writes that land
+		// in the gap between the two are queued on the channel rather than
+		// lost; the handoff state below reconciles them against the snapshot
+		// by RecordID + output length so each byte is emitted exactly once.
+		sub, unsubscribe := rr.logBroker.Subscribe(id)
+		defer unsubscribe()
+
 		logs, err := rr.app.FindAllRecords("sync_logs", dbx.HashExp{"stack": id})
 		if err != nil {
 			return err
@@ -424,20 +431,29 @@ func (rr routeRegistrar) registerBackupAndStreamRoutes() {
 			}
 		}
 
-		var lastRecordID string
-		var lastLen int
+		state := newStreamHandoffState()
 		for _, logRecord := range logs {
 			writeLines(logRecord.GetString("output"))
-			lastRecordID = logRecord.Id
-			lastLen = len(logRecord.GetString("output"))
+			state.observeSnapshot(logRecord.Id, logRecord.GetString("output"))
 		}
 
-		// Historical replay above is a snapshot; from here on, tail new
-		// sync_logs writes as they happen via the in-process broker
-		// (published by internal/hooks on every sync_logs create/update)
-		// until the client disconnects.
-		sub, unsubscribe := rr.logBroker.Subscribe(id)
-		defer unsubscribe()
+		// Drain events queued during the gap between Subscribe and the
+		// snapshot query above: apply() no-ops for anything already covered
+		// by the snapshot and emits only the unseen tail for genuine gaps.
+	drain:
+		for {
+			select {
+			case ev, ok := <-sub:
+				if !ok {
+					return nil
+				}
+				if delta := state.apply(ev); delta != "" {
+					writeLines(delta)
+				}
+			default:
+				break drain
+			}
+		}
 
 		ctx := e.Request.Context()
 		for {
@@ -448,18 +464,44 @@ func (rr routeRegistrar) registerBackupAndStreamRoutes() {
 				if !ok {
 					return nil
 				}
-				if ev.RecordID != lastRecordID {
-					lastRecordID = ev.RecordID
-					lastLen = 0
+				if delta := state.apply(ev); delta != "" {
+					writeLines(delta)
 				}
-				if len(ev.Output) <= lastLen {
-					continue
-				}
-				writeLines(ev.Output[lastLen:])
-				lastLen = len(ev.Output)
 			}
 		}
 	}).BindFunc(rbac.Require(rbac.CapViewLogs))
+}
+
+// streamHandoffState tracks, per sync_logs RecordID, how many bytes of
+// cumulative output have already been written to an SSE stream. It lets the
+// /stream handler reconcile broker events against the historical snapshot
+// (and against each other) so the same bytes are never replayed and no
+// bytes published during the subscribe/snapshot handoff are dropped.
+type streamHandoffState struct {
+	lastLen map[string]int
+}
+
+func newStreamHandoffState() *streamHandoffState {
+	return &streamHandoffState{lastLen: make(map[string]int)}
+}
+
+// observeSnapshot records that recordID's output, as loaded from the
+// historical snapshot, has already been written in full.
+func (s *streamHandoffState) observeSnapshot(recordID, output string) {
+	s.lastLen[recordID] = len(output)
+}
+
+// apply returns the slice of ev.Output not yet written for its record ("" if
+// ev carries nothing new — a duplicate of, or already covered by, the
+// snapshot or a prior event) and advances the recorded length.
+func (s *streamHandoffState) apply(ev logstream.Event) string {
+	prev := s.lastLen[ev.RecordID]
+	if len(ev.Output) <= prev {
+		return ""
+	}
+	delta := ev.Output[prev:]
+	s.lastLen[ev.RecordID] = len(ev.Output)
+	return delta
 }
 
 func (rr routeRegistrar) registerRepositoryRoutes() {

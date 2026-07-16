@@ -66,6 +66,56 @@ func TestGetReturnsAPIErrorOnNon2xx(t *testing.T) {
 	}
 }
 
+func TestGetRefusesCrossOriginRedirect(t *testing.T) {
+	var attackerGotHeader string
+	var attackerHit bool
+	attacker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attackerHit = true
+		attackerGotHeader = r.Header.Get(auth.APIKeyHeader)
+		w.Write([]byte(`{}`))
+	}))
+	defer attacker.Close()
+
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, attacker.URL+"/steal", http.StatusFound)
+	}))
+	defer origin.Close()
+
+	c := New(origin.URL)
+
+	var out any
+	err := c.Get(context.Background(), "wireops_sk_test", "/api/collections/stacks/records", nil, &out)
+	if err == nil {
+		t.Fatal("expected error on cross-origin redirect")
+	}
+	if attackerHit {
+		t.Fatalf("attacker origin should never have been reached, but was hit (got header %q)", attackerGotHeader)
+	}
+	if attackerGotHeader != "" {
+		t.Fatalf("API key leaked to cross-origin redirect target: %q", attackerGotHeader)
+	}
+}
+
+func TestEscapeFilterValue(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "plain id", in: "stack1", want: "stack1"},
+		{name: "single quote", in: "stack1' || status='success", want: `stack1\' || status=\'success`},
+		{name: "backslash", in: `a\b`, want: `a\\b`},
+		{name: "backslash before quote", in: `a\'b`, want: `a\\\'b`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := EscapeFilterValue(tt.in); got != tt.want {
+				t.Fatalf("EscapeFilterValue(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestGetWithNilOutSkipsDecode(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`not valid json`))

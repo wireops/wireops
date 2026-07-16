@@ -56,7 +56,7 @@ func diagnoseStackFailure(c *client.Client) mcp.PromptHandler {
 
 		var logs any
 		q := url.Values{
-			"filter":  {fmt.Sprintf("stack='%s'", stackID)},
+			"filter":  {fmt.Sprintf("stack='%s'", client.EscapeFilterValue(stackID))},
 			"sort":    {"-created"},
 			"perPage": {"5"},
 		}

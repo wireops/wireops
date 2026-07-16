@@ -61,10 +61,12 @@ func (b *Broker) Subscribe(stackID string) (ch <-chan Event, unsubscribe func())
 // publisher (the caller is a PocketBase record hook, on the write path).
 func (b *Broker) Publish(stackID string, ev Event) {
 	b.mu.Lock()
-	subs := append([]chan Event(nil), b.subs[stackID]...)
-	b.mu.Unlock()
+	defer b.mu.Unlock()
 
-	for _, c := range subs {
+	// Held for the whole send loop (not just the snapshot) so unsubscribe
+	// can't close a channel concurrently with a send to it; sends stay
+	// non-blocking via the select/default below, so this can't stall Publish.
+	for _, c := range b.subs[stackID] {
 		select {
 		case c <- ev:
 		default:

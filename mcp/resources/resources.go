@@ -154,7 +154,7 @@ func readStackLiveLogs(c *client.Client) mcp.ResourceHandler {
 func latestSyncLogOutput(ctx context.Context, c *client.Client, apiKey, stackID string) (string, error) {
 	var out syncLogsListResponse
 	q := url.Values{
-		"filter":  {fmt.Sprintf("stack='%s'", stackID)},
+		"filter":  {fmt.Sprintf("stack='%s'", client.EscapeFilterValue(stackID))},
 		"sort":    {"-created"},
 		"perPage": {"1"},
 	}
