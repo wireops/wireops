@@ -87,3 +87,9 @@ docker-run-worker:
 
 docker-run-all:
 	docker compose -f examples/server-and-worker/docker-compose.yml --env-file examples/server-and-worker/.env up -d
+
+docker-build-mcp:
+	docker build -f Dockerfile.mcp -t wireops-mcp:latest .
+
+docker-run-mcp:
+	docker compose -f examples/mcp/docker-compose.yml --env-file examples/mcp/.env up -d

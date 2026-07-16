@@ -1,0 +1,37 @@
+FROM golang:1.25-alpine AS builder
+
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+ARG VERSION=dev
+ARG COMMIT=none
+ARG BUILD_DATE=unknown
+
+RUN apk add --no-cache ca-certificates git
+
+WORKDIR /src
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY mcp/ ./mcp/
+COPY internal/ ./internal/
+COPY pkg/ ./pkg/
+
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -trimpath \
+    -ldflags="-s -w -X github.com/wireops/wireops/internal/buildinfo.Version=${VERSION} -X github.com/wireops/wireops/internal/buildinfo.Commit=${COMMIT} -X github.com/wireops/wireops/internal/buildinfo.BuildDate=${BUILD_DATE}" \
+    -o /out/wireops-mcp ./mcp/main.go
+
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates tzdata \
+    && addgroup -g 1000 appgroup \
+    && adduser -u 1000 -G appgroup -s /bin/sh -D appuser
+
+WORKDIR /app
+COPY --from=builder /out/wireops-mcp ./wireops-mcp
+
+USER appuser
+
+EXPOSE 8091
+
+ENTRYPOINT ["/app/wireops-mcp"]

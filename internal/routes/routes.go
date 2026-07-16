@@ -7,17 +7,19 @@ import (
 	"github.com/pocketbase/pocketbase/tools/router"
 
 	"github.com/wireops/wireops/internal/crypto"
+	"github.com/wireops/wireops/internal/logstream"
 	"github.com/wireops/wireops/internal/sync"
 )
 
 const OfflineWorkerMsg = "worker '%s' is offline"
 
-func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *sync.Scheduler, workerSvc sync.WorkerDispatcher) {
+func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *sync.Scheduler, workerSvc sync.WorkerDispatcher, logBroker *logstream.Broker) {
 	registrar := routeRegistrar{
 		r:         r,
 		app:       app,
 		scheduler: scheduler,
 		workerSvc: workerSvc,
+		logBroker: logBroker,
 	}
 
 	registrar.registerStackTriggerRoutes()

@@ -16,6 +16,7 @@ import (
 	"github.com/pocketbase/pocketbase/tools/types"
 
 	"github.com/wireops/wireops/internal/crypto"
+	"github.com/wireops/wireops/internal/logstream"
 )
 
 func TestValidateRepositoryKeyAssignment(t *testing.T) {
@@ -101,7 +102,7 @@ func TestRepositoryKeyTypeCannotChangeAfterCreate(t *testing.T) {
 		t.Fatalf("save repositories collection: %v", err)
 	}
 
-	Register(app, nil, nil)
+	Register(app, nil, nil, logstream.New())
 
 	key := core.NewRecord(keys)
 	key.Set("name", "Production")
@@ -143,7 +144,7 @@ func TestEnvSecretMaskedUpdatePreservesEncryptedValue(t *testing.T) {
 		t.Fatalf("save stack_env_vars collection: %v", err)
 	}
 
-	Register(app, nil, nil)
+	Register(app, nil, nil, logstream.New())
 
 	rec := core.NewRecord(envVars)
 	rec.Set("key", "TOKEN")
@@ -202,7 +203,7 @@ func TestEnvSecretExternalProviderValueNotEncrypted(t *testing.T) {
 		t.Fatalf("save stack_env_vars collection: %v", err)
 	}
 
-	Register(app, nil, nil)
+	Register(app, nil, nil, logstream.New())
 
 	rec := core.NewRecord(envVars)
 	rec.Set("key", "DB_PASS")
@@ -271,7 +272,7 @@ func TestEnvVarKeyIsTrimmedAndBlankRejected(t *testing.T) {
 		t.Fatalf("save stack_env_vars collection: %v", err)
 	}
 
-	Register(app, nil, nil)
+	Register(app, nil, nil, logstream.New())
 
 	rec := core.NewRecord(envVars)
 	rec.Set("key", "  API_KEY  ")

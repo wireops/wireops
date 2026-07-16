@@ -7,6 +7,7 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
 
+	"github.com/wireops/wireops/internal/logstream"
 	"github.com/wireops/wireops/internal/sync"
 )
 
@@ -44,7 +45,7 @@ func newWireopsImmutabilityTestApp(t *testing.T) (*tests.TestApp, *core.Collecti
 	}
 
 	scheduler := sync.NewScheduler(app, nil)
-	Register(app, scheduler, nil)
+	Register(app, scheduler, nil, logstream.New())
 
 	worker := core.NewRecord(workers)
 	if err := app.Save(worker); err != nil {

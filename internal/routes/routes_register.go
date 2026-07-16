@@ -28,6 +28,7 @@ import (
 	"github.com/wireops/wireops/internal/git"
 	"github.com/wireops/wireops/internal/integrations"
 	"github.com/wireops/wireops/internal/job"
+	"github.com/wireops/wireops/internal/logstream"
 	"github.com/wireops/wireops/internal/notify"
 	"github.com/wireops/wireops/internal/protocol"
 	"github.com/wireops/wireops/internal/rbac"
@@ -40,6 +41,7 @@ type routeRegistrar struct {
 	app       core.App
 	scheduler *sync.Scheduler
 	workerSvc sync.WorkerDispatcher
+	logBroker *logstream.Broker
 }
 
 func isNotificationIntegration(slug string) bool {
@@ -412,17 +414,51 @@ func (rr routeRegistrar) registerBackupAndStreamRoutes() {
 			return err
 		}
 
-		flusher, ok := e.Response.(http.Flusher)
-		for _, logRecord := range logs {
-			for _, line := range strings.Split(logRecord.GetString("output"), "\n") {
+		flusher, _ := e.Response.(http.Flusher)
+		writeLines := func(text string) {
+			for _, line := range strings.Split(text, "\n") {
 				fmt.Fprintf(e.Response, "data: %s\n\n", line)
 			}
-			if ok {
+			if flusher != nil {
 				flusher.Flush()
 			}
 		}
 
-		return nil
+		var lastRecordID string
+		var lastLen int
+		for _, logRecord := range logs {
+			writeLines(logRecord.GetString("output"))
+			lastRecordID = logRecord.Id
+			lastLen = len(logRecord.GetString("output"))
+		}
+
+		// Historical replay above is a snapshot; from here on, tail new
+		// sync_logs writes as they happen via the in-process broker
+		// (published by internal/hooks on every sync_logs create/update)
+		// until the client disconnects.
+		sub, unsubscribe := rr.logBroker.Subscribe(id)
+		defer unsubscribe()
+
+		ctx := e.Request.Context()
+		for {
+			select {
+			case <-ctx.Done():
+				return nil
+			case ev, ok := <-sub:
+				if !ok {
+					return nil
+				}
+				if ev.RecordID != lastRecordID {
+					lastRecordID = ev.RecordID
+					lastLen = 0
+				}
+				if len(ev.Output) <= lastLen {
+					continue
+				}
+				writeLines(ev.Output[lastLen:])
+				lastLen = len(ev.Output)
+			}
+		}
 	}).BindFunc(rbac.Require(rbac.CapViewLogs))
 }
 

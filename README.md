@@ -17,14 +17,14 @@
 
 GitOps controller for Docker Compose stacks. Automatically sync and deploy your compose stacks from Git repositories, similar to Flux/ArgoCD for Kubernetes.
 
-> **Project status**: pre-1.0, actively developed (releases `v0.1.x`). Core GitOps sync, worker security policies, and RBAC are in daily use; external secret providers are stubbed, and the audited web terminal is intentionally not started yet — see [Known Limitations](#known-limitations).
+> **Project status**: pre-1.0, actively developed (releases `v0.1.x`). Core GitOps sync, worker security policies, RBAC, and external secret providers (Vault, Infisical) are in daily use; the audited web terminal is intentionally not started yet — see [Known Limitations](#known-limitations).
 
 ## Features
 
 - 🔄 Automatic synchronization from Git repositories
 - 🐳 Docker Compose stack management
 - 📊 Real-time container monitoring (with worker runtime info and container ports)
-- 🔐 Encrypted credentials (SSH keys, passwords) + pluggable secret providers
+- 🔐 Encrypted credentials (SSH keys, passwords) + pluggable secret providers (internal AES-GCM, HashiCorp Vault, Infisical)
 - 🛡️ Role-based access control (viewer/operator/admin/monitoring) and audit logging
 - 🚧 Worker-side deploy security policies (block privileged/host-network/docker.sock/host-PID/host-IPC)
 - 🔑 SSO login via any OIDC provider
@@ -241,6 +241,27 @@ OIDC_DISPLAY_NAME=Authentik
 | `WORKER_STACK_DIR` | No | `<os.TempDir()>/wireops` | Directory where the worker writes temporary compose files |
 | `WORKER_TLS_SKIP_VERIFY` | No | `false` | Skip TLS certificate verification. Set to `true` when the server uses a self-signed certificate |
 
+### Secret Providers
+
+Every secret-flagged env var (stack, global, or job-scoped) picks a `secret_provider` at creation time: `internal` (default), `vault`, or `infisical`.
+
+| Provider | Where the secret lives | Value stored on the env var |
+|---|---|---|
+| `internal` | Encrypted at rest in wireops's own DB (AES-GCM, `SECRET_KEY`) | The plaintext secret, encrypted |
+| `vault` | HashiCorp Vault (KV v2) | A reference: `<mount>/data/<path>#<field>` |
+| `infisical` | Infisical | A reference: `<project-id>/<environment>/<secret-path>#<SECRET_NAME>` |
+
+Vault and Infisical are **not** configured via server env vars — enable and configure them from **Settings → Integrations** (category "Secret Backend"):
+
+- **Vault**: `address`, `token`, optional `allowed_mount` (scopes which mount the picker/resolver may touch). The token is encrypted at rest using the existing `SECRET_KEY`.
+- **Infisical**: `site_url` (defaults to `https://app.infisical.com`), `client_id`, `client_secret`, optional `allowed_project_id`. The client secret is encrypted at rest using the existing `SECRET_KEY`.
+
+Once a backend is enabled, its provider option appears in the env var editor; picking `vault` or `infisical` swaps the value field for a guided picker (mount/path/field, or project/environment/path/secret) that resolves against Vault/Infisical server-side — you never type or see a raw reference string by hand, and existing secret values are never displayed in plaintext.
+
+Notes:
+- **A secret's provider is locked once saved.** You can't switch an existing secret from `internal` to `vault` (or vice versa) — delete it and recreate it with the new provider instead.
+- **Disabled backends are caught before deploy.** If a stack or job references a `vault`/`infisical` env var whose backend integration is disabled or unconfigured, sync/job execution fails fast with an error naming the provider and the affected keys, instead of failing mid-deploy.
+
 ### APP_URL Configuration
 
 The `APP_URL` variable is used to:
@@ -422,7 +443,6 @@ services:
 
 ## Known Limitations
 
-- **External secret providers are stubbed**: only the `internal` (AES-GCM, local `SECRET_KEY`) provider is functional. `vault` and `infisical` providers exist in the schema/UI but `Resolve()` always returns an error — do not select them yet.
 - **`internal/backup`** (config/data backup & restore) has test scaffolding but no shipped implementation.
 - **Audited web terminal**: intentionally not started — requires the RBAC system to be fully wired first to avoid shipping a high-risk feature half-done.
 - No OCI-artifact source, Docker Swarm/multi-node, or canary/preview deploys yet (tracked as strategic backlog with no ETA).
@@ -463,7 +483,7 @@ services:
 - UI density options (compact/comfortable)
 
 ### 🔒 Security & Ops (strategic)
-- Finish `vault` / `infisical` secret providers; SOPS+age support
+- SOPS+age support
 - Git auth hardening, deploy metrics/alerts
 - Audited web terminal (blocked on RBAC completeness)
 - docker-run → compose converter, OCI artifact sources, Swarm/multi-node, canary deploys

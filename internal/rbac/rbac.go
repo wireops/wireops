@@ -28,6 +28,7 @@ const (
 	CapViewLogs       Capability = "view_logs"
 	CapOperateStacks  Capability = "operate_stacks"
 	CapManageRepos    Capability = "manage_repositories"
+	CapViewWorkers    Capability = "view_workers"
 	CapManageWorkers  Capability = "manage_workers"
 	CapManageJobs     Capability = "manage_jobs"
 	CapManageSettings Capability = "manage_settings"
@@ -43,6 +44,7 @@ var minimumRoleByCapability = map[Capability]string{
 	CapViewLogs:       RoleViewer,
 	CapOperateStacks:  RoleOperator,
 	CapManageRepos:    RoleOperator,
+	CapViewWorkers:    RoleViewer,
 	CapManageWorkers:  RoleOperator,
 	CapManageJobs:     RoleOperator,
 	CapManageSettings: RoleAdmin,
