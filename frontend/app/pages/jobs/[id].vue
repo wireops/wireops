@@ -18,20 +18,10 @@ const tabs = [
 // --- Delete job
 const showDangerZone = ref(false)
 const showDeleteModal = ref(false)
-const deleting = ref(false)
 
-async function confirmDelete() {
-  deleting.value = true
-  try {
-    await $pb.collection('scheduled_jobs').delete(jobId.value)
-    toast.add({ title: 'Job deleted', color: 'success' })
-    showDeleteModal.value = false
-    await navigateTo('/jobs', { replace: true })
-  } catch (e: any) {
-    toast.add({ title: 'Failed to delete job', description: e?.message, color: 'error' })
-  } finally {
-    deleting.value = false
-  }
+async function onJobDeleted() {
+  showDeleteModal.value = false
+  await navigateTo('/jobs', { replace: true })
 }
 
 const { data: job, refresh: refreshJob } = useAsyncData(`job_${jobId.value}`, () =>
@@ -389,33 +379,12 @@ async function toggleEnabled() {
     <!-- Delete job modal -->
     <UModal v-model:open="showDeleteModal">
       <template #content>
-        <UCard>
-          <template #header>
-            <div class="flex items-center gap-2">
-              <UIcon name="i-lucide-trash-2" class="w-5 h-5 text-red-500" />
-              <h2 class="font-semibold text-red-500">Remove Job</h2>
-            </div>
-          </template>
-          <div class="space-y-3 text-sm text-gray-500 dark:text-wire-200/60">
-            <p>
-              Are you sure you want to delete
-              <span class="font-semibold text-gray-900 dark:text-wire-200">{{ job?.name || definition?.name }}</span>?
-            </p>
-            <p class="text-xs text-red-500 font-medium">This action cannot be undone.</p>
-          </div>
-          <template #footer>
-            <div class="flex justify-end gap-2">
-              <UButton label="Cancel" variant="outline" color="neutral" @click="showDeleteModal = false" />
-              <UButton
-                label="Remove Job"
-                color="error"
-                icon="i-lucide-trash-2"
-                :loading="deleting"
-                @click="confirmDelete"
-              />
-            </div>
-          </template>
-        </UCard>
+        <JobDeleteModal
+          v-if="showDeleteModal"
+          :job="job"
+          @deleted="onJobDeleted"
+          @cancel="showDeleteModal = false"
+        />
       </template>
     </UModal>
   </div>

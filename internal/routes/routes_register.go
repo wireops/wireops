@@ -132,12 +132,21 @@ func validateRequiredIntegrationConfig(slug string, cfg map[string]interface{}) 
 	return nil
 }
 
-// isIntegrationLocked reports whether the integrations row for slug has
-// locked=true, meaning it can't be enabled/disabled/reconfigured from the
-// API (e.g. "sops", which is always active and has no connection to
-// configure — see migration 53). An integration with no saved row yet is
-// never locked.
+// alwaysLockedIntegrationSlugs are integrations that can never be
+// enabled/disabled/reconfigured from the API regardless of what's in their
+// DB row — e.g. "sops", which is always active and has no connection to
+// configure (see migration 53). Keeping this independent of the DB row means
+// the guarantee holds even if the seed row is missing or gets deleted.
+var alwaysLockedIntegrationSlugs = map[string]bool{"sops": true}
+
+// isIntegrationLocked reports whether slug can't be enabled/disabled/
+// reconfigured from the API — either because it's in
+// alwaysLockedIntegrationSlugs, or its integrations row has locked=true. An
+// integration with no saved row yet is never locked (unless always-locked).
 func isIntegrationLocked(app core.App, slug string) bool {
+	if alwaysLockedIntegrationSlugs[slug] {
+		return true
+	}
 	rec, err := app.FindFirstRecordByFilter("integrations", "slug = {:slug}", map[string]any{"slug": slug})
 	if err != nil {
 		return false

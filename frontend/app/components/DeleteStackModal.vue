@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import TerminalOutput from '~/components/TerminalOutput.vue'
 import { useDeployStream } from '~/composables/useDeployStream'
 
@@ -77,6 +77,13 @@ async function confirmDelete() {
     deleting.value = false
   }
 }
+
+// Guarantees the parent navigates away even if the user dismisses the modal
+// via backdrop/ESC after a successful delete instead of clicking "Close" —
+// the parent's v-if unmounts this component on any close path.
+onUnmounted(() => {
+  if (deleted.value) emit('deleted')
+})
 </script>
 
 <template>

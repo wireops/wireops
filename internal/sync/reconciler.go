@@ -1872,15 +1872,19 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 	}
 
 	if repoID := stack.GetString("repository"); repoID != "" {
-		if repo, repoErr := r.app.FindRecordById("repositories", repoID); repoErr == nil {
-			if workDir, workDirErr := r.stackWorkDir(stack, repoID); workDirErr == nil {
-				sopsValues, sopsErr := r.loadSopsEnv(ctx, repo, workDir)
-				if sopsErr != nil {
-					return fmt.Errorf("failed to decrypt SOPS secrets file: %w", sopsErr)
-				}
-				envVars = overlaySopsEnv(envVars, sopsValues)
-			}
+		repo, repoErr := r.app.FindRecordById("repositories", repoID)
+		if repoErr != nil {
+			return fmt.Errorf("failed to load repository for SOPS secrets: %w", repoErr)
 		}
+		workDir, workDirErr := r.stackWorkDir(stack, repoID)
+		if workDirErr != nil {
+			return fmt.Errorf("failed to resolve work dir for SOPS secrets: %w", workDirErr)
+		}
+		sopsValues, sopsErr := r.loadSopsEnv(ctx, repo, workDir)
+		if sopsErr != nil {
+			return fmt.Errorf("failed to decrypt SOPS secrets file: %w", sopsErr)
+		}
+		envVars = overlaySopsEnv(envVars, sopsValues)
 	}
 
 	composeB64 := base64.StdEncoding.EncodeToString(composeContent)

@@ -1,8 +1,14 @@
 package pb_migrations
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
+
+	"github.com/wireops/wireops/internal/crypto"
+	"github.com/wireops/wireops/internal/secrets"
 )
 
 // Migration 53: SOPS+age support (P1.5).
@@ -20,6 +26,9 @@ import (
 func init() {
 	m.Register(func(app core.App) error {
 		if err := addRepositorySopsFields(app); err != nil {
+			return err
+		}
+		if err := backfillRepositorySopsKeys(app); err != nil {
 			return err
 		}
 		if err := addIntegrationsLockedField(app); err != nil {
@@ -51,6 +60,43 @@ func addRepositorySopsFields(app core.App) error {
 	}
 
 	return app.Save(col)
+}
+
+// backfillRepositorySopsKeys generates an age keypair for every repository
+// that predates this migration and therefore never went through the
+// OnRecordCreate("repositories") hook in internal/hooks/pb_hooks.go — without
+// this, any pre-existing repo that already has (or later adds) a
+// secrets.yaml would hard-fail every sync with "no SOPS age key configured".
+func backfillRepositorySopsKeys(app core.App) error {
+	repositories, err := app.FindAllRecords("repositories")
+	if err != nil {
+		return err
+	}
+
+	secretKey := crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))
+	for _, repo := range repositories {
+		if repo.GetString("sops_age_key") != "" {
+			continue
+		}
+
+		privateKey, publicKey, err := secrets.GenerateAgeKeypair()
+		if err != nil {
+			return fmt.Errorf("failed to generate SOPS age keypair for repository %q: %w", repo.Id, err)
+		}
+
+		encrypted, err := crypto.Encrypt([]byte(privateKey), secretKey)
+		if err != nil {
+			return fmt.Errorf("failed to encrypt SOPS age key for repository %q: %w", repo.Id, err)
+		}
+
+		repo.Set("sops_age_key", encrypted)
+		repo.Set("sops_age_public_key", publicKey)
+		if err := app.Save(repo); err != nil {
+			return fmt.Errorf("failed to save SOPS age keypair for repository %q: %w", repo.Id, err)
+		}
+	}
+
+	return nil
 }
 
 func removeRepositorySopsFields(app core.App) error {
