@@ -94,10 +94,11 @@ type WorkerServer struct {
 	seenMu       sync.Mutex
 	seenMessages map[string]time.Time
 
-	onConnect      func(workerID string)
-	onDisconnect   func(workerID string)
-	onJobCompleted func(protocol.JobCompletedMessage)
-	onHeartbeat    func(workerID string, activeIDs []string)
+	onConnect       func(workerID string)
+	onDisconnect    func(workerID string)
+	onJobCompleted  func(protocol.JobCompletedMessage)
+	onHeartbeat     func(workerID string, activeIDs []string)
+	onCommandOutput func(protocol.CommandOutputMessage)
 }
 
 // MTLSServer is kept as an internal alias while the codebase finishes moving
@@ -123,6 +124,15 @@ func (s *WorkerServer) SetOnJobCompleted(f func(protocol.JobCompletedMessage)) {
 // SetOnHeartbeat registers a callback invoked whenever a heartbeat is received from a worker.
 func (s *WorkerServer) SetOnHeartbeat(f func(workerID string, activeIDs []string)) {
 	s.onHeartbeat = f
+}
+
+// SetOnCommandOutput registers a callback invoked whenever a remote worker pushes an
+// incremental output line for a running deploy/redeploy/teardown command. Unlike
+// MsgResult, this is unsolicited and can arrive multiple times per command — the
+// callback must not assume ordering guarantees beyond what CommandOutputMessage.Seq
+// records, since transport-level retries can theoretically redeliver a line.
+func (s *WorkerServer) SetOnCommandOutput(f func(protocol.CommandOutputMessage)) {
+	s.onCommandOutput = f
 }
 
 // SetWorkerTags stores the tags reported by the worker at registration time.
@@ -779,6 +789,17 @@ func (s *WorkerServer) handleWebSocket(c *gin.Context) {
 				}
 			} else {
 				logger.SafeLogf("[WORKER] Failed to parse job_completed from %s: %v", workerID, jsonErr)
+			}
+
+		case protocol.MsgCommandOutput:
+			payloadBytes, _ := json.Marshal(env.Payload)
+			var out protocol.CommandOutputMessage
+			if jsonErr := json.Unmarshal(payloadBytes, &out); jsonErr == nil {
+				if s.onCommandOutput != nil {
+					go s.onCommandOutput(out)
+				}
+			} else {
+				logger.SafeLogf("[WORKER] Failed to parse command_output from %s: %v", workerID, jsonErr)
 			}
 
 		case protocol.MsgResult:

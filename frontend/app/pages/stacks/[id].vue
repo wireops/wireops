@@ -72,6 +72,12 @@ function toggleTimeline(logId: string, event: Event) {
   else expandedTimelineLogIds.value.delete(logId)
 }
 
+// Only open the live SSE stream while a deploy/redeploy/teardown is actually
+// in flight for this stack — avoids an idle connection per open stack page.
+const hasRunningLog = computed(() => (logs.value?.items || []).some((log: any) => log.status === 'running'))
+const liveStreamStackId = computed(() => (hasRunningLog.value ? stackId : null))
+const { lines: liveOutputLines, connected: liveStreamConnected } = useDeployStream(liveStreamStackId)
+
 const localEnvKeys = ref<string[]>([])
 
 const { data: webhookUrl } = useAsyncData(`webhook_url_${stackId}`, () => getWebhookUrl(stackId))
@@ -741,6 +747,17 @@ onMounted(() => {
             <UButton icon="i-lucide-refresh-cw" variant="ghost" size="xs" @click="refreshLogs()" />
           </div>
         </template>
+        <div v-if="hasRunningLog || liveOutputLines.length" class="mb-3 rounded-md border border-default bg-elevated p-2">
+          <div class="flex items-center gap-1.5 text-xs text-gray-500 mb-1">
+            <UIcon
+              :name="hasRunningLog ? 'i-lucide-loader-circle' : 'i-lucide-check-circle-2'"
+              :class="['w-3.5 h-3.5', hasRunningLog ? 'animate-spin text-blue-500' : 'text-green-500']"
+            />
+            <span>{{ hasRunningLog ? 'Live output' : 'Live output (finished)' }}</span>
+          </div>
+          <TerminalOutput v-if="liveOutputLines.length" :lines="liveOutputLines" />
+          <p v-else class="text-xs text-gray-400">Waiting for output…</p>
+        </div>
         <div v-if="logs?.items?.length" class="divide-y divide-gray-200 dark:divide-gray-800">
           <div v-for="log in logs.items" :key="log.id" class="py-3 space-y-1">
             <div class="flex items-center justify-between">
