@@ -28,6 +28,7 @@ import (
 	"github.com/wireops/wireops/internal/git"
 	"github.com/wireops/wireops/internal/integrations"
 	"github.com/wireops/wireops/internal/job"
+	"github.com/wireops/wireops/internal/logstream"
 	"github.com/wireops/wireops/internal/notify"
 	"github.com/wireops/wireops/internal/protocol"
 	"github.com/wireops/wireops/internal/rbac"
@@ -40,6 +41,7 @@ type routeRegistrar struct {
 	app       core.App
 	scheduler *sync.Scheduler
 	workerSvc sync.WorkerDispatcher
+	logBroker *logstream.Broker
 }
 
 func isNotificationIntegration(slug string) bool {
@@ -407,23 +409,109 @@ func (rr routeRegistrar) registerBackupAndStreamRoutes() {
 		e.Response.Header().Set("Cache-Control", "no-cache")
 		e.Response.Header().Set("Connection", "keep-alive")
 
+		// Commit the 200 status line as soon as the RBAC check above has
+		// passed, before the (possibly long) wait for the first log line —
+		// callers that only need to confirm access (e.g. the MCP live-log
+		// bridge's pre-subscribe authorization check) must not block on
+		// there being any log output yet.
+		e.Response.WriteHeader(http.StatusOK)
+		if flusher, ok := e.Response.(http.Flusher); ok {
+			flusher.Flush()
+		}
+
+		// Subscribe before loading the historical snapshot so writes that land
+		// in the gap between the two are queued on the channel rather than
+		// lost; the handoff state below reconciles them against the snapshot
+		// by RecordID + output length so each byte is emitted exactly once.
+		sub, unsubscribe := rr.logBroker.Subscribe(id)
+		defer unsubscribe()
+
 		logs, err := rr.app.FindAllRecords("sync_logs", dbx.HashExp{"stack": id})
 		if err != nil {
 			return err
 		}
 
-		flusher, ok := e.Response.(http.Flusher)
-		for _, logRecord := range logs {
-			for _, line := range strings.Split(logRecord.GetString("output"), "\n") {
+		flusher, _ := e.Response.(http.Flusher)
+		writeLines := func(text string) {
+			for _, line := range strings.Split(text, "\n") {
 				fmt.Fprintf(e.Response, "data: %s\n\n", line)
 			}
-			if ok {
+			if flusher != nil {
 				flusher.Flush()
 			}
 		}
 
-		return nil
+		state := newStreamHandoffState()
+		for _, logRecord := range logs {
+			writeLines(logRecord.GetString("output"))
+			state.observeSnapshot(logRecord.Id, logRecord.GetString("output"))
+		}
+
+		// Drain events queued during the gap between Subscribe and the
+		// snapshot query above: apply() no-ops for anything already covered
+		// by the snapshot and emits only the unseen tail for genuine gaps.
+	drain:
+		for {
+			select {
+			case ev, ok := <-sub:
+				if !ok {
+					return nil
+				}
+				if delta := state.apply(ev); delta != "" {
+					writeLines(delta)
+				}
+			default:
+				break drain
+			}
+		}
+
+		ctx := e.Request.Context()
+		for {
+			select {
+			case <-ctx.Done():
+				return nil
+			case ev, ok := <-sub:
+				if !ok {
+					return nil
+				}
+				if delta := state.apply(ev); delta != "" {
+					writeLines(delta)
+				}
+			}
+		}
 	}).BindFunc(rbac.Require(rbac.CapViewLogs))
+}
+
+// streamHandoffState tracks, per sync_logs RecordID, how many bytes of
+// cumulative output have already been written to an SSE stream. It lets the
+// /stream handler reconcile broker events against the historical snapshot
+// (and against each other) so the same bytes are never replayed and no
+// bytes published during the subscribe/snapshot handoff are dropped.
+type streamHandoffState struct {
+	lastLen map[string]int
+}
+
+func newStreamHandoffState() *streamHandoffState {
+	return &streamHandoffState{lastLen: make(map[string]int)}
+}
+
+// observeSnapshot records that recordID's output, as loaded from the
+// historical snapshot, has already been written in full.
+func (s *streamHandoffState) observeSnapshot(recordID, output string) {
+	s.lastLen[recordID] = len(output)
+}
+
+// apply returns the slice of ev.Output not yet written for its record ("" if
+// ev carries nothing new — a duplicate of, or already covered by, the
+// snapshot or a prior event) and advances the recorded length.
+func (s *streamHandoffState) apply(ev logstream.Event) string {
+	prev := s.lastLen[ev.RecordID]
+	if len(ev.Output) <= prev {
+		return ""
+	}
+	delta := ev.Output[prev:]
+	s.lastLen[ev.RecordID] = len(ev.Output)
+	return delta
 }
 
 func (rr routeRegistrar) registerRepositoryRoutes() {

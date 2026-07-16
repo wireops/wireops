@@ -2,7 +2,7 @@
 
 Self-hosted GitOps platform for managing Docker Compose stacks and scheduled Docker-based jobs. It watches Git repositories for changes and deploys updates on remote hosts through token-authenticated WebSocket workers.
 
-**Project status**: pre-1.0 (tags `v0.1.0`–`v0.1.15`), active hobby/side-project pace. Core GitOps sync, worker deploy security policy, and RBAC/audit are implemented and in daily use. `internal/secrets` has only the `internal` (AES-GCM) provider working — `vault`/`infisical` are unimplemented stubs; `internal/backup` is test-scaffolding only with no real implementation. Don't describe stub features as shipped in docs or responses without checking the source first.
+**Project status**: pre-1.0 (tags `v0.1.0`–`v0.1.15`), active hobby/side-project pace. Core GitOps sync, worker deploy security policy, and RBAC/audit are implemented and in daily use. `internal/secrets` has all three providers implemented and functional: `internal` (AES-GCM), `vault` (HashiCorp Vault), and `infisical`. `internal/backup` is test-scaffolding only with no real implementation. Don't describe stub features as shipped in docs or responses without checking the source first.
 
 ---
 
@@ -40,7 +40,7 @@ Self-hosted GitOps platform for managing Docker Compose stacks and scheduled Doc
 │   ├── protocol/messages.go      # WebSocket message types (shared)
 │   ├── rbac/rbac.go              # Role definitions (viewer/operator/admin/monitoring) and capability checks
 │   ├── audit/audit.go            # Request/system audit log recording + retention purge
-│   ├── secrets/                  # Pluggable secret providers (internal/AES-GCM; vault & infisical are unimplemented stubs)
+│   ├── secrets/                  # Pluggable secret providers: internal (AES-GCM), vault (HashiCorp Vault), infisical
 │   ├── oidc/collection.go        # OIDC PocketBase collection support (client secret hydration)
 │   ├── setup/service.go          # First-admin bootstrap (`/setup`) service
 │   ├── backup/                   # Backup/restore — test scaffolding only, no implementation yet
@@ -129,7 +129,10 @@ All collections are defined via Go migrations in `pb_migrations/`.
 | `repositories` | `name`, `git_url`, `branch`, `status`, `last_commit_sha`, `platform` |
 | `repository_keys` | `repository`, `auth_type` (none/ssh_key/basic), `ssh_private_key`*, `git_password`* |
 | `stacks` | `name`, `repository`, `compose_path`, `auto_sync`, `status`, `worker`, `current_version` |
-| `stack_env_vars` | `stack`, `key`, `value`*, `secret` |
+| `stack_env_vars` | `stack`, `key`, `value`*, `secret`, `secret_provider` (internal/vault/infisical) |
+| `global_env_vars` | `key`, `value`*, `secret`, `secret_provider` — reusable across stacks/jobs via binding tables |
+| `job_env_vars` | `job`, `key`, `value`*, `secret`, `secret_provider` |
+| `stack_global_env_vars` / `job_global_env_vars` | Binding tables linking `global_env_vars` rows to stacks/jobs |
 | `stack_services` | `stack`, `service_name`, `container_name`, `status` |
 | `stack_revisions` | `stack`, `version` — numbered snapshots of rendered compose YAML |
 | `stack_pending_reconciles` | `stack`, `trigger`, `commit_sha` — queue for offline worker reconnect |
@@ -137,7 +140,7 @@ All collections are defined via Go migrations in `pb_migrations/`.
 | `workers` | `hostname`, `fingerprint`, `status` (ACTIVE/REVOKED), `health_history` |
 | `scheduled_jobs` | `repository`, `job_file`, `enabled`, `status` |
 | `job_runs` | `job`, `worker`, `status`, `output`, `expires_at` (30-day TTL) |
-| `integrations` | `slug`, `enabled`, `config` (JSON) |
+| `integrations` | `slug`, `enabled`, `config` (JSON) — also stores Vault/Infisical backend config (address/token, site_url/client_id/client_secret, etc.) |
 
 (\* = AES-GCM encrypted at rest via `SECRET_KEY`)
 
@@ -255,6 +258,19 @@ All custom routes are prefixed `/api/custom/`. PocketBase also auto-exposes CRUD
 | `POST` | `/job-runs/{runId}/cancel` | Kill running container |
 | `DELETE` | `/job-runs/{runId}` | Delete stalled run |
 
+### Secret Backend Browse (superuser only, read-only — never returns raw credentials)
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/custom/integrations/vault/mounts` | List KV v2 mounts |
+| `GET` | `/api/custom/integrations/vault/browse` | Browse paths/keys under a mount |
+| `GET` | `/api/custom/integrations/vault/fields` | List fields at a path |
+| `POST` | `/api/custom/integrations/vault/test` | Test Vault connection |
+| `GET` | `/api/custom/integrations/infisical/projects` | List projects |
+| `GET` | `/api/custom/integrations/infisical/project` | Project detail (environments) |
+| `GET` | `/api/custom/integrations/infisical/browse` | Browse secret paths/keys |
+| `POST` | `/api/custom/integrations/infisical/test` | Test Infisical connection |
+
 ---
 
 ## Environment Variables
@@ -317,7 +333,7 @@ Events: `sync.started`, `sync.done`, `sync.error`, `sync.test`.
 - **RBAC** (`internal/rbac/rbac.go`): four roles — `viewer` < `operator` < `admin`, plus a separate `monitoring` role scoped to metrics-only access. Capabilities (`CapViewStacks`, `CapOperateStacks`, `CapManageSettings`, `CapManageSecurity`, `CapViewAuditLogs`, …) map to a minimum required role; route handlers check capabilities, not raw role strings.
 - **Worker deploy policy** (`internal/policy/`): resolves an effective `WorkerPolicy` per worker from the `worker_policies` singleton (global) with optional per-worker overrides. Enforces allowlists (volumes/networks/images/cap-add/devices/security-opt) and boolean blocks (`BlockPrivileged`, `BlockHostNetwork`, `BlockHostPID`, `BlockHostIPC`, `BlockDockerSocket`, `PreventLatestImages`, `BlockHostVolumes`). Empty allowlist = open; first entry added = allowlist-only from then on. `policy_inherit` controls whether a worker without a local override falls back to the global value.
 - **Audit log** (`internal/audit/audit.go`): records custom-route requests and system events (actor, action, resource, status, origin) with a configurable retention window, purged by a periodic sweep. Exposed via `GET /api/custom/audit-logs` (filterable by `from`/`to`/`actor_type`/`actor_id`/`action`/`resource_type`/`resource_id`/`origin`/`status`).
-- **Secrets providers** (`internal/secrets/`): pluggable `SecretProvider` registry. Only `internal` (AES-GCM, `SECRET_KEY`) is in `ValidProviders` and functional. `vault` and `infisical` are registered so legacy records get a clear provider-specific error, but their `Resolve()` always returns `not yet implemented` — do not present them as usable in docs or UI copy without checking `internal/secrets/vault.go` / `infisical.go` first.
+- **Secrets providers** (`internal/secrets/`): pluggable `SecretProvider` registry, `ValidProviders = ["internal", "vault", "infisical"]`, all three implemented and functional. `internal` encrypts the value at rest (AES-GCM, `SECRET_KEY`). `vault`/`infisical` store a reference string (`<mount>/data/<path>#<field>` / `<project-id>/<environment>/<secret-path>#<SECRET_NAME>`) resolved at deploy time against a backend configured via the `integrations` collection (category "Secret Backend"), not server env vars. Once an env var is saved as a secret its `secret_provider` is immutable (`preventEnvSecretProviderChange` in `internal/hooks/pb_hooks.go`) — must delete/recreate to switch backends. `internal/envvars/backend_check.go` pre-flight-blocks stack/job execution if a referenced backend is disabled, naming the provider and offending keys.
 - **OIDC / SSO** (`internal/oidc/collection.go`): PocketBase collection glue for OIDC client secret hydration; see README's OIDC env var table for the user-facing setup and the SSO role-override warning.
 - **Setup/bootstrap** (`internal/setup/service.go`): backs the `/setup` first-admin flow gated by `BOOTSTRAP_TOKEN`.
 - **Backup** (`internal/backup/`): only test scaffolding exists (`backup_restore_test.go`); there is no shipped backup/restore implementation — do not document this as a feature.

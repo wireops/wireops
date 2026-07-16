@@ -62,6 +62,18 @@ func TestMinimumRole(t *testing.T) {
 	}
 }
 
+func TestCapViewWorkersIsViewerLevel(t *testing.T) {
+	if got := MinimumRole(CapViewWorkers); got != RoleViewer {
+		t.Fatalf("expected viewer, got %q", got)
+	}
+	if !AtLeast(RoleViewer, MinimumRole(CapViewWorkers)) {
+		t.Fatal("expected viewer role to satisfy CapViewWorkers")
+	}
+	if AtLeast(RoleMonitoring, MinimumRole(CapViewWorkers)) {
+		t.Fatal("expected monitoring role to NOT satisfy CapViewWorkers")
+	}
+}
+
 func TestResolveActorDisabledUser(t *testing.T) {
 	col := core.NewAuthCollection("users")
 	user := core.NewRecord(col)

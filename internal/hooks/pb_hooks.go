@@ -27,6 +27,7 @@ import (
 	"github.com/wireops/wireops/internal/crypto"
 	"github.com/wireops/wireops/internal/git"
 	"github.com/wireops/wireops/internal/jobscheduler"
+	"github.com/wireops/wireops/internal/logstream"
 	"github.com/wireops/wireops/internal/oidc"
 	"github.com/wireops/wireops/internal/rbac"
 	"github.com/wireops/wireops/internal/safepath"
@@ -189,9 +190,21 @@ func triggerRepositoryBackgroundClone(app core.App, repoID, gitURL, branch strin
 	}()
 }
 
-func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Scheduler) {
+func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Scheduler, logBroker *logstream.Broker) {
 	secretKey := crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))
 	registerAuditHooks(app)
+
+	// Fan out sync_logs writes to the live tail broker (GET /api/custom/stacks/{id}/stream).
+	publishSyncLogEvent := func(e *core.RecordEvent) error {
+		logBroker.Publish(e.Record.GetString("stack"), logstream.Event{
+			RecordID: e.Record.Id,
+			Output:   e.Record.GetString("output"),
+			Status:   e.Record.GetString("status"),
+		})
+		return e.Next()
+	}
+	app.OnRecordAfterCreateSuccess("sync_logs").BindFunc(publishSyncLogEvent)
+	app.OnRecordAfterUpdateSuccess("sync_logs").BindFunc(publishSyncLogEvent)
 
 	// OIDC_REQUIRE_EMAIL_VERIFIED: secure by default — reject when email_verified is absent or false.
 	// Set explicitly to "false" to opt out (e.g. IdPs that omit the claim or treat it like Authentik by default).

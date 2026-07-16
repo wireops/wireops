@@ -24,6 +24,7 @@ import (
 	"github.com/wireops/wireops/internal/crypto"
 	"github.com/wireops/wireops/internal/hooks"
 	"github.com/wireops/wireops/internal/jobscheduler"
+	"github.com/wireops/wireops/internal/logstream"
 	"github.com/wireops/wireops/internal/oidc"
 	"github.com/wireops/wireops/internal/protocol"
 	"github.com/wireops/wireops/internal/routes"
@@ -222,6 +223,7 @@ func Execute() error {
 	workerServer := worker.NewWorkerServer(app, workerSvc)
 	scheduler := wiresync.NewScheduler(app, workerServer)
 	jobSched := jobscheduler.NewScheduler(app, workerServer, reposWorkspace)
+	logBroker := logstream.New()
 
 	var disconnectTimers sync.Map
 
@@ -328,7 +330,7 @@ func Execute() error {
 
 		routes.RegisterSetupRoutes(se.Router, app)
 		routes.RegisterMetricsRoutes(se.Router, app, workerServer)
-		routes.Register(se.Router, app, scheduler, workerServer)
+		routes.Register(se.Router, app, scheduler, workerServer, logBroker)
 		routes.RegisterWorkerRoutes(se.Router, app, workerSvc, workerServer, workerServer)
 		routes.RegisterJobRoutes(se.Router, app, jobSched)
 		routes.RegisterAuditRoutes(se.Router, app)
@@ -369,7 +371,7 @@ func Execute() error {
 		return se.Next()
 	})
 
-	hooks.Register(app, scheduler, jobSched)
+	hooks.Register(app, scheduler, jobSched, logBroker)
 
 	syncHandler := func(e *core.RecordEvent) error {
 		syncSuperusers(app)

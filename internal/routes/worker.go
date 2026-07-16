@@ -141,7 +141,7 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 		}
 
 		return e.JSON(http.StatusOK, result)
-	}).BindFunc(rbac.Require(rbac.CapManageWorkers))
+	}).BindFunc(rbac.Require(rbac.CapViewWorkers))
 
 	r.POST("/api/custom/workers/{id}/revoke", func(e *core.RequestEvent) error {
 		workerID := e.Request.PathValue("id")
