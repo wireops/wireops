@@ -4,6 +4,7 @@
 
 # wireops
 
+[![Codacy Badge](https://api.codacy.com/project/badge/Grade/0e06b88c06e9488e8863268a71abbfd0)](https://app.codacy.com/gh/wireops/wireops?utm_source=github.com&utm_medium=referral&utm_content=wireops/wireops&utm_campaign=Badge_Grade)
 [![Latest Release](https://img.shields.io/github/v/release/wireops/wireops?sort=semver)](https://github.com/wireops/wireops/releases/latest)
 [![Server CI](https://github.com/wireops/wireops/actions/workflows/server-ci.yml/badge.svg)](https://github.com/wireops/wireops/actions/workflows/server-ci.yml)
 [![Worker CI](https://github.com/wireops/wireops/actions/workflows/worker-ci.yml/badge.svg)](https://github.com/wireops/wireops/actions/workflows/worker-ci.yml)
