@@ -113,6 +113,12 @@ const integrationMeta: Record<string, IntegrationMeta> = {
     description: 'Resolve secret env vars from Infisical via Universal Auth.',
     docLink: 'https://infisical.com/docs',
     open: integration => { infisicalIntegration.value = integration; showInfisicalModal.value = true }
+  },
+  sops: {
+    icon: '',
+    description: 'Decrypts secrets.yaml files committed next to wireops.yaml. Always active — each repository gets its own age key (see repository detail page).',
+    docLink: 'https://github.com/getsops/sops',
+    open: () => {}
   }
 }
 
@@ -179,7 +185,8 @@ function getIntegrationIcon(slug: string) {
 }
 
 // Fallback for any future integration without a bundled SVG asset yet.
-function getIntegrationFallbackIcon() {
+function getIntegrationFallbackIcon(slug: string) {
+  if (slug === 'sops') return 'i-lucide-file-lock-2'
   return 'i-lucide-puzzle'
 }
 
@@ -230,7 +237,10 @@ onMounted(() => {
                   <div class="flex items-center justify-between">
                     <h3 class="font-bold text-base text-gray-950 dark:text-wire-200">{{ integration.name }}</h3>
                     <div class="flex items-center gap-2">
-                      <USwitch v-model="integration.enabled" @update:model-value="handleSaveIntegration(integration, true)" />
+                      <UTooltip v-if="integration.locked" text="Always active — nothing to toggle">
+                        <USwitch :model-value="integration.enabled" disabled />
+                      </UTooltip>
+                      <USwitch v-else v-model="integration.enabled" @update:model-value="handleSaveIntegration(integration, true)" />
                       <UButton
                         v-if="configurableSlugs.includes(integration.slug)"
                         icon="i-lucide-settings"
@@ -257,7 +267,7 @@ onMounted(() => {
                   <!-- Large Icon -->
                   <div class="w-20 h-20 rounded-2xl bg-gray-50 dark:bg-carbon-800 flex items-center justify-center p-4 shadow-inner">
                     <img v-if="getIntegrationIcon(integration.slug)" :src="getIntegrationIcon(integration.slug)" class="w-12 h-12 object-contain" alt="">
-                    <UIcon v-else :name="getIntegrationFallbackIcon()" class="w-10 h-10 text-primary-500" />
+                    <UIcon v-else :name="getIntegrationFallbackIcon(integration.slug)" class="w-10 h-10 text-primary-500" />
                   </div>
                   
                   <!-- Discrete Description -->

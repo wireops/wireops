@@ -41,7 +41,10 @@ const syncDisabledReason = computed(() => {
 })
 
 watch(stackError, (err) => {
-  if (err) navigateTo('/stacks')
+  // Once the stack is gone, background refreshes (polling, realtime) will
+  // also 404 — but the delete modal handles its own redirect on close, so
+  // don't race it away from the user before they've seen the teardown logs.
+  if (err && !showDeleteModal.value) navigateTo('/stacks')
 })
 
 const { data: logs, refresh: refreshLogs } = useAsyncData(`logs_${stackId}`, () =>
@@ -1010,7 +1013,7 @@ onMounted(() => {
     <UModal v-model:open="showDeleteModal">
       <template #content>
         <DeleteStackModal
-          v-if="stack"
+          v-if="showDeleteModal"
           :stack="stack"
           :worker-offline="workerOffline"
           @deleted="onStackDeleted"

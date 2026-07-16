@@ -13,9 +13,34 @@ const emit = defineEmits<{
 }>()
 
 const { $pb } = useNuxtApp()
+const { customGet } = useApi()
 const { subscribe } = useRealtime()
 const toast = useToast()
 const { load: loadProviderOptions, providerOptions, hasActiveBackends, iconFor, avatarFor, labelFor } = useSecretProviderOptions()
+
+// SOPS-managed keys (decrypted from secrets.yaml, GitOps stacks only) are
+// read-only/immutable here: key names only, the server never sends values to
+// the browser. They override UI-defined vars with the same key at deploy
+// time, so surface that precedence in the UI too.
+const sopsKeys = ref<string[]>([])
+const sopsSourceFile = ref('')
+const sopsError = ref('')
+
+async function loadSopsEnvVars() {
+  if (props.targetType !== 'stack') return
+  try {
+    const res = await customGet<{ keys: string[]; available: boolean; source_file?: string; error?: string }>(
+      `/api/custom/stacks/${props.targetId}/sops-env-vars`
+    )
+    sopsKeys.value = res.available ? res.keys : []
+    sopsSourceFile.value = res.source_file || ''
+    sopsError.value = res.error || ''
+  } catch {
+    sopsKeys.value = []
+    sopsSourceFile.value = ''
+    sopsError.value = ''
+  }
+}
 
 const envVars = ref<any[]>([])
 const loading = ref(false)
@@ -189,6 +214,7 @@ async function confirmDeleteEnvVar() {
 
 onMounted(() => {
   load()
+  loadSopsEnvVars()
   loadProviderOptions()
   subscribe(collection.value, (event: any) => {
     if (event.record?.[targetField.value] === props.targetId) load()
@@ -212,13 +238,17 @@ watch(showCreateModal, (open) => {
           <UBadge :label="`${envVars.length}`" color="neutral" variant="subtle" />
           <UButton icon="i-lucide-plus" label="Add" size="xs" class="sm:hidden" :disabled="showCreateModal" @click="openCreateEnvModal" />
           <UButton icon="i-lucide-plus" label="Add" size="xs" class="hidden sm:inline-flex" :disabled="creating" @click="startCreateEnv" />
-          <UButton icon="i-lucide-refresh-cw" variant="ghost" color="neutral" size="xs" :loading="loading" @click="load" />
+          <UButton icon="i-lucide-refresh-cw" variant="ghost" color="neutral" size="xs" :loading="loading" @click="load(); loadSopsEnvVars()" />
         </div>
       </div>
     </template>
 
     <div>
-      <div v-if="creating || envVars.length" class="divide-y divide-gray-200 dark:divide-gray-800">
+      <p v-if="sopsError" class="flex items-center gap-1.5 py-1 text-xs text-amber-600 dark:text-amber-400">
+        <UIcon name="i-lucide-triangle-alert" class="h-3.5 w-3.5 shrink-0" />
+        SOPS: {{ sopsError }}
+      </p>
+      <div v-if="creating || envVars.length || sopsKeys.length" class="divide-y divide-gray-200 dark:divide-gray-800">
         <form v-if="creating" class="grid grid-cols-1 gap-2 py-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2rem_2rem_2rem] sm:items-center" @submit.prevent="addEnvVar">
           <AppTextInput v-model="newEnvKey" placeholder="KEY" class="font-mono" />
           <div class="flex items-center gap-1">
@@ -341,7 +371,31 @@ watch(showCreateModal, (open) => {
                 <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="xs" class="h-8 w-full justify-center !bg-red-500/10 p-0 !text-red-600 hover:!bg-red-500/15 sm:w-8 sm:!bg-transparent sm:!text-inherit sm:hover:!bg-transparent dark:!text-red-400" :loading="deletingId === env.id" aria-label="Delete environment variable" @click="openDeleteEnvModal(env)" />
               </div>
             </div>
+            <p v-if="sopsKeys.includes(env.key)" class="mt-1 flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400">
+              <UIcon name="i-lucide-file-lock-2" class="h-3 w-3" />
+              Overridden by SOPS at deploy time
+            </p>
           </template>
+        </div>
+
+        <div v-for="key in sopsKeys" :key="`sops-${key}`" class="py-2">
+          <div class="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2rem_2rem_2rem] sm:items-center">
+            <AppTextInput :model-value="key" disabled class="font-mono" />
+            <AppTextInput
+              model-value="••••••••"
+              disabled
+              type="password"
+              icon="i-lucide-file-lock-2"
+              :title="`Decrypted from ${sopsSourceFile || 'secrets.yaml'} via SOPS`"
+              class="font-mono"
+            />
+            <div class="grid grid-cols-3 gap-2 sm:contents">
+              <div class="flex h-8 w-full items-center justify-center rounded-md bg-amber-400/15 text-amber-500 sm:w-8 dark:bg-amber-400/10 dark:text-amber-400">
+                <UIcon name="i-lucide-file-lock-2" class="h-4 w-4" :title="`Managed by SOPS (${sopsSourceFile || 'secrets.yaml'}) — immutable here`" />
+              </div>
+              <UBadge label="SOPS" color="warning" variant="subtle" size="sm" class="col-span-2 justify-center sm:col-span-2" />
+            </div>
+          </div>
         </div>
       </div>
       <p v-else class="py-2 text-sm text-gray-500">No environment variables defined</p>

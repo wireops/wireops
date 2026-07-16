@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -174,11 +175,17 @@ func (r *Renderer) GenerateRevision(
 	// Calculate checksum WITHOUT time-varying metadata (generated_at, commit_sha, version).
 	// This ensures the checksum reflects only the structural compose content, so that
 	// commits touching unrelated files (non-compose) do not trigger unnecessary redeploys.
+	//
+	// The compose config above is rendered with --no-interpolate, so `${VAR}` placeholders
+	// stay literal in normalizedYAML — a value-only change to an env var (plain or
+	// SOPS-decrypted) would otherwise produce an identical checksum and be silently
+	// skipped as "no changes detected". Folding a hash of the resolved env vars into the
+	// checksum ensures env-only changes still trigger a redeploy.
 	normalizedYAML, err := normalizeYAML(configMap)
 	if err != nil {
 		return nil, fmt.Errorf("failed to normalize YAML for checksum: %w", err)
 	}
-	checksum := computeSHA256(normalizedYAML)
+	checksum := computeSHA256(append(normalizedYAML, []byte(hashEnvVars(envVars))...))
 
 	// Inject commit_sha, version, checksum, and generated_at AFTER hashing.
 	injectVersionMetadata(services, commitSHA, checksum, generatedAt, nextVersion)
@@ -309,6 +316,19 @@ func (r *Renderer) GetRevisionFilePath(stackID string, version int) string {
 func computeSHA256(data []byte) string {
 	h := sha256.New()
 	h.Write(data)
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// hashEnvVars returns a deterministic digest of "KEY=VALUE" entries,
+// independent of input order, for folding into the compose checksum.
+func hashEnvVars(envVars []string) string {
+	sorted := append([]string(nil), envVars...)
+	sort.Strings(sorted)
+	h := sha256.New()
+	for _, kv := range sorted {
+		h.Write([]byte(kv))
+		h.Write([]byte{0})
+	}
 	return hex.EncodeToString(h.Sum(nil))
 }
 

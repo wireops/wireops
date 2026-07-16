@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import TerminalOutput from '~/components/TerminalOutput.vue'
 import { useDeployStream } from '~/composables/useDeployStream'
 
@@ -19,28 +19,36 @@ const emit = defineEmits<{
 
 const showForceDeleteOption = ref(false)
 
+// Snapshot the stack prop so the modal keeps showing the right name/logs even
+// after deletion, once background refetches null it out on the parent page.
+const stackSnapshot = ref(props.stack)
+watch(() => props.stack, (val) => {
+  if (val) stackSnapshot.value = val
+})
+
 // Worker connectivity check
 const workerOffline = computed(() => {
   if (props.workerOffline) return true
   if (showForceDeleteOption.value) return true
-  const worker = props.stack?.expand?.worker
+  const worker = stackSnapshot.value?.expand?.worker
   if (!worker) return true
   // A worker is considered offline if its status is not ACTIVE
   if (worker.status && worker.status !== WORKER_STATUS.ACTIVE) return true
   return false
 })
 
-const workerName = computed(() => props.stack?.expand?.worker?.hostname || 'Assigned worker')
+const workerName = computed(() => stackSnapshot.value?.expand?.worker?.hostname || 'Assigned worker')
 
 const forceDelete = ref(false)
 const deleting = ref(false)
+const deleted = ref(false)
 const errorMsg = ref('')
 
 // Only opens the live SSE stream once the teardown dispatch is actually in
 // flight — the delete endpoint runs `docker compose down` synchronously
 // before removing DB records, and the worker streams that output under the
 // same "teardown" phase tag used elsewhere (see useDeployStream).
-const streamStackId = computed(() => (deleting.value ? props.stack?.id : null))
+const streamStackId = computed(() => (deleting.value || deleted.value ? stackSnapshot.value?.id : null))
 const { lines: teardownLines } = useDeployStream(streamStackId)
 
 async function confirmDelete() {
@@ -48,7 +56,7 @@ async function confirmDelete() {
   deleting.value = true
   errorMsg.value = ''
   try {
-    const res = await deleteStack(props.stack.id, forceDelete.value)
+    const res = await deleteStack(stackSnapshot.value.id, forceDelete.value)
     if (res?.error) {
       errorMsg.value = res.error
       if (res.error.toLowerCase().includes('offline')) {
@@ -56,15 +64,15 @@ async function confirmDelete() {
       }
       return
     }
-    toast.add({ title: `Stack "${props.stack.name}" deleted`, color: 'success' })
-    announce(`Stack ${props.stack.name} deleted`)
-    emit('deleted')
+    toast.add({ title: `Stack "${stackSnapshot.value.name}" deleted`, color: 'success' })
+    announce(`Stack ${stackSnapshot.value.name} deleted`)
+    deleted.value = true
   } catch (e: any) {
     errorMsg.value = e?.message || 'Unexpected error'
     if (errorMsg.value.toLowerCase().includes('offline')) {
       showForceDeleteOption.value = true
     }
-    announce(`Failed to delete stack ${props.stack?.name || ''}`.trim(), 'assertive')
+    announce(`Failed to delete stack ${stackSnapshot.value?.name || ''}`.trim(), 'assertive')
   } finally {
     deleting.value = false
   }
@@ -109,10 +117,16 @@ async function confirmDelete() {
       </div>
 
       <!-- Confirmation text -->
-      <div v-else class="text-sm text-gray-500 space-y-1">
-        <p>Are you sure you want to delete <span class="font-semibold text-gray-800 dark:text-gray-200">{{ stack?.name }}</span>?</p>
+      <div v-else-if="!deleted" class="text-sm text-gray-500 space-y-1">
+        <p>Are you sure you want to delete <span class="font-semibold text-gray-800 dark:text-gray-200">{{ stackSnapshot?.name }}</span>?</p>
         <p class="text-xs">The worker will run <code class="bg-gray-100 dark:bg-gray-800 px-1 rounded">docker compose down</code> to stop all containers before removing the stack.</p>
         <p class="text-xs text-red-500 font-medium">This action cannot be undone.</p>
+      </div>
+
+      <!-- Success message -->
+      <div v-if="deleted" class="flex items-start gap-3 rounded-lg border border-green-500/30 bg-green-500/10 px-4 py-3" role="status" aria-live="polite">
+        <UIcon name="i-lucide-circle-check" class="w-5 h-5 text-green-500 mt-0.5 shrink-0" />
+        <p class="text-sm text-green-600 dark:text-green-400">Stack "{{ stackSnapshot?.name }}" deleted successfully.</p>
       </div>
 
       <!-- API error -->
@@ -121,21 +135,24 @@ async function confirmDelete() {
         <p class="text-sm text-red-500">{{ errorMsg }}</p>
       </div>
 
-      <!-- Live teardown output while deletion is in flight -->
-      <TerminalOutput v-if="deleting && teardownLines.length" :lines="teardownLines" />
+      <!-- Live teardown output while deletion is in flight / after completion -->
+      <TerminalOutput v-if="(deleting || deleted) && teardownLines.length" :lines="teardownLines" />
     </div>
 
     <template #footer>
       <div class="flex justify-end gap-2">
-        <UButton label="Cancel" variant="outline" @click="emit('cancel')" />
-        <UButton
-          label="Delete Stack"
-          color="error"
-          icon="i-lucide-trash-2"
-          :loading="deleting"
-          :disabled="workerOffline && !forceDelete"
-          @click="confirmDelete"
-        />
+        <UButton v-if="deleted" label="Close" @click="emit('deleted')" />
+        <template v-else>
+          <UButton label="Cancel" variant="outline" @click="emit('cancel')" />
+          <UButton
+            label="Delete Stack"
+            color="error"
+            icon="i-lucide-trash-2"
+            :loading="deleting"
+            :disabled="workerOffline && !forceDelete"
+            @click="confirmDelete"
+          />
+        </template>
       </div>
     </template>
   </UCard>

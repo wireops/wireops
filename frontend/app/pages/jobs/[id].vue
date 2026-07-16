@@ -15,6 +15,25 @@ const tabs = [
   { id: 'runs', label: 'Runs', icon: 'i-lucide-history' },
 ]
 
+// --- Delete job
+const showDangerZone = ref(false)
+const showDeleteModal = ref(false)
+const deleting = ref(false)
+
+async function confirmDelete() {
+  deleting.value = true
+  try {
+    await $pb.collection('scheduled_jobs').delete(jobId.value)
+    toast.add({ title: 'Job deleted', color: 'success' })
+    showDeleteModal.value = false
+    await navigateTo('/jobs', { replace: true })
+  } catch (e: any) {
+    toast.add({ title: 'Failed to delete job', description: e?.message, color: 'error' })
+  } finally {
+    deleting.value = false
+  }
+}
+
 const { data: job, refresh: refreshJob } = useAsyncData(`job_${jobId.value}`, () =>
   $pb.collection('scheduled_jobs').getOne(jobId.value, { expand: 'repository' })
 )
@@ -175,6 +194,7 @@ async function toggleEnabled() {
       <GlobalVariablesExporter target-type="job" :target-id="jobId" :local-keys="localEnvKeys" />
     </div>
 
+
     <!-- Definition tab -->
     <div v-if="activeTab === 'definition'" class="space-y-4">
       <div v-if="definitionErrors.length > 0" class="space-y-2">
@@ -320,6 +340,29 @@ async function toggleEnabled() {
       <div v-else class="text-center py-10">
         <USkeleton class="h-40 w-full rounded-xl" />
       </div>
+
+      <!-- Danger Zone -->
+      <AccordionCard
+        v-model:open="showDangerZone"
+        title="Danger Zone"
+        title-class="text-red-500"
+        chevron-class="text-red-500"
+      >
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="text-sm font-medium">Remove Job</p>
+            <p class="text-xs text-gray-500">This will permanently delete this scheduled job and its run history.</p>
+          </div>
+          <UButton
+            label="Remove Job"
+            color="error"
+            variant="outline"
+            size="sm"
+            icon="i-lucide-trash-2"
+            @click="showDeleteModal = true"
+          />
+        </div>
+      </AccordionCard>
     </div>
 
     <!-- YAML File Modal -->
@@ -339,6 +382,39 @@ async function toggleEnabled() {
           <div class="overflow-y-auto max-h-[60vh] -mx-6 -my-4 p-6 bg-gray-950 text-gray-100 font-mono text-xs select-text">
             <YamlHighlighter :code="yamlContent" />
           </div>
+        </UCard>
+      </template>
+    </UModal>
+
+    <!-- Delete job modal -->
+    <UModal v-model:open="showDeleteModal">
+      <template #content>
+        <UCard>
+          <template #header>
+            <div class="flex items-center gap-2">
+              <UIcon name="i-lucide-trash-2" class="w-5 h-5 text-red-500" />
+              <h2 class="font-semibold text-red-500">Remove Job</h2>
+            </div>
+          </template>
+          <div class="space-y-3 text-sm text-gray-500 dark:text-wire-200/60">
+            <p>
+              Are you sure you want to delete
+              <span class="font-semibold text-gray-900 dark:text-wire-200">{{ job?.name || definition?.name }}</span>?
+            </p>
+            <p class="text-xs text-red-500 font-medium">This action cannot be undone.</p>
+          </div>
+          <template #footer>
+            <div class="flex justify-end gap-2">
+              <UButton label="Cancel" variant="outline" color="neutral" @click="showDeleteModal = false" />
+              <UButton
+                label="Remove Job"
+                color="error"
+                icon="i-lucide-trash-2"
+                :loading="deleting"
+                @click="confirmDelete"
+              />
+            </div>
+          </template>
         </UCard>
       </template>
     </UModal>

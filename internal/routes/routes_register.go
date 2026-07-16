@@ -29,11 +29,11 @@ import (
 	"github.com/wireops/wireops/internal/integrations"
 	"github.com/wireops/wireops/internal/job"
 	"github.com/wireops/wireops/internal/logstream"
+	"github.com/wireops/wireops/internal/manifest"
 	"github.com/wireops/wireops/internal/notify"
 	"github.com/wireops/wireops/internal/protocol"
 	"github.com/wireops/wireops/internal/rbac"
 	"github.com/wireops/wireops/internal/sync"
-	"github.com/wireops/wireops/internal/manifest"
 )
 
 type routeRegistrar struct {
@@ -130,6 +130,19 @@ func validateRequiredIntegrationConfig(slug string, cfg map[string]interface{}) 
 		}
 	}
 	return nil
+}
+
+// isIntegrationLocked reports whether the integrations row for slug has
+// locked=true, meaning it can't be enabled/disabled/reconfigured from the
+// API (e.g. "sops", which is always active and has no connection to
+// configure — see migration 53). An integration with no saved row yet is
+// never locked.
+func isIntegrationLocked(app core.App, slug string) bool {
+	rec, err := app.FindFirstRecordByFilter("integrations", "slug = {:slug}", map[string]any{"slug": slug})
+	if err != nil {
+		return false
+	}
+	return rec.GetBool("locked")
 }
 
 func maskIntegrationConfig(slug string, cfg map[string]interface{}) {
@@ -858,6 +871,7 @@ func (rr routeRegistrar) registerIntegrationRoutes(secretKey []byte) {
 			Name     string                 `json:"name"`
 			Category string                 `json:"category"`
 			Enabled  bool                   `json:"enabled"`
+			Locked   bool                   `json:"locked"`
 			Config   map[string]interface{} `json:"config"`
 		}
 
@@ -873,6 +887,7 @@ func (rr routeRegistrar) registerIntegrationRoutes(secretKey []byte) {
 			}
 			if rec, exists := saved[slug]; exists {
 				item.Enabled = rec.GetBool("enabled")
+				item.Locked = rec.GetBool("locked")
 				var cfg map[string]interface{}
 				if err := rec.UnmarshalJSONField("config", &cfg); err == nil && cfg != nil {
 					maskIntegrationConfig(slug, cfg)
@@ -888,6 +903,9 @@ func (rr routeRegistrar) registerIntegrationRoutes(secretKey []byte) {
 		slug := e.Request.PathValue("slug")
 		if _, exists := integrations.Get(slug); !exists {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid integration slug"})
+		}
+		if isIntegrationLocked(rr.app, slug) {
+			return e.JSON(http.StatusForbidden, map[string]string{"error": "this integration is always active and cannot be reconfigured"})
 		}
 
 		var body struct {
@@ -950,6 +968,9 @@ func (rr routeRegistrar) registerIntegrationRoutes(secretKey []byte) {
 		slug := e.Request.PathValue("slug")
 		if _, exists := integrations.Get(slug); !exists {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid integration slug"})
+		}
+		if isIntegrationLocked(rr.app, slug) {
+			return e.JSON(http.StatusForbidden, map[string]string{"error": "this integration is always active and cannot be disabled"})
 		}
 		recs, err := rr.app.FindRecordsByFilter("integrations", "slug = {:slug}", "", 0, 1, dbx.Params{"slug": slug})
 		if err != nil || len(recs) == 0 {

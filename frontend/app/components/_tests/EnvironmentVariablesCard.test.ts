@@ -20,6 +20,7 @@ describe('EnvironmentVariablesCard', () => {
         }),
       },
     })
+    ;(globalThis as any).useApi = () => ({ customGet: vi.fn().mockResolvedValue({ keys: [], available: false }) })
     ;(globalThis as any).useRealtime = () => ({ subscribe: vi.fn() })
     ;(globalThis as any).useToast = () => ({ add: vi.fn() })
     ;(globalThis as any).useSecretProviderOptions = () => ({
