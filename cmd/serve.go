@@ -281,6 +281,10 @@ func Execute() error {
 		jobSched.HandleJobCompleted(msg)
 	})
 
+	workerServer.SetOnCommandOutput(func(msg protocol.CommandOutputMessage) {
+		logBroker.PublishLine(msg.StackID, msg.CommandID, msg.Phase, msg.Line, msg.Seq)
+	})
+
 	go func() {
 		addr := ":8443"
 		if port := os.Getenv("TLS_WORKER_PORT"); port != "" {

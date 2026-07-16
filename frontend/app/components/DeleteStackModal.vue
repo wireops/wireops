@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import TerminalOutput from '~/components/TerminalOutput.vue'
+import { useDeployStream } from '~/composables/useDeployStream'
 
 const { deleteStack } = useApi()
 const toast = useToast()
@@ -33,6 +35,13 @@ const workerName = computed(() => props.stack?.expand?.worker?.hostname || 'Assi
 const forceDelete = ref(false)
 const deleting = ref(false)
 const errorMsg = ref('')
+
+// Only opens the live SSE stream once the teardown dispatch is actually in
+// flight — the delete endpoint runs `docker compose down` synchronously
+// before removing DB records, and the worker streams that output under the
+// same "teardown" phase tag used elsewhere (see useDeployStream).
+const streamStackId = computed(() => (deleting.value ? props.stack?.id : null))
+const { lines: teardownLines } = useDeployStream(streamStackId)
 
 async function confirmDelete() {
   if (workerOffline.value && !forceDelete.value) return
@@ -111,6 +120,9 @@ async function confirmDelete() {
         <UIcon name="i-lucide-circle-x" class="w-5 h-5 text-red-500 mt-0.5 shrink-0" />
         <p class="text-sm text-red-500">{{ errorMsg }}</p>
       </div>
+
+      <!-- Live teardown output while deletion is in flight -->
+      <TerminalOutput v-if="deleting && teardownLines.length" :lines="teardownLines" />
     </div>
 
     <template #footer>

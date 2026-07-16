@@ -73,6 +73,65 @@ func TestPublishWithNoSubscribersDoesNotBlock(t *testing.T) {
 	}
 }
 
+func TestPublishLineAccumulatesCumulativeOutput(t *testing.T) {
+	b := New()
+	ch, unsubscribe := b.Subscribe("stack1")
+	defer unsubscribe()
+
+	b.PublishLine("stack1", "cmd-1", "compose_up", "Pulling image", 1)
+	b.PublishLine("stack1", "cmd-1", "compose_up", "Starting container", 2)
+
+	var last Event
+	for i := 0; i < 2; i++ {
+		select {
+		case ev := <-ch:
+			last = ev
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for published line event")
+		}
+	}
+
+	want := "[compose_up] Pulling image\n[compose_up] Starting container\n"
+	if last.Output != want {
+		t.Fatalf("cumulative output = %q, want %q", last.Output, want)
+	}
+	if last.RecordID != "live:cmd-1" {
+		t.Fatalf("RecordID = %q, want live:cmd-1", last.RecordID)
+	}
+}
+
+func TestPublishLineIgnoresOutOfOrderSeq(t *testing.T) {
+	b := New()
+	ch, unsubscribe := b.Subscribe("stack1")
+	defer unsubscribe()
+
+	b.PublishLine("stack1", "cmd-1", "", "second", 2)
+	<-ch
+	b.PublishLine("stack1", "cmd-1", "", "stale-retry", 1) // redelivered/out-of-order
+	ev := <-ch
+
+	if ev.Output != "second\n" {
+		t.Fatalf("out-of-order line should have been dropped, got output %q", ev.Output)
+	}
+}
+
+func TestForgetLiveCommandClearsBuffer(t *testing.T) {
+	b := New()
+	ch, unsubscribe := b.Subscribe("stack1")
+	defer unsubscribe()
+
+	b.PublishLine("stack1", "cmd-1", "", "first", 1)
+	<-ch
+
+	b.ForgetLiveCommand("cmd-1")
+
+	b.PublishLine("stack1", "cmd-1", "", "after-forget", 1)
+	ev := <-ch
+	if ev.Output != "after-forget\n" {
+		t.Fatalf("expected buffer to restart after ForgetLiveCommand, got %q", ev.Output)
+	}
+}
+
 func TestMultipleSubscribersBothReceive(t *testing.T) {
 	b := New()
 	ch1, unsub1 := b.Subscribe("stack1")

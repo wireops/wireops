@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,6 +22,12 @@ type RunOptions struct {
 	// Callers must resolve the desired default (historically always true)
 	// before constructing RunOptions — this struct has no implicit default.
 	RemoveOrphans bool
+
+	// OnLine, when set, is invoked with each complete line of combined
+	// stdout/stderr as the command runs, for live streaming. It does not
+	// affect the final string returned by the Run* functions. May be called
+	// from the command's own goroutine context; implementations must not block.
+	OnLine func(string)
 }
 
 // buildUpArgs assembles the `docker compose ... up -d` argument list.
@@ -63,10 +70,13 @@ func RunUp(ctx context.Context, opts RunOptions) (string, error) {
 	cmd.Env = safeEnv()
 
 	var buf bytes.Buffer
-	cmd.Stdout = &buf
-	cmd.Stderr = &buf
+	lw := &lineWriter{onLine: opts.OnLine}
+	cmd.Stdout = io.MultiWriter(&buf, lw)
+	cmd.Stderr = io.MultiWriter(&buf, lw)
 
-	if err := cmd.Run(); err != nil {
+	err = cmd.Run()
+	lw.Flush()
+	if err != nil {
 		return buf.String(), fmt.Errorf("docker compose up failed: %w", err)
 	}
 
@@ -117,10 +127,13 @@ func RunForceUp(ctx context.Context, opts ForceUpOptions) (string, error) {
 		downCmd.Dir = opts.WorkDir
 		downCmd.Env = env
 		var downBuf bytes.Buffer
-		downCmd.Stdout = &downBuf
-		downCmd.Stderr = &downBuf
-		if err := downCmd.Run(); err != nil {
-			return downBuf.String(), fmt.Errorf("docker compose down failed: %w", err)
+		downLw := &lineWriter{onLine: opts.OnLine}
+		downCmd.Stdout = io.MultiWriter(&downBuf, downLw)
+		downCmd.Stderr = io.MultiWriter(&downBuf, downLw)
+		runErr := downCmd.Run()
+		downLw.Flush()
+		if runErr != nil {
+			return downBuf.String(), fmt.Errorf("docker compose down failed: %w", runErr)
 		}
 		allOutput.WriteString(downBuf.String())
 		allOutput.WriteString("\n--- recreating ---\n")
@@ -139,10 +152,13 @@ func RunForceUp(ctx context.Context, opts ForceUpOptions) (string, error) {
 	cmd.Env = env
 
 	var buf bytes.Buffer
-	cmd.Stdout = &buf
-	cmd.Stderr = &buf
+	lw := &lineWriter{onLine: opts.OnLine}
+	cmd.Stdout = io.MultiWriter(&buf, lw)
+	cmd.Stderr = io.MultiWriter(&buf, lw)
 
-	if err := cmd.Run(); err != nil {
+	err = cmd.Run()
+	lw.Flush()
+	if err != nil {
 		allOutput.WriteString(buf.String())
 		return allOutput.String(), fmt.Errorf("docker compose up failed: %w", err)
 	}
@@ -169,10 +185,13 @@ func RunDown(ctx context.Context, opts RunOptions) (string, error) {
 	cmd.Env = safeEnv()
 
 	var buf bytes.Buffer
-	cmd.Stdout = &buf
-	cmd.Stderr = &buf
+	lw := &lineWriter{onLine: opts.OnLine}
+	cmd.Stdout = io.MultiWriter(&buf, lw)
+	cmd.Stderr = io.MultiWriter(&buf, lw)
 
-	if err = cmd.Run(); err != nil {
+	err = cmd.Run()
+	lw.Flush()
+	if err != nil {
 		return buf.String(), fmt.Errorf("docker compose down failed: %w", err)
 	}
 
@@ -197,10 +216,13 @@ func RunDownPurge(ctx context.Context, opts RunOptions) (string, error) {
 	cmd.Env = safeEnv()
 
 	var buf bytes.Buffer
-	cmd.Stdout = &buf
-	cmd.Stderr = &buf
+	lw := &lineWriter{onLine: opts.OnLine}
+	cmd.Stdout = io.MultiWriter(&buf, lw)
+	cmd.Stderr = io.MultiWriter(&buf, lw)
 
-	if err = cmd.Run(); err != nil {
+	err = cmd.Run()
+	lw.Flush()
+	if err != nil {
 		return buf.String(), fmt.Errorf("docker compose down --purge failed: %w", err)
 	}
 

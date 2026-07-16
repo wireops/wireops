@@ -33,9 +33,10 @@ const (
 	MsgForceRebootstrap MessageType = "force_rebootstrap"
 
 	// Worker → Server responses/events
-	MsgResult       MessageType = "result"
-	MsgHeartbeat    MessageType = "heartbeat"
-	MsgJobCompleted MessageType = "job_completed"
+	MsgResult        MessageType = "result"
+	MsgHeartbeat     MessageType = "heartbeat"
+	MsgJobCompleted  MessageType = "job_completed"
+	MsgCommandOutput MessageType = "command_output"
 )
 
 // Envelope wraps every WebSocket message so the receiver can inspect Type
@@ -410,6 +411,27 @@ type JobCompletedMessage struct {
 
 	// ExecutionTimeMs is the worker-calculated execution time in milliseconds.
 	ExecutionTimeMs int64 `json:"execution_time_ms,omitempty"`
+}
+
+// CommandOutputMessage is an unsolicited push message sent from the worker to
+// the server while a compose command (deploy/redeploy/teardown) is running.
+// It carries one incremental line of stdout/stderr for live-tailing in the UI.
+// It is not a reply to a specific command and does not replace CommandResult —
+// the final CommandResult.Output remains the authoritative, persisted record.
+type CommandOutputMessage struct {
+	MessageID string `json:"message_id,omitempty"`
+	// CommandID correlates this line with the deploy/redeploy/teardown command.
+	CommandID string `json:"command_id"`
+	// StackID lets the server fan this out to the right stack's subscribers
+	// without needing to look up the command first.
+	StackID string `json:"stack_id"`
+	// Phase is the deploy phase this line belongs to (e.g. "compose_up").
+	Phase string `json:"phase,omitempty"`
+	// Line is a single line of stdout/stderr, already redacted of known secrets.
+	Line string `json:"line"`
+	// Seq is a per-command monotonically increasing sequence number, used by
+	// the server to detect gaps/reordering from transport retries.
+	Seq int64 `json:"seq"`
 }
 
 type AckMessage struct {

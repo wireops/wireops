@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/wireops/wireops/internal/constants"
 	"github.com/wireops/wireops/internal/protocol"
 	"github.com/wireops/wireops/worker/executor"
 	"github.com/wireops/wireops/worker/metrics"
@@ -116,6 +117,27 @@ type Sender interface {
 	QueuedJobsLen() int
 }
 
+// outputLineSender builds a per-command onLine callback that pushes each
+// redacted line to the server as an unsolicited MsgCommandOutput envelope,
+// for live streaming during deploy/redeploy/teardown. It never blocks
+// execution: SendEnvelope already queues asynchronously.
+func outputLineSender(sender Sender, commandID, stackID, phase string) func(string) {
+	var seq int64
+	return func(line string) {
+		n := atomic.AddInt64(&seq, 1)
+		sender.SendEnvelope(protocol.Envelope{
+			Type: protocol.MsgCommandOutput,
+			Payload: protocol.CommandOutputMessage{
+				CommandID: commandID,
+				StackID:   stackID,
+				Phase:     phase,
+				Line:      line,
+				Seq:       n,
+			},
+		})
+	}
+}
+
 func InitSemaphores(heavy, light, interactive, queueDepth int) {
 	if heavy <= 0 {
 		panic("InitSemaphores: heavy parameter must be greater than zero")
@@ -198,7 +220,7 @@ func HandleDeploy(sender Sender, payload interface{}) {
 		ActiveCommands.Delete(cmd.CommandID)
 	}()
 	start := time.Now()
-	result := executor.Deploy(ctx, cmd)
+	result := executor.Deploy(ctx, cmd, outputLineSender(sender, cmd.CommandID, cmd.StackID, constants.PhaseComposeUp))
 	duration := time.Since(start)
 
 	atomic.AddUint64(&metrics.TasksDeploy, 1)
@@ -229,7 +251,7 @@ func HandleRedeploy(sender Sender, payload interface{}) {
 		ActiveCommands.Delete(commandID)
 	}()
 	start := time.Now()
-	result := executor.Redeploy(ctx, cmd)
+	result := executor.Redeploy(ctx, cmd, outputLineSender(sender, commandID, cmd.StackID, constants.PhaseComposeUp))
 	duration := time.Since(start)
 
 	atomic.AddUint64(&metrics.TasksRedeploy, 1)
@@ -259,7 +281,7 @@ func HandleTeardown(sender Sender, payload interface{}) {
 		ActiveCommands.Delete(cmd.CommandID)
 	}()
 	start := time.Now()
-	result := executor.Teardown(ctx, cmd)
+	result := executor.Teardown(ctx, cmd, outputLineSender(sender, cmd.CommandID, cmd.StackID, "teardown"))
 	duration := time.Since(start)
 
 	atomic.AddUint64(&metrics.TasksTeardown, 1)

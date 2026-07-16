@@ -46,22 +46,35 @@ var stackDir = func() string {
 }()
 
 // runInWorkDir encapsulates the work directory preparation, logger error handling, and deferred cleanup
-// for commands that execute in a temporary compose workspace.
-func runInWorkDir(stackID, commandID, composeFileB64, envFileB64 string, action string, fn func(workDir, composeFile string) (string, error)) (string, error) {
-	workDir, composeFile, cleanup, err := prepareWorkDir(stackID, commandID, composeFileB64, envFileB64)
+// for commands that execute in a temporary compose workspace. onLine, if non-nil, is wrapped so every
+// line handed to fn's compose runner has secrets redacted before it reaches the caller (used for live
+// streaming); the final joined output and error are redacted the same way.
+func runInWorkDir(stackID, commandID, composeFileB64, envFileB64 string, action string, onLine func(string), fn func(workDir, composeFile string, onLine func(string)) (string, error)) (string, error) {
+	workDir, composeFile, cleanup, secrets, err := prepareWorkDir(stackID, commandID, composeFileB64, envFileB64)
 	if err != nil {
 		log.Printf("[executor] %s error stack=%s: %v", action, stackID, err)
 		return "", err
 	}
 	defer cleanup()
-	return fn(workDir, composeFile)
+
+	var wrappedOnLine func(string)
+	if onLine != nil {
+		wrappedOnLine = func(line string) { onLine(redactSecrets(line, secrets)) }
+	}
+
+	output, runErr := fn(workDir, composeFile, wrappedOnLine)
+	output = redactSecrets(output, secrets)
+	if runErr != nil {
+		runErr = errors.New(redactSecrets(runErr.Error(), secrets))
+	}
+	return output, runErr
 }
 
 // Deploy decodes the base64 compose file, writes it to a temp file, and runs
 // `docker compose up`. Environment variables are passed via cmd.Env, never
 // interpolated into the YAML. If EnvFileB64 is set, a .env file is also written
 // to the work directory before the compose command runs.
-func Deploy(ctx context.Context, cmd protocol.DeployCommand) protocol.CommandResult {
+func Deploy(ctx context.Context, cmd protocol.DeployCommand, onLine func(string)) protocol.CommandResult {
 	trigger := cmd.Trigger
 	if trigger == "" {
 		trigger = "unknown"
@@ -73,12 +86,13 @@ func Deploy(ctx context.Context, cmd protocol.DeployCommand) protocol.CommandRes
 	}
 	start := time.Now()
 
-	output, runErr := runInWorkDir(cmd.StackID, cmd.CommandID, cmd.ComposeFileB64, cmd.EnvFileB64, "deploy", func(workDir, composeFile string) (string, error) {
+	output, runErr := runInWorkDir(cmd.StackID, cmd.CommandID, cmd.ComposeFileB64, cmd.EnvFileB64, "deploy", onLine, func(workDir, composeFile string, wrappedOnLine func(string)) (string, error) {
 		return compose.RunUp(ctx, compose.RunOptions{
 			WorkDir:       workDir,
 			ComposeFile:   composeFile,
 			ForcePull:     cmd.ForcePull,
 			RemoveOrphans: cmd.RemoveOrphans,
+			OnLine:        wrappedOnLine,
 		})
 	})
 
@@ -94,7 +108,7 @@ func Deploy(ctx context.Context, cmd protocol.DeployCommand) protocol.CommandRes
 }
 
 // Redeploy is like Deploy but with force-recreate options.
-func Redeploy(ctx context.Context, cmd protocol.RedeployCommand) protocol.CommandResult {
+func Redeploy(ctx context.Context, cmd protocol.RedeployCommand, onLine func(string)) protocol.CommandResult {
 	trigger := cmd.Trigger
 	if trigger == "" {
 		trigger = "force-redeploy"
@@ -108,13 +122,14 @@ func Redeploy(ctx context.Context, cmd protocol.RedeployCommand) protocol.Comman
 	}
 	start := time.Now()
 
-	output, runErr := runInWorkDir(cmd.StackID, cmd.CommandID, cmd.ComposeFileB64, cmd.EnvFileB64, "redeploy", func(workDir, composeFile string) (string, error) {
+	output, runErr := runInWorkDir(cmd.StackID, cmd.CommandID, cmd.ComposeFileB64, cmd.EnvFileB64, "redeploy", onLine, func(workDir, composeFile string, wrappedOnLine func(string)) (string, error) {
 		return compose.RunForceUp(ctx, compose.ForceUpOptions{
 			RunOptions: compose.RunOptions{
 				WorkDir:       workDir,
 				ComposeFile:   composeFile,
 				ForcePull:     cmd.ForcePull,
 				RemoveOrphans: cmd.RemoveOrphans,
+				OnLine:        wrappedOnLine,
 			},
 			RecreateContainers: cmd.RecreateContainers,
 			RecreateVolumes:    cmd.RecreateVolumes,
@@ -135,14 +150,15 @@ func Redeploy(ctx context.Context, cmd protocol.RedeployCommand) protocol.Comman
 
 // Teardown decodes the base64 compose file and runs `docker compose down --remove-orphans`
 // to cleanly stop and remove all containers for the stack.
-func Teardown(ctx context.Context, cmd protocol.TeardownCommand) protocol.CommandResult {
+func Teardown(ctx context.Context, cmd protocol.TeardownCommand, onLine func(string)) protocol.CommandResult {
 	log.Printf("[executor] teardown start stack=%s command=%s", cmd.StackID, cmd.CommandID)
 	start := time.Now()
 
-	output, runErr := runInWorkDir(cmd.StackID, cmd.CommandID, cmd.ComposeFileB64, cmd.EnvFileB64, "teardown", func(workDir, composeFile string) (string, error) {
+	output, runErr := runInWorkDir(cmd.StackID, cmd.CommandID, cmd.ComposeFileB64, cmd.EnvFileB64, "teardown", onLine, func(workDir, composeFile string, wrappedOnLine func(string)) (string, error) {
 		return compose.RunDown(ctx, compose.RunOptions{
 			WorkDir:     workDir,
 			ComposeFile: composeFile,
+			OnLine:      wrappedOnLine,
 		})
 	})
 
@@ -164,7 +180,7 @@ func Probe(ctx context.Context, cmd protocol.ProbeCommand) protocol.CommandResul
 	start := time.Now()
 
 	var services []string
-	_, runErr := runInWorkDir(cmd.StackID, cmd.CommandID, cmd.ComposeFileB64, cmd.EnvFileB64, "probe", func(workDir, composeFile string) (string, error) {
+	_, runErr := runInWorkDir(cmd.StackID, cmd.CommandID, cmd.ComposeFileB64, cmd.EnvFileB64, "probe", nil, func(workDir, composeFile string, _ func(string)) (string, error) {
 		var psErr error
 		services, psErr = compose.RunPs(ctx, compose.RunOptions{
 			WorkDir:     workDir,
@@ -567,7 +583,13 @@ func RunJob(ctx context.Context, cmd protocol.RunJobCommand) protocol.JobComplet
 	runCmd := exec.CommandContext(runCtx, dockerPath, args...)
 	runCmd.Env = safeEnv()
 	out, runErr := runCmd.CombinedOutput()
-	output := string(out)
+	jobSecrets := make([]string, 0, len(cmd.Env))
+	for _, v := range cmd.Env {
+		if len(v) >= minRedactableSecretLen {
+			jobSecrets = append(jobSecrets, v)
+		}
+	}
+	output := redactSecrets(string(out), jobSecrets)
 
 	elapsed := time.Since(start).Milliseconds()
 	success := runErr == nil
@@ -642,18 +664,19 @@ func KillJob(cmd protocol.KillJobCommand) protocol.CommandResult {
 // prepareWorkDir prepares the compose work dir and applies the .env file if provided.
 // It returns the workDir, composeFile, a cleanup function, and any error.
 // If an error is returned, any created resources are cleaned up before returning.
-func prepareWorkDir(stackID, commandID, composeFileB64, envFileB64 string) (string, string, func(), error) {
+func prepareWorkDir(stackID, commandID, composeFileB64, envFileB64 string) (string, string, func(), []string, error) {
 	workDir, composeFile, cleanup, err := prepareComposeFile(stackID, commandID, composeFileB64)
 	if err != nil {
-		return "", "", func() {}, err
+		return "", "", func() {}, nil, err
 	}
 
-	if envErr := applyEnvFile(workDir, envFileB64); envErr != nil {
+	secrets, envErr := applyEnvFile(workDir, envFileB64)
+	if envErr != nil {
 		cleanup()
-		return "", "", func() {}, fmt.Errorf("failed to apply env file for stack %s: %w", stackID, envErr)
+		return "", "", func() {}, nil, fmt.Errorf("failed to apply env file for stack %s: %w", stackID, envErr)
 	}
 
-	return workDir, composeFile, cleanup, nil
+	return workDir, composeFile, cleanup, secrets, nil
 }
 
 // prepareComposeFile decodes the base64 YAML, writes it to a structured directory
@@ -701,22 +724,22 @@ func keepWorkerWorkDir() bool {
 // If envFileB64 is non-empty, it base64-decodes the content and writes .env with
 // mode 0600. If empty, any existing .env in the directory is removed.
 // Errors during write or decode are returned so callers can abort deployment.
-func applyEnvFile(workDir, envFileB64 string) error {
+func applyEnvFile(workDir, envFileB64 string) ([]string, error) {
 	envPath := filepath.Join(workDir, ".env")
 	if envFileB64 == "" {
 		if err := os.Remove(envPath); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("failed to remove .env: %w", err)
+			return nil, fmt.Errorf("failed to remove .env: %w", err)
 		}
-		return nil
+		return nil, nil
 	}
 	data, err := base64.StdEncoding.DecodeString(envFileB64)
 	if err != nil {
-		return fmt.Errorf("failed to decode .env content: %w", err)
+		return nil, fmt.Errorf("failed to decode .env content: %w", err)
 	}
 	if err := os.WriteFile(envPath, data, 0600); err != nil {
-		return fmt.Errorf("failed to write .env: %w", err)
+		return nil, fmt.Errorf("failed to write .env: %w", err)
 	}
-	return nil
+	return parseEnvValues(data), nil
 }
 
 // validateVolumePaths checks that every host path in the volume specs is
