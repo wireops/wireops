@@ -409,6 +409,16 @@ func (rr routeRegistrar) registerBackupAndStreamRoutes() {
 		e.Response.Header().Set("Cache-Control", "no-cache")
 		e.Response.Header().Set("Connection", "keep-alive")
 
+		// Commit the 200 status line as soon as the RBAC check above has
+		// passed, before the (possibly long) wait for the first log line —
+		// callers that only need to confirm access (e.g. the MCP live-log
+		// bridge's pre-subscribe authorization check) must not block on
+		// there being any log output yet.
+		e.Response.WriteHeader(http.StatusOK)
+		if flusher, ok := e.Response.(http.Flusher); ok {
+			flusher.Flush()
+		}
+
 		// Subscribe before loading the historical snapshot so writes that land
 		// in the gap between the two are queued on the channel rather than
 		// lost; the handoff state below reconciles them against the snapshot

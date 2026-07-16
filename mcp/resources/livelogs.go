@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -53,10 +54,28 @@ type liveLogWatcher struct {
 // *mcp.Server because the bridge must be wired into ServerOptions before
 // mcp.NewServer returns the server it needs to call back into.
 func NewLiveLogBridge(serverURL string, server func() *mcp.Server) *LiveLogBridge {
+	trimmed := strings.TrimRight(serverURL, "/")
+	origin, _ := url.Parse(trimmed)
+
 	return &LiveLogBridge{
-		serverURL:  strings.TrimRight(serverURL, "/"),
-		server:     server,
-		httpc:      &http.Client{},
+		serverURL: trimmed,
+		server:    server,
+		httpc: &http.Client{
+			// Redirects normally carry forward custom request headers, so a
+			// redirect to another origin would leak X-Wireops-Api-Key to it
+			// (both the authorize probe and the SSE stream connection send
+			// this header). Only permit redirects that stay on serverURL's
+			// origin — mirrors mcp/client.New's CheckRedirect.
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				if origin == nil || req.URL.Scheme != origin.Scheme || req.URL.Host != origin.Host {
+					return fmt.Errorf("refusing cross-origin redirect to %s", req.URL)
+				}
+				if len(via) >= 10 {
+					return fmt.Errorf("stopped after 10 redirects")
+				}
+				return nil
+			},
+		},
 		minBackoff: 500 * time.Millisecond,
 		maxBackoff: 30 * time.Second,
 		watchers:   make(map[watcherKey]*liveLogWatcher),
@@ -78,13 +97,31 @@ func (b *LiveLogBridge) Subscribe(ctx context.Context, req *mcp.SubscribeRequest
 
 	key := watcherKey{uri: uri, apiKey: apiKey}
 
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
 	// Reuse is keyed by (uri, apiKey), so this only ever matches a watcher
 	// started with the same credential — a different apiKey for the same
 	// uri always falls through and gets its own independently authorized
 	// connection below.
+	b.mu.Lock()
+	if w, exists := b.watchers[key]; exists {
+		w.refCount++
+		b.mu.Unlock()
+		return nil
+	}
+	b.mu.Unlock()
+
+	// Authorize synchronously, outside the lock, before Subscribe can
+	// return success. The MCP SDK registers this session as subscribed to
+	// uri as soon as Subscribe returns nil, and ResourceUpdated fans out
+	// to every session subscribed to that uri — not just the one whose
+	// watcher produced the line. Returning nil for an apiKey that can't
+	// actually read this stack's logs would let it ride along on another,
+	// authorized session's watcher once one exists.
+	if err := b.authorize(ctx, stackID, apiKey); err != nil {
+		return err
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	if w, exists := b.watchers[key]; exists {
 		w.refCount++
 		return nil
@@ -93,6 +130,28 @@ func (b *LiveLogBridge) Subscribe(ctx context.Context, req *mcp.SubscribeRequest
 	watchCtx, cancel := context.WithCancel(context.Background())
 	b.watchers[key] = &liveLogWatcher{cancel: cancel, apiKey: apiKey, refCount: 1}
 	go b.watch(watchCtx, uri, stackID, apiKey)
+	return nil
+}
+
+// authorize makes a synchronous request to confirm apiKey can read
+// stackID's log stream before Subscribe is allowed to succeed for it.
+func (b *LiveLogBridge) authorize(ctx context.Context, stackID, apiKey string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, b.serverURL+"/api/custom/stacks/"+stackID+"/stream", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set(wireauth.APIKeyHeader, apiKey)
+	req.Header.Set("Accept", "text/event-stream")
+
+	resp, err := b.httpc.Do(req)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("not authorized to subscribe to stack %s logs: server returned status %d", stackID, resp.StatusCode)
+	}
 	return nil
 }
 
