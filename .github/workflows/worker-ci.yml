@@ -46,6 +46,11 @@ jobs:
           CGO_ENABLED: 0
         run: go test -v ./worker/... ./internal/worker/...
 
+      - name: Run govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./worker/... ./internal/worker/...
+
       - name: Build worker binary
         env:
           CGO_ENABLED: 0

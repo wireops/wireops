@@ -48,6 +48,11 @@ jobs:
           packages=$(go list ./... | grep -v '^github.com/wireops/wireops/worker\(/\|$\)')
           go test -v $packages
 
+      - name: Run govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
       - name: Build server binary
         env:
           CGO_ENABLED: 0
