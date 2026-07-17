@@ -86,10 +86,10 @@ func validateRepositoryKeyAssignment(app core.App, repository *core.Record) erro
 // as ssh_private_key/git_password; the public key is stored as plain text
 // so it can be shown in the UI for `sops -e --age <key> secrets.yaml`.
 func ensureRepositorySopsKeypair(repository *core.Record) error {
-	if repository.GetString("sops_age_key") != "" {
-		return nil
-	}
-
+	// Both fields are server-managed: always generate a fresh keypair on
+	// create and overwrite whatever the caller may have sent, so a
+	// caller-supplied sops_age_key can never bypass encryption and
+	// sops_age_public_key can never be spoofed out of sync with the private key.
 	privateKey, publicKey, err := secrets.GenerateAgeKeypair()
 	if err != nil {
 		return fmt.Errorf("failed to generate SOPS age keypair: %w", err)

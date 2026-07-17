@@ -38,7 +38,7 @@ async function loadSopsEnvVars() {
   } catch {
     sopsKeys.value = []
     sopsSourceFile.value = ''
-    sopsError.value = ''
+    sopsError.value = 'Could not load SOPS override information'
   }
 }
 

@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/wireops/wireops/internal/compose"
 	"github.com/wireops/wireops/internal/config"
+	"github.com/wireops/wireops/internal/crypto"
 	"github.com/wireops/wireops/internal/policy"
 )
 
@@ -320,11 +322,18 @@ func computeSHA256(data []byte) string {
 }
 
 // hashEnvVars returns a deterministic digest of "KEY=VALUE" entries,
-// independent of input order, for folding into the compose checksum.
+// independent of input order, for folding into the compose checksum. The
+// checksum is persisted (stack/revision records) and baked into the
+// deployed compose file as a label, so an unkeyed hash of resolved env vars
+// (which may include SOPS-decrypted secret values) would let anyone with
+// read access to that checksum brute-force or dictionary-guess the
+// underlying secret value. HMAC with the server-only SECRET_KEY keeps the
+// digest one-way even when the plaintext value is weak/guessable.
 func hashEnvVars(envVars []string) string {
 	sorted := append([]string(nil), envVars...)
 	sort.Strings(sorted)
-	h := sha256.New()
+	secretKey := crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))
+	h := hmac.New(sha256.New, secretKey)
 	for _, kv := range sorted {
 		h.Write([]byte(kv))
 		h.Write([]byte{0})

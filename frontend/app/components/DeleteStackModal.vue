@@ -80,9 +80,16 @@ async function confirmDelete() {
 
 // Guarantees the parent navigates away even if the user dismisses the modal
 // via backdrop/ESC after a successful delete instead of clicking "Close" —
-// the parent's v-if unmounts this component on any close path.
+// the parent's v-if unmounts this component on any close path. Tracked
+// separately from `deleted` so an explicit "Close" click doesn't also fire
+// this on the teardown it triggers, double-emitting 'deleted' to the parent.
+let deletedEmitted = false
+function closeAfterDelete() {
+  deletedEmitted = true
+  emit('deleted')
+}
 onUnmounted(() => {
-  if (deleted.value) emit('deleted')
+  if (deleted.value && !deletedEmitted) emit('deleted')
 })
 </script>
 
@@ -148,7 +155,7 @@ onUnmounted(() => {
 
     <template #footer>
       <div class="flex justify-end gap-2">
-        <UButton v-if="deleted" label="Close" @click="emit('deleted')" />
+        <UButton v-if="deleted" label="Close" @click="closeAfterDelete" />
         <template v-else>
           <UButton label="Cancel" variant="outline" @click="emit('cancel')" />
           <UButton

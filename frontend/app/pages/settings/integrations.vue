@@ -122,7 +122,7 @@ const integrationMeta: Record<string, IntegrationMeta> = {
   }
 }
 
-const configurableSlugs = Object.keys(integrationMeta)
+const configurableSlugs = Object.keys(integrationMeta).filter(slug => slug !== 'sops')
 
 
 const groupedIntegrations = computed(() => {

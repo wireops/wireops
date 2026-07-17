@@ -1,6 +1,8 @@
 package pb_migrations
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 
@@ -163,7 +165,10 @@ func seedSopsIntegration(app core.App) error {
 func removeSopsIntegration(app core.App) error {
 	record, err := app.FindFirstRecordByFilter("integrations", "slug = {:slug}", map[string]any{"slug": "sops"})
 	if err != nil {
-		return nil
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return err
 	}
 	return app.Delete(record)
 }

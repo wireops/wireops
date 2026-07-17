@@ -13,6 +13,7 @@ import (
 
 	"github.com/wireops/wireops/internal/crypto"
 	"github.com/wireops/wireops/internal/secrets"
+	"github.com/wireops/wireops/internal/testutil"
 )
 
 // newRollbackGuardrailTestApp creates the minimal "stacks" collection needed
@@ -129,7 +130,7 @@ func TestRollbackReconcilesSopsSecretsForTargetCommitVersion(t *testing.T) {
 	}
 
 	commitSecrets := func(value string) string {
-		encrypted := encryptForAgeTest(t, publicKey, []byte("DB_PASS: "+value+"\n"))
+		encrypted := testutil.EncryptForAge(t, publicKey, []byte("DB_PASS: "+value+"\n"))
 		if err := os.WriteFile(filepath.Join(repoDir, "secrets.yaml"), encrypted, 0o644); err != nil {
 			t.Fatalf("write secrets.yaml: %v", err)
 		}

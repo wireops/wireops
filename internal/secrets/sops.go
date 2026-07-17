@@ -171,15 +171,29 @@ func flattenSecretsYAML(plaintext []byte) (map[string]string, error) {
 var SecretsFileNames = []string{"secrets.yaml", "secrets.yml"}
 
 // FindSecretsFile returns the absolute path to a secrets.yaml/secrets.yml
-// in dir, or "" if none exists.
+// in dir, or "" if none exists. dir is the checked-out contents of a
+// third-party git repository, so it is untrusted: a malicious commit could
+// plant "secrets.yaml" as a symlink to an arbitrary host path (e.g.
+// /etc/shadow) to have it read and echoed back through the decrypt-error
+// response. Lstat (rather than Stat) deliberately does not follow symlinks,
+// so a symlinked "secrets.yaml" is rejected instead of silently resolved.
 func FindSecretsFile(dir string) (string, error) {
 	for _, name := range SecretsFileNames {
 		path := filepath.Join(dir, name)
-		if info, err := os.Stat(path); err == nil && !info.IsDir() {
-			return path, nil
-		} else if err != nil && !os.IsNotExist(err) {
+		info, err := os.Lstat(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
 			return "", fmt.Errorf("sops: failed to stat %q: %w", path, err)
 		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("sops: %q must be a regular file, not a symlink", path)
+		}
+		if info.IsDir() {
+			continue
+		}
+		return path, nil
 	}
 	return "", nil
 }

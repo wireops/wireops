@@ -12,20 +12,12 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/router"
 
-	sopscore "github.com/getsops/sops/v3"
-	"github.com/getsops/sops/v3/aes"
-	sopsage "github.com/getsops/sops/v3/age"
-	"github.com/getsops/sops/v3/cmd/sops/common"
-	"github.com/getsops/sops/v3/cmd/sops/formats"
-	sopsconfig "github.com/getsops/sops/v3/config"
-	"github.com/getsops/sops/v3/keyservice"
-	"github.com/getsops/sops/v3/version"
-
 	_ "github.com/wireops/wireops/internal/integrations/sops"
 
 	"github.com/wireops/wireops/internal/crypto"
 	"github.com/wireops/wireops/internal/rbac"
 	"github.com/wireops/wireops/internal/secrets"
+	"github.com/wireops/wireops/internal/testutil"
 )
 
 func setupSopsTestApp(t *testing.T) (core.App, http.Handler) {
@@ -119,41 +111,6 @@ func TestSopsIntegrationCannotBeDeleted(t *testing.T) {
 	}
 }
 
-// encryptSopsFixture builds a SOPS-encrypted YAML fixture for the given age
-// recipient — sops-wrapper's own Encrypt doesn't support the age platform,
-// so the fixture is built directly against getsops/sops/v3.
-func encryptSopsFixture(t *testing.T, publicKey string, plaintext []byte) []byte {
-	t.Helper()
-	store := common.StoreForFormat(formats.Yaml, sopsconfig.NewStoresConfig())
-	branches, err := store.LoadPlainFile(plaintext)
-	if err != nil {
-		t.Fatalf("LoadPlainFile: %v", err)
-	}
-	masterKey, err := sopsage.MasterKeyFromRecipient(publicKey)
-	if err != nil {
-		t.Fatalf("MasterKeyFromRecipient: %v", err)
-	}
-	tree := sopscore.Tree{
-		Branches: branches,
-		Metadata: sopscore.Metadata{
-			KeyGroups: []sopscore.KeyGroup{{masterKey}},
-			Version:   version.Version,
-		},
-	}
-	dataKey, errs := tree.GenerateDataKeyWithKeyServices([]keyservice.KeyServiceClient{keyservice.NewLocalClient()})
-	if len(errs) > 0 {
-		t.Fatalf("GenerateDataKeyWithKeyServices: %v", errs)
-	}
-	if err := common.EncryptTree(common.EncryptTreeOpts{DataKey: dataKey, Tree: &tree, Cipher: aes.NewCipher()}); err != nil {
-		t.Fatalf("EncryptTree: %v", err)
-	}
-	encBytes, err := store.EmitEncryptedFile(tree)
-	if err != nil {
-		t.Fatalf("EmitEncryptedFile: %v", err)
-	}
-	return encBytes
-}
-
 func createSopsTestRepo(t *testing.T, app core.App, ageKeyEncrypted, ageKeyPublic string) *core.Record {
 	t.Helper()
 	col, err := app.FindCollectionByNameOrId("repositories")
@@ -238,7 +195,7 @@ func TestSopsEnvVarsRouteNeverLeaksValues(t *testing.T) {
 		t.Fatalf("mkdir repo dir: %v", err)
 	}
 	const secretValue = "s3cr3t-value-must-not-leak"
-	encrypted := encryptSopsFixture(t, publicKey, []byte("DB_PASS: "+secretValue+"\n"))
+	encrypted := testutil.EncryptForAge(t, publicKey, []byte("DB_PASS: "+secretValue+"\n"))
 	if err := os.WriteFile(filepath.Join(repoDir, "secrets.yaml"), encrypted, 0o644); err != nil {
 		t.Fatalf("write secrets.yaml: %v", err)
 	}

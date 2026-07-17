@@ -2,61 +2,15 @@ package secrets
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
-	"github.com/getsops/sops/v3"
-	"github.com/getsops/sops/v3/aes"
-	sopsage "github.com/getsops/sops/v3/age"
-	"github.com/getsops/sops/v3/cmd/sops/common"
-	"github.com/getsops/sops/v3/cmd/sops/formats"
-	sopsconfig "github.com/getsops/sops/v3/config"
-	"github.com/getsops/sops/v3/keyservice"
-	"github.com/getsops/sops/v3/version"
+	"github.com/wireops/wireops/internal/testutil"
 )
 
-// encryptForAge builds a SOPS-encrypted YAML document for the given age
-// recipient, bypassing sops-wrapper's Encrypt (which only wires up
-// aws/gcp/azure/vault key groups, not age) by driving the same
-// getsops/sops/v3 primitives directly with an age.MasterKey.
-func encryptForAge(t *testing.T, publicKey string, plaintext []byte) []byte {
-	t.Helper()
-
-	store := common.StoreForFormat(formats.Yaml, sopsconfig.NewStoresConfig())
-	branches, err := store.LoadPlainFile(plaintext)
-	if err != nil {
-		t.Fatalf("LoadPlainFile: %v", err)
-	}
-
-	masterKey, err := sopsage.MasterKeyFromRecipient(publicKey)
-	if err != nil {
-		t.Fatalf("MasterKeyFromRecipient: %v", err)
-	}
-
-	tree := sops.Tree{
-		Branches: branches,
-		Metadata: sops.Metadata{
-			KeyGroups: []sops.KeyGroup{{masterKey}},
-			Version:   version.Version,
-		},
-	}
-
-	dataKey, errs := tree.GenerateDataKeyWithKeyServices([]keyservice.KeyServiceClient{keyservice.NewLocalClient()})
-	if len(errs) > 0 {
-		t.Fatalf("GenerateDataKeyWithKeyServices: %v", errs)
-	}
-
-	if err := common.EncryptTree(common.EncryptTreeOpts{DataKey: dataKey, Tree: &tree, Cipher: aes.NewCipher()}); err != nil {
-		t.Fatalf("EncryptTree: %v", err)
-	}
-
-	encBytes, err := store.EmitEncryptedFile(tree)
-	if err != nil {
-		t.Fatalf("EmitEncryptedFile: %v", err)
-	}
-	return encBytes
-}
 
 func TestGenerateAgeKeypair(t *testing.T) {
 	privateKey, publicKey, err := GenerateAgeKeypair()
@@ -85,7 +39,7 @@ func TestDecryptSecretsFileSuccess(t *testing.T) {
 		t.Fatalf("GenerateAgeKeypair: %v", err)
 	}
 
-	encrypted := encryptForAge(t, publicKey, []byte("DB_PASS: hunter2\nAPI_TOKEN: \"abc123\"\n"))
+	encrypted := testutil.EncryptForAge(t, publicKey, []byte("DB_PASS: hunter2\nAPI_TOKEN: \"abc123\"\n"))
 
 	values, err := DecryptSecretsFile(context.Background(), encrypted, privateKey)
 	if err != nil {
@@ -106,7 +60,7 @@ func TestDecryptSecretsFileWrongKey(t *testing.T) {
 		t.Fatalf("GenerateAgeKeypair (other): %v", err)
 	}
 
-	encrypted := encryptForAge(t, publicKey, []byte("DB_PASS: hunter2\n"))
+	encrypted := testutil.EncryptForAge(t, publicKey, []byte("DB_PASS: hunter2\n"))
 
 	if _, err := DecryptSecretsFile(context.Background(), encrypted, otherPrivateKey); err == nil {
 		t.Fatal("expected error decrypting with the wrong age key, got nil")
@@ -114,10 +68,6 @@ func TestDecryptSecretsFileWrongKey(t *testing.T) {
 }
 
 func TestDecryptSecretsFileMalformed(t *testing.T) {
-	_, _, err := GenerateAgeKeypair()
-	if err != nil {
-		t.Fatalf("GenerateAgeKeypair: %v", err)
-	}
 	privateKey, _, err := GenerateAgeKeypair()
 	if err != nil {
 		t.Fatalf("GenerateAgeKeypair: %v", err)
@@ -171,8 +121,8 @@ func TestDecryptSecretsFileConcurrentDifferentKeys(t *testing.T) {
 		t.Fatalf("GenerateAgeKeypair B: %v", err)
 	}
 
-	encryptedA := encryptForAge(t, publicKeyA, []byte("WHO: alice\n"))
-	encryptedB := encryptForAge(t, publicKeyB, []byte("WHO: bob\n"))
+	encryptedA := testutil.EncryptForAge(t, publicKeyA, []byte("WHO: alice\n"))
+	encryptedB := testutil.EncryptForAge(t, publicKeyB, []byte("WHO: bob\n"))
 
 	var wg sync.WaitGroup
 	errs := make([]error, 20)
@@ -266,5 +216,57 @@ func TestEncryptSecretsMapRejectsEmptyPublicKey(t *testing.T) {
 func TestEncryptSecretsMapRejectsInvalidPublicKey(t *testing.T) {
 	if _, err := EncryptSecretsMap(context.Background(), map[string]string{"A": "b"}, "not-a-real-age-recipient"); err == nil {
 		t.Fatal("expected error for invalid public key, got nil")
+	}
+}
+
+func TestFindSecretsFileNoneFound(t *testing.T) {
+	dir := t.TempDir()
+	path, err := FindSecretsFile(dir)
+	if err != nil {
+		t.Fatalf("FindSecretsFile: %v", err)
+	}
+	if path != "" {
+		t.Fatalf("path = %q, want empty", path)
+	}
+}
+
+func TestFindSecretsFileFindsRegularFile(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "secrets.yaml")
+	if err := os.WriteFile(target, []byte("DB_PASS: ENC[...]\n"), 0o644); err != nil {
+		t.Fatalf("write secrets.yaml: %v", err)
+	}
+
+	path, err := FindSecretsFile(dir)
+	if err != nil {
+		t.Fatalf("FindSecretsFile: %v", err)
+	}
+	if path != target {
+		t.Fatalf("path = %q, want %q", path, target)
+	}
+}
+
+// TestFindSecretsFileRejectsSymlink guards against a malicious git repo
+// planting "secrets.yaml" as a symlink to an arbitrary host path (e.g.
+// /etc/shadow) — the repo tree checked out from a configured git_url is
+// untrusted content, so a symlinked secrets file must be rejected rather
+// than transparently followed and read.
+func TestFindSecretsFileRejectsSymlink(t *testing.T) {
+	dir := t.TempDir()
+	outsideTarget := filepath.Join(t.TempDir(), "host-secret.txt")
+	if err := os.WriteFile(outsideTarget, []byte("super-secret-host-file"), 0o644); err != nil {
+		t.Fatalf("write outside target: %v", err)
+	}
+	linkPath := filepath.Join(dir, "secrets.yaml")
+	if err := os.Symlink(outsideTarget, linkPath); err != nil {
+		t.Fatalf("create symlink: %v", err)
+	}
+
+	path, err := FindSecretsFile(dir)
+	if err == nil {
+		t.Fatalf("expected FindSecretsFile to reject a symlinked secrets file, got path=%q", path)
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("error = %q, want it to mention symlink rejection", err)
 	}
 }

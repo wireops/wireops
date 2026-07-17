@@ -892,11 +892,11 @@ func (rr routeRegistrar) registerIntegrationRoutes(secretKey []byte) {
 				Name:     impl.Name(),
 				Category: impl.Category(),
 				Enabled:  false,
+				Locked:   isIntegrationLocked(rr.app, slug),
 				Config:   map[string]interface{}{},
 			}
 			if rec, exists := saved[slug]; exists {
 				item.Enabled = rec.GetBool("enabled")
-				item.Locked = rec.GetBool("locked")
 				var cfg map[string]interface{}
 				if err := rec.UnmarshalJSONField("config", &cfg); err == nil && cfg != nil {
 					maskIntegrationConfig(slug, cfg)

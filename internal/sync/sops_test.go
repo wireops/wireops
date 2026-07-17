@@ -9,60 +9,12 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
 
-	sopscore "github.com/getsops/sops/v3"
-	"github.com/getsops/sops/v3/aes"
-	sopsage "github.com/getsops/sops/v3/age"
-	"github.com/getsops/sops/v3/cmd/sops/common"
-	"github.com/getsops/sops/v3/cmd/sops/formats"
-	sopsconfig "github.com/getsops/sops/v3/config"
-	"github.com/getsops/sops/v3/keyservice"
-	"github.com/getsops/sops/v3/version"
-
 	"github.com/wireops/wireops/internal/crypto"
 	"github.com/wireops/wireops/internal/secrets"
+	"github.com/wireops/wireops/internal/testutil"
 )
 
 const sopsTestSecretKey = "12345678901234567890123456789012"
-
-// encryptForAgeTest is a copy of internal/secrets's test-only fixture
-// builder: sops-wrapper's Encrypt only wires up aws/gcp/azure/vault key
-// groups, not age, so building an age-encrypted fixture means driving
-// getsops/sops/v3 directly with an age.MasterKey.
-func encryptForAgeTest(t *testing.T, publicKey string, plaintext []byte) []byte {
-	t.Helper()
-
-	store := common.StoreForFormat(formats.Yaml, sopsconfig.NewStoresConfig())
-	branches, err := store.LoadPlainFile(plaintext)
-	if err != nil {
-		t.Fatalf("LoadPlainFile: %v", err)
-	}
-
-	masterKey, err := sopsage.MasterKeyFromRecipient(publicKey)
-	if err != nil {
-		t.Fatalf("MasterKeyFromRecipient: %v", err)
-	}
-
-	tree := sopscore.Tree{
-		Branches: branches,
-		Metadata: sopscore.Metadata{
-			KeyGroups: []sopscore.KeyGroup{{masterKey}},
-			Version:   version.Version,
-		},
-	}
-
-	dataKey, errs := tree.GenerateDataKeyWithKeyServices([]keyservice.KeyServiceClient{keyservice.NewLocalClient()})
-	if len(errs) > 0 {
-		t.Fatalf("GenerateDataKeyWithKeyServices: %v", errs)
-	}
-	if err := common.EncryptTree(common.EncryptTreeOpts{DataKey: dataKey, Tree: &tree, Cipher: aes.NewCipher()}); err != nil {
-		t.Fatalf("EncryptTree: %v", err)
-	}
-	encBytes, err := store.EmitEncryptedFile(tree)
-	if err != nil {
-		t.Fatalf("EmitEncryptedFile: %v", err)
-	}
-	return encBytes
-}
 
 func newSopsTestRepo(t *testing.T, app core.App, ageKeyEncrypted, ageKeyPublic string) *core.Record {
 	t.Helper()
@@ -159,7 +111,7 @@ func TestLoadSopsEnvDecryptsFile(t *testing.T) {
 	repo := newSopsTestRepo(t, app, encryptedKey, publicKey)
 
 	workDir := t.TempDir()
-	encrypted := encryptForAgeTest(t, publicKey, []byte("DB_PASS: hunter2\n"))
+	encrypted := testutil.EncryptForAge(t, publicKey, []byte("DB_PASS: hunter2\n"))
 	if err := os.WriteFile(filepath.Join(workDir, "secrets.yaml"), encrypted, 0o644); err != nil {
 		t.Fatalf("write secrets.yaml: %v", err)
 	}

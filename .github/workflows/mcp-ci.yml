@@ -46,11 +46,12 @@ jobs:
           CGO_ENABLED: 0
         run: go test -v ./mcp/...
 
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+
       - name: Run govulncheck
         continue-on-error: true
-        run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck ./mcp/...
+        run: govulncheck ./mcp/...
 
       - name: Build mcp binary
         env:

@@ -9,6 +9,7 @@ import (
 
 	"github.com/pocketbase/pocketbase/core"
 
+	"github.com/wireops/wireops/internal/audit"
 	"github.com/wireops/wireops/internal/config"
 	"github.com/wireops/wireops/internal/crypto"
 	"github.com/wireops/wireops/internal/rbac"
@@ -139,6 +140,12 @@ func (rr routeRegistrar) registerSopsRoutes() {
 		if err := rr.app.Save(repo); err != nil {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
+
+		audit.RecordRequest(rr.app, e, audit.Event{
+			Action:       "repository.sops_key_rotate",
+			ResourceType: "repository",
+			ResourceID:   repoID,
+		})
 
 		return e.JSON(http.StatusOK, map[string]string{"sops_age_public_key": publicKey})
 	}).BindFunc(rbac.Require(rbac.CapManageRepos))

@@ -48,7 +48,14 @@ async function encrypt() {
   result.value = ''
   try {
     const values: Record<string, string> = {}
-    for (const row of validRows.value) values[row.key.trim()] = row.value
+    for (const row of validRows.value) {
+      const key = row.key.trim()
+      if (key in values) {
+        toast.add({ title: 'Duplicate key', description: `Key "${key}" is used more than once.`, color: 'error' })
+        return
+      }
+      values[key] = row.value
+    }
     const res = await customPost<{ content: string, filename: string }>(
       `/api/custom/repositories/${repositoryId.value}/sops-encrypt`,
       { values }

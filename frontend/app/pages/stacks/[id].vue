@@ -40,11 +40,16 @@ const syncDisabledReason = computed(() => {
   }
 })
 
-watch(stackError, (err) => {
+// Delete stack modal
+const showDeleteModal = ref(false)
+
+watch([stackError, showDeleteModal], ([err, deleting]) => {
   // Once the stack is gone, background refreshes (polling, realtime) will
   // also 404 — but the delete modal handles its own redirect on close, so
   // don't race it away from the user before they've seen the teardown logs.
-  if (err && !showDeleteModal.value) navigateTo('/stacks')
+  // If the modal is dismissed (cancelled, or closed after a background 404)
+  // while the stack is already gone, redirect on that transition too.
+  if (err && !deleting) navigateTo('/stacks')
 })
 
 const { data: logs, refresh: refreshLogs } = useAsyncData(`logs_${stackId}`, () =>
@@ -407,8 +412,6 @@ async function handleForceRedeploy() {
 }
 
 
-// Delete stack modal
-const showDeleteModal = ref(false)
 async function onStackDeleted() {
   showDeleteModal.value = false
   navigateTo('/stacks')
