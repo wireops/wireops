@@ -11,6 +11,7 @@ export interface Integration {
     name: string
     category: string
     enabled: boolean
+    locked?: boolean
     config: Record<string, any>
 }
 

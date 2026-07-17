@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -682,5 +683,69 @@ func createSSOGroupRoleMapping(t *testing.T, app core.App, group, role string) {
 	rec.Set("role", role)
 	if err := app.Save(rec); err != nil {
 		t.Fatalf("save sso group role mapping: %v", err)
+	}
+}
+
+func TestEnsureRepositorySopsKeypairOverridesCallerSuppliedValues(t *testing.T) {
+	t.Setenv("SECRET_KEY", "12345678901234567890123456789012")
+
+	repositories := core.NewBaseCollection("repositories")
+	repositories.Fields.Add(&core.TextField{Name: "sops_age_key"})
+	repositories.Fields.Add(&core.TextField{Name: "sops_age_public_key"})
+
+	repository := core.NewRecord(repositories)
+	repository.Set("sops_age_key", "plaintext-attacker-supplied-key")
+	repository.Set("sops_age_public_key", "age1attacker-supplied-public-key")
+
+	if err := ensureRepositorySopsKeypair(repository); err != nil {
+		t.Fatalf("ensureRepositorySopsKeypair() error = %v", err)
+	}
+
+	if got := repository.GetString("sops_age_key"); got == "plaintext-attacker-supplied-key" {
+		t.Fatalf("caller-supplied sops_age_key was not overwritten")
+	}
+	if got := repository.GetString("sops_age_public_key"); got == "age1attacker-supplied-public-key" {
+		t.Fatalf("caller-supplied sops_age_public_key was not overwritten")
+	}
+
+	secretKey := crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))
+	decrypted, err := crypto.Decrypt(repository.GetString("sops_age_key"), secretKey)
+	if err != nil {
+		t.Fatalf("expected stored sops_age_key to be encrypted with crypto.Encrypt, decrypt failed: %v", err)
+	}
+	if !strings.HasPrefix(string(decrypted), "AGE-SECRET-KEY-") {
+		t.Fatalf("decrypted sops_age_key does not look like an age private key: %q", decrypted)
+	}
+	if !strings.HasPrefix(repository.GetString("sops_age_public_key"), "age1") {
+		t.Fatalf("sops_age_public_key does not look like an age public key: %q", repository.GetString("sops_age_public_key"))
+	}
+}
+
+// GenerateAgeKeypair (age.GenerateX25519Identity, backed by crypto/rand) has
+// no injectable failure seam, so its error path isn't covered here.
+func TestEnsureRepositorySopsKeypairEncryptFailure(t *testing.T) {
+	// An invalid SECRET_KEY normalizes to a nil key, which makes
+	// aes.NewCipher (and so crypto.Encrypt) fail — a real, reachable error
+	// path rather than a mocked one.
+	t.Setenv("SECRET_KEY", "too-short")
+
+	repositories := core.NewBaseCollection("repositories")
+	repositories.Fields.Add(&core.TextField{Name: "sops_age_key"})
+	repositories.Fields.Add(&core.TextField{Name: "sops_age_public_key"})
+
+	repository := core.NewRecord(repositories)
+
+	err := ensureRepositorySopsKeypair(repository)
+	if err == nil {
+		t.Fatal("expected ensureRepositorySopsKeypair() to fail with an invalid SECRET_KEY, got nil error")
+	}
+	if !strings.Contains(err.Error(), "failed to encrypt SOPS age key") {
+		t.Fatalf("expected encrypt-failure error, got: %v", err)
+	}
+	if repository.GetString("sops_age_key") != "" {
+		t.Fatalf("sops_age_key should remain unset after an encrypt failure, got %q", repository.GetString("sops_age_key"))
+	}
+	if repository.GetString("sops_age_public_key") != "" {
+		t.Fatalf("sops_age_public_key should remain unset after an encrypt failure, got %q", repository.GetString("sops_age_public_key"))
 	}
 }

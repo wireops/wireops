@@ -20,6 +20,7 @@ describe('EnvironmentVariablesCard', () => {
         }),
       },
     })
+    ;(globalThis as any).useApi = () => ({ customGet: vi.fn().mockResolvedValue({ keys: [], available: false }) })
     ;(globalThis as any).useRealtime = () => ({ subscribe: vi.fn() })
     ;(globalThis as any).useToast = () => ({ add: vi.fn() })
     ;(globalThis as any).useSecretProviderOptions = () => ({
@@ -205,5 +206,66 @@ describe('EnvironmentVariablesCard', () => {
       }),
       expect.anything(),
     )
+  })
+
+  it('marks env vars overridden by SOPS and lists SOPS-only keys as read-only rows', async () => {
+    ;(globalThis as any).useNuxtApp = () => ({
+      $pb: {
+        collection: () => ({
+          getFullList: vi.fn().mockResolvedValue([
+            { id: 'env-1', key: 'DB_PASS', value: 'plain', secret: false, secret_provider: '' },
+          ]),
+          create: createFn,
+          update: vi.fn().mockResolvedValue({}),
+          delete: vi.fn().mockResolvedValue({}),
+        }),
+      },
+    })
+    ;(globalThis as any).useApi = () => ({
+      customGet: vi.fn().mockResolvedValue({ keys: ['DB_PASS', 'API_KEY'], available: true, source_file: 'secrets.yaml' }),
+    })
+
+    const wrapper = mount(EnvironmentVariablesCard, {
+      props: { targetType: 'stack', targetId: 'stack-1' },
+      global: { stubs },
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(wrapper.text()).toContain('Overridden by SOPS at deploy time')
+
+    const rowInputs = wrapper.findAll('input')
+    const values = rowInputs.map(i => (i.element as HTMLInputElement).value)
+    expect(values).toContain('API_KEY')
+  })
+
+  it('shows the amber error banner when sopsError is set', async () => {
+    ;(globalThis as any).useApi = () => ({
+      customGet: vi.fn().mockResolvedValue({ keys: [], available: false, error: 'no age key configured' }),
+    })
+
+    const wrapper = mount(EnvironmentVariablesCard, {
+      props: { targetType: 'stack', targetId: 'stack-1' },
+      global: { stubs },
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(wrapper.text()).toContain('SOPS: no age key configured')
+  })
+
+  it('shows the amber error banner when the SOPS request itself throws', async () => {
+    ;(globalThis as any).useApi = () => ({
+      customGet: vi.fn().mockRejectedValue(new Error('network error')),
+    })
+
+    const wrapper = mount(EnvironmentVariablesCard, {
+      props: { targetType: 'stack', targetId: 'stack-1' },
+      global: { stubs },
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(wrapper.text()).toContain('SOPS: Could not load SOPS override information')
   })
 })

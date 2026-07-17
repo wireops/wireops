@@ -79,6 +79,33 @@ func validateRepositoryKeyAssignment(app core.App, repository *core.Record) erro
 	return nil
 }
 
+// ensureRepositorySopsKeypair generates a per-repository age keypair on
+// creation (P1.5), so every repository is ready to decrypt a
+// secrets.yaml/secrets.yml as soon as one shows up next to its
+// wireops.yaml. The private key is encrypted at rest with SECRET_KEY, same
+// as ssh_private_key/git_password; the public key is stored as plain text
+// so it can be shown in the UI for `sops -e --age <key> secrets.yaml`.
+func ensureRepositorySopsKeypair(repository *core.Record) error {
+	// Both fields are server-managed: always generate a fresh keypair on
+	// create and overwrite whatever the caller may have sent, so a
+	// caller-supplied sops_age_key can never bypass encryption and
+	// sops_age_public_key can never be spoofed out of sync with the private key.
+	privateKey, publicKey, err := secrets.GenerateAgeKeypair()
+	if err != nil {
+		return fmt.Errorf("failed to generate SOPS age keypair: %w", err)
+	}
+
+	secretKey := crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))
+	encrypted, err := crypto.Encrypt([]byte(privateKey), secretKey)
+	if err != nil {
+		return fmt.Errorf("failed to encrypt SOPS age key: %w", err)
+	}
+
+	repository.Set("sops_age_key", encrypted)
+	repository.Set("sops_age_public_key", publicKey)
+	return nil
+}
+
 func validateRepositoryKeyTypeImmutable(app core.App, record *core.Record) error {
 	original := record.Original()
 	originalType := ""
@@ -343,6 +370,9 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 	// Repository hooks
 	app.OnRecordCreate("repositories").BindFunc(func(e *core.RecordEvent) error {
 		if err := validateRepositoryKeyAssignment(e.App, e.Record); err != nil {
+			return err
+		}
+		if err := ensureRepositorySopsKeypair(e.Record); err != nil {
 			return err
 		}
 		return e.Next()

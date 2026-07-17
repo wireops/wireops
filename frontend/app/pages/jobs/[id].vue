@@ -15,6 +15,15 @@ const tabs = [
   { id: 'runs', label: 'Runs', icon: 'i-lucide-history' },
 ]
 
+// --- Delete job
+const showDangerZone = ref(false)
+const showDeleteModal = ref(false)
+
+async function onJobDeleted() {
+  showDeleteModal.value = false
+  await navigateTo('/jobs', { replace: true })
+}
+
 const { data: job, refresh: refreshJob } = useAsyncData(`job_${jobId.value}`, () =>
   $pb.collection('scheduled_jobs').getOne(jobId.value, { expand: 'repository' })
 )
@@ -175,6 +184,7 @@ async function toggleEnabled() {
       <GlobalVariablesExporter target-type="job" :target-id="jobId" :local-keys="localEnvKeys" />
     </div>
 
+
     <!-- Definition tab -->
     <div v-if="activeTab === 'definition'" class="space-y-4">
       <div v-if="definitionErrors.length > 0" class="space-y-2">
@@ -320,6 +330,29 @@ async function toggleEnabled() {
       <div v-else class="text-center py-10">
         <USkeleton class="h-40 w-full rounded-xl" />
       </div>
+
+      <!-- Danger Zone -->
+      <AccordionCard
+        v-model:open="showDangerZone"
+        title="Danger Zone"
+        title-class="text-red-500"
+        chevron-class="text-red-500"
+      >
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="text-sm font-medium">Remove Job</p>
+            <p class="text-xs text-gray-500">This will permanently delete this scheduled job and its run history.</p>
+          </div>
+          <UButton
+            label="Remove Job"
+            color="error"
+            variant="outline"
+            size="sm"
+            icon="i-lucide-trash-2"
+            @click="showDeleteModal = true"
+          />
+        </div>
+      </AccordionCard>
     </div>
 
     <!-- YAML File Modal -->
@@ -340,6 +373,18 @@ async function toggleEnabled() {
             <YamlHighlighter :code="yamlContent" />
           </div>
         </UCard>
+      </template>
+    </UModal>
+
+    <!-- Delete job modal -->
+    <UModal v-model:open="showDeleteModal">
+      <template #content>
+        <JobDeleteModal
+          v-if="showDeleteModal"
+          :job="job"
+          @deleted="onJobDeleted"
+          @cancel="showDeleteModal = false"
+        />
       </template>
     </UModal>
   </div>

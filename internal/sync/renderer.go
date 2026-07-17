@@ -2,11 +2,13 @@ package sync
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +18,7 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/wireops/wireops/internal/compose"
 	"github.com/wireops/wireops/internal/config"
+	"github.com/wireops/wireops/internal/crypto"
 	"github.com/wireops/wireops/internal/policy"
 )
 
@@ -174,11 +177,17 @@ func (r *Renderer) GenerateRevision(
 	// Calculate checksum WITHOUT time-varying metadata (generated_at, commit_sha, version).
 	// This ensures the checksum reflects only the structural compose content, so that
 	// commits touching unrelated files (non-compose) do not trigger unnecessary redeploys.
+	//
+	// The compose config above is rendered with --no-interpolate, so `${VAR}` placeholders
+	// stay literal in normalizedYAML — a value-only change to an env var (plain or
+	// SOPS-decrypted) would otherwise produce an identical checksum and be silently
+	// skipped as "no changes detected". Folding a hash of the resolved env vars into the
+	// checksum ensures env-only changes still trigger a redeploy.
 	normalizedYAML, err := normalizeYAML(configMap)
 	if err != nil {
 		return nil, fmt.Errorf("failed to normalize YAML for checksum: %w", err)
 	}
-	checksum := computeSHA256(normalizedYAML)
+	checksum := computeSHA256(append(normalizedYAML, []byte(hashEnvVars(envVars))...))
 
 	// Inject commit_sha, version, checksum, and generated_at AFTER hashing.
 	injectVersionMetadata(services, commitSHA, checksum, generatedAt, nextVersion)
@@ -309,6 +318,26 @@ func (r *Renderer) GetRevisionFilePath(stackID string, version int) string {
 func computeSHA256(data []byte) string {
 	h := sha256.New()
 	h.Write(data)
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// hashEnvVars returns a deterministic digest of "KEY=VALUE" entries,
+// independent of input order, for folding into the compose checksum. The
+// checksum is persisted (stack/revision records) and baked into the
+// deployed compose file as a label, so an unkeyed hash of resolved env vars
+// (which may include SOPS-decrypted secret values) would let anyone with
+// read access to that checksum brute-force or dictionary-guess the
+// underlying secret value. HMAC with the server-only SECRET_KEY keeps the
+// digest one-way even when the plaintext value is weak/guessable.
+func hashEnvVars(envVars []string) string {
+	sorted := append([]string(nil), envVars...)
+	sort.Strings(sorted)
+	secretKey := crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))
+	h := hmac.New(sha256.New, secretKey)
+	for _, kv := range sorted {
+		h.Write([]byte(kv))
+		h.Write([]byte{0})
+	}
 	return hex.EncodeToString(h.Sum(nil))
 }
 

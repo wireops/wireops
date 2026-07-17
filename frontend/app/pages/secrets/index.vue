@@ -21,6 +21,7 @@ const deletingId = ref('')
 const creating = ref(false)
 const showCreateModal = ref(false)
 const variableToDelete = ref<any | null>(null)
+const showSopsEncryptModal = ref(false)
 
 const { load: loadProviderOptions, providerOptions, hasActiveBackends, iconFor, avatarFor, labelFor } = useSecretProviderOptions()
 
@@ -259,7 +260,10 @@ onMounted(() => {
           Secrets
         </h1>
       </div>
-      <UButton icon="i-lucide-refresh-cw" label="Refresh" variant="outline" :loading="activeTab === 'global-variables' && loading" @click="refreshActiveTab" />
+      <div class="flex items-center gap-2">
+        <UButton v-if="canOperate" icon="i-lucide-file-lock-2" label="Encrypt for SOPS" variant="outline" @click="showSopsEncryptModal = true" />
+        <UButton icon="i-lucide-refresh-cw" label="Refresh" variant="outline" :loading="activeTab === 'global-variables' && loading" @click="refreshActiveTab" />
+      </div>
     </div>
 
     <UTabs v-model="activeTab" :items="tabs" />
@@ -526,5 +530,7 @@ onMounted(() => {
     </UModal>
 
     <RepositoryKeysPanel v-if="activeTab === 'repository-keys'" ref="keysPanel" />
+
+    <EncryptSopsSecretsModal v-model:open="showSopsEncryptModal" />
   </div>
 </template>

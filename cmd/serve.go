@@ -40,6 +40,7 @@ import (
 	_ "github.com/wireops/wireops/internal/integrations/nginxproxymanager"
 	_ "github.com/wireops/wireops/internal/integrations/ntfy"
 	_ "github.com/wireops/wireops/internal/integrations/slack"
+	_ "github.com/wireops/wireops/internal/integrations/sops"
 	_ "github.com/wireops/wireops/internal/integrations/traefik"
 	_ "github.com/wireops/wireops/internal/integrations/vault"
 	_ "github.com/wireops/wireops/internal/integrations/webhook"

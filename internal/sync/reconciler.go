@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -277,6 +278,15 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		r.markError(stack, "stacks")
 		return fmt.Errorf("%s", errMsg)
 	}
+
+	sopsValues, sopsErr := r.loadSopsEnv(ctx, repo, workDir)
+	if sopsErr != nil {
+		errMsg := fmt.Sprintf("failed to decrypt SOPS secrets file: %v", sopsErr)
+		r.logFailureWithPhase(stackID, trigger, remoteSHA, errMsg, constants.PhaseRender, renderStart)
+		r.markError(stack, "stacks")
+		return fmt.Errorf("%s", errMsg)
+	}
+	envVars = overlaySopsEnv(envVars, sopsValues)
 
 	// Write .env to the repo workDir NOW so that compose config (called by
 	// GenerateRevision below via compose.Config) can resolve ${VAR} interpolations.
@@ -574,6 +584,15 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 		return fmt.Errorf("%s", errMsg)
 	}
 
+	sopsValues, sopsErr := r.loadSopsEnv(ctx, repo, workDir)
+	if sopsErr != nil {
+		errMsg := fmt.Sprintf("failed to decrypt SOPS secrets file: %v", sopsErr)
+		r.logFailureWithPhase(stackID, "manual", commitSHA, errMsg, constants.PhaseRender, renderStart)
+		r.markError(stack, "stacks")
+		return fmt.Errorf("%s", errMsg)
+	}
+	envVars = overlaySopsEnv(envVars, sopsValues)
+
 	workerID, workerFingerprint, err := r.resolveWorker(stack)
 	if err != nil {
 		errMsg := fmt.Sprintf("worker resolution failed: %v", err)
@@ -847,6 +866,13 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 		errMsg := fmt.Sprintf("failed to load env vars: %v", envErr)
 		return failRedeploy(errMsg, time.Since(start).Milliseconds())
 	}
+
+	sopsValues, sopsErr := r.loadSopsEnv(ctx, repo, workDir)
+	if sopsErr != nil {
+		errMsg := fmt.Sprintf("failed to decrypt SOPS secrets file: %v", sopsErr)
+		return failRedeploy(errMsg, time.Since(start).Milliseconds())
+	}
+	envVars = overlaySopsEnv(envVars, sopsValues)
 
 	workerID, workerFingerprint, err := r.resolveWorker(stack)
 	if err != nil {
@@ -1405,6 +1431,75 @@ func (r *Reconciler) loadEnvVars(ctx context.Context, stackID string) ([]string,
 	return envvars.LoadStack(ctx, r.app, r.secretsRegistry, stackID)
 }
 
+// loadSopsEnv looks for a secrets.yaml/secrets.yml next to the stack's
+// wireops.yaml (workDir) and, if found, decrypts it with the repository's
+// age key. Returns (nil, nil) when no secrets file is present — the common
+// case, and a no-op for stacks not using SOPS. repo may be nil (e.g. local
+// stacks, which have no repository record and no wireops.yaml) — SOPS is a
+// GitOps-only feature, so that also returns (nil, nil).
+func (r *Reconciler) loadSopsEnv(ctx context.Context, repo *core.Record, workDir string) (map[string]string, error) {
+	if repo == nil {
+		return nil, nil
+	}
+
+	path, err := secrets.FindSecretsFile(workDir)
+	if err != nil {
+		return nil, err
+	}
+	if path == "" {
+		return nil, nil
+	}
+
+	encryptedKey := repo.GetString("sops_age_key")
+	if encryptedKey == "" {
+		return nil, fmt.Errorf("found %q but repository %q has no SOPS age key configured", filepath.Base(path), repo.GetString("name"))
+	}
+
+	secretKey := crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))
+	ageKey, err := crypto.Decrypt(encryptedKey, secretKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt repository SOPS age key: %w", err)
+	}
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read %q: %w", path, err)
+	}
+
+	return secrets.DecryptSecretsFile(ctx, content, string(ageKey))
+}
+
+// overlaySopsEnv merges SOPS-decrypted values on top of envVars ("KEY=VALUE"
+// list from global/stack env vars), with SOPS values taking precedence on
+// key collisions. Returns envVars unchanged when overlay is empty.
+func overlaySopsEnv(envVars []string, overlay map[string]string) []string {
+	if len(overlay) == 0 {
+		return envVars
+	}
+
+	values := make(map[string]string, len(envVars)+len(overlay))
+	for _, kv := range envVars {
+		if idx := strings.Index(kv, "="); idx >= 0 {
+			values[kv[:idx]] = kv[idx+1:]
+		}
+	}
+	for k, v := range overlay {
+		values[k] = v
+	}
+
+	keys := make([]string, 0, len(values))
+	for k := range values {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	merged := make([]string, 0, len(keys))
+	for _, k := range keys {
+		merged = append(merged, k+"="+values[k])
+	}
+	return merged
+}
+
 // buildEnvFileB64 renders envVars as a .env file using the canonical
 // serializeEnvContent serializer (same quoting and validation as WriteEnvFile)
 // and returns the base64-encoded result. If envVars is empty, returns ("", nil)
@@ -1774,6 +1869,22 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 	envVars, envErr := r.loadEnvVars(ctx, stackID)
 	if envErr != nil {
 		return fmt.Errorf("failed to load env vars: %w", envErr)
+	}
+
+	if repoID := stack.GetString("repository"); repoID != "" {
+		repo, repoErr := r.app.FindRecordById("repositories", repoID)
+		if repoErr != nil {
+			return fmt.Errorf("failed to load repository for SOPS secrets: %w", repoErr)
+		}
+		workDir, workDirErr := r.stackWorkDir(stack, repoID)
+		if workDirErr != nil {
+			return fmt.Errorf("failed to resolve work dir for SOPS secrets: %w", workDirErr)
+		}
+		sopsValues, sopsErr := r.loadSopsEnv(ctx, repo, workDir)
+		if sopsErr != nil {
+			return fmt.Errorf("failed to decrypt SOPS secrets file: %w", sopsErr)
+		}
+		envVars = overlaySopsEnv(envVars, sopsValues)
 	}
 
 	composeB64 := base64.StdEncoding.EncodeToString(composeContent)
