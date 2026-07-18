@@ -23,7 +23,8 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 	}
 
 	registrar.registerStackTriggerRoutes()
-	registrar.registerBackupAndStreamRoutes()
+	registrar.registerBackupRoutes()
+	registrar.registerStreamRoutes()
 	registrar.registerStackInspectionRoutes()
 	registrar.registerContainerReadRoutes()
 	registrar.registerRepositoryRoutes()

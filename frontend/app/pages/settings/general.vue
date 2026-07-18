@@ -1,11 +1,9 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 
-const { $pb } = useNuxtApp()
 const toast = useToast()
 const { getAppSettings, saveAppSettings, keyscan } = useApi()
 
-const backupLoading = ref(false)
 const keyscanHost = ref('')
 const keyscanPort = ref(22)
 const keyscanLoading = ref(false)
@@ -91,60 +89,6 @@ async function handleSaveAppSettings() {
   }
 }
 
-function timestampForBackupName() {
-  const now = new Date()
-  const opts: Intl.DateTimeFormatOptions = {
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-    hourCycle: 'h23',
-    timeZone: (appSettings.value.timezone && appSettings.value.timezone !== 'system') ? appSettings.value.timezone : undefined
-  }
-  const parts = new Intl.DateTimeFormat('en-US', opts).formatToParts(now)
-  const get = (type: string) => parts.find(p => p.type === type)?.value || '00'
-  return `${get('year')}${get('month')}${get('day')}_${get('hour')}${get('minute')}${get('second')}`
-}
-
-async function exportDatabaseBackup() {
-  if (backupLoading.value) return
-  backupLoading.value = true
-  const filename = `wireops_backup_${timestampForBackupName()}.zip`
-  try {
-    const res = await fetch(`${$pb.baseURL}/api/custom/backups`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: $pb.authStore.token ? `Bearer ${$pb.authStore.token}` : '',
-        'X-Wireops-Origin': 'ui',
-      },
-      body: JSON.stringify({ filename }),
-    })
-    if (!res.ok) {
-      let message = `Download failed: ${res.statusText || res.status}`
-      try {
-        const data = await res.json()
-        if (data?.error) message = data.error
-      } catch {
-        // Keep default
-      }
-      throw new Error(message)
-    }
-    const blob = await res.blob()
-    const objectUrl = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = objectUrl
-    a.download = filename
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    URL.revokeObjectURL(objectUrl)
-    toast.add({ title: 'Database backup downloaded', color: 'success' })
-  } catch (e: any) {
-    toast.add({ title: 'Failed to export backup', description: e?.message, color: 'error' })
-  } finally {
-    backupLoading.value = false
-  }
-}
-
 async function copyToClipboard(text: string) {
   if (!navigator?.clipboard?.writeText) {
     toast.add({ title: 'Clipboard API not available', color: 'error' })
@@ -201,22 +145,6 @@ async function runKeyscan() {
           label="Save"
           :loading="appSettingsSaving"
           @click="handleSaveAppSettings"
-        />
-      </div>
-    </UCard>
-
-    <UCard>
-      <template #header><h3 class="font-semibold">Database Backup</h3></template>
-      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <p class="text-sm text-gray-500">
-          Export a restorable PocketBase backup of the local database and data directory.
-        </p>
-        <UButton
-          icon="i-lucide-download"
-          label="Export Backup"
-          :loading="backupLoading"
-          :disabled="backupLoading"
-          @click="exportDatabaseBackup"
         />
       </div>
     </UCard>

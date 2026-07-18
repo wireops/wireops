@@ -38,6 +38,7 @@ const navItems = computed(() => {
       to: '/settings',
       children: [
         { label: 'General', icon: 'i-lucide-settings-2', to: '/settings/general' },
+        { label: 'Backups', icon: 'i-lucide-database-backup', to: '/settings/backups' },
         { label: 'Security', icon: 'i-lucide-shield', to: '/settings/security' },
         { label: 'Integrations', icon: 'i-lucide-puzzle', to: '/settings/integrations' },
         { label: 'Identity', icon: 'i-lucide-users', to: '/settings/identity' },

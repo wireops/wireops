@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -286,33 +287,48 @@ func Execute() error {
 		logBroker.PublishLine(msg.StackID, msg.CommandID, msg.Phase, msg.Line, msg.Seq)
 	})
 
-	go func() {
-		addr := ":8443"
-		if port := os.Getenv("TLS_WORKER_PORT"); port != "" {
-			addr = ":" + strings.TrimPrefix(port, ":")
-		}
-
-		tlsCfg, tlsErr := wiretls.BuildServerTLSConfig()
-		if tlsErr != nil {
-			log.Fatalf("Fatal: failed to build TLS config for worker server: %v", tlsErr)
-		}
-
-		if tlsCfg != nil {
-			certFile := os.Getenv("TLS_CERT_FILE")
-			if certFile != "" {
-				log.Printf("[TLS] Worker server TLS enabled using certificate: %s", certFile)
-			} else {
-				log.Printf("[TLS] Worker server TLS enabled with self-signed certificate (workers need WORKER_TLS_SKIP_VERIFY=true)")
-			}
-		}
-
-		if err := workerServer.Start(addr, tlsCfg); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Fatal: worker server failed: %v", err)
-		}
-	}()
-
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
 		log.Println("[db] Database migrations completed successfully.")
+
+		// Verify SECRET_KEY still decrypts the canary seeded on a prior boot
+		// (or seed it, on first boot). Runs here rather than in OnBootstrap
+		// because the collections cache isn't guaranteed refreshed yet right
+		// after migrations apply mid-chain — by OnServe, bootstrap (schema +
+		// cache) has fully settled. A mismatch here means SECRET_KEY was
+		// rotated on this host without re-encrypting existing stack secrets.
+		// This must run before the worker TLS server starts accepting
+		// connections below — otherwise a worker could connect and run
+		// commands against undecryptable stack secrets during the window
+		// before this check has a chance to fail the process.
+		if err := crypto.VerifyOrSeedSecretKeyCanary(app, crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))); err != nil {
+			log.Printf("[FATAL] %v", err)
+			return err
+		}
+
+		go func() {
+			addr := ":8443"
+			if port := os.Getenv("TLS_WORKER_PORT"); port != "" {
+				addr = ":" + strings.TrimPrefix(port, ":")
+			}
+
+			tlsCfg, tlsErr := wiretls.BuildServerTLSConfig()
+			if tlsErr != nil {
+				log.Fatalf("Fatal: failed to build TLS config for worker server: %v", tlsErr)
+			}
+
+			if tlsCfg != nil {
+				certFile := os.Getenv("TLS_CERT_FILE")
+				if certFile != "" {
+					log.Printf("[TLS] Worker server TLS enabled using certificate: %s", certFile)
+				} else {
+					log.Printf("[TLS] Worker server TLS enabled with self-signed certificate (workers need WORKER_TLS_SKIP_VERIFY=true)")
+				}
+			}
+
+			if err := workerServer.Start(addr, tlsCfg); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("Fatal: worker server failed: %v", err)
+			}
+		}()
 
 		configureOIDC(app)
 		syncSuperusers(app)
@@ -403,6 +419,10 @@ func Execute() error {
 	}
 	if err := os.MkdirAll(stacksStorage, 0755); err != nil {
 		return fmt.Errorf("create stacks storage %s: %w", stacksStorage, err)
+	}
+	backupsDir := filepath.Join(dataDir, core.LocalBackupsDirName)
+	if err := os.MkdirAll(backupsDir, 0755); err != nil {
+		return fmt.Errorf("create backups dir %s: %w", backupsDir, err)
 	}
 
 	return app.Start()
@@ -566,8 +586,10 @@ func syncSuperusers(app core.App) {
 			superRecord.Set("email", email)
 		}
 
-		if superRecord.GetString("passwordHash") != u.GetString("passwordHash") || superRecord.GetString("tokenKey") != u.GetString("tokenKey") {
-			superRecord.Set("passwordHash", u.GetString("passwordHash"))
+		if superRecord.GetString("password:hash") != u.GetString("password:hash") || superRecord.GetString("tokenKey") != u.GetString("tokenKey") {
+			// SetRaw with a "$2"-prefixed string stores the bcrypt hash as-is
+			// instead of re-hashing it as plaintext (see PasswordField.getPasswordValue).
+			superRecord.SetRaw("password", u.GetString("password:hash"))
 			superRecord.Set("tokenKey", u.GetString("tokenKey"))
 
 			if err := app.SaveNoValidate(superRecord); err != nil {
@@ -576,7 +598,7 @@ func syncSuperusers(app core.App) {
 						app.Delete(superRecord)
 						superRecord = core.NewRecord(superCol)
 						superRecord.Set("email", email)
-						superRecord.Set("passwordHash", u.GetString("passwordHash"))
+						superRecord.SetRaw("password", u.GetString("password:hash"))
 						superRecord.Set("tokenKey", u.GetString("tokenKey"))
 						if err2 := app.SaveNoValidate(superRecord); err2 != nil {
 							log.Printf("[boot] warning: failed to recreate superuser %s: %v", email, err2)

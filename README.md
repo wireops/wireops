@@ -173,6 +173,7 @@ resources:
 | `STACKS_STORAGE_PATH` | No | `{PB_DATA_DIR}/stacks` | Directory for rendered compose revision files |
 | `HEARTBEAT_INTERVAL` | No | `30` | Heartbeat interval in seconds. Remote worker read deadline is 3x this value |
 | `ALLOWED_PRIVATE_IP_RANGES` | No | — | Comma-separated CIDR ranges allowed for SSH host key scanning |
+| `BACKUP_UPLOAD_MAX_MB` | No | `4096` | Max size (MB) accepted when uploading a backup archive for restore (Settings → Backups) |
 
 #### SMTP (optional)
 
@@ -358,6 +359,18 @@ Store the header line in `credentials_file`:
 ```text
 X-Wireops-Api-Key: wireops_sk_...
 ```
+
+## Disaster Recovery
+
+Wireops wraps PocketBase's built-in backup/restore (full DB + `DATA_DIR`, optional S3-compatible remote storage, scheduled cron backups with retention) behind wireops's own RBAC, so any admin (not just PocketBase superusers) can manage it from **Settings → Backups**:
+
+- Manual and scheduled backups, with history, download, and delete.
+- Restore replaces `DATA_DIR` and restarts the server automatically; failed restores revert on their own.
+- `SECRET_KEY` mismatch protection: a canary value is checked on every boot — restoring onto a host with the wrong `SECRET_KEY` fails startup with an explicit error instead of silently corrupting encrypted stack secrets (git passwords, SSH keys, integration tokens).
+
+**Critical:** back up `SECRET_KEY` separately from `DATA_DIR` backups (a secrets manager, not the same storage target) — without it, restored secrets are unreadable.
+
+Full runbook and worker-loss recovery scenarios: [`docs/DISASTER_RECOVERY.md`](docs/DISASTER_RECOVERY.md).
 
 ## Development
 

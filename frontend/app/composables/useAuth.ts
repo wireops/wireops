@@ -2,17 +2,28 @@ import type { RecordModel } from 'pocketbase'
 import { resolveBackendBaseUrl } from '~/composables/useBaseUrl'
 
 export function useAuth() {
-  const { $pb } = useNuxtApp()
+  const { $pb, $pbSuperuser } = useNuxtApp()
   const user = useState('auth_user', () => $pb.authStore.record)
 
   const login = async (email: string, password: string) => {
     const record = await $pb.collection('users').authWithPassword(email, password)
     user.value = record.record
+    // Best-effort: if these credentials also belong to a PocketBase
+    // superuser (true for the bootstrap admin), pick up a real superuser
+    // session too. Failure here is expected for non-superuser accounts.
+    try {
+      await $pbSuperuser.collection('_superusers').authWithPassword(email, password)
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn('[auth] not a PocketBase superuser session (expected for non-superuser accounts):', e)
+      $pbSuperuser.authStore.clear()
+    }
     return record
   }
 
   const logout = () => {
     $pb.authStore.clear()
+    $pbSuperuser.authStore.clear()
     user.value = null
     navigateTo('/login')
   }
@@ -49,6 +60,7 @@ export function useAuth() {
     // Clear the SSO token immediately - we don't want it to be used for admin endpoints
     // The SSO token is only valid for sso_users collection, not for app users
     $pb.authStore.clear()
+    $pbSuperuser.authStore.clear()
 
     const config = useRuntimeConfig()
     const baseURL = resolveBackendBaseUrl(config.public.pocketbaseUrl as string)

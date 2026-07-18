@@ -11,13 +11,11 @@ import (
 	"sort"
 	"strings"
 	stdsync "sync"
-	"time"
 
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/plumbing/transport"
-	"github.com/google/uuid"
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/router"
@@ -376,51 +374,7 @@ func (rr routeRegistrar) repoFilesSetupByID(e *core.RequestEvent, repoID string)
 	return filepath.Join(workspace, repoID), true
 }
 
-func (rr routeRegistrar) registerBackupAndStreamRoutes() {
-	rr.r.POST("/api/custom/backups", func(e *core.RequestEvent) error {
-		var body struct {
-			Filename string `json:"filename"`
-		}
-		if err := json.NewDecoder(e.Request.Body).Decode(&body); err != nil && err.Error() != "EOF" {
-			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid body"})
-		}
-
-		filename := strings.TrimSpace(body.Filename)
-		if filename == "" {
-			filename = fmt.Sprintf("wireops_backup_%d.zip", time.Now().Unix())
-		}
-		filename = filepath.Base(filename)
-		if !strings.HasSuffix(strings.ToLower(filename), ".zip") {
-			filename += ".zip"
-		}
-		if filename == "." || filename == "/" || filename == "" {
-			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid filename"})
-		}
-
-		storageFilename := fmt.Sprintf("wireops_backup_%s.zip", uuid.NewString())
-		if err := rr.app.CreateBackup(context.Background(), storageFilename); err != nil {
-			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to create backup"})
-		}
-
-		backupPath := filepath.Join(rr.app.DataDir(), core.LocalBackupsDirName, storageFilename)
-		file, err := os.Open(backupPath)
-		if err != nil {
-			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to open backup"})
-		}
-		defer os.Remove(backupPath)
-		defer file.Close()
-
-		info, err := file.Stat()
-		if err != nil {
-			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to stat backup"})
-		}
-
-		e.Response.Header().Set("Content-Type", "application/zip")
-		e.Response.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
-		http.ServeContent(e.Response, e.Request, filename, info.ModTime(), file)
-		return nil
-	}).BindFunc(rbac.Require(rbac.CapManageSettings))
-
+func (rr routeRegistrar) registerStreamRoutes() {
 	rr.r.GET("/api/custom/stacks/{id}/stream", func(e *core.RequestEvent) error {
 		id := e.Request.PathValue("id")
 		if id == "" {

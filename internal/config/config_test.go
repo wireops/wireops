@@ -276,6 +276,33 @@ func TestGetAppURL(t *testing.T) {
 	}
 }
 
+func TestGetBackupUploadMaxBytes(t *testing.T) {
+	t.Run("default", func(t *testing.T) {
+		t.Setenv("BACKUP_UPLOAD_MAX_MB", "")
+		os.Unsetenv("BACKUP_UPLOAD_MAX_MB")
+		want := int64(4096) * 1024 * 1024
+		if got := GetBackupUploadMaxBytes(); got != want {
+			t.Errorf("GetBackupUploadMaxBytes() = %d, want %d", got, want)
+		}
+	})
+
+	t.Run("configured", func(t *testing.T) {
+		t.Setenv("BACKUP_UPLOAD_MAX_MB", "10")
+		want := int64(10) * 1024 * 1024
+		if got := GetBackupUploadMaxBytes(); got != want {
+			t.Errorf("GetBackupUploadMaxBytes() = %d, want %d", got, want)
+		}
+	})
+
+	t.Run("invalid falls back to default", func(t *testing.T) {
+		t.Setenv("BACKUP_UPLOAD_MAX_MB", "not-a-number")
+		want := int64(4096) * 1024 * 1024
+		if got := GetBackupUploadMaxBytes(); got != want {
+			t.Errorf("GetBackupUploadMaxBytes() = %d, want %d", got, want)
+		}
+	})
+}
+
 func TestGetWebhookURL(t *testing.T) {
 	tests := []struct {
 		name     string

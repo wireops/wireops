@@ -7,6 +7,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/pocketbase/pocketbase/core"
+	"github.com/pocketbase/pocketbase/tests"
 )
 
 func TestGetAllowedOriginsIncludesLoopbackDevOrigins(t *testing.T) {
@@ -187,5 +190,43 @@ func TestValidateOIDCURL(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Regression test: syncSuperusers must copy the real bcrypt hash so the
+// mirrored "_superusers" record can authenticate with the admin's actual
+// password. It previously read/wrote a nonexistent "passwordHash" field
+// (PocketBase stores it under the "password" field, read via the
+// "password:hash" getter key), silently leaving the mirrored record's
+// password unset.
+func TestSyncSuperusersCopiesRealPasswordHash(t *testing.T) {
+	app, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatalf("new test app: %v", err)
+	}
+	t.Cleanup(func() { app.Cleanup() })
+
+	users, err := app.FindCollectionByNameOrId("users")
+	if err != nil {
+		t.Fatalf("find users collection: %v", err)
+	}
+
+	admin := core.NewRecord(users)
+	admin.Set("email", "admin@example.com")
+	admin.Set("password", "correct-horse-battery-staple")
+	admin.Set("role", "admin")
+	admin.Set("verified", true)
+	if err := app.Save(admin); err != nil {
+		t.Fatalf("save admin user: %v", err)
+	}
+
+	syncSuperusers(app)
+
+	superuser, err := app.FindAuthRecordByEmail(core.CollectionNameSuperusers, "admin@example.com")
+	if err != nil {
+		t.Fatalf("expected mirrored superuser to exist: %v", err)
+	}
+	if !superuser.ValidatePassword("correct-horse-battery-staple") {
+		t.Fatal("expected mirrored superuser to authenticate with the admin's real password")
 	}
 }

@@ -226,11 +226,14 @@ func TestSetupCreateFirstAdmin(t *testing.T) {
 	if !created.GetBool("protected") {
 		t.Fatal("expected first admin to be protected")
 	}
-	if created.GetString("passwordHash") != superuser.GetString("passwordHash") {
+	if created.GetString("password:hash") != superuser.GetString("password:hash") {
 		t.Fatal("expected user and superuser password hashes to match")
 	}
 	if created.GetString("tokenKey") != superuser.GetString("tokenKey") {
 		t.Fatal("expected user and superuser token keys to match")
+	}
+	if !superuser.ValidatePassword("securepassword") {
+		t.Fatal("expected superuser record to authenticate with the original plaintext password")
 	}
 	assertRouteAuditEvent(t, app, "setup.bootstrap_started", "success", "", "f***@example.com")
 	assertRouteAuditEvent(t, app, "setup.bootstrap_completed", "success", "", "f***@example.com")

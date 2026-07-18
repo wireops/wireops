@@ -1,6 +1,7 @@
 package config
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -89,6 +90,38 @@ func GetDeployTimeout() time.Duration {
 		}
 	}
 	return defaultSeconds * time.Second
+}
+
+// GetBackupUploadMaxBytes returns the maximum size accepted for an uploaded
+// backup archive. Configured via BACKUP_UPLOAD_MAX_MB (megabytes), default
+// 4096 MB (4 GiB) — generous for a DATA_DIR dump while still bounding disk
+// usage from an unauthenticated-adjacent-risk upload endpoint.
+func GetBackupUploadMaxBytes() int64 {
+	const defaultMB = 4096
+	const maxMB = math.MaxInt64 / (1024 * 1024) // cap so mb*1024*1024 can't overflow int64
+	mb := int64(defaultMB)
+	if raw := strings.TrimSpace(os.Getenv("BACKUP_UPLOAD_MAX_MB")); raw != "" {
+		if val, err := strconv.ParseInt(raw, 10, 64); err == nil && val > 0 && val <= maxMB {
+			mb = val
+		}
+	}
+	return mb * 1024 * 1024
+}
+
+// GetBackupMaxCount returns the maximum number of backups (any source:
+// manual create, scheduled cron, or upload) allowed to exist in the backups
+// filesystem at once. Configured via BACKUP_MAX_COUNT, default 100 — manual
+// creation has no automatic retention (unlike the cron job's
+// cron_max_keep), so without a cap a CapManageSettings user could
+// repeatedly create named backups and exhaust disk/S3 storage.
+func GetBackupMaxCount() int {
+	const defaultCount = 100
+	if raw := strings.TrimSpace(os.Getenv("BACKUP_MAX_COUNT")); raw != "" {
+		if val, err := strconv.Atoi(raw); err == nil && val > 0 {
+			return val
+		}
+	}
+	return defaultCount
 }
 
 // GetWebhookURL returns the full webhook URL for a given stack ID

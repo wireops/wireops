@@ -859,6 +859,29 @@ func registerAuditHooks(app core.App) {
 		})
 		return err
 	})
+
+	// Real PocketBase superuser sessions bypass wireops RBAC entirely
+	// (see rbac.RequireSuperuser), so every successful login against
+	// "_superusers" is audited regardless of which auth method was used.
+	app.OnRecordAuthRequest(core.CollectionNameSuperusers).BindFunc(func(e *core.RecordAuthRequestEvent) error {
+		err := e.Next()
+		status, code := auditStatus(err)
+		audit.Record(app, audit.Event{
+			ActorType:    audit.ActorUser,
+			ActorID:      e.Record.Id,
+			Action:       "superuser.login",
+			ResourceType: "superuser_session",
+			ResourceID:   e.Record.Id,
+			Origin:       audit.RequestOrigin(e.RequestEvent),
+			Metadata: map[string]any{
+				"auth_method": e.AuthMethod,
+				"email":       e.Record.GetString("email"),
+			},
+			Status:    status,
+			ErrorCode: code,
+		})
+		return err
+	})
 }
 
 func shouldSkipRequestAudit(req *core.RequestEvent) bool {

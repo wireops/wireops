@@ -349,5 +349,32 @@ export function useApi() {
     return customGet<AuditLogResponse>(`/api/custom/audit-logs${query ? `?${query}` : ''}`)
   }
 
-  return { triggerSync, triggerRollback, forceRedeploy, getServices, getStackResources, stopContainer, restartContainer, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, getRepoFiles, getStackFiles, getJobFiles, getJobDefinitionFromFile, getWireopsFiles, getWireopsDefinitionFromFile, createStackFromWireops, testCredentials, keyscan, listOrphans, purgeOrphan, getSystemInfo, customPost, customGet, customPut, customPatch, customDelete, getWorkers, createWorkerToken, revokeWorker, transferStack, discoverProjects, importStack, listJobs, triggerJobRun, cancelJobRun, deleteJobRun, getJobDefinition, getJobRaw, getWorkerPolicy, saveWorkerPolicy, resetWorkerPolicy, getGlobalWorkerPolicy, saveGlobalWorkerPolicy, getAppSettings, saveAppSettings, listAuditLogs }
+  // --- Backups ---
+  type BackupInfo = {
+    key: string
+    size: number
+    modified: string
+  }
+  type S3Config = {
+    enabled: boolean
+    bucket: string
+    region: string
+    endpoint: string
+    accessKey: string
+    secret?: string
+    forcePathStyle: boolean
+  }
+  type BackupSettings = {
+    cron: string
+    cron_max_keep: number
+    s3: S3Config
+  }
+  const listBackups = () => customGet<BackupInfo[]>('/api/custom/backups')
+  const createBackup = (filename?: string) => customPost<{ key: string }>('/api/custom/backups', filename ? { filename } : {})
+  const deleteBackup = (key: string) => customDelete(`/api/custom/backups/${encodeURIComponent(key)}`)
+  const restoreBackup = (key: string) => customPost(`/api/custom/backups/${encodeURIComponent(key)}/restore`, { confirm: true })
+  const getBackupSettings = () => customGet<BackupSettings>('/api/custom/backups/settings')
+  const saveBackupSettings = (data: BackupSettings) => customPut<BackupSettings>('/api/custom/backups/settings', data)
+
+  return { triggerSync, triggerRollback, forceRedeploy, getServices, getStackResources, stopContainer, restartContainer, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, getRepoFiles, getStackFiles, getJobFiles, getJobDefinitionFromFile, getWireopsFiles, getWireopsDefinitionFromFile, createStackFromWireops, testCredentials, keyscan, listOrphans, purgeOrphan, getSystemInfo, customPost, customGet, customPut, customPatch, customDelete, getWorkers, createWorkerToken, revokeWorker, transferStack, discoverProjects, importStack, listJobs, triggerJobRun, cancelJobRun, deleteJobRun, getJobDefinition, getJobRaw, getWorkerPolicy, saveWorkerPolicy, resetWorkerPolicy, getGlobalWorkerPolicy, saveGlobalWorkerPolicy, getAppSettings, saveAppSettings, listAuditLogs, listBackups, createBackup, deleteBackup, restoreBackup, getBackupSettings, saveBackupSettings }
 }
