@@ -35,6 +35,23 @@ func buildRouteTestZip(t *testing.T) []byte {
 	return buf.Bytes()
 }
 
+func buildOversizedRouteTestZip(t *testing.T, entrySize int) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	w, err := zw.CreateHeader(&zip.FileHeader{Name: "big.bin", Method: zip.Store})
+	if err != nil {
+		t.Fatalf("failed to add zip entry: %v", err)
+	}
+	if _, err := w.Write(make([]byte, entrySize)); err != nil {
+		t.Fatalf("failed to write zip entry: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("failed to close zip writer: %v", err)
+	}
+	return buf.Bytes()
+}
+
 func backupRoutesMux(t *testing.T, app core.App, auth *core.Record) http.Handler {
 	t.Helper()
 
@@ -272,14 +289,17 @@ func TestBackupRoutesUploadEnforcesSizeLimit(t *testing.T) {
 	t.Setenv("BACKUP_UPLOAD_MAX_MB", "1")
 	mux := backupRoutesMux(t, app, superuser)
 
-	oversized := make([]byte, 2*1024*1024) // 2MB body, over the 1MB configured limit
+	// A structurally valid zip (not arbitrary bytes) with an uncompressed
+	// entry over 1MB — so this test fails if rejection instead came from
+	// zip-magic validation rather than the configured size cap.
+	oversizedZip := buildOversizedRouteTestZip(t, 2*1024*1024) // 2MB entry, over the 1MB configured limit
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
 	fw, err := mw.CreateFormFile("file", "big.zip")
 	if err != nil {
 		t.Fatalf("create form file: %v", err)
 	}
-	if _, err := fw.Write(oversized); err != nil {
+	if _, err := fw.Write(oversizedZip); err != nil {
 		t.Fatalf("write form file: %v", err)
 	}
 	if err := mw.Close(); err != nil {
@@ -290,7 +310,7 @@ func TestBackupRoutesUploadEnforcesSizeLimit(t *testing.T) {
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
-	if rec.Code == http.StatusOK {
-		t.Fatalf("expected upload over the configured size limit to be rejected, got 200: %s", rec.Body.String())
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected %d (body too large) for an upload over the configured size limit, got %d: %s", http.StatusRequestEntityTooLarge, rec.Code, rec.Body.String())
 	}
 }

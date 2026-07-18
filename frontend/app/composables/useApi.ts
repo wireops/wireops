@@ -354,6 +354,7 @@ export function useApi() {
     key: string
     size: number
     modified: string
+    local?: boolean
     remote?: boolean
   }
   // Remote storage (S3) is the "s3" integration now (see

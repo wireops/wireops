@@ -51,6 +51,24 @@ func saveS3Integration(t *testing.T, app core.App, enabled bool, config map[stri
 	}
 }
 
+// saveS3IntegrationRecord is like saveS3Integration but returns the saved
+// record, for tests that need to update its config afterward.
+func saveS3IntegrationRecord(t *testing.T, app core.App, enabled bool, config map[string]any) *core.Record {
+	t.Helper()
+	col, err := app.FindCollectionByNameOrId("integrations")
+	if err != nil {
+		t.Fatalf("find integrations collection: %v", err)
+	}
+	rec := core.NewRecord(col)
+	rec.Set("slug", "s3")
+	rec.Set("enabled", enabled)
+	rec.Set("config", config)
+	if err := app.Save(rec); err != nil {
+		t.Fatalf("save s3 integration: %v", err)
+	}
+	return rec
+}
+
 func TestRemoteEnabledFalseWithoutIntegrationRow(t *testing.T) {
 	app := newS3TestApp(t)
 	enabled, err := remoteEnabled(app)
@@ -136,6 +154,26 @@ func TestRemoteEncryptContentRespectsConfigFlag(t *testing.T) {
 	}
 }
 
+func TestS3IntegrationConfigReturnsUnexpectedLookupError(t *testing.T) {
+	app := newS3TestApp(t)
+
+	// Drop the underlying table (but leave the collection's own schema
+	// record intact) so the filter lookup fails with a real DB error rather
+	// than "no matching row", and confirm that error surfaces instead of
+	// being swallowed into ok=false.
+	if _, err := app.DB().NewQuery("DROP TABLE integrations").Execute(); err != nil {
+		t.Fatalf("drop integrations table: %v", err)
+	}
+
+	_, ok, err := s3IntegrationConfig(app)
+	if err == nil {
+		t.Fatal("expected an error when the integrations collection lookup fails unexpectedly")
+	}
+	if ok {
+		t.Fatal("expected ok=false alongside the unexpected error")
+	}
+}
+
 func TestMigrateLegacyS3SettingsNoopWithoutLegacyConfig(t *testing.T) {
 	app := newS3TestApp(t)
 	if err := MigrateLegacyS3Settings(app, crypto.NormalizeSecretKey(testS3SecretKey)); err != nil {
@@ -202,5 +240,52 @@ func TestMigrateLegacyS3SettingsCarriesOverAndDisablesNativeS3(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("expected exactly 1 s3 integration row, got %d", count)
+	}
+}
+
+func TestMigrateLegacyS3SettingsDisablesNativeS3WithPreExistingIntegration(t *testing.T) {
+	app := newS3TestApp(t)
+
+	// An operator already configured the new-style "s3" integration by hand
+	// (row pre-exists) but never flipped off the legacy native backend.
+	encryptedSecret, err := crypto.Encrypt([]byte("s3cr3t"), crypto.NormalizeSecretKey(testS3SecretKey))
+	if err != nil {
+		t.Fatalf("encrypt secret: %v", err)
+	}
+	saveS3Integration(t, app, true, map[string]any{
+		"bucket": "b", "region": "r", "access_key": "ak", "secret": encryptedSecret,
+	})
+
+	settings := app.Settings()
+	settings.Backups.S3.Enabled = true
+	settings.Backups.S3.Bucket = "legacy-bucket"
+	settings.Backups.S3.Region = "us-east-1"
+	settings.Backups.S3.Endpoint = "https://s3.example.com"
+	settings.Backups.S3.AccessKey = "legacy-ak"
+	settings.Backups.S3.Secret = "legacy-secret"
+	if err := app.Save(settings); err != nil {
+		t.Fatalf("save legacy S3 settings: %v", err)
+	}
+
+	if err := MigrateLegacyS3Settings(app, crypto.NormalizeSecretKey(testS3SecretKey)); err != nil {
+		t.Fatalf("MigrateLegacyS3Settings failed: %v", err)
+	}
+
+	if app.Settings().Backups.S3.Enabled {
+		t.Fatal("expected PocketBase's native S3 backend to be disabled even when the s3 integration row already existed")
+	}
+
+	recs, err := app.FindAllRecords("integrations")
+	if err != nil {
+		t.Fatalf("query integrations: %v", err)
+	}
+	count := 0
+	for _, r := range recs {
+		if r.GetString("slug") == "s3" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("expected the pre-existing s3 integration row not to be duplicated, got %d", count)
 	}
 }

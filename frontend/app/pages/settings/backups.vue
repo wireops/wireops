@@ -126,14 +126,17 @@ async function loadRemoteStorageStatus() {
 // here so a silent/broken S3 target doesn't go unnoticed.
 const mirrorHistory = ref<MirrorAttempt[]>([])
 const mirrorHistoryLoading = ref(false)
+const mirrorHistoryError = ref('')
 
 async function loadMirrorHistory() {
   mirrorHistoryLoading.value = true
+  mirrorHistoryError.value = ''
   try {
     const res = await listAuditLogs({ action: 'backup.mirror', resource_type: 'backup', perPage: 10 })
     mirrorHistory.value = (res?.items || []) as unknown as MirrorAttempt[]
-  } catch {
+  } catch (e: any) {
     mirrorHistory.value = []
+    mirrorHistoryError.value = e?.message || 'Failed to load mirror history.'
   } finally {
     mirrorHistoryLoading.value = false
   }
@@ -450,8 +453,20 @@ onMounted(() => {
       </p>
 
       <div v-if="mirrorHistoryLoading" class="text-sm text-gray-500 py-2">Loading mirror history...</div>
+      <UAlert
+        v-else-if="mirrorHistoryError"
+        color="error"
+        icon="i-lucide-alert-circle"
+        title="Failed to load mirror history"
+        :description="mirrorHistoryError"
+        class="mt-3"
+      >
+        <template #actions>
+          <UButton label="Retry" size="xs" color="error" variant="outline" @click="loadMirrorHistory" />
+        </template>
+      </UAlert>
       <div v-else-if="mirrorHistory.length === 0" class="text-xs text-gray-500 mt-3">
-        No mirror attempts logged yet — nothing to mirror until S3 storage is enabled.
+        {{ isRemoteEnabled ? 'No mirror attempts logged yet.' : 'No mirror attempts logged yet — nothing to mirror until S3 storage is enabled.' }}
       </div>
       <div v-else class="mt-3 overflow-x-auto">
         <p class="text-xs uppercase text-gray-500 mb-1">Mirror history</p>

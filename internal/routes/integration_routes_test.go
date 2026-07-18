@@ -130,8 +130,12 @@ func TestS3IntegrationConfigKeys(t *testing.T) {
 	if s3Cfg["secret"] == "s3cr3t" {
 		t.Fatal("s3 secret was not encrypted at rest")
 	}
-	if !crypto.IsEncrypted(s3Cfg["secret"].(string)) {
-		t.Fatal("s3 secret does not look encrypted")
+	decrypted, err := crypto.Decrypt(s3Cfg["secret"].(string), key)
+	if err != nil {
+		t.Fatalf("s3 secret does not decrypt: %v", err)
+	}
+	if string(decrypted) != "s3cr3t" {
+		t.Fatalf("expected decrypted s3 secret %q, got %q", "s3cr3t", decrypted)
 	}
 	if s3Cfg["access_key"] != "AKIA..." {
 		t.Fatal("s3 access_key must stay plaintext at rest, like vault's address")

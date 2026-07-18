@@ -41,18 +41,16 @@ func PutRemote(ctx context.Context, app core.App, key string, r io.Reader, size 
 
 // GetRemote downloads key from the configured S3 integration, reversing
 // whatever content encryption was applied at upload time.
+//
+// Which decryption (if any) to apply is decided from the object's own
+// metadata (see remote.EncryptedGet), not from the current encrypt_content
+// setting — an object stays encrypted (or plain) as it was written even if
+// encrypt_content is later toggled, so decrypting on the current setting
+// would either fail or silently return ciphertext.
 func GetRemote(ctx context.Context, app core.App, key string) (io.ReadCloser, error) {
 	storage, err := buildRemoteStorage(app)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load remote backup storage: %w", err)
-	}
-
-	if !remoteEncryptContent(app) {
-		body, _, err := storage.Get(ctx, key)
-		if err != nil {
-			return nil, fmt.Errorf("failed to download remote backup: %w", err)
-		}
-		return body, nil
 	}
 
 	km, err := buildRemoteKeyManager(app)

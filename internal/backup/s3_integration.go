@@ -1,6 +1,8 @@
 package backup
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -24,7 +26,10 @@ const s3IntegrationSlug = "s3"
 func s3IntegrationConfig(app core.App) (config map[string]any, ok bool, err error) {
 	rec, findErr := app.FindFirstRecordByFilter("integrations", "slug = {:slug}", map[string]any{"slug": s3IntegrationSlug})
 	if findErr != nil {
-		return nil, false, nil
+		if errors.Is(findErr, sql.ErrNoRows) {
+			return nil, false, nil
+		}
+		return nil, false, findErr
 	}
 	if !rec.GetBool("enabled") {
 		return nil, false, nil
@@ -120,43 +125,54 @@ func MigrateLegacyS3Settings(app core.App, secretKey []byte) error {
 		return nil
 	}
 
-	if _, err := app.FindFirstRecordByFilter("integrations", "slug = {:slug}", map[string]any{"slug": s3IntegrationSlug}); err == nil {
+	_, err := app.FindFirstRecordByFilter("integrations", "slug = {:slug}", map[string]any{"slug": s3IntegrationSlug})
+	alreadyMigrated := err == nil
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("failed to check for existing s3 integration: %w", err)
+	}
+
+	return app.RunInTransaction(func(txApp core.App) error {
+		if !alreadyMigrated {
+			col, err := txApp.FindCollectionByNameOrId("integrations")
+			if err != nil {
+				return fmt.Errorf("failed to find integrations collection: %w", err)
+			}
+
+			encryptedSecret, err := crypto.Encrypt([]byte(s3.Secret), secretKey)
+			if err != nil {
+				return fmt.Errorf("failed to encrypt legacy S3 secret: %w", err)
+			}
+
+			rec := core.NewRecord(col)
+			rec.Set("slug", s3IntegrationSlug)
+			rec.Set("enabled", true)
+			rec.Set("config", map[string]any{
+				"bucket":           s3.Bucket,
+				"region":           s3.Region,
+				"endpoint":         s3.Endpoint,
+				"prefix":           "",
+				"force_path_style": s3.ForcePathStyle,
+				"access_key":       s3.AccessKey,
+				"secret":           encryptedSecret,
+				"encrypt_content":  true,
+			})
+			if err := txApp.Save(rec); err != nil {
+				return fmt.Errorf("failed to save migrated s3 integration: %w", err)
+			}
+		}
+
+		// Disable PocketBase's native S3 backend regardless of whether the
+		// "s3" integration row was just created or already existed — an
+		// operator who set up the new-style integration by hand may not
+		// have known to also flip off the legacy native backend, and
+		// leaving both enabled means backups get pushed through two
+		// different S3 clients.
+		settings := txApp.Settings()
+		settings.Backups.S3.Enabled = false
+		if err := txApp.Save(settings); err != nil {
+			return fmt.Errorf("failed to disable PocketBase's native S3 backend: %w", err)
+		}
+
 		return nil
-	}
-
-	col, err := app.FindCollectionByNameOrId("integrations")
-	if err != nil {
-		return fmt.Errorf("failed to find integrations collection: %w", err)
-	}
-
-	encryptedSecret, err := crypto.Encrypt([]byte(s3.Secret), secretKey)
-	if err != nil {
-		return fmt.Errorf("failed to encrypt legacy S3 secret: %w", err)
-	}
-
-	rec := core.NewRecord(col)
-	rec.Set("slug", s3IntegrationSlug)
-	rec.Set("enabled", true)
-	rec.Set("config", map[string]any{
-		"bucket":           s3.Bucket,
-		"region":           s3.Region,
-		"endpoint":         s3.Endpoint,
-		"prefix":           "",
-		"force_path_style": s3.ForcePathStyle,
-		"access_key":       s3.AccessKey,
-		"secret":           encryptedSecret,
-		"encrypt_content":  true,
 	})
-	if err := app.Save(rec); err != nil {
-		return fmt.Errorf("failed to save migrated s3 integration: %w", err)
-	}
-
-	settings := app.Settings()
-	settings.Backups.S3.Enabled = false
-	if err := app.Save(settings); err != nil {
-		return fmt.Errorf("failed to disable PocketBase's native S3 backend: %w", err)
-	}
-
-	app.Logger().Info("migrated legacy S3 backup settings into the s3 integration and disabled PocketBase's native S3 backend")
-	return nil
 }

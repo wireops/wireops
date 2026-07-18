@@ -19,14 +19,19 @@ import (
 // talk to it end-to-end, without hitting real S3. Used to verify actual
 // replication behavior (local copy survives, remote copy exists, List()
 // flags both) through the real SDK request/response shapes.
+type fakeS3Object struct {
+	body []byte
+	meta http.Header // x-amz-meta-* headers, as sent by the PUT request
+}
+
 type fakeS3Server struct {
 	mu      sync.Mutex
-	objects map[string][]byte // key: "/bucket/key"
+	objects map[string]fakeS3Object // key: "/bucket/key"
 	server  *httptest.Server
 }
 
 func newFakeS3Server() *fakeS3Server {
-	f := &fakeS3Server{objects: map[string][]byte{}}
+	f := &fakeS3Server{objects: map[string]fakeS3Object{}}
 	f.server = httptest.NewServer(http.HandlerFunc(f.handle))
 	return f
 }
@@ -45,7 +50,13 @@ func (f *fakeS3Server) handle(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		f.objects[r.URL.Path] = body
+		meta := make(http.Header)
+		for k, v := range r.Header {
+			if strings.HasPrefix(strings.ToLower(k), "x-amz-meta-") {
+				meta[k] = v
+			}
+		}
+		f.objects[r.URL.Path] = fakeS3Object{body: body, meta: meta}
 		w.Header().Set("ETag", `"fake"`)
 		w.WriteHeader(http.StatusOK)
 
@@ -54,13 +65,16 @@ func (f *fakeS3Server) handle(w http.ResponseWriter, r *http.Request) {
 			f.serveList(w, r)
 			return
 		}
-		body, ok := f.objects[r.URL.Path]
+		obj, ok := f.objects[r.URL.Path]
 		if !ok {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
+		for k, v := range obj.meta {
+			w.Header()[k] = v
+		}
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(body)
+		_, _ = w.Write(obj.body)
 
 	case http.MethodDelete:
 		delete(f.objects, r.URL.Path)
@@ -92,7 +106,7 @@ func (f *fakeS3Server) serveList(w http.ResponseWriter, r *http.Request) {
 	prefix := r.URL.Query().Get("prefix")
 
 	result := listBucketResult{Prefix: prefix}
-	for path, body := range f.objects {
+	for path, obj := range f.objects {
 		if !strings.HasPrefix(path, bucketPrefix) {
 			continue
 		}
@@ -103,7 +117,7 @@ func (f *fakeS3Server) serveList(w http.ResponseWriter, r *http.Request) {
 		result.Contents = append(result.Contents, listBucketItem{
 			Key:          key,
 			LastModified: time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
-			Size:         int64(len(body)),
+			Size:         int64(len(obj.body)),
 		})
 	}
 	result.KeyCount = len(result.Contents)

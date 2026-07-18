@@ -332,7 +332,7 @@ func TestGetBackupUploadMaxBytes(t *testing.T) {
 
 func TestGetBackupMaxCount(t *testing.T) {
 	t.Run("default", func(t *testing.T) {
-		os.Unsetenv("BACKUP_MAX_COUNT")
+		t.Setenv("BACKUP_MAX_COUNT", "")
 		if got := GetBackupMaxCount(); got != 100 {
 			t.Errorf("GetBackupMaxCount() = %d, want 100", got)
 		}

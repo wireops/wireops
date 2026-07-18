@@ -138,17 +138,24 @@ func TestSuperuserFailedLoginIsAuditedAsAuthFailure(t *testing.T) {
 	}
 
 	req := httptest.NewRequestWithContext(context.Background(), "POST", "/api/collections/_superusers/auth-with-password", nil)
-	event := &core.RecordAuthRequestEvent{
+	event := &core.RecordAuthWithPasswordRequestEvent{
 		RequestEvent: &core.RequestEvent{App: app, Event: router.Event{Request: req}},
 		Record:       superuser,
-		Token:        "test-token",
-		AuthMethod:   "password",
+		Identity:     "root2@example.com",
+		Password:     "wrong-password",
 	}
 	event.Collection = col
 
-	wantErr := errors.New("invalid credentials")
-	if err := app.OnRecordAuthRequest().Trigger(event, func(e *core.RecordAuthRequestEvent) error {
-		return wantErr
+	// Exercise the actual rejection path PocketBase's own auth-with-password
+	// handler uses (see apis/record_auth_with_password.go): reject when the
+	// submitted password doesn't validate against the found record, rather
+	// than synthesizing a post-auth error that OnRecordAuthRequest would
+	// never actually see for a rejected password.
+	if err := app.OnRecordAuthWithPasswordRequest().Trigger(event, func(e *core.RecordAuthWithPasswordRequestEvent) error {
+		if e.Record == nil || !e.Record.ValidatePassword(e.Password) {
+			return errors.New("invalid login credentials")
+		}
+		return nil
 	}); err == nil {
 		t.Fatal("expected auth hook to propagate the failure")
 	}

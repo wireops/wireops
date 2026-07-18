@@ -2,6 +2,8 @@ package backup
 
 import (
 	"context"
+	"io"
+	"strings"
 	"testing"
 )
 
@@ -18,6 +20,52 @@ func TestMirrorLocalBackupToRemoteNoopWhenDisabled(t *testing.T) {
 	}
 	if attempted {
 		t.Fatal("expected no mirror attempt when remote storage is disabled")
+	}
+}
+
+// TestGetRemoteDecryptsBasedOnUploadTimeMetadataNotCurrentSetting guards
+// against GetRemote picking its decryption path from the *current*
+// encrypt_content setting: an object stays encrypted (or plain) as it was
+// written, and toggling the setting afterward must not make GetRemote
+// silently return ciphertext instead of decrypting it (see remote.EncryptedGet,
+// which is metadata-driven).
+func TestGetRemoteDecryptsBasedOnUploadTimeMetadataNotCurrentSetting(t *testing.T) {
+	app := newS3TestApp(t)
+	server := newFakeS3Server()
+	defer server.Close()
+
+	initialConfig := fakeS3Config(t, server, "wireops-backups")
+	initialConfig["encrypt_content"] = true
+	rec := saveS3IntegrationRecord(t, app, true, initialConfig)
+
+	const key = "wireops_getremote_meta_test.zip"
+	const plaintext = "this is the original backup content"
+
+	if err := PutRemote(context.Background(), app, key, strings.NewReader(plaintext), int64(len(plaintext))); err != nil {
+		t.Fatalf("PutRemote failed: %v", err)
+	}
+
+	// Disable encrypt_content after the upload — GetRemote must still know
+	// (from the object's own metadata) that this object was encrypted, and
+	// decrypt it, rather than returning raw ciphertext.
+	config := fakeS3Config(t, server, "wireops-backups")
+	config["encrypt_content"] = false
+	rec.Set("config", config)
+	if err := app.Save(rec); err != nil {
+		t.Fatalf("update s3 integration config: %v", err)
+	}
+
+	body, err := GetRemote(context.Background(), app, key)
+	if err != nil {
+		t.Fatalf("GetRemote failed: %v", err)
+	}
+	defer body.Close()
+	got, err := io.ReadAll(body)
+	if err != nil {
+		t.Fatalf("read remote body: %v", err)
+	}
+	if string(got) != plaintext {
+		t.Fatalf("expected decrypted content %q, got %q", plaintext, got)
 	}
 }
 

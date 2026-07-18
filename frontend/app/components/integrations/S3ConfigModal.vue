@@ -131,7 +131,7 @@ async function handleSave() {
           <UFormField label="Secret Key" required>
             <AppTextInput
               v-model="form.secret"
-              :type="hasSecret && form.secret === '••••••••' ? 'password' : 'text'"
+              type="password"
               class="font-mono text-sm"
               @focus="onSecretFocus"
             />

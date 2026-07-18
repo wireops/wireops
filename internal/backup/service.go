@@ -78,6 +78,28 @@ func secretKeyFromEnv() []byte {
 // storage, so a cross-instance distributed lock isn't needed here.
 var capacityMu sync.Mutex
 
+// restoreMu guards pendingRestoreKeyVal, the key of a backup that Restore
+// has committed to but whose actual app.RestoreBackup call hasn't started
+// yet (it runs after a short delay in a goroutine — see Restore). Without
+// this, Delete's existing core.StoreKeyActiveBackup check (which
+// RestoreBackup itself sets) has a window between Restore() returning and
+// the goroutine firing during which the same backup could be deleted out
+// from under the pending restore.
+var restoreMu sync.Mutex
+var pendingRestoreKeyVal string
+
+func setPendingRestoreKey(key string) {
+	restoreMu.Lock()
+	pendingRestoreKeyVal = key
+	restoreMu.Unlock()
+}
+
+func pendingRestoreKey() string {
+	restoreMu.Lock()
+	defer restoreMu.Unlock()
+	return pendingRestoreKeyVal
+}
+
 // Info describes one stored backup archive. Local and Remote are
 // independent, additive flags (mirroring replicates, it never moves) — a
 // backup can be Local-only, Local+Remote, or (rarely) Remote-only, e.g. one
@@ -221,6 +243,9 @@ func Create(ctx context.Context, app core.App, name string) error {
 	}
 
 	if name != "" {
+		if err := safepath.ValidateBackupKey(name); err != nil {
+			return err
+		}
 		exists, err := existsBackup(app, name)
 		if err != nil {
 			return fmt.Errorf("failed to check for existing backup: %w", err)
@@ -306,6 +331,15 @@ func Delete(app core.App, key string) error {
 	if v, ok := app.Store().Get(core.StoreKeyActiveBackup).(string); ok && v == key {
 		return errors.New("this backup is currently being used and cannot be deleted")
 	}
+	if pending := pendingRestoreKey(); pending == key {
+		return errors.New("this backup is currently being used and cannot be deleted")
+	}
+
+	// Shares capacityMu with Create/Upload so a delete in progress can't
+	// race a concurrent count-then-write on the other side and let the
+	// configured max count be exceeded or under-counted.
+	capacityMu.Lock()
+	defer capacityMu.Unlock()
 
 	fsys, err := app.NewBackupsFilesystem()
 	if err != nil {
@@ -388,8 +422,10 @@ func Restore(ctx context.Context, app core.App, key string, confirm bool) error 
 		return fmt.Errorf("failed to check for backup %q: %w", key, err)
 	}
 	if !exists {
-		// Normal state once remote storage is enabled: MirrorLocalBackupToRemote
-		// deletes the local copy right after upload. Fetch it back from
+		// A backup can be remote-only for two reasons: its local copy was
+		// removed independently after mirroring (MirrorLocalBackupToRemote
+		// never deletes it itself), or it was uploaded straight into the
+		// bucket and never existed locally. Either way, fetch it back from
 		// remote into the local backups dir so PocketBase's own
 		// RestoreBackup — which always reads locally, see internal/backup/remote_ops.go
 		// doc comment — can find it.
@@ -405,7 +441,9 @@ func Restore(ctx context.Context, app core.App, key string, confirm bool) error 
 		}
 	}
 
+	setPendingRestoreKey(key)
 	go func() {
+		defer setPendingRestoreKey("")
 		time.Sleep(1 * time.Second)
 		restoreCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer cancel()

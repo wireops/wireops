@@ -885,6 +885,35 @@ func registerAuditHooks(app core.App) {
 		return err
 	})
 
+	// A rejected password login never reaches OnRecordAuthRequest above —
+	// PocketBase's auth-with-password handler checks the password inside
+	// this hook and returns an error before ever calling RecordAuthResponse
+	// (which is what triggers OnRecordAuthRequest). So credential rejections
+	// need their own audit here; successful logins fall through to e.Next(),
+	// which ultimately fires OnRecordAuthRequest and gets audited there
+	// instead — only failures are recorded in this handler.
+	app.OnRecordAuthWithPasswordRequest(core.CollectionNameSuperusers).BindFunc(func(e *core.RecordAuthWithPasswordRequestEvent) error {
+		err := e.Next()
+		if err == nil || e.Record == nil {
+			return err
+		}
+		audit.Record(app, audit.Event{
+			ActorType:    audit.ActorUser,
+			ActorID:      e.Record.Id,
+			Action:       "superuser.login",
+			ResourceType: "superuser_session",
+			ResourceID:   e.Record.Id,
+			Origin:       audit.RequestOrigin(e.RequestEvent),
+			Metadata: map[string]any{
+				"auth_method": "password",
+				"email":       e.Record.GetString("email"),
+			},
+			Status:    audit.StatusError,
+			ErrorCode: "auth_failed",
+		})
+		return err
+	})
+
 	// Mirrors every successfully-created backup (manual or PocketBase's own
 	// cron autobackup — both call app.CreateBackup, which triggers this hook
 	// either way) to the "s3" Storage Backend integration, if enabled, then
