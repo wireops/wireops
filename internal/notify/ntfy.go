@@ -49,7 +49,7 @@ func (n *NtfyProvider) Send(ctx context.Context, cfg *Config, p Payload) error {
 			fmt.Fprintf(&body, "Test notification from wireops for stack %s", p.StackName)
 		} else {
 			emoji := "✅"
-			if p.Event == SyncError {
+			if p.Event == SyncError || p.Event == BackupMirrorError {
 				emoji = "🚨"
 			} else if p.Event == SyncStarted {
 				emoji = "🚀"
@@ -83,6 +83,10 @@ func (n *NtfyProvider) Send(ctx context.Context, cfg *Config, p Payload) error {
 	case SyncError:
 		tags += ",rotating_light,error"
 		priority = "high"
+	case BackupMirrorError:
+		tags += ",rotating_light,error"
+		priority = "high"
+		title = fmt.Sprintf("wireops: Backup mirror failed - %s", p.StackName)
 	case SyncTest:
 		tags += ",test_tube"
 		title = "wireops: Test Notification"

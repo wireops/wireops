@@ -25,6 +25,7 @@ describe('default layout accessibility', () => {
     })
     ;(globalThis as any).usePermissions = () => ({
       isViewer: ref(false),
+      isAdmin: ref(true),
     })
     ;(globalThis as any).useCookie = (_key: string, opts?: { default?: () => any }) => {
       const val = opts?.default ? opts.default() : undefined

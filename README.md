@@ -362,11 +362,13 @@ X-Wireops-Api-Key: wireops_sk_...
 
 ## Disaster Recovery
 
-Wireops wraps PocketBase's built-in backup/restore (full DB + `DATA_DIR`, optional S3-compatible remote storage, scheduled cron backups with retention) behind wireops's own RBAC, so any admin (not just PocketBase superusers) can manage it from **Settings → Backups**:
+Wireops wraps PocketBase's built-in backup/restore (full DB + `DATA_DIR`, scheduled cron backups with retention) behind wireops's own RBAC, so any admin (not just PocketBase superusers) can manage it from **Settings → Backups**:
 
 - Manual and scheduled backups, with history, download, and delete.
+- Uploading an existing backup file (`/api/custom/backups/upload`) requires a real PocketBase superuser session, not just a wireops admin role — see the [disaster recovery runbook](docs/DISASTER_RECOVERY.md#restoring-an-uploaded-file) for the no-superuser fallback.
+- Optional off-host mirroring to S3-compatible storage (AWS S3, R2, MinIO, B2, ...) via the **S3 Storage** integration (Settings → Integrations) — credentials encrypted at rest under `SECRET_KEY`, with optional prefix and KMS-wrapped content encryption.
 - Restore replaces `DATA_DIR` and restarts the server automatically; failed restores revert on their own.
-- `SECRET_KEY` mismatch protection: a canary value is checked on every boot — restoring onto a host with the wrong `SECRET_KEY` fails startup with an explicit error instead of silently corrupting encrypted stack secrets (git passwords, SSH keys, integration tokens).
+- `SECRET_KEY` mismatch protection: a canary value is checked against this host's data — a restore-triggered restart runs the decisive check, catching a `SECRET_KEY` that doesn't match instead of silently corrupting encrypted stack secrets (git passwords, SSH keys, integration tokens).
 
 **Critical:** back up `SECRET_KEY` separately from `DATA_DIR` backups (a secrets manager, not the same storage target) — without it, restored secrets are unreadable.
 

@@ -23,7 +23,6 @@ import (
 
 	"github.com/wireops/wireops/internal/config"
 	"github.com/wireops/wireops/internal/crypto"
-	"github.com/wireops/wireops/internal/notify"
 	"github.com/wireops/wireops/internal/safepath"
 )
 
@@ -71,22 +70,63 @@ func secretKeyFromEnv() []byte {
 	return crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))
 }
 
-// Info describes one stored backup archive.
+// capacityMu serializes the "list backups, check against
+// config.GetBackupMaxCount, then write" sequence in Create/Upload so two
+// concurrent requests on this process can't both pass the check and jointly
+// exceed the configured max. This only guards a single server process —
+// wireops doesn't run multiple server instances against shared backup
+// storage, so a cross-instance distributed lock isn't needed here.
+var capacityMu sync.Mutex
+
+// Info describes one stored backup archive. Local and Remote are
+// independent, additive flags (mirroring replicates, it never moves) — a
+// backup can be Local-only, Local+Remote, or (rarely) Remote-only, e.g. one
+// uploaded straight into the bucket, or whose local copy was removed
+// independently. Remote-only backups need SyncLocal before they can be
+// restored (core.App.RestoreBackup always reads from local disk).
 type Info struct {
 	Key      string    `json:"key"`
 	Size     int64     `json:"size"`
 	Modified time.Time `json:"modified"`
+	Local    bool      `json:"local"`
+	Remote   bool      `json:"remote"`
 }
 
 // Settings mirrors the subset of app.Settings().Backups that wireops exposes
-// for editing: cron schedule, retention, and optional S3 target.
+// for editing: cron schedule and retention. Off-host remote storage is
+// configured separately, as the "s3" Storage Backend integration (see
+// internal/integrations/s3 and s3_integration.go) — not part of this struct.
 type Settings struct {
-	Cron        string        `json:"cron"`
-	CronMaxKeep int           `json:"cron_max_keep"`
-	S3          core.S3Config `json:"s3"`
+	Cron        string `json:"cron"`
+	CronMaxKeep int    `json:"cron_max_keep"`
 }
 
-// List returns every stored backup, most recent first.
+// GetSettings returns the current backup cron/retention configuration.
+func GetSettings(app core.App) Settings {
+	b := app.Settings().Backups
+	return Settings{Cron: b.Cron, CronMaxKeep: b.CronMaxKeep}
+}
+
+// SaveSettings updates the backup cron/retention configuration. Saving
+// triggers PocketBase's OnSettingsReload hook, which re-registers the
+// autobackup cron entry (core.App.registerAutobackupHooks) — no custom
+// scheduling code needed here.
+func SaveSettings(app core.App, s Settings) error {
+	settings := app.Settings()
+	settings.Backups.Cron = s.Cron
+	settings.Backups.CronMaxKeep = s.CronMaxKeep
+	if err := app.Save(settings); err != nil {
+		return fmt.Errorf("failed to save backup settings: %w", err)
+	}
+	return nil
+}
+
+// List returns every stored backup. Local disk is always the source of
+// truth; when remote storage is enabled, each entry is additionally flagged
+// Remote if it's also mirrored there — mirroring replicates the local copy,
+// it doesn't replace it. A backup present only in remote storage (e.g.
+// uploaded directly to the bucket, or its local copy removed independently)
+// is still listed, Remote-only.
 func List(app core.App) ([]Info, error) {
 	fsys, err := app.NewBackupsFilesystem()
 	if err != nil {
@@ -94,16 +134,73 @@ func List(app core.App) ([]Info, error) {
 	}
 	defer fsys.Close()
 
-	objects, err := fsys.List("")
+	localObjects, err := fsys.List("")
 	if err != nil {
 		return nil, fmt.Errorf("failed to list backups: %w", err)
 	}
 
-	out := make([]Info, len(objects))
-	for i, obj := range objects {
-		out[i] = Info{Key: obj.Key, Size: obj.Size, Modified: obj.ModTime}
+	out := make([]Info, len(localObjects))
+	localKeys := make(map[string]bool, len(localObjects))
+	for i, obj := range localObjects {
+		out[i] = Info{Key: obj.Key, Size: obj.Size, Modified: obj.ModTime, Local: true}
+		localKeys[obj.Key] = true
+	}
+
+	enabled, err := remoteEnabled(app)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check remote backup storage: %w", err)
+	}
+	if !enabled {
+		return out, nil
+	}
+
+	storage, err := buildRemoteStorage(app)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load remote backup storage: %w", err)
+	}
+	defer storage.Close()
+
+	remoteObjects, err := storage.List(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("failed to list remote backups: %w", err)
+	}
+	remoteKeys := make(map[string]bool, len(remoteObjects))
+	for _, obj := range remoteObjects {
+		remoteKeys[obj.Key] = true
+	}
+	for i := range out {
+		out[i].Remote = remoteKeys[out[i].Key]
+	}
+	for _, obj := range remoteObjects {
+		if !localKeys[obj.Key] {
+			out = append(out, Info{Key: obj.Key, Size: obj.Size, Modified: obj.Modified, Remote: true})
+		}
 	}
 	return out, nil
+}
+
+// countBackups returns how many distinct backups currently exist (local ∪
+// remote), for the capacity check in Create/Upload.
+func countBackups(app core.App) (int, error) {
+	objects, err := List(app)
+	if err != nil {
+		return 0, err
+	}
+	return len(objects), nil
+}
+
+// existsBackup reports whether key already exists, locally or remotely.
+func existsBackup(app core.App, key string) (bool, error) {
+	objects, err := List(app)
+	if err != nil {
+		return false, err
+	}
+	for _, obj := range objects {
+		if obj.Key == key {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // Create generates a new backup. name may be empty to auto-generate one.
@@ -112,22 +209,19 @@ func List(app core.App) ([]Info, error) {
 // cron_max_keep), so it's capped against config.GetBackupMaxCount to bound
 // disk/S3 usage from repeated calls by any CapManageSettings user.
 func Create(ctx context.Context, app core.App, name string) error {
-	fsys, err := app.NewBackupsFilesystem()
-	if err != nil {
-		return fmt.Errorf("failed to load backups filesystem: %w", err)
-	}
-	defer fsys.Close()
+	capacityMu.Lock()
+	defer capacityMu.Unlock()
 
-	objects, err := fsys.List("")
+	count, err := countBackups(app)
 	if err != nil {
-		return fmt.Errorf("failed to list backups: %w", err)
+		return fmt.Errorf("failed to count existing backups: %w", err)
 	}
-	if max := config.GetBackupMaxCount(); len(objects) >= max {
+	if max := config.GetBackupMaxCount(); count >= max {
 		return fmt.Errorf("maximum number of stored backups (%d) reached; delete an existing backup first", max)
 	}
 
 	if name != "" {
-		exists, err := fsys.Exists(name)
+		exists, err := existsBackup(app, name)
 		if err != nil {
 			return fmt.Errorf("failed to check for existing backup: %w", err)
 		}
@@ -135,6 +229,9 @@ func Create(ctx context.Context, app core.App, name string) error {
 			return fmt.Errorf("a backup named %q already exists", name)
 		}
 	}
+	// Always creates locally — PocketBase's own S3 backend is never enabled
+	// (see s3_integration.go); MirrorLocalBackupToRemote, bound to
+	// app.OnBackupCreate(), mirrors it off-host afterward if configured.
 	if err := app.CreateBackup(ctx, name); err != nil {
 		return fmt.Errorf("failed to create backup: %w", err)
 	}
@@ -162,51 +259,88 @@ func Upload(app core.App, file *filesystem.File) error {
 		return err
 	}
 
-	fsys, err := app.NewBackupsFilesystem()
-	if err != nil {
-		return fmt.Errorf("failed to load backups filesystem: %w", err)
-	}
-	defer fsys.Close()
+	capacityMu.Lock()
+	defer capacityMu.Unlock()
 
-	objects, err := fsys.List("")
+	count, err := countBackups(app)
 	if err != nil {
-		return fmt.Errorf("failed to list backups: %w", err)
+		return fmt.Errorf("failed to count existing backups: %w", err)
 	}
-	if max := config.GetBackupMaxCount(); len(objects) >= max {
+	if max := config.GetBackupMaxCount(); count >= max {
 		return fmt.Errorf("maximum number of stored backups (%d) reached; delete an existing backup first", max)
 	}
 
-	if exists, err := fsys.Exists(file.OriginalName); err != nil {
+	if exists, err := existsBackup(app, file.OriginalName); err != nil {
 		return fmt.Errorf("failed to check for existing backup: %w", err)
 	} else if exists {
 		return fmt.Errorf("a backup named %q already exists", file.OriginalName)
 	}
 
+	// Always lands locally first, same as a server-generated backup — then
+	// mirrored to remote storage if enabled, replicating rather than
+	// replacing the local copy (see MirrorLocalBackupToRemote).
+	fsys, err := app.NewBackupsFilesystem()
+	if err != nil {
+		return fmt.Errorf("failed to load backups filesystem: %w", err)
+	}
+	defer fsys.Close()
 	if err := fsys.UploadFile(file, file.OriginalName); err != nil {
 		return fmt.Errorf("failed to upload backup: %w", err)
+	}
+
+	if _, err := MirrorLocalBackupToRemote(context.Background(), app, file.OriginalName); err != nil {
+		return fmt.Errorf("uploaded locally but failed to mirror to remote storage: %w", err)
 	}
 	return nil
 }
 
-// Delete removes a stored backup by key. Fails if a backup/restore is
+// Delete removes a stored backup by key from every backend that holds a
+// copy (local disk and, if enabled, remote storage) — mirroring replicates,
+// so deletion must clean up both sides. Fails if a backup/restore is
 // currently in progress and that operation is using this exact key.
 func Delete(app core.App, key string) error {
 	if err := safepath.ValidateBackupKey(key); err != nil {
 		return err
 	}
 
+	if v, ok := app.Store().Get(core.StoreKeyActiveBackup).(string); ok && v == key {
+		return errors.New("this backup is currently being used and cannot be deleted")
+	}
+
 	fsys, err := app.NewBackupsFilesystem()
 	if err != nil {
 		return fmt.Errorf("failed to load backups filesystem: %w", err)
 	}
 	defer fsys.Close()
 
-	if v, ok := app.Store().Get(core.StoreKeyActiveBackup).(string); ok && v == key {
-		return errors.New("this backup is currently being used and cannot be deleted")
+	localExists, err := fsys.Exists(key)
+	if err != nil {
+		return fmt.Errorf("failed to check for existing backup: %w", err)
+	}
+	if localExists {
+		if err := fsys.Delete(key); err != nil {
+			return fmt.Errorf("failed to delete backup: %w", err)
+		}
 	}
 
-	if err := fsys.Delete(key); err != nil {
-		return fmt.Errorf("failed to delete backup: %w", err)
+	enabled, err := remoteEnabled(app)
+	if err != nil {
+		return fmt.Errorf("failed to check remote backup storage: %w", err)
+	}
+	if !enabled {
+		if !localExists {
+			return fmt.Errorf("backup %q not found", key)
+		}
+		return nil
+	}
+
+	storage, err := buildRemoteStorage(app)
+	if err != nil {
+		return fmt.Errorf("failed to load remote backup storage: %w", err)
+	}
+	defer storage.Close()
+	if err := storage.Delete(context.Background(), key); err != nil {
+		return fmt.Errorf("failed to delete remote backup: %w", err)
 	}
 	return nil
 }
@@ -254,7 +388,21 @@ func Restore(ctx context.Context, app core.App, key string, confirm bool) error 
 		return fmt.Errorf("failed to check for backup %q: %w", key, err)
 	}
 	if !exists {
-		return fmt.Errorf("backup %q not found", key)
+		// Normal state once remote storage is enabled: MirrorLocalBackupToRemote
+		// deletes the local copy right after upload. Fetch it back from
+		// remote into the local backups dir so PocketBase's own
+		// RestoreBackup — which always reads locally, see internal/backup/remote_ops.go
+		// doc comment — can find it.
+		enabled, err := remoteEnabled(app)
+		if err != nil {
+			return fmt.Errorf("failed to check remote backup storage: %w", err)
+		}
+		if !enabled {
+			return fmt.Errorf("backup %q not found", key)
+		}
+		if err := downloadRemoteToLocal(ctx, app, fsys, key); err != nil {
+			return fmt.Errorf("failed to fetch backup %q from remote storage: %w", key, err)
+		}
 	}
 
 	go func() {
@@ -265,47 +413,5 @@ func Restore(ctx context.Context, app core.App, key string, confirm bool) error 
 			app.Logger().Error("failed to restore backup", "key", key, "error", err.Error())
 		}
 	}()
-	return nil
-}
-
-// maskedSecretPlaceholder is what GetSettings returns in place of a real S3
-// secret key, and the sentinel SaveSettings looks for to know the caller
-// left the field untouched (mirrors the integrations config pattern in
-// internal/routes/routes_register.go: maskIntegrationConfig / MaskSecret).
-var maskedSecretPlaceholder = notify.MaskSecret("x")
-
-// GetSettings returns the current backup cron/retention/S3 configuration.
-// The S3 secret key is masked — it must never round-trip to the client in
-// plaintext, unlike every other secret-bearing settings payload in this
-// codebase (see maskIntegrationConfig for the equivalent integrations-side
-// pattern).
-func GetSettings(app core.App) Settings {
-	b := app.Settings().Backups
-	s3 := b.S3
-	s3.Secret = notify.MaskSecret(s3.Secret)
-	return Settings{Cron: b.Cron, CronMaxKeep: b.CronMaxKeep, S3: s3}
-}
-
-// SaveSettings updates the backup cron/retention/S3 configuration.
-// Saving triggers PocketBase's OnSettingsReload hook, which re-registers the
-// autobackup cron entry (core.App.registerAutobackupHooks) — no custom
-// scheduling code needed here.
-//
-// If the incoming S3 secret is the masked placeholder (the client echoed
-// back what GetSettings gave it without editing it), the existing stored
-// secret is preserved instead of being overwritten with the literal
-// placeholder string — otherwise every settings save that doesn't touch the
-// S3 secret field would silently brick S3 backups.
-func SaveSettings(app core.App, s Settings) error {
-	settings := app.Settings()
-	if s.S3.Secret == maskedSecretPlaceholder {
-		s.S3.Secret = settings.Backups.S3.Secret
-	}
-	settings.Backups.Cron = s.Cron
-	settings.Backups.CronMaxKeep = s.CronMaxKeep
-	settings.Backups.S3 = s.S3
-	if err := app.Save(settings); err != nil {
-		return fmt.Errorf("failed to save backup settings: %w", err)
-	}
 	return nil
 }

@@ -23,11 +23,13 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/wireops/wireops/internal/audit"
+	"github.com/wireops/wireops/internal/backup"
 	"github.com/wireops/wireops/internal/config"
 	"github.com/wireops/wireops/internal/crypto"
 	"github.com/wireops/wireops/internal/git"
 	"github.com/wireops/wireops/internal/jobscheduler"
 	"github.com/wireops/wireops/internal/logstream"
+	"github.com/wireops/wireops/internal/notify"
 	"github.com/wireops/wireops/internal/oidc"
 	"github.com/wireops/wireops/internal/rbac"
 	"github.com/wireops/wireops/internal/safepath"
@@ -865,7 +867,7 @@ func registerAuditHooks(app core.App) {
 	// "_superusers" is audited regardless of which auth method was used.
 	app.OnRecordAuthRequest(core.CollectionNameSuperusers).BindFunc(func(e *core.RecordAuthRequestEvent) error {
 		err := e.Next()
-		status, code := auditStatus(err)
+		status, code := authAuditStatus(err)
 		audit.Record(app, audit.Event{
 			ActorType:    audit.ActorUser,
 			ActorID:      e.Record.Id,
@@ -881,6 +883,49 @@ func registerAuditHooks(app core.App) {
 			ErrorCode: code,
 		})
 		return err
+	})
+
+	// Mirrors every successfully-created backup (manual or PocketBase's own
+	// cron autobackup — both call app.CreateBackup, which triggers this hook
+	// either way) to the "s3" Storage Backend integration, if enabled, then
+	// removes the local copy. See internal/backup/remote_ops.go for why
+	// PocketBase's own native S3 backend is never used instead.
+	//
+	// Every actual attempt (remote storage enabled) is audited — success and
+	// failure — so a failed mirror shows up in Settings -> Audit Logs and the
+	// Backups page instead of only the server log. Failures also notify
+	// through any enabled webhook/ntfy/discord/slack integration subscribed
+	// to notify.BackupMirrorError.
+	notifier := notify.New(app)
+	app.OnBackupCreate().BindFunc(func(e *core.BackupEvent) error {
+		if err := e.Next(); err != nil {
+			return err
+		}
+		attempted, mirrorErr := backup.MirrorLocalBackupToRemote(e.Context, e.App, e.Name)
+		if !attempted {
+			return nil
+		}
+
+		ev := audit.Event{
+			Action:       "backup.mirror",
+			ResourceType: "backup",
+			ResourceID:   e.Name,
+			Status:       audit.StatusSuccess,
+		}
+		if mirrorErr != nil {
+			e.App.Logger().Error("failed to mirror backup to remote storage", "name", e.Name, "error", mirrorErr.Error())
+			ev.Status = audit.StatusError
+			ev.ErrorCode = mirrorErr.Error()
+			audit.Record(e.App, ev)
+			notifier.Dispatch(e.Context, notify.Payload{
+				Event:     notify.BackupMirrorError,
+				StackName: e.Name,
+				Error:     mirrorErr.Error(),
+			})
+			return nil
+		}
+		audit.Record(e.App, ev)
+		return nil
 	})
 }
 
@@ -900,6 +945,15 @@ func auditStatus(err error) (string, string) {
 		return audit.StatusSuccess, ""
 	}
 	return audit.StatusError, "write_failed"
+}
+
+// authAuditStatus is like auditStatus but for auth-request hooks (login),
+// where a rejected attempt is a failed authentication, not a failed write.
+func authAuditStatus(err error) (string, string) {
+	if err == nil {
+		return audit.StatusSuccess, ""
+	}
+	return audit.StatusError, "auth_failed"
 }
 
 func recordChangeMetadata(record *core.Record) map[string]any {

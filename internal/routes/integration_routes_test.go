@@ -116,6 +116,35 @@ func TestEncryptIntegrationConfigRejectsInvalidSecretKey(t *testing.T) {
 	}
 }
 
+// TestS3IntegrationConfigKeys covers the "s3" Storage Backend integration
+// added for off-host backup mirroring (internal/backup/remote): its secret
+// key must be encrypted at rest like vault's token/infisical's
+// client_secret, and enabling it requires bucket/region/access_key/secret.
+func TestS3IntegrationConfigKeys(t *testing.T) {
+	key := []byte(testIntegrationEncryptKey)
+
+	s3Cfg := map[string]interface{}{"bucket": "my-bucket", "access_key": "AKIA...", "secret": "s3cr3t"}
+	if err := encryptIntegrationConfig("s3", s3Cfg, key, nil); err != nil {
+		t.Fatalf("encrypt s3 config: %v", err)
+	}
+	if s3Cfg["secret"] == "s3cr3t" {
+		t.Fatal("s3 secret was not encrypted at rest")
+	}
+	if !crypto.IsEncrypted(s3Cfg["secret"].(string)) {
+		t.Fatal("s3 secret does not look encrypted")
+	}
+	if s3Cfg["access_key"] != "AKIA..." {
+		t.Fatal("s3 access_key must stay plaintext at rest, like vault's address")
+	}
+
+	if err := validateRequiredIntegrationConfig("s3", map[string]interface{}{"bucket": "b", "region": "r", "access_key": "ak"}); err == nil {
+		t.Fatal("expected error when s3 secret is missing")
+	}
+	if err := validateRequiredIntegrationConfig("s3", map[string]interface{}{"bucket": "b", "region": "r", "access_key": "ak", "secret": "sk"}); err != nil {
+		t.Fatalf("expected no error with all required s3 fields, got %v", err)
+	}
+}
+
 func TestValidateRequiredIntegrationConfig(t *testing.T) {
 	if err := validateRequiredIntegrationConfig("vault", map[string]interface{}{"address": "x"}); err == nil {
 		t.Fatal("expected error when vault token is missing")

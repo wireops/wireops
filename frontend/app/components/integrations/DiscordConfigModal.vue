@@ -18,6 +18,7 @@ const allEvents = [
   { value: 'sync.started', label: 'Started' },
   { value: 'sync.done',    label: 'Done' },
   { value: 'sync.error',   label: 'Error' },
+  { value: 'backup.mirror_error', label: 'Backup mirror failed' },
 ]
 
 const form = ref({

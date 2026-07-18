@@ -104,7 +104,7 @@ func (d *DiscordProvider) Send(ctx context.Context, cfg *Config, p Payload) erro
 func buildDiscordPayload(cfg *Config, p Payload) discordWebhookPayload {
 	content := ""
 	allowed := discordAllowedMentions{Parse: []string{}}
-	if p.Event == SyncError && cfg.DiscordMentionOnError && strings.TrimSpace(cfg.DiscordRoleID) != "" {
+	if (p.Event == SyncError || p.Event == BackupMirrorError) && cfg.DiscordMentionOnError && strings.TrimSpace(cfg.DiscordRoleID) != "" {
 		roleID := strings.TrimSpace(cfg.DiscordRoleID)
 		content = "<@&" + roleID + ">"
 		allowed.Roles = []string{roleID}
@@ -145,6 +145,8 @@ func discordTitle(p Payload) string {
 		return "Sync completed"
 	case SyncError:
 		return "Sync failed"
+	case BackupMirrorError:
+		return "Backup mirror failed"
 	case SyncTest:
 		return "Test notification"
 	default:
@@ -158,7 +160,7 @@ func discordColor(event string) int {
 		return discordColorStarted
 	case SyncDone:
 		return discordColorDone
-	case SyncError:
+	case SyncError, BackupMirrorError:
 		return discordColorError
 	case SyncTest:
 		return discordColorTest

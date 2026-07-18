@@ -21,6 +21,7 @@ import (
 
 	"github.com/wireops/wireops/internal/audit"
 	wireauth "github.com/wireops/wireops/internal/auth"
+	"github.com/wireops/wireops/internal/backup"
 	"github.com/wireops/wireops/internal/config"
 	"github.com/wireops/wireops/internal/crypto"
 	"github.com/wireops/wireops/internal/hooks"
@@ -40,6 +41,7 @@ import (
 	_ "github.com/wireops/wireops/internal/integrations/infisical"
 	_ "github.com/wireops/wireops/internal/integrations/nginxproxymanager"
 	_ "github.com/wireops/wireops/internal/integrations/ntfy"
+	_ "github.com/wireops/wireops/internal/integrations/s3"
 	_ "github.com/wireops/wireops/internal/integrations/slack"
 	_ "github.com/wireops/wireops/internal/integrations/sops"
 	_ "github.com/wireops/wireops/internal/integrations/traefik"
@@ -305,6 +307,14 @@ func Execute() error {
 			return err
 		}
 
+		// One-time carry-over for hosts that configured remote backup
+		// storage before it became the "s3" integration — see
+		// internal/backup.MigrateLegacyS3Settings.
+		if err := backup.MigrateLegacyS3Settings(app, crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))); err != nil {
+			log.Printf("[FATAL] %v", err)
+			return err
+		}
+
 		go func() {
 			addr := ":8443"
 			if port := os.Getenv("TLS_WORKER_PORT"); port != "" {
@@ -421,8 +431,11 @@ func Execute() error {
 		return fmt.Errorf("create stacks storage %s: %w", stacksStorage, err)
 	}
 	backupsDir := filepath.Join(dataDir, core.LocalBackupsDirName)
-	if err := os.MkdirAll(backupsDir, 0755); err != nil {
+	if err := os.MkdirAll(backupsDir, 0700); err != nil {
 		return fmt.Errorf("create backups dir %s: %w", backupsDir, err)
+	}
+	if err := os.Chmod(backupsDir, 0700); err != nil {
+		return fmt.Errorf("secure backups dir %s: %w", backupsDir, err)
 	}
 
 	return app.Start()

@@ -46,6 +46,9 @@ const vaultIntegration = ref<any>(null)
 const showInfisicalModal = ref(false)
 const infisicalIntegration = ref<any>(null)
 
+const showS3Modal = ref(false)
+const s3Integration = ref<any>(null)
+
 interface IntegrationMeta {
   icon: string
   description: string
@@ -113,6 +116,12 @@ const integrationMeta: Record<string, IntegrationMeta> = {
     description: 'Resolve secret env vars from Infisical via Universal Auth.',
     docLink: 'https://infisical.com/docs',
     open: integration => { infisicalIntegration.value = integration; showInfisicalModal.value = true }
+  },
+  s3: {
+    icon: '',
+    description: 'Mirror backups to S3-compatible storage (AWS S3, R2, MinIO, B2, ...).',
+    docLink: 'https://github.com/wireops/wireops/blob/main/docs/DISASTER_RECOVERY.md',
+    open: integration => { s3Integration.value = integration; showS3Modal.value = true }
   },
   sops: {
     icon: '',
@@ -187,6 +196,7 @@ function getIntegrationIcon(slug: string) {
 // Fallback for any future integration without a bundled SVG asset yet.
 function getIntegrationFallbackIcon(slug: string) {
   if (slug === 'sops') return 'i-lucide-file-lock-2'
+  if (slug === 's3') return 'i-lucide-database-backup'
   return 'i-lucide-puzzle'
 }
 
@@ -339,6 +349,12 @@ onMounted(() => {
     <IntegrationsInfisicalConfigModal
       v-model:open="showInfisicalModal"
       :integration="infisicalIntegration"
+      @saved="loadIntegrations"
+    />
+
+    <IntegrationsS3ConfigModal
+      v-model:open="showS3Modal"
+      :integration="s3Integration"
       @saved="loadIntegrations"
     />
   </div>

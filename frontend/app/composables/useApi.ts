@@ -354,27 +354,22 @@ export function useApi() {
     key: string
     size: number
     modified: string
+    remote?: boolean
   }
-  type S3Config = {
-    enabled: boolean
-    bucket: string
-    region: string
-    endpoint: string
-    accessKey: string
-    secret?: string
-    forcePathStyle: boolean
-  }
+  // Remote storage (S3) is the "s3" integration now (see
+  // frontend/app/components/integrations/S3ConfigModal.vue) — not part of
+  // these cron/retention-only backup settings.
   type BackupSettings = {
     cron: string
     cron_max_keep: number
-    s3: S3Config
   }
   const listBackups = () => customGet<BackupInfo[]>('/api/custom/backups')
   const createBackup = (filename?: string) => customPost<{ key: string }>('/api/custom/backups', filename ? { filename } : {})
   const deleteBackup = (key: string) => customDelete(`/api/custom/backups/${encodeURIComponent(key)}`)
   const restoreBackup = (key: string) => customPost(`/api/custom/backups/${encodeURIComponent(key)}/restore`, { confirm: true })
+  const syncLocalBackup = (key: string) => customPost<{ status: string }>(`/api/custom/backups/${encodeURIComponent(key)}/sync-local`, {})
   const getBackupSettings = () => customGet<BackupSettings>('/api/custom/backups/settings')
   const saveBackupSettings = (data: BackupSettings) => customPut<BackupSettings>('/api/custom/backups/settings', data)
 
-  return { triggerSync, triggerRollback, forceRedeploy, getServices, getStackResources, stopContainer, restartContainer, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, getRepoFiles, getStackFiles, getJobFiles, getJobDefinitionFromFile, getWireopsFiles, getWireopsDefinitionFromFile, createStackFromWireops, testCredentials, keyscan, listOrphans, purgeOrphan, getSystemInfo, customPost, customGet, customPut, customPatch, customDelete, getWorkers, createWorkerToken, revokeWorker, transferStack, discoverProjects, importStack, listJobs, triggerJobRun, cancelJobRun, deleteJobRun, getJobDefinition, getJobRaw, getWorkerPolicy, saveWorkerPolicy, resetWorkerPolicy, getGlobalWorkerPolicy, saveGlobalWorkerPolicy, getAppSettings, saveAppSettings, listAuditLogs, listBackups, createBackup, deleteBackup, restoreBackup, getBackupSettings, saveBackupSettings }
+  return { triggerSync, triggerRollback, forceRedeploy, getServices, getStackResources, stopContainer, restartContainer, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, getRepoFiles, getStackFiles, getJobFiles, getJobDefinitionFromFile, getWireopsFiles, getWireopsDefinitionFromFile, createStackFromWireops, testCredentials, keyscan, listOrphans, purgeOrphan, getSystemInfo, customPost, customGet, customPut, customPatch, customDelete, getWorkers, createWorkerToken, revokeWorker, transferStack, discoverProjects, importStack, listJobs, triggerJobRun, cancelJobRun, deleteJobRun, getJobDefinition, getJobRaw, getWorkerPolicy, saveWorkerPolicy, resetWorkerPolicy, getGlobalWorkerPolicy, saveGlobalWorkerPolicy, getAppSettings, saveAppSettings, listAuditLogs, listBackups, createBackup, deleteBackup, restoreBackup, syncLocalBackup, getBackupSettings, saveBackupSettings }
 }

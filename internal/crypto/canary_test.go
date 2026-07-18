@@ -68,3 +68,36 @@ func TestVerifyOrSeedSecretKeyCanaryRejectsMismatchedKey(t *testing.T) {
 		t.Fatal("expected error for mismatched SECRET_KEY, got nil")
 	}
 }
+
+func TestVerifyOrSeedSecretKeyCanaryRefusesToSeedOverExistingEncryptedData(t *testing.T) {
+	app := newCanaryTestApp(t)
+	key := []byte("01234567890123456789012345678901"[:32])
+
+	// Simulate a legacy datastore: repository_keys already holds an
+	// encrypted secret, but the secret_key_canary collection was only just
+	// introduced and has no row yet — this must NOT be treated as a fresh
+	// install and silently seeded with whatever key happens to be set now.
+	repoKeys := core.NewBaseCollection("repository_keys")
+	repoKeys.Fields.Add(&core.TextField{Name: "ssh_private_key", Hidden: true})
+	if err := app.Save(repoKeys); err != nil {
+		t.Fatalf("failed to create repository_keys collection: %v", err)
+	}
+	rec := core.NewRecord(repoKeys)
+	rec.Set("ssh_private_key", "some-ciphertext-from-a-different-key")
+	if err := app.Save(rec); err != nil {
+		t.Fatalf("failed to seed repository_keys record: %v", err)
+	}
+
+	err := VerifyOrSeedSecretKeyCanary(app, key)
+	if err == nil {
+		t.Fatal("expected error refusing to seed canary over existing encrypted data, got nil")
+	}
+
+	recs, err := app.FindAllRecords("secret_key_canary")
+	if err != nil {
+		t.Fatalf("failed to query canary records: %v", err)
+	}
+	if len(recs) != 0 {
+		t.Fatalf("expected no canary row to be seeded, got %d", len(recs))
+	}
+}

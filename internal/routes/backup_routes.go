@@ -170,6 +170,23 @@ func (rr routeRegistrar) registerBackupRoutes() {
 		return e.JSON(http.StatusOK, map[string]string{"status": "restoring"})
 	}).BindFunc(rbac.Require(rbac.CapManageSettings))
 
+	// Pulls a remote-only backup (uploaded straight into the bucket, or
+	// whose local copy was removed independently) down onto local disk —
+	// core.App.RestoreBackup always reads locally, it has no remote
+	// fallback of its own, so this must run before restoring such a backup.
+	rr.r.POST("/api/custom/backups/{key}/sync-local", func(e *core.RequestEvent) error {
+		key := e.Request.PathValue("key")
+		if err := safepath.ValidateBackupKey(key); err != nil {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+		}
+		if err := backup.SyncLocal(e.Request.Context(), rr.app, key); err != nil {
+			recordBackupAudit(rr.app, e, "backup.sync_local", key, err)
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+		}
+		recordBackupAudit(rr.app, e, "backup.sync_local", key, nil)
+		return e.JSON(http.StatusOK, map[string]string{"status": "synced"})
+	}).BindFunc(rbac.Require(rbac.CapManageSettings))
+
 	rr.r.GET("/api/custom/backups/settings", func(e *core.RequestEvent) error {
 		return e.JSON(http.StatusOK, backup.GetSettings(rr.app))
 	}).BindFunc(rbac.Require(rbac.CapManageSettings))

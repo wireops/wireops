@@ -4,15 +4,19 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 const { $pb, $pbSuperuser } = useNuxtApp()
 const toast = useToast()
 const { isAdmin } = usePermissions()
-const { listBackups, createBackup, deleteBackup, restoreBackup, getBackupSettings, saveBackupSettings } = useApi()
+const { logout } = useAuth()
+const { listBackups, createBackup, deleteBackup, restoreBackup, syncLocalBackup, getBackupSettings, saveBackupSettings, listAuditLogs } = useApi()
+const { getIntegrations } = useIntegrations()
 
-type BackupInfo = { key: string; size: number; modified: string }
+type BackupInfo = { key: string; size: number; modified: string; local?: boolean; remote?: boolean }
+type MirrorAttempt = { id: string; resource_id: string; status: 'success' | 'error'; error_code: string; created: string }
 
 const backups = ref<BackupInfo[]>([])
 const backupsLoading = ref(false)
 const backupsError = ref('')
 const createLoading = ref(false)
 const deleteLoading = ref('')
+const syncLocalLoading = ref('')
 const uploadLoading = ref(false)
 const uploadInput = ref<HTMLInputElement | null>(null)
 const isSuperuser = computed(() => !!$pbSuperuser.authStore.isSuperuser)
@@ -20,25 +24,20 @@ const isSuperuser = computed(() => !!$pbSuperuser.authStore.isSuperuser)
 const settings = ref({
   cron: '',
   cron_max_keep: 3,
-  s3: {
-    enabled: false,
-    bucket: '',
-    region: '',
-    endpoint: '',
-    accessKey: '',
-    secret: '',
-    forcePathStyle: true,
-  },
 })
 
-// PocketBase serves backups from a single filesystem at a time (S3 if
-// enabled, otherwise local disk — see core.App.NewBackupsFilesystem), so
-// every listed backup currently shares the same storage origin. Tracked
-// separately from settings.s3.enabled (the editable, unsaved toggle state)
-// so the badge reflects what's actually persisted/active on the backend,
-// not whatever the settings form happens to be mid-edit.
-const activeS3Enabled = ref(false)
-const backupSource = computed(() => (activeS3Enabled.value ? 'S3' : 'Local'))
+// Remote storage (S3) is configured as an integration now, not here — see
+// Settings -> Integrations. isRemoteEnabled just reflects whether it's
+// currently active, for the mirror-history section below. Each backup's own
+// source badge instead uses its own `remote` flag (backup.List merges local
+// disk with remote storage — mirroring replicates, so a backup can be Local,
+// Local + S3, or (rarely) S3-only).
+const isRemoteEnabled = ref(false)
+function backupSource(backup: BackupInfo) {
+  if (backup.local && backup.remote) return 'Local + S3'
+  if (backup.remote) return 'S3 only'
+  return 'Local'
+}
 const settingsLoading = ref(false)
 const settingsSaving = ref(false)
 
@@ -92,22 +91,10 @@ async function loadBackups() {
   }
 }
 
-// Shared merge for both load and save responses: an unconfigured S3 target
-// keeps the "force path-style" default (true) instead of being overwritten
-// by the backend's Go zero value (false), which is indistinguishable from an
-// explicit prior save. Using the same function in both places prevents the
-// two call sites from silently diverging.
-function mergeSettingsResponse(data: { cron?: string; cron_max_keep?: number; s3?: Partial<typeof settings.value.s3> } | null) {
+function mergeSettingsResponse(data: { cron?: string; cron_max_keep?: number } | null) {
   if (!data) return
   settings.value.cron = data.cron || ''
   settings.value.cron_max_keep = data.cron_max_keep || 3
-  const s3IsUnconfigured = !data.s3?.bucket && !data.s3?.endpoint && !data.s3?.accessKey
-  settings.value.s3 = {
-    ...settings.value.s3,
-    ...(data.s3 || {}),
-    forcePathStyle: s3IsUnconfigured ? true : !!data.s3?.forcePathStyle,
-  }
-  activeS3Enabled.value = !!data.s3?.enabled
 }
 
 async function loadSettings() {
@@ -119,6 +106,36 @@ async function loadSettings() {
     toast.add({ title: 'Failed to load backup settings', description: e?.message, color: 'error' })
   } finally {
     settingsLoading.value = false
+  }
+}
+
+// Remote storage is configured under Settings -> Integrations now (see
+// components/integrations/S3ConfigModal.vue); this page only needs to know
+// whether it's active, to label the backup list's storage badge correctly.
+async function loadRemoteStorageStatus() {
+  try {
+    const list = await getIntegrations()
+    isRemoteEnabled.value = !!list.find(i => i.slug === 's3')?.enabled
+  } catch {
+    isRemoteEnabled.value = false
+  }
+}
+
+// Every attempt to mirror a newly-created backup to remote storage is
+// audited (internal/hooks: OnBackupCreate), success and failure — surfaced
+// here so a silent/broken S3 target doesn't go unnoticed.
+const mirrorHistory = ref<MirrorAttempt[]>([])
+const mirrorHistoryLoading = ref(false)
+
+async function loadMirrorHistory() {
+  mirrorHistoryLoading.value = true
+  try {
+    const res = await listAuditLogs({ action: 'backup.mirror', resource_type: 'backup', perPage: 10 })
+    mirrorHistory.value = (res?.items || []) as unknown as MirrorAttempt[]
+  } catch {
+    mirrorHistory.value = []
+  } finally {
+    mirrorHistoryLoading.value = false
   }
 }
 
@@ -222,6 +239,22 @@ async function confirmDeleteBackup() {
   }
 }
 
+// Pulls a remote-only backup down onto local disk (core.App.RestoreBackup
+// always reads locally, it has no remote fallback of its own) so it can be
+// restored.
+async function handleSyncLocal(backup: BackupInfo) {
+  syncLocalLoading.value = backup.key
+  try {
+    await syncLocalBackup(backup.key)
+    toast.add({ title: 'Backup synced to local disk', color: 'success' })
+    await loadBackups()
+  } catch (e: any) {
+    toast.add({ title: 'Failed to sync backup locally', description: e?.message, color: 'error' })
+  } finally {
+    syncLocalLoading.value = ''
+  }
+}
+
 function requestRestore(backup: BackupInfo) {
   restoreTarget.value = backup
   restoreConfirmText.value = ''
@@ -239,8 +272,7 @@ function startRestoreCountdown() {
     if (restoreCountdown.value <= 0) {
       clearInterval(restoreCountdownInterval!)
       restoreCountdownInterval = null
-      $pb.authStore.clear()
-      navigateTo('/login')
+      logout()
     }
   }, 1000)
 }
@@ -262,21 +294,7 @@ async function confirmRestore() {
   }
 }
 
-// PocketBase's S3 filesystem treats the whole "bucket" value as one literal
-// URL path segment (see tools/filesystem/internal/s3blob), so a value like
-// "my-bucket/wireops" breaks listing with a "NoSuchKey" error — not a
-// bucket+prefix combo. Block the save instead of letting it silently
-// half-work (uploads succeed, listing fails).
-const bucketPrefixError = computed(() => {
-  if (!settings.value.s3.enabled || !settings.value.s3.bucket.includes('/')) return undefined
-  return "Bucket must not include a path/prefix — PocketBase doesn't support it and listing will fail. Use a dedicated bucket instead."
-})
-
 async function handleSaveSettings() {
-  if (bucketPrefixError.value) {
-    toast.add({ title: 'Failed to save backup settings', description: bucketPrefixError.value, color: 'error' })
-    return
-  }
   settingsSaving.value = true
   try {
     const data = await saveBackupSettings(settings.value)
@@ -293,6 +311,8 @@ async function handleSaveSettings() {
 onMounted(() => {
   loadBackups()
   loadSettings()
+  loadRemoteStorageStatus()
+  loadMirrorHistory()
 })
 </script>
 
@@ -361,16 +381,26 @@ onMounted(() => {
               <td class="py-2 pr-4 text-xs">{{ formatDate(backup.modified) }}</td>
               <td class="py-2 pr-4">
                 <UBadge
-                  :icon="backupSource === 'S3' ? 'i-lucide-cloud' : 'i-lucide-hard-drive'"
-                  :label="backupSource"
-                  :color="backupSource === 'S3' ? 'info' : 'neutral'"
+                  :icon="backup.remote ? 'i-lucide-cloud' : 'i-lucide-hard-drive'"
+                  :label="backupSource(backup)"
+                  :color="backup.remote ? 'info' : 'neutral'"
                   variant="subtle"
                   size="sm"
                 />
               </td>
               <td class="py-2 pr-4">
                 <div class="flex justify-end gap-1">
-                  <UButton icon="i-lucide-download" size="xs" variant="ghost" aria-label="Download" @click="downloadBackup(backup)" />
+                  <UButton
+                    v-if="!backup.local && backup.remote"
+                    icon="i-lucide-hard-drive-download"
+                    size="xs"
+                    variant="ghost"
+                    color="info"
+                    aria-label="Sync local"
+                    :loading="syncLocalLoading === backup.key"
+                    @click="handleSyncLocal(backup)"
+                  />
+                  <UButton icon="i-lucide-download" size="xs" variant="ghost" aria-label="Download" :disabled="!backup.local" @click="downloadBackup(backup)" />
                   <UButton icon="i-lucide-history" size="xs" variant="ghost" color="warning" aria-label="Restore" @click="requestRestore(backup)" />
                   <UButton
                     icon="i-lucide-trash-2"
@@ -412,46 +442,44 @@ onMounted(() => {
     </UCard>
 
     <UCard>
-      <template #header><h3 class="font-semibold">Remote Storage (S3)</h3></template>
-      <div v-if="settingsLoading" class="text-sm text-gray-500 py-2">Loading settings...</div>
-      <div v-else class="space-y-4">
-        <div class="flex items-center gap-2">
-          <USwitch v-model="settings.s3.enabled" />
-          <span class="text-sm font-medium">Store backups on S3-compatible storage</span>
-        </div>
+      <template #header><h3 class="font-semibold">Remote Storage</h3></template>
+      <p class="text-sm text-gray-500">
+        Off-host storage is configured as an integration now — see
+        <NuxtLink to="/settings/integrations" class="text-primary-500 underline">Settings &rarr; Integrations &rarr; S3 Storage</NuxtLink>
+        to enable mirroring backups to S3-compatible storage (AWS S3, R2, MinIO, B2, ...).
+      </p>
 
-        <div v-if="settings.s3.enabled" class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <UFormField label="Bucket" :error="bucketPrefixError">
-            <AppTextInput v-model="settings.s3.bucket" placeholder="my-wireops-backups" />
-          </UFormField>
-          <UFormField label="Region">
-            <AppTextInput v-model="settings.s3.region" />
-          </UFormField>
-        </div>
-
-        <div v-if="settings.s3.enabled" class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <UFormField label="Access Key">
-            <AppTextInput v-model="settings.s3.accessKey" />
-          </UFormField>
-          <UFormField label="Secret Key">
-            <AppTextInput v-model="settings.s3.secret" type="password" placeholder="••••••••" />
-          </UFormField>
-          <UFormField label="Endpoint">
-            <AppTextInput v-model="settings.s3.endpoint" placeholder="https://s3.example.com" />
-          </UFormField>
-          <div class="pt-6">
-            <div class="flex items-center gap-2">
-              <USwitch v-model="settings.s3.forcePathStyle" />
-              <span class="text-sm">Force path-style addressing</span>
-            </div>
-            <p class="text-xs text-gray-500 mt-1">
-              Use <code class="font-mono">https://endpoint/bucket</code> instead of <code class="font-mono">https://bucket.endpoint</code>.
-              Required for most self-hosted S3-compatible services (e.g. MinIO); leave off for AWS S3.
-            </p>
-          </div>
-        </div>
-
-        <UButton icon="i-lucide-save" label="Save" :loading="settingsSaving" @click="handleSaveSettings" />
+      <div v-if="mirrorHistoryLoading" class="text-sm text-gray-500 py-2">Loading mirror history...</div>
+      <div v-else-if="mirrorHistory.length === 0" class="text-xs text-gray-500 mt-3">
+        No mirror attempts logged yet — nothing to mirror until S3 storage is enabled.
+      </div>
+      <div v-else class="mt-3 overflow-x-auto">
+        <p class="text-xs uppercase text-gray-500 mb-1">Mirror history</p>
+        <table class="w-full text-sm">
+          <thead class="text-left text-xs uppercase text-gray-500 border-b border-gray-200 dark:border-gray-800">
+            <tr>
+              <th class="pb-2 pr-4 font-medium">Backup</th>
+              <th class="pb-2 pr-4 font-medium">When</th>
+              <th class="pb-2 pr-4 font-medium">Status</th>
+              <th class="pb-2 pr-4 font-medium">Error</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+            <tr v-for="attempt in mirrorHistory" :key="attempt.id">
+              <td class="py-2 pr-4 font-mono text-xs">{{ attempt.resource_id }}</td>
+              <td class="py-2 pr-4 text-xs">{{ formatDate(attempt.created) }}</td>
+              <td class="py-2 pr-4">
+                <UBadge
+                  :label="attempt.status === 'success' ? 'Success' : 'Failed'"
+                  :color="attempt.status === 'success' ? 'success' : 'error'"
+                  variant="subtle"
+                  size="sm"
+                />
+              </td>
+              <td class="py-2 pr-4 text-xs text-gray-500">{{ attempt.error_code }}</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </UCard>
 

@@ -56,6 +56,8 @@ func sensitiveIntegrationConfigKeys(slug string) []string {
 		return []string{"token"}
 	case "infisical":
 		return []string{"client_secret"}
+	case "s3":
+		return []string{"secret"}
 	default:
 		return nil
 	}
@@ -69,7 +71,7 @@ func sensitiveIntegrationConfigKeys(slug string) []string {
 // deliberately.
 func encryptedIntegrationConfigKeys(slug string) []string {
 	switch slug {
-	case "vault", "infisical":
+	case "vault", "infisical", "s3":
 		return sensitiveIntegrationConfigKeys(slug)
 	default:
 		return nil
@@ -115,6 +117,8 @@ func requiredIntegrationConfigKeys(slug string) []string {
 		return []string{"address", "token"}
 	case "infisical":
 		return []string{"client_id", "client_secret"}
+	case "s3":
+		return []string{"bucket", "region", "access_key", "secret"}
 	default:
 		return nil
 	}
