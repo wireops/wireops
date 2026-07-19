@@ -78,26 +78,42 @@ func secretKeyFromEnv() []byte {
 // storage, so a cross-instance distributed lock isn't needed here.
 var capacityMu sync.Mutex
 
-// restoreMu guards pendingRestoreKeyVal, the key of a backup that Restore
+// restoreMu guards pendingRestoreKeys, the set of backup keys that Restore
 // has committed to but whose actual app.RestoreBackup call hasn't started
 // yet (it runs after a short delay in a goroutine — see Restore). Without
 // this, Delete's existing core.StoreKeyActiveBackup check (which
 // RestoreBackup itself sets) has a window between Restore() returning and
 // the goroutine firing during which the same backup could be deleted out
 // from under the pending restore.
+//
+// Keyed by backup key with a reference count rather than a single string:
+// Restore is reserved for the key before any filesystem check, so a
+// concurrent Delete of a different key never contends, and reserving the
+// same key twice (two concurrent restores of the same backup) is tracked
+// rather than one silently clobbering the other's reservation.
 var restoreMu sync.Mutex
-var pendingRestoreKeyVal string
+var pendingRestoreKeys = map[string]int{}
 
-func setPendingRestoreKey(key string) {
+func reservePendingRestoreKey(key string) {
 	restoreMu.Lock()
-	pendingRestoreKeyVal = key
+	pendingRestoreKeys[key]++
 	restoreMu.Unlock()
 }
 
-func pendingRestoreKey() string {
+func releasePendingRestoreKey(key string) {
+	restoreMu.Lock()
+	if pendingRestoreKeys[key] > 1 {
+		pendingRestoreKeys[key]--
+	} else {
+		delete(pendingRestoreKeys, key)
+	}
+	restoreMu.Unlock()
+}
+
+func isPendingRestoreKey(key string) bool {
 	restoreMu.Lock()
 	defer restoreMu.Unlock()
-	return pendingRestoreKeyVal
+	return pendingRestoreKeys[key] > 0
 }
 
 // Info describes one stored backup archive. Local and Remote are
@@ -331,7 +347,7 @@ func Delete(app core.App, key string) error {
 	if v, ok := app.Store().Get(core.StoreKeyActiveBackup).(string); ok && v == key {
 		return errors.New("this backup is currently being used and cannot be deleted")
 	}
-	if pending := pendingRestoreKey(); pending == key {
+	if isPendingRestoreKey(key) {
 		return errors.New("this backup is currently being used and cannot be deleted")
 	}
 
@@ -412,6 +428,17 @@ func Restore(ctx context.Context, app core.App, key string, confirm bool) error 
 		return fmt.Errorf("refusing to restore: %w", err)
 	}
 
+	// Reserved before any filesystem check (not just before the goroutine
+	// fires), so a concurrent Delete of this exact key can't race the window
+	// between checking it exists here and committing to restore it below.
+	reservePendingRestoreKey(key)
+	restoreCommitted := false
+	defer func() {
+		if !restoreCommitted {
+			releasePendingRestoreKey(key)
+		}
+	}()
+
 	fsys, err := app.NewBackupsFilesystem()
 	if err != nil {
 		return fmt.Errorf("failed to load backups filesystem: %w", err)
@@ -441,9 +468,9 @@ func Restore(ctx context.Context, app core.App, key string, confirm bool) error 
 		}
 	}
 
-	setPendingRestoreKey(key)
+	restoreCommitted = true
 	go func() {
-		defer setPendingRestoreKey("")
+		defer releasePendingRestoreKey(key)
 		time.Sleep(1 * time.Second)
 		restoreCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer cancel()

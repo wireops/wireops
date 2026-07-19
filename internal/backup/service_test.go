@@ -83,6 +83,52 @@ func TestRestoreRequiresConfirmation(t *testing.T) {
 	}
 }
 
+func TestPendingRestoreKeyIsPerKeyAndRefCounted(t *testing.T) {
+	const keyA = "a.zip"
+	const keyB = "b.zip"
+
+	if isPendingRestoreKey(keyA) || isPendingRestoreKey(keyB) {
+		t.Fatal("expected no pending restore keys initially")
+	}
+
+	reservePendingRestoreKey(keyA)
+	if !isPendingRestoreKey(keyA) {
+		t.Fatal("expected keyA to be pending after reservation")
+	}
+	if isPendingRestoreKey(keyB) {
+		t.Fatal("reserving keyA must not affect keyB")
+	}
+
+	// A second reservation of the same key (two concurrent restores of the
+	// same backup) must not be undone by a single release.
+	reservePendingRestoreKey(keyA)
+	releasePendingRestoreKey(keyA)
+	if !isPendingRestoreKey(keyA) {
+		t.Fatal("expected keyA to still be pending after one of two releases")
+	}
+
+	releasePendingRestoreKey(keyA)
+	if isPendingRestoreKey(keyA) {
+		t.Fatal("expected keyA to be cleared after matching releases")
+	}
+}
+
+func TestDeleteRejectsBackupWithPendingRestore(t *testing.T) {
+	app, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatalf("failed to create test app: %v", err)
+	}
+	defer app.Cleanup()
+
+	const key = "pending-restore.zip"
+	reservePendingRestoreKey(key)
+	defer releasePendingRestoreKey(key)
+
+	if err := Delete(app, key); err == nil {
+		t.Fatal("expected Delete to reject a backup with a pending restore reservation")
+	}
+}
+
 func TestUploadRejectsNonZipContent(t *testing.T) {
 	app, err := tests.NewTestApp()
 	if err != nil {

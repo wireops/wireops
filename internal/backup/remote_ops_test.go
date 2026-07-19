@@ -69,6 +69,52 @@ func TestGetRemoteDecryptsBasedOnUploadTimeMetadataNotCurrentSetting(t *testing.
 	}
 }
 
+// TestGetRemoteReturnsPlaintextForUploadTimeUnencryptedObject is the mirror
+// image of TestGetRemoteDecryptsBasedOnUploadTimeMetadataNotCurrentSetting:
+// an object uploaded while encrypt_content was disabled carries no
+// encryption metadata (metaEncryption == ""), so enabling the setting
+// afterward must not make GetRemote try to decrypt it as ciphertext.
+func TestGetRemoteReturnsPlaintextForUploadTimeUnencryptedObject(t *testing.T) {
+	app := newS3TestApp(t)
+	server := newFakeS3Server()
+	defer server.Close()
+
+	initialConfig := fakeS3Config(t, server, "wireops-backups")
+	initialConfig["encrypt_content"] = false
+	rec := saveS3IntegrationRecord(t, app, true, initialConfig)
+
+	const key = "wireops_getremote_plain_meta_test.zip"
+	const plaintext = "this is the original unencrypted backup content"
+
+	if err := PutRemote(context.Background(), app, key, strings.NewReader(plaintext), int64(len(plaintext))); err != nil {
+		t.Fatalf("PutRemote failed: %v", err)
+	}
+
+	// Enable encrypt_content after the upload — GetRemote must still know
+	// (from the object's own metadata, or lack thereof) that this object
+	// was never encrypted, and return it as-is rather than attempting to
+	// decrypt plaintext as ciphertext.
+	config := fakeS3Config(t, server, "wireops-backups")
+	config["encrypt_content"] = true
+	rec.Set("config", config)
+	if err := app.Save(rec); err != nil {
+		t.Fatalf("update s3 integration config: %v", err)
+	}
+
+	body, err := GetRemote(context.Background(), app, key)
+	if err != nil {
+		t.Fatalf("GetRemote failed: %v", err)
+	}
+	defer body.Close()
+	got, err := io.ReadAll(body)
+	if err != nil {
+		t.Fatalf("read remote body: %v", err)
+	}
+	if string(got) != plaintext {
+		t.Fatalf("expected plaintext content %q, got %q", plaintext, got)
+	}
+}
+
 func TestMirrorLocalBackupToRemoteAttemptedAndFailsWithBadConfig(t *testing.T) {
 	app := newS3TestApp(t)
 
