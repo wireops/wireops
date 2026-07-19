@@ -73,6 +73,10 @@ func (f *fakeS3Server) handle(w http.ResponseWriter, r *http.Request) {
 		for k, v := range obj.meta {
 			w.Header()[k] = v
 		}
+		// Explicit non-HTML content type: this serves an object's own bytes
+		// back to the aws-sdk-go S3 client (never a browser), so there's no
+		// HTML-escaping concern — content-type just needs to be accurate.
+		w.Header().Set("Content-Type", "application/octet-stream")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(obj.body)
 

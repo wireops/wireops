@@ -92,6 +92,14 @@ func TestPendingRestoreKeyIsPerKeyAndRefCounted(t *testing.T) {
 	}
 
 	reservePendingRestoreKey(keyA)
+	// Guarantees both keyA reservations taken below are released even if a
+	// t.Fatal aborts the test partway through — releasePendingRestoreKey is
+	// safe to call on an already-cleared key (no-op), so this is safe to
+	// pair with the explicit releases later in the happy path.
+	t.Cleanup(func() {
+		releasePendingRestoreKey(keyA)
+		releasePendingRestoreKey(keyA)
+	})
 	if !isPendingRestoreKey(keyA) {
 		t.Fatal("expected keyA to be pending after reservation")
 	}
@@ -121,11 +129,20 @@ func TestDeleteRejectsBackupWithPendingRestore(t *testing.T) {
 	defer app.Cleanup()
 
 	const key = "pending-restore.zip"
+	if err := Create(context.Background(), app, key); err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
 	reservePendingRestoreKey(key)
 	defer releasePendingRestoreKey(key)
 
-	if err := Delete(app, key); err == nil {
+	err = Delete(app, key)
+	if err == nil {
 		t.Fatal("expected Delete to reject a backup with a pending restore reservation")
+	}
+	const wantMsg = "this backup is currently being used and cannot be deleted"
+	if err.Error() != wantMsg {
+		t.Fatalf("expected error %q, got %q", wantMsg, err.Error())
 	}
 }
 
