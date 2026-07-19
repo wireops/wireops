@@ -152,3 +152,24 @@ func Require(capability Capability) func(*core.RequestEvent) error {
 		return e.JSON(http.StatusForbidden, map[string]string{"error": "permission denied"})
 	}
 }
+
+// RequireSuperuser gates a route to an actual PocketBase superuser session
+// (the "_superusers" collection), deliberately stricter than a wireops
+// role=admin user (see ResolveActor — role=admin is not the same auth
+// principal as a real superuser). Use only for operations dangerous enough
+// to warrant that extra bar, e.g. uploading an arbitrary file that later
+// becomes a full-data-replace restore target.
+func RequireSuperuser() func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
+		if e != nil && e.Auth != nil && e.Auth.IsSuperuser() {
+			return e.Next()
+		}
+		if e == nil {
+			return nil
+		}
+		if e.Auth == nil {
+			return e.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+		}
+		return e.JSON(http.StatusForbidden, map[string]string{"error": "this action requires a PocketBase superuser session, not just a wireops admin role"})
+	}
+}

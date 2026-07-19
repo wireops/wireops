@@ -55,11 +55,14 @@ func TestCreateInitialAdminCreatesAlignedUserAndSuperuser(t *testing.T) {
 	if !user.GetBool("protected") {
 		t.Fatal("expected initial admin to be protected")
 	}
-	if superuser.GetString("passwordHash") != user.GetString("passwordHash") {
+	if superuser.GetString("password:hash") != user.GetString("password:hash") {
 		t.Fatal("expected user and superuser password hashes to match")
 	}
 	if superuser.GetString("tokenKey") != user.GetString("tokenKey") {
 		t.Fatal("expected user and superuser token keys to match")
+	}
+	if !superuser.ValidatePassword("securepassword") {
+		t.Fatal("expected superuser record to authenticate with the original plaintext password")
 	}
 
 	assertAuditEvent(t, app, "setup.bootstrap_started", "success", "", "f***@example.com")

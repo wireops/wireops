@@ -43,6 +43,30 @@ func ValidateComposeFile(f string) error {
 	return nil
 }
 
+// ValidateBackupKey checks that a backup archive key is a bare .zip filename
+// with no path traversal or directory separators — it is interpolated into
+// filesystem/S3 paths by internal/backup, so a caller-supplied key must never
+// be able to escape the backups directory or address a different object.
+func ValidateBackupKey(key string) error {
+	if key == "" {
+		return fmt.Errorf("backup key cannot be empty")
+	}
+	cleaned := filepath.Clean(key)
+	if cleaned != key {
+		return fmt.Errorf("backup key contains invalid characters: %q", key)
+	}
+	if strings.ContainsAny(cleaned, "/\\") {
+		return fmt.Errorf("backup key must be a filename, not a path: %q", key)
+	}
+	if cleaned == "." || cleaned == ".." || strings.Contains(cleaned, "..") {
+		return fmt.Errorf("backup key contains invalid traversal: %q", key)
+	}
+	if strings.ToLower(filepath.Ext(cleaned)) != ".zip" {
+		return fmt.Errorf("backup key must end in .zip: %q", key)
+	}
+	return nil
+}
+
 // ValidateHostPath checks that a host path is absolute and does not contain traversal.
 func ValidateHostPath(p string) error {
 	if p == "" {

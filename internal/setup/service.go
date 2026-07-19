@@ -74,7 +74,10 @@ func (s *Service) CreateInitialAdmin(email, password string) error {
 		superRecord := core.NewRecord(superusers)
 		superRecord.Set("email", email)
 		superRecord.Set("verified", true)
-		superRecord.Set("passwordHash", userRecord.GetString("passwordHash"))
+		// GetString("password:hash") reads the bcrypt hash for the "password"
+		// field; SetRaw with a "$2"-prefixed string stores it back as-is
+		// instead of re-hashing it as plaintext (see PasswordField.getPasswordValue).
+		superRecord.SetRaw("password", userRecord.GetString("password:hash"))
 		superRecord.Set("tokenKey", userRecord.GetString("tokenKey"))
 		if err := txApp.SaveNoValidate(superRecord); err != nil {
 			return err

@@ -81,7 +81,7 @@ func (s *SlackProvider) Send(ctx context.Context, cfg *Config, p Payload) error 
 func buildSlackPayload(cfg *Config, p Payload) slackWebhookPayload {
 	title := slackTitle(p)
 	mention := ""
-	if p.Event == SyncError && cfg.SlackMentionOnError {
+	if (p.Event == SyncError || p.Event == BackupMirrorError) && cfg.SlackMentionOnError {
 		mention = strings.TrimSpace(cfg.SlackMentionText)
 	}
 
@@ -125,6 +125,8 @@ func slackTitle(p Payload) string {
 		return "wireops sync completed"
 	case SyncError:
 		return "wireops sync failed"
+	case BackupMirrorError:
+		return "wireops backup mirror failed"
 	case SyncTest:
 		return "wireops test notification"
 	default:

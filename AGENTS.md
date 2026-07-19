@@ -2,7 +2,7 @@
 
 Self-hosted GitOps platform for managing Docker Compose stacks and scheduled Docker-based jobs. It watches Git repositories for changes and deploys updates on remote hosts through token-authenticated WebSocket workers.
 
-**Project status**: pre-1.0 (tags `v0.1.0`–`v0.1.15`), active hobby/side-project pace. Core GitOps sync, worker deploy security policy, and RBAC/audit are implemented and in daily use. `internal/secrets` has all three providers implemented and functional: `internal` (AES-GCM), `vault` (HashiCorp Vault), and `infisical`. `internal/backup` is test-scaffolding only with no real implementation. Don't describe stub features as shipped in docs or responses without checking the source first.
+**Project status**: pre-1.0 (tags `v0.1.0`–`v0.1.15`), active hobby/side-project pace. Core GitOps sync, worker deploy security policy, and RBAC/audit are implemented and in daily use. `internal/secrets` has all three providers implemented and functional: `internal` (AES-GCM), `vault` (HashiCorp Vault), and `infisical`. `internal/backup` (create/list/upload/delete/restore, cron autobackup) is implemented and shipped; optional off-host mirroring to S3-compatible storage is the "s3" `internal/integrations` entry (see `internal/backup/remote`). Don't describe stub features as shipped in docs or responses without checking the source first.
 
 ---
 
@@ -43,7 +43,7 @@ Self-hosted GitOps platform for managing Docker Compose stacks and scheduled Doc
 │   ├── secrets/                  # Pluggable secret providers: internal (AES-GCM), vault (HashiCorp Vault), infisical
 │   ├── oidc/collection.go        # OIDC PocketBase collection support (client secret hydration)
 │   ├── setup/service.go          # First-admin bootstrap (`/setup`) service
-│   ├── backup/                   # Backup/restore — test scaffolding only, no implementation yet
+│   ├── backup/                   # Backup/restore (create/list/upload/delete/restore) + optional S3 mirroring
 │   ├── routes/                   # HTTP route handlers
 │   │   ├── routes.go             # Stack / repo / credential / integration routes
 │   │   ├── worker.go             # Worker management routes
@@ -336,7 +336,7 @@ Events: `sync.started`, `sync.done`, `sync.error`, `sync.test`.
 - **Secrets providers** (`internal/secrets/`): pluggable `SecretProvider` registry, `ValidProviders = ["internal", "vault", "infisical"]`, all three implemented and functional. `internal` encrypts the value at rest (AES-GCM, `SECRET_KEY`). `vault`/`infisical` store a reference string (`<mount>/data/<path>#<field>` / `<project-id>/<environment>/<secret-path>#<SECRET_NAME>`) resolved at deploy time against a backend configured via the `integrations` collection (category "Secret Backend"), not server env vars. Once an env var is saved as a secret its `secret_provider` is immutable (`preventEnvSecretProviderChange` in `internal/hooks/pb_hooks.go`) — must delete/recreate to switch backends. `internal/envvars/backend_check.go` pre-flight-blocks stack/job execution if a referenced backend is disabled, naming the provider and offending keys.
 - **OIDC / SSO** (`internal/oidc/collection.go`): PocketBase collection glue for OIDC client secret hydration; see README's OIDC env var table for the user-facing setup and the SSO role-override warning.
 - **Setup/bootstrap** (`internal/setup/service.go`): backs the `/setup` first-admin flow gated by `BOOTSTRAP_TOKEN`.
-- **Backup** (`internal/backup/`): only test scaffolding exists (`backup_restore_test.go`); there is no shipped backup/restore implementation — do not document this as a feature.
+- **Backup** (`internal/backup/`): wraps `core.App.CreateBackup`/`RestoreBackup` behind wireops RBAC (`GET/POST/DELETE /api/custom/backups`, `POST /api/custom/backups/upload` gated to a real PocketBase superuser, `POST /api/custom/backups/{key}/restore`). PocketBase always manages *local-disk* backups only; optional off-host mirroring is the `"s3"` `internal/integrations` entry (Category "Storage Backend", config/credentials in the `integrations` collection like Vault/Infisical) — `app.OnBackupCreate()` uploads each new local backup via `internal/backup/remote` (a provider-agnostic `Storage`/`KeyManager` registry, S3-only today) as a **replica**, not a move: the local copy is never deleted by mirroring. `List` merges local disk with the remote listing, flagging each backup `Remote` if it also exists there (`Info.Remote`); `Delete` removes both copies; `Restore` prefers the local copy and only re-downloads from remote if it's missing locally. Content is AES-256-GCM-encrypted before upload by default (SECRET_KEY-derived key, or an AWS KMS-wrapped data key if configured). Mirror attempts (once remote storage is actually enabled) are audited (`backup.mirror` in `audit_logs`) and failures notify via `notify.BackupMirrorError`.
 
 ---
 

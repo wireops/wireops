@@ -48,5 +48,6 @@ defineEmits<{
       :readonly="readonly"
       @input="$emit('update:modelValue', ($event.target as HTMLInputElement).value)"
     >
+    <slot name="trailing" />
   </div>
 </template>

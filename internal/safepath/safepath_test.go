@@ -5,6 +5,44 @@ import (
 	"testing"
 )
 
+func TestValidateBackupKey(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		wantErr   bool
+		errSubstr string
+	}{
+		{name: "valid key", input: "wireops_backup_20260717.zip"},
+		{name: "empty", input: "", wantErr: true, errSubstr: "cannot be empty"},
+		{name: "traversal", input: "../../etc/passwd.zip", wantErr: true, errSubstr: "filename, not a path"},
+		{name: "traversal encoded in middle", input: "foo/../../bar.zip", wantErr: true, errSubstr: "invalid characters"},
+		{name: "absolute path", input: "/etc/passwd.zip", wantErr: true, errSubstr: "filename, not a path"},
+		{name: "nested path", input: "sub/dir/backup.zip", wantErr: true, errSubstr: "filename, not a path"},
+		{name: "backslash", input: "sub\\backup.zip", wantErr: true, errSubstr: "filename, not a path"},
+		{name: "wrong extension", input: "backup.tar", wantErr: true, errSubstr: "must end in .zip"},
+		{name: "no extension", input: "backup", wantErr: true, errSubstr: "must end in .zip"},
+		{name: "just dot", input: ".", wantErr: true},
+		{name: "just dotdot", input: "..", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateBackupKey(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("ValidateBackupKey(%q) expected error, got nil", tt.input)
+					return
+				}
+				if tt.errSubstr != "" && !strings.Contains(err.Error(), tt.errSubstr) {
+					t.Errorf("ValidateBackupKey(%q) error = %q, want to contain %q", tt.input, err.Error(), tt.errSubstr)
+				}
+			} else if err != nil {
+				t.Errorf("ValidateBackupKey(%q) unexpected error: %v", tt.input, err)
+			}
+		})
+	}
+}
+
 func TestCleanRelativePath(t *testing.T) {
 	tests := []struct {
 		name      string

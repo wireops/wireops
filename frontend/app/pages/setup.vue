@@ -134,7 +134,7 @@ async function handleSetup() {
       <!-- Logo / Brand -->
       <div class="flex flex-col items-center mb-8">
         <div class="flex items-center justify-center w-12 h-12 rounded-xl bg-yellow-400/10 border border-yellow-400/20 mb-3 shadow-[0_0_24px_rgba(255,198,0,0.15)] sm:w-16 sm:h-16 sm:rounded-2xl sm:mb-4">
-          <UIcon name="i-lucide-zap" class="w-7 h-7 text-yellow-400 drop-shadow-[0_0_8px_rgba(255,198,0,0.7)] sm:w-9 sm:h-9" />
+          <img src="~/assets/img/logo.png" alt="" class="w-7 h-7 object-contain sm:w-9 sm:h-9">
         </div>
         <h1 class="text-2xl font-black tracking-[0.22em] uppercase text-yellow-400 drop-shadow-[0_0_12px_rgba(255,198,0,0.4)] sm:text-3xl sm:tracking-widest">
           wireops
@@ -173,15 +173,11 @@ async function handleSetup() {
                 </UTooltip>
               </span>
             </template>
-            <UInput
+            <AppTextInput
               v-model="bootstrapToken"
               :type="showBootstrapToken ? 'text' : 'password'"
-              size="xl"
-              class="w-full"
-              :ui="{ base: 'text-sm px-3 py-2.5 ps-10', leadingIcon: 'size-4' }"
               placeholder="Enter the bootstrap token"
               icon="i-lucide-key-round"
-              required
               aria-label="Bootstrap token"
               :disabled="setupBlocked || loading"
             >
@@ -197,38 +193,30 @@ async function handleSetup() {
                   @click="showBootstrapToken = !showBootstrapToken"
                 />
               </template>
-            </UInput>
+            </AppTextInput>
           </UFormField>
 
           <p v-if="setupStatus?.requiresBootstrapToken" class="text-xs text-gray-500 -mt-2">
             This token is only used during the initial setup.
           </p>
 
-          <UFormField label="Email">
-            <UInput
+          <UFormField label="Email" required>
+            <AppTextInput
               v-model="email"
               type="email"
-              size="xl"
-              class="w-full"
-              :ui="{ base: 'text-sm px-3 py-2.5 ps-10', leadingIcon: 'size-4' }"
               placeholder="admin@example.com"
               icon="i-lucide-mail"
-              required
               aria-label="Email"
               :disabled="setupBlocked || loading"
             />
           </UFormField>
 
-          <UFormField label="Password">
-            <UInput
+          <UFormField label="Password" required>
+            <AppTextInput
               v-model="password"
               :type="showPassword ? 'text' : 'password'"
-              size="xl"
-              class="w-full"
-              :ui="{ base: 'text-sm px-3 py-2.5 ps-10', leadingIcon: 'size-4' }"
               placeholder="••••••••"
               icon="i-lucide-lock"
-              required
               aria-label="Password"
               :disabled="setupBlocked || loading"
             >
@@ -244,23 +232,19 @@ async function handleSetup() {
                   @click="showPassword = !showPassword"
                 />
               </template>
-            </UInput>
+            </AppTextInput>
           </UFormField>
 
           <p class="text-xs text-gray-500 -mt-2">
             Use at least 8 characters for the administrator password.
           </p>
 
-          <UFormField label="Confirm Password">
-            <UInput
+          <UFormField label="Confirm Password" required>
+            <AppTextInput
               v-model="passwordConfirm"
               :type="showPasswordConfirm ? 'text' : 'password'"
-              size="xl"
-              class="w-full"
-              :ui="{ base: 'text-sm px-3 py-2.5 ps-10', leadingIcon: 'size-4' }"
               placeholder="••••••••"
               icon="i-lucide-lock"
-              required
               aria-label="Confirm password"
               :disabled="setupBlocked || loading"
               @paste="preventConfirmPasswordPaste"
@@ -277,7 +261,7 @@ async function handleSetup() {
                   @click="showPasswordConfirm = !showPasswordConfirm"
                 />
               </template>
-            </UInput>
+            </AppTextInput>
           </UFormField>
 
           <UButton

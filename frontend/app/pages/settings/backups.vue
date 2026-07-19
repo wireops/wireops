@@ -1,0 +1,629 @@
+<script setup lang="ts">
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+
+const { $pb, $pbSuperuser } = useNuxtApp()
+const toast = useToast()
+const { isAdmin } = usePermissions()
+const { logout } = useAuth()
+const { listBackups, createBackup, deleteBackup, restoreBackup, syncLocalBackup, getBackupSettings, saveBackupSettings, listAuditLogs } = useApi()
+const { getIntegrations } = useIntegrations()
+
+type BackupInfo = { key: string; size: number; modified: string; local?: boolean; remote?: boolean }
+type MirrorAttempt = { id: string; resource_id: string; status: 'success' | 'error'; error_code: string; created: string }
+
+const backups = ref<BackupInfo[]>([])
+const backupsLoading = ref(false)
+const backupsError = ref('')
+const createLoading = ref(false)
+const deleteLoading = ref('')
+const syncLocalLoading = ref('')
+const uploadLoading = ref(false)
+const uploadInput = ref<HTMLInputElement | null>(null)
+const isSuperuser = computed(() => !!$pbSuperuser.authStore.isSuperuser)
+
+const settings = ref({
+  cron: '',
+  cron_max_keep: 3,
+})
+
+// Remote storage (S3) is configured as an integration now, not here — see
+// Settings -> Integrations. isRemoteEnabled just reflects whether it's
+// currently active, for the mirror-history section below. Each backup's own
+// source badge instead uses its own `remote` flag (backup.List merges local
+// disk with remote storage — mirroring replicates, so a backup can be Local,
+// Local + S3, or (rarely) S3-only).
+const isRemoteEnabled = ref(false)
+function backupSource(backup: BackupInfo) {
+  if (backup.local && backup.remote) return 'Local + S3'
+  if (backup.remote) return 'S3 only'
+  return 'Local'
+}
+const settingsLoading = ref(false)
+const settingsSaving = ref(false)
+
+const showDeleteModal = ref(false)
+const deleteTarget = ref<BackupInfo | null>(null)
+
+const showUploadModal = ref(false)
+const uploadTarget = ref<File | null>(null)
+
+const showRestoreModal = ref(false)
+const restoreTarget = ref<BackupInfo | null>(null)
+const restoreConfirmText = ref('')
+const restoreLoading = ref(false)
+const restoreStarted = ref(false)
+const restoreCountdown = ref(0)
+const RESTORE_REDIRECT_SECONDS = 12
+
+function formatSize(bytes: number) {
+  if (!bytes) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB']
+  let i = 0
+  let size = bytes
+  while (size >= 1024 && i < units.length - 1) {
+    size /= 1024
+    i++
+  }
+  return `${size.toFixed(1)} ${units[i]}`
+}
+
+function formatDate(value: string) {
+  if (!value) return ''
+  return new Intl.DateTimeFormat('en-US', { dateStyle: 'short', timeStyle: 'medium' }).format(new Date(value))
+}
+
+async function loadBackups() {
+  backupsLoading.value = true
+  backupsError.value = ''
+  try {
+    const data = await listBackups()
+    backups.value = (data || []).sort((a, b) => new Date(b.modified).getTime() - new Date(a.modified).getTime())
+  } catch (e: any) {
+    // Clear the stale list instead of leaving it on screen — it may belong
+    // to a filesystem (e.g. local disk) that's no longer the active one
+    // after switching storage backends, so its download/restore actions
+    // would silently fail against the now-active filesystem.
+    backups.value = []
+    backupsError.value = e?.message || 'Failed to load backups.'
+    toast.add({ title: 'Failed to load backups', description: e?.message, color: 'error' })
+  } finally {
+    backupsLoading.value = false
+  }
+}
+
+function mergeSettingsResponse(data: { cron?: string; cron_max_keep?: number } | null) {
+  if (!data) return
+  settings.value.cron = data.cron || ''
+  settings.value.cron_max_keep = data.cron_max_keep || 3
+}
+
+async function loadSettings() {
+  settingsLoading.value = true
+  try {
+    const data = await getBackupSettings()
+    mergeSettingsResponse(data)
+  } catch (e: any) {
+    toast.add({ title: 'Failed to load backup settings', description: e?.message, color: 'error' })
+  } finally {
+    settingsLoading.value = false
+  }
+}
+
+// Remote storage is configured under Settings -> Integrations now (see
+// components/integrations/S3ConfigModal.vue); this page only needs to know
+// whether it's active, to label the backup list's storage badge correctly.
+async function loadRemoteStorageStatus() {
+  try {
+    const list = await getIntegrations()
+    isRemoteEnabled.value = !!list.find(i => i.slug === 's3')?.enabled
+  } catch {
+    isRemoteEnabled.value = false
+  }
+}
+
+// Every attempt to mirror a newly-created backup to remote storage is
+// audited (internal/hooks: OnBackupCreate), success and failure — surfaced
+// here so a silent/broken S3 target doesn't go unnoticed.
+const mirrorHistory = ref<MirrorAttempt[]>([])
+const mirrorHistoryLoading = ref(false)
+const mirrorHistoryError = ref('')
+
+async function loadMirrorHistory() {
+  mirrorHistoryLoading.value = true
+  mirrorHistoryError.value = ''
+  try {
+    const res = await listAuditLogs({ action: 'backup.mirror', resource_type: 'backup', perPage: 10 })
+    mirrorHistory.value = (res?.items || []) as unknown as MirrorAttempt[]
+  } catch (e: any) {
+    mirrorHistory.value = []
+    mirrorHistoryError.value = e?.message || 'Failed to load mirror history.'
+  } finally {
+    mirrorHistoryLoading.value = false
+  }
+}
+
+async function handleCreateBackup() {
+  createLoading.value = true
+  try {
+    await createBackup()
+    toast.add({ title: 'Backup created', color: 'success' })
+    await loadBackups()
+  } catch (e: any) {
+    toast.add({ title: 'Failed to create backup', description: e?.message, color: 'error' })
+  } finally {
+    createLoading.value = false
+  }
+}
+
+function triggerUpload() {
+  uploadInput.value?.click()
+}
+
+function handleUploadFile(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+
+  uploadTarget.value = file
+  showUploadModal.value = true
+}
+
+async function confirmUploadBackup() {
+  const file = uploadTarget.value
+  if (!file) return
+
+  uploadLoading.value = true
+  try {
+    const form = new FormData()
+    form.append('file', file)
+    const res = await fetch(`${$pbSuperuser.baseURL}/api/custom/backups/upload`, {
+      method: 'POST',
+      headers: {
+        Authorization: $pbSuperuser.authStore.token ? `Bearer ${$pbSuperuser.authStore.token}` : '',
+        'X-Wireops-Origin': 'ui',
+      },
+      body: form,
+    })
+    const data = await res.json().catch(() => null)
+    if (!res.ok) throw new Error(data?.error || `Upload failed: ${res.statusText || res.status}`)
+    toast.add({ title: 'Backup uploaded', color: 'success' })
+    showUploadModal.value = false
+    uploadTarget.value = null
+    await loadBackups()
+  } catch (e: any) {
+    toast.add({ title: 'Failed to upload backup', description: e?.message, color: 'error' })
+  } finally {
+    uploadLoading.value = false
+  }
+}
+
+async function downloadBackup(backup: BackupInfo) {
+  try {
+    const res = await fetch(`${$pb.baseURL}/api/custom/backups/${encodeURIComponent(backup.key)}/download`, {
+      headers: {
+        Authorization: $pb.authStore.token ? `Bearer ${$pb.authStore.token}` : '',
+        'X-Wireops-Origin': 'ui',
+      },
+    })
+    if (!res.ok) throw new Error(`Download failed: ${res.statusText || res.status}`)
+    const blob = await res.blob()
+    const objectUrl = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = objectUrl
+    a.download = backup.key
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(objectUrl)
+  } catch (e: any) {
+    toast.add({ title: 'Failed to download backup', description: e?.message, color: 'error' })
+  }
+}
+
+function requestDeleteBackup(backup: BackupInfo) {
+  deleteTarget.value = backup
+  showDeleteModal.value = true
+}
+
+async function confirmDeleteBackup() {
+  if (!deleteTarget.value) return
+  const backup = deleteTarget.value
+  deleteLoading.value = backup.key
+  try {
+    await deleteBackup(backup.key)
+    toast.add({ title: 'Backup deleted', color: 'success' })
+    showDeleteModal.value = false
+    await loadBackups()
+  } catch (e: any) {
+    toast.add({ title: 'Failed to delete backup', description: e?.message, color: 'error' })
+  } finally {
+    deleteLoading.value = ''
+  }
+}
+
+// Pulls a remote-only backup down onto local disk (core.App.RestoreBackup
+// always reads locally, it has no remote fallback of its own) so it can be
+// restored.
+async function handleSyncLocal(backup: BackupInfo) {
+  syncLocalLoading.value = backup.key
+  try {
+    await syncLocalBackup(backup.key)
+    toast.add({ title: 'Backup synced to local disk', color: 'success' })
+    await loadBackups()
+  } catch (e: any) {
+    toast.add({ title: 'Failed to sync backup locally', description: e?.message, color: 'error' })
+  } finally {
+    syncLocalLoading.value = ''
+  }
+}
+
+function requestRestore(backup: BackupInfo) {
+  restoreTarget.value = backup
+  restoreConfirmText.value = ''
+  restoreStarted.value = false
+  showRestoreModal.value = true
+}
+
+let restoreCountdownInterval: ReturnType<typeof setInterval> | null = null
+
+function startRestoreCountdown() {
+  restoreStarted.value = true
+  restoreCountdown.value = RESTORE_REDIRECT_SECONDS
+  restoreCountdownInterval = setInterval(() => {
+    restoreCountdown.value -= 1
+    if (restoreCountdown.value <= 0) {
+      clearInterval(restoreCountdownInterval!)
+      restoreCountdownInterval = null
+      logout()
+    }
+  }, 1000)
+}
+
+onUnmounted(() => {
+  if (restoreCountdownInterval) clearInterval(restoreCountdownInterval)
+})
+
+async function confirmRestore() {
+  if (!restoreTarget.value) return
+  restoreLoading.value = true
+  try {
+    await restoreBackup(restoreTarget.value.key)
+    startRestoreCountdown()
+  } catch (e: any) {
+    toast.add({ title: 'Failed to restore backup', description: e?.message, color: 'error' })
+  } finally {
+    restoreLoading.value = false
+  }
+}
+
+async function handleSaveSettings() {
+  settingsSaving.value = true
+  try {
+    const data = await saveBackupSettings(settings.value)
+    mergeSettingsResponse(data)
+    toast.add({ title: 'Backup settings saved', color: 'success' })
+    await loadBackups()
+  } catch (e: any) {
+    toast.add({ title: 'Failed to save backup settings', description: e?.message, color: 'error' })
+  } finally {
+    settingsSaving.value = false
+  }
+}
+
+onMounted(() => {
+  loadBackups()
+  loadSettings()
+  loadRemoteStorageStatus()
+  loadMirrorHistory()
+})
+</script>
+
+<template>
+  <div v-if="isAdmin" class="space-y-6">
+    <UCard>
+      <template #header>
+        <div class="flex items-center justify-between gap-3">
+          <div>
+            <h3 class="font-semibold">Backups</h3>
+            <p class="text-xs text-gray-500 mt-0.5">
+              Full database + data directory backups, stored on this host (or on the S3 target below).
+              A backup made without also preserving <code>SECRET_KEY</code> separately cannot decrypt stack secrets on restore.
+            </p>
+          </div>
+          <div class="flex gap-2">
+            <UButton
+              v-if="isSuperuser"
+              icon="i-lucide-upload"
+              label="Upload Backup"
+              variant="outline"
+              :loading="uploadLoading"
+              @click="triggerUpload"
+            />
+            <UButton icon="i-lucide-play" label="Backup Now" :loading="createLoading" @click="handleCreateBackup" />
+          </div>
+        </div>
+      </template>
+
+      <input ref="uploadInput" type="file" accept=".zip" class="hidden" @change="handleUploadFile">
+
+      <p v-if="!isSuperuser" class="text-xs text-gray-500 -mt-2 mb-2">
+        Uploading a backup file requires a real PocketBase superuser session, which this login can't provide.
+        See the Disaster Recovery docs for how to restore from a file on your machine.
+      </p>
+
+      <UAlert
+        v-if="backupsError"
+        color="error"
+        icon="i-lucide-alert-circle"
+        title="Failed to load backups"
+        :description="backupsError"
+        class="mb-2"
+      >
+        <template #actions>
+          <UButton label="Retry" size="xs" color="error" variant="outline" @click="loadBackups" />
+        </template>
+      </UAlert>
+      <div v-if="backupsLoading" class="text-sm text-gray-500 py-2">Loading backups...</div>
+      <div v-else-if="!backupsError && backups.length === 0" class="text-sm text-gray-500 py-2">No backups yet.</div>
+      <div v-else-if="!backupsError" class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="text-left text-xs uppercase text-gray-500 border-b border-gray-200 dark:border-gray-800">
+            <tr>
+              <th class="pb-2 pr-4 font-medium">Name</th>
+              <th class="pb-2 pr-4 font-medium">Size</th>
+              <th class="pb-2 pr-4 font-medium">Created</th>
+              <th class="pb-2 pr-4 font-medium">Source</th>
+              <th class="pb-2 pr-4 font-medium text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+            <tr v-for="backup in backups" :key="backup.key">
+              <td class="py-2 pr-4 font-mono text-xs">{{ backup.key }}</td>
+              <td class="py-2 pr-4 text-xs">{{ formatSize(backup.size) }}</td>
+              <td class="py-2 pr-4 text-xs">{{ formatDate(backup.modified) }}</td>
+              <td class="py-2 pr-4">
+                <UBadge
+                  :icon="backup.remote ? 'i-lucide-cloud' : 'i-lucide-hard-drive'"
+                  :label="backupSource(backup)"
+                  :color="backup.remote ? 'info' : 'neutral'"
+                  variant="subtle"
+                  size="sm"
+                />
+              </td>
+              <td class="py-2 pr-4">
+                <div class="flex justify-end gap-1">
+                  <UButton
+                    v-if="!backup.local && backup.remote"
+                    icon="i-lucide-hard-drive-download"
+                    size="xs"
+                    variant="ghost"
+                    color="info"
+                    aria-label="Sync local"
+                    :loading="syncLocalLoading === backup.key"
+                    @click="handleSyncLocal(backup)"
+                  />
+                  <UButton icon="i-lucide-download" size="xs" variant="ghost" aria-label="Download" :disabled="!backup.local" @click="downloadBackup(backup)" />
+                  <UButton icon="i-lucide-history" size="xs" variant="ghost" color="warning" aria-label="Restore" @click="requestRestore(backup)" />
+                  <UButton
+                    icon="i-lucide-trash-2"
+                    size="xs"
+                    variant="ghost"
+                    color="error"
+                    aria-label="Delete"
+                    :loading="deleteLoading === backup.key"
+                    @click="requestDeleteBackup(backup)"
+                  />
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </UCard>
+
+    <UCard>
+      <template #header><h3 class="font-semibold">Scheduled Backups</h3></template>
+      <div v-if="settingsLoading" class="text-sm text-gray-500 py-2">Loading settings...</div>
+      <div v-else class="space-y-4">
+        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <UFormField label="Cron schedule">
+            <AppTextInput v-model="settings.cron" placeholder="0 3 * * *" class="font-mono" />
+          </UFormField>
+          <UFormField label="Keep last N scheduled backups">
+            <AppTextInput
+              :model-value="String(settings.cron_max_keep)"
+              type="number"
+              @update:model-value="(v) => settings.cron_max_keep = Number(v)"
+            />
+          </UFormField>
+        </div>
+        <p class="text-xs text-gray-500 -mt-2">e.g. '0 3 * * *' for daily at 3am. Empty disables scheduled backups.</p>
+
+        <UButton icon="i-lucide-save" label="Save" :loading="settingsSaving" @click="handleSaveSettings" />
+      </div>
+    </UCard>
+
+    <UCard>
+      <template #header><h3 class="font-semibold">Remote Storage</h3></template>
+      <p class="text-sm text-gray-500">
+        Off-host storage is configured as an integration now — see
+        <NuxtLink to="/settings/integrations" class="text-primary-500 underline">Settings &rarr; Integrations &rarr; S3 Storage</NuxtLink>
+        to enable mirroring backups to S3-compatible storage (AWS S3, R2, MinIO, B2, ...).
+      </p>
+
+      <div v-if="mirrorHistoryLoading" class="text-sm text-gray-500 py-2">Loading mirror history...</div>
+      <UAlert
+        v-else-if="mirrorHistoryError"
+        color="error"
+        icon="i-lucide-alert-circle"
+        title="Failed to load mirror history"
+        :description="mirrorHistoryError"
+        class="mt-3"
+      >
+        <template #actions>
+          <UButton label="Retry" size="xs" color="error" variant="outline" @click="loadMirrorHistory" />
+        </template>
+      </UAlert>
+      <div v-else-if="mirrorHistory.length === 0" class="text-xs text-gray-500 mt-3">
+        {{ isRemoteEnabled ? 'No mirror attempts logged yet.' : 'No mirror attempts logged yet — nothing to mirror until S3 storage is enabled.' }}
+      </div>
+      <div v-else class="mt-3 overflow-x-auto">
+        <p class="text-xs uppercase text-gray-500 mb-1">Mirror history</p>
+        <table class="w-full text-sm">
+          <thead class="text-left text-xs uppercase text-gray-500 border-b border-gray-200 dark:border-gray-800">
+            <tr>
+              <th class="pb-2 pr-4 font-medium">Backup</th>
+              <th class="pb-2 pr-4 font-medium">When</th>
+              <th class="pb-2 pr-4 font-medium">Status</th>
+              <th class="pb-2 pr-4 font-medium">Error</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+            <tr v-for="attempt in mirrorHistory" :key="attempt.id">
+              <td class="py-2 pr-4 font-mono text-xs">{{ attempt.resource_id }}</td>
+              <td class="py-2 pr-4 text-xs">{{ formatDate(attempt.created) }}</td>
+              <td class="py-2 pr-4">
+                <UBadge
+                  :label="attempt.status === 'success' ? 'Success' : 'Failed'"
+                  :color="attempt.status === 'success' ? 'success' : 'error'"
+                  variant="subtle"
+                  size="sm"
+                />
+              </td>
+              <td class="py-2 pr-4 text-xs text-gray-500">{{ attempt.error_code }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </UCard>
+
+    <UModal v-model:open="showUploadModal" :dismissible="!uploadLoading" :close="!uploadLoading">
+      <template #content>
+        <UCard>
+          <template #header>
+            <div class="flex items-center gap-2">
+              <UIcon name="i-lucide-triangle-alert" class="w-5 h-5 text-yellow-400" />
+              <h2 class="font-semibold text-yellow-400">Upload Backup</h2>
+            </div>
+          </template>
+          <div class="space-y-3 text-sm text-gray-500 dark:text-wire-200/60">
+            <p>
+              You're about to upload
+              <code class="font-mono">{{ uploadTarget?.name }}</code>
+              as a backup file.
+            </p>
+            <p>
+              This file becomes a valid <span class="font-semibold text-gray-900 dark:text-wire-200">restore target</span> —
+              restoring it later replaces the entire database and data directory. Only upload files you produced yourself
+              (e.g. via <span class="font-mono text-xs">Backup Now</span> or the scheduled backup job) or fully trust the source of.
+            </p>
+            <p class="text-xs text-red-500 font-medium">A malicious or corrupted backup file can destroy this instance's data if restored.</p>
+          </div>
+          <template #footer>
+            <div class="flex justify-end gap-2">
+              <UButton
+                label="Cancel"
+                variant="outline"
+                color="neutral"
+                :disabled="uploadLoading"
+                @click="showUploadModal = false; uploadTarget = null"
+              />
+              <UButton
+                label="Upload Backup"
+                color="warning"
+                icon="i-lucide-upload"
+                :loading="uploadLoading"
+                @click="confirmUploadBackup"
+              />
+            </div>
+          </template>
+        </UCard>
+      </template>
+    </UModal>
+
+    <UModal v-model:open="showDeleteModal">
+      <template #content>
+        <UCard>
+          <template #header>
+            <div class="flex items-center gap-2">
+              <UIcon name="i-lucide-trash-2" class="w-5 h-5 text-red-500" />
+              <h2 class="font-semibold text-red-500">Delete Backup</h2>
+            </div>
+          </template>
+          <div class="space-y-3 text-sm text-gray-500 dark:text-wire-200/60">
+            <p>
+              Are you sure you want to delete
+              <code class="font-mono">{{ deleteTarget?.key }}</code>?
+            </p>
+            <p class="text-xs text-red-500 font-medium">This action cannot be undone.</p>
+          </div>
+          <template #footer>
+            <div class="flex justify-end gap-2">
+              <UButton label="Cancel" variant="outline" color="neutral" @click="showDeleteModal = false" />
+              <UButton
+                label="Delete Backup"
+                color="error"
+                icon="i-lucide-trash-2"
+                :loading="deleteLoading === deleteTarget?.key"
+                @click="confirmDeleteBackup"
+              />
+            </div>
+          </template>
+        </UCard>
+      </template>
+    </UModal>
+
+    <UModal v-model:open="showRestoreModal" :dismissible="!restoreStarted" :close="!restoreStarted">
+      <template #content>
+        <UCard :ui="{ ring: '', divide: 'divide-y divide-gray-100 dark:divide-gray-800' }">
+          <template v-if="!restoreStarted" #header>
+            <h3 class="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
+              <UIcon name="i-lucide-alert-triangle" class="text-red-500" />
+              Restore Backup
+            </h3>
+          </template>
+
+          <div v-if="!restoreStarted" class="p-4 space-y-3 text-sm">
+            <p>
+              This replaces the entire current database and data directory with the contents of
+              <code class="font-mono">{{ restoreTarget?.key }}</code> and restarts the server. This cannot be undone
+              except by restoring another backup.
+            </p>
+            <p class="text-gray-500">
+              Make sure the currently configured <code>SECRET_KEY</code> matches the one used when this backup was
+              created — a mismatch is detected on the next server boot and blocks startup.
+            </p>
+            <UFormField label="Type the backup name to confirm">
+              <AppTextInput v-model="restoreConfirmText" :placeholder="restoreTarget?.key" />
+            </UFormField>
+          </div>
+
+          <div v-else class="p-6 flex flex-col items-center gap-3 text-center">
+            <UIcon name="i-lucide-refresh-cw" class="w-8 h-8 text-yellow-500 animate-spin" />
+            <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Restoring backup</h3>
+            <p class="text-sm text-gray-500">
+              The server is restarting to apply <code class="font-mono">{{ restoreTarget?.key }}</code>. You'll be
+              sent to the login page in
+            </p>
+            <p class="text-3xl font-bold tabular-nums">{{ restoreCountdown }}s</p>
+          </div>
+
+          <template v-if="!restoreStarted" #footer>
+            <div class="flex justify-end gap-2">
+              <UButton label="Cancel" color="neutral" variant="ghost" :disabled="restoreLoading" @click="showRestoreModal = false" />
+              <UButton
+                label="Restore"
+                color="error"
+                icon="i-lucide-history"
+                :loading="restoreLoading"
+                :disabled="restoreConfirmText !== restoreTarget?.key"
+                @click="confirmRestore"
+              />
+            </div>
+          </template>
+        </UCard>
+      </template>
+    </UModal>
+  </div>
+</template>

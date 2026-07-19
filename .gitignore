@@ -52,4 +52,5 @@ worker_bin
 .tmpbin
 .gomodcache
 .gocache
-docs/
+docs/*
+!docs/DISASTER_RECOVERY.md

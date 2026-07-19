@@ -118,6 +118,70 @@ func TestDisabledUserCannotAccessCapability(t *testing.T) {
 	}
 }
 
+func TestRequireSuperuserMiddleware(t *testing.T) {
+	t.Run("allows a real superuser", func(t *testing.T) {
+		superuser := core.NewRecord(core.NewAuthCollection(core.CollectionNameSuperusers))
+
+		r := pbrouter.NewRouter(func(w http.ResponseWriter, req *http.Request) (*core.RequestEvent, pbrouter.EventCleanupFunc) {
+			return &core.RequestEvent{
+				Event: pbrouter.Event{Response: w, Request: req},
+				Auth:  superuser,
+			}, nil
+		})
+		r.GET("/protected", func(e *core.RequestEvent) error {
+			return e.String(http.StatusOK, "ok")
+		}).BindFunc(RequireSuperuser())
+
+		mux, err := r.BuildMux()
+		if err != nil {
+			t.Fatalf("build mux: %v", err)
+		}
+
+		res := httptest.NewRecorder()
+		mux.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/protected", nil))
+
+		if res.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", res.Code, res.Body.String())
+		}
+	})
+
+	t.Run("rejects a wireops admin role that is not a real superuser", func(t *testing.T) {
+		admin := core.NewRecord(core.NewAuthCollection("users"))
+		admin.Set("role", RoleAdmin)
+
+		event := &core.RequestEvent{
+			Event: pbrouter.Event{
+				Response: httptest.NewRecorder(),
+				Request:  httptest.NewRequest(http.MethodGet, "/", nil),
+			},
+			Auth: admin,
+		}
+
+		if err := RequireSuperuser()(event); err != nil {
+			t.Fatalf("middleware returned error: %v", err)
+		}
+		res := event.Response.(*httptest.ResponseRecorder)
+		if res.Code != http.StatusForbidden {
+			t.Fatalf("expected 403 for non-superuser admin, got %d", res.Code)
+		}
+	})
+
+	t.Run("rejects unauthenticated", func(t *testing.T) {
+		event := &core.RequestEvent{Event: pbrouter.Event{
+			Response: httptest.NewRecorder(),
+			Request:  httptest.NewRequest(http.MethodGet, "/", nil),
+		}}
+
+		if err := RequireSuperuser()(event); err != nil {
+			t.Fatalf("middleware returned error: %v", err)
+		}
+		res := event.Response.(*httptest.ResponseRecorder)
+		if res.Code != http.StatusUnauthorized {
+			t.Fatalf("expected 401 for unauthenticated, got %d", res.Code)
+		}
+	})
+}
+
 func TestRequireMiddleware(t *testing.T) {
 	t.Run("allows and calls next handler", func(t *testing.T) {
 		user := core.NewRecord(core.NewAuthCollection("users"))

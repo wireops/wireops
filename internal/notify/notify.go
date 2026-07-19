@@ -19,6 +19,12 @@ const (
 	SyncDone    Event = "sync.done"
 	SyncError   Event = "sync.error"
 	SyncTest    Event = "sync.test"
+
+	// BackupMirrorError fires when mirroring a just-created local backup to
+	// the "s3" remote storage integration fails (see
+	// internal/backup.MirrorLocalBackupToRemote). Payload reuses StackName
+	// to carry the backup's key for context — there's no stack involved.
+	BackupMirrorError Event = "backup.mirror_error"
 )
 
 // Payload is the JSON body sent to the configured webhook URL.
