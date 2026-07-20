@@ -19,12 +19,39 @@ GitOps controller for Docker Compose stacks. Automatically sync and deploy your 
 
 > **Project status**: pre-1.0, actively developed (releases `v0.1.x`). Core GitOps sync, worker security policies, RBAC, and external secret providers (Vault, Infisical) are in daily use; the audited web terminal is intentionally not started yet — see [Known Limitations](#known-limitations).
 
+## Project Scope
+
+Targets developers, homelabs, and self-hosters running plain `docker compose` stacks across one or many hosts and repos — GitOps sync/deploy, without manifest sprawl or enterprise-grade autoscaling/control-plane complexity. 
+
+**Not** a Kubernetes/Swarm alternative, not a competitor to Flux/ArgoCD or enterprise app-management platforms. For production workloads exposed to the internet at enterprise scale (multi-node autoscaling, high availability, compliance-grade orchestration), prefer Kubernetes (with Flux/ArgoCD) instead.
+
+## Table of Contents
+
+- [Project Scope](#project-scope)
+- [Features](#features)
+- [Tech Stack](#tech-stack)
+- [Quick Start](#quick-start)
+- [Architecture](#architecture)
+- [Usage](#usage)
+- [Environment Variables](#environment-variables)
+- [Observability](#observability)
+- [MCP Server](#mcp-server)
+- [Disaster Recovery](#disaster-recovery)
+- [Development](#development)
+- [Integrations](#integrations)
+- [Known Limitations](#known-limitations)
+- [Backlog / Future Enhancements](#backlog--future-enhancements)
+- [License](#license)
+- [Contributing](#contributing)
+
 ## Features
 
 - 🔄 Automatic synchronization from Git repositories
 - 🐳 Docker Compose stack management
 - 📊 Real-time container monitoring (with worker runtime info and container ports)
 - 🔐 Encrypted credentials (SSH keys, passwords) + pluggable secret providers (internal AES-GCM, HashiCorp Vault, Infisical)
+- 🔏 SOPS+age support for git-committed `secrets.yaml`, auto-decrypted at deploy time
+- 🎛️ Render-time stack overrides (image/ports/networks) without a git commit
 - 🛡️ Role-based access control (viewer/operator/admin/monitoring) and audit logging
 - 🚧 Worker-side deploy security policies (block privileged/host-network/docker.sock/host-PID/host-IPC)
 - 🔑 SSO login via any OIDC provider
@@ -132,6 +159,15 @@ services:
     #   labels:
     #     - "customization.image.slug=nuxtjs"
 ```
+
+### Render Overrides
+
+Stacks support render-time overrides — swapping a service's `image`, `ports`, or `networks` without committing anything to git. Overrides are stored on the stack (not the repo), applied only when the compose file is rendered for deploy, and only take effect the next time the stack is rendered/redeployed.
+
+- Gated by the **"Allow render overrides"** worker policy flag (`allow_render_overrides`), off by default — set it globally or per-worker in worker policy settings.
+- View, set, and clear overrides from the stack detail page, or via `GET`/`PUT`/`DELETE /api/custom/stacks/{id}/render-overrides`.
+- Overridden values still pass through the worker's other deploy policy checks (image/network allowlists, etc.) — an override can't be used to bypass policy.
+- Applying or clearing overrides force-recreates the stack's containers.
 
 ### Scheduled Jobs
 
@@ -263,6 +299,17 @@ Notes:
 - **A secret's provider is locked once saved.** You can't switch an existing secret from `internal` to `vault` (or vice versa) — delete it and recreate it with the new provider instead.
 - **Disabled backends are caught before deploy.** If a stack or job references a `vault`/`infisical` env var whose backend integration is disabled or unconfigured, sync/job execution fails fast with an error naming the provider and the affected keys, instead of failing mid-deploy.
 
+### SOPS+age Secrets
+
+SOPS is a fundamentally different model from the per-variable providers above: it's file-based and scoped to a **repository**, not to an individual env var.
+
+- Each repository gets an auto-generated [age](https://github.com/FiloSottile/age) keypair the moment it's added — the private key is encrypted at rest under `SECRET_KEY`, the public key is stored in the clear so you (or CI) can encrypt a `secrets.yaml` for it.
+- Commit a SOPS-encrypted `secrets.yaml` next to the stack's `wireops.yaml` in the repo. On every sync, rollback, redeploy, and transfer, wireops decrypts it automatically and overlays its keys on top of the stack's env vars — no provider selection per variable, no `secrets.yaml` content ever touches the UI.
+- Registered as an always-enabled "Secret Backend" integration (`sops`) that can't be disabled.
+- **Rotate a repo's age key** via `POST /api/custom/repositories/{id}/sops-rotate-key` — this is explicit and destructive-ish: any `secrets.yaml` encrypted for the old public key becomes undecryptable until re-encrypted with the new one.
+- **Build a `secrets.yaml`** without the `sops` CLI via `POST /api/custom/repositories/{id}/sops-encrypt` (Secrets page) — it encrypts a key/value map against the repo's public key and hands the result back to you to commit yourself; nothing is persisted server-side.
+- View which keys a stack's `secrets.yaml` provides via `GET /api/custom/stacks/{id}/sops-env-vars` — key names only, values are never returned.
+
 ### APP_URL Configuration
 
 The `APP_URL` variable is used to:
@@ -362,7 +409,7 @@ X-Wireops-Api-Key: wireops_sk_...
 
 ## MCP Server
 
-Wireops ships a standalone **MCP server** (`mcp/`, built as `wireops-mcp`) exposing read-only stack/worker/job data as MCP tools, resources, and prompts over streamable HTTP. It never holds a credential of its own — every client sends its own wireops API key on each request (pass-through auth), so tool access is scoped by that key's role exactly like the REST API.
+Wireops ships a standalone **MCP server** (`mcp/`, built as `wireops-mcp`) exposing stack/worker/job data as MCP tools, resources, and prompts over streamable HTTP. Most tools are read-only (stacks, workers, jobs, repos, revisions, audit logs, secrets key names, integrations, system info); a few generate manifest content for an agent to review and commit itself — `generate_wireops_yaml`, `generate_job_yaml`, and `scaffold_stack` (a matching `wireops.yaml` + `docker-compose.yml` pair) — none of them write to disk or git. It never holds a credential of its own — every client sends its own wireops API key on each request (pass-through auth), so tool access is scoped by that key's role exactly like the REST API.
 
 | Env var | Purpose |
 |---|---|
@@ -514,7 +561,6 @@ services:
 
 ## Known Limitations
 
-- **`internal/backup`** (config/data backup & restore) has test scaffolding but no shipped implementation.
 - **Audited web terminal**: intentionally not started — requires the RBAC system to be fully wired first to avoid shipping a high-risk feature half-done.
 - No OCI-artifact source, Docker Swarm/multi-node, or canary/preview deploys yet (tracked as strategic backlog with no ETA).
 
@@ -554,7 +600,6 @@ services:
 - UI density options (compact/comfortable)
 
 ### 🔒 Security & Ops (strategic)
-- SOPS+age support
 - Git auth hardening, deploy metrics/alerts
 - Audited web terminal (blocked on RBAC completeness)
 - docker-run → compose converter, OCI artifact sources, Swarm/multi-node, canary deploys

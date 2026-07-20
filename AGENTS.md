@@ -2,7 +2,26 @@
 
 Self-hosted GitOps platform for managing Docker Compose stacks and scheduled Docker-based jobs. It watches Git repositories for changes and deploys updates on remote hosts through token-authenticated WebSocket workers.
 
+**Scope**: targets developers, homelabs, and self-hosters running plain `docker compose` stacks across one or many hosts/repos — without manifest sprawl or enterprise-grade autoscaling/control-plane complexity. **Not** a Kubernetes/Swarm alternative, not a competitor to Flux/ArgoCD/enterprise app-management platforms; cluster orchestration, multi-node scheduling, and autoscaling are explicitly out of scope. For production/internet-exposed workloads at enterprise scale, point users toward Kubernetes (Flux/ArgoCD) instead of stretching wireops into that role.
+
 **Project status**: pre-1.0 (tags `v0.1.0`–`v0.1.15`), active hobby/side-project pace. Core GitOps sync, worker deploy security policy, and RBAC/audit are implemented and in daily use. `internal/secrets` has all three providers implemented and functional: `internal` (AES-GCM), `vault` (HashiCorp Vault), and `infisical`. `internal/backup` (create/list/upload/delete/restore, cron autobackup) is implemented and shipped; optional off-host mirroring to S3-compatible storage is the "s3" `internal/integrations` entry (see `internal/backup/remote`). Don't describe stub features as shipped in docs or responses without checking the source first.
+
+---
+
+## Table of Contents
+
+- [Repository Layout](#repository-layout)
+- [Tech Stack](#tech-stack)
+- [Architecture](#architecture)
+- [Data Model](#data-model)
+- [Key Business Flows](#key-business-flows)
+- [Custom API Endpoints](#custom-api-endpoints)
+- [Environment Variables](#environment-variables)
+- [Integration Plugin System](#integration-plugin-system)
+- [Notifications](#notifications)
+- [Access Control, Policy & Audit](#access-control-policy--audit)
+- [Coding Conventions](#coding-conventions)
+- [Testing & Coverage](#testing--coverage)
 
 ---
 
@@ -31,7 +50,7 @@ Self-hosted GitOps platform for managing Docker Compose stacks and scheduled Doc
 │   ├── docker/client.go          # Docker Engine API client wrapper
 │   ├── git/                      # Clone, fetch, SSH/Basic auth
 │   ├── hooks/pb_hooks.go         # PocketBase lifecycle hooks
-│   ├── integrations/             # Plugin registry (Traefik, Caddy, Nginx Proxy Manager, Dozzle, Webhook, Discord, Slack, Ntfy)
+│   ├── integrations/             # Plugin registry (Traefik, Caddy, Nginx Proxy Manager, Dozzle, Webhook, Discord, Slack, Ntfy, SOPS)
 │   ├── job/parser.go             # job.yaml parsing & validation
 │   ├── jobscheduler/scheduler.go # Cron scheduler for Docker-based jobs
 │   ├── manifest/parser.go        # Parses declarative `.wireops.yml` stack config
@@ -40,7 +59,7 @@ Self-hosted GitOps platform for managing Docker Compose stacks and scheduled Doc
 │   ├── protocol/messages.go      # WebSocket message types (shared)
 │   ├── rbac/rbac.go              # Role definitions (viewer/operator/admin/monitoring) and capability checks
 │   ├── audit/audit.go            # Request/system audit log recording + retention purge
-│   ├── secrets/                  # Pluggable secret providers: internal (AES-GCM), vault (HashiCorp Vault), infisical
+│   ├── secrets/                  # Pluggable secret providers: internal (AES-GCM), vault (HashiCorp Vault), infisical; also SOPS+age helpers (keypair gen, decrypt/encrypt secrets.yaml) used by sync/ and hooks/
 │   ├── oidc/collection.go        # OIDC PocketBase collection support (client secret hydration)
 │   ├── setup/service.go          # First-admin bootstrap (`/setup`) service
 │   ├── backup/                   # Backup/restore (create/list/upload/delete/restore) + optional S3 mirroring
@@ -57,6 +76,7 @@ Self-hosted GitOps platform for managing Docker Compose stacks and scheduled Doc
 │       └── watcher.go            # File-based change detection
 ├── pb_migrations/                # PocketBase SQLite schema migrations
 ├── pb_public/                    # Compiled frontend static assets (served by PocketBase)
+├── mcp/                          # Standalone MCP server binary (wireops-mcp) — read-only tools + generate/scaffold tools, pass-through auth
 └── frontend/                     # Nuxt 4 SPA (Vue 3, @nuxt/ui v4, Tailwind)
     └── app/
         ├── pages/                # File-based routing
@@ -126,9 +146,9 @@ All collections are defined via Go migrations in `pb_migrations/`.
 
 | Collection | Key Fields |
 |---|---|
-| `repositories` | `name`, `git_url`, `branch`, `status`, `last_commit_sha`, `platform` |
+| `repositories` | `name`, `git_url`, `branch`, `status`, `last_commit_sha`, `platform`, `sops_age_key`* (auto-generated), `sops_age_public_key` |
 | `repository_keys` | `repository`, `auth_type` (none/ssh_key/basic), `ssh_private_key`*, `git_password`* |
-| `stacks` | `name`, `repository`, `compose_path`, `auto_sync`, `status`, `worker`, `current_version` |
+| `stacks` | `name`, `repository`, `compose_path`, `auto_sync`, `status`, `worker`, `current_version`, `render_overrides` (JSON, per-service image/ports/networks not committed to git) |
 | `stack_env_vars` | `stack`, `key`, `value`*, `secret`, `secret_provider` (internal/vault/infisical) |
 | `global_env_vars` | `key`, `value`*, `secret`, `secret_provider` — reusable across stacks/jobs via binding tables |
 | `job_env_vars` | `job`, `key`, `value`*, `secret`, `secret_provider` |
@@ -199,6 +219,10 @@ All custom routes are prefixed `/api/custom/`. PocketBase also auto-exposes CRUD
 | `GET` | `/stacks/{id}/services` | Live container statuses |
 | `GET` | `/stacks/{id}/resources` | Volumes + networks |
 | `GET` | `/stacks/{id}/compose` | Read rendered compose YAML |
+| `GET` | `/stacks/{id}/revisions/{version}` | Read rendered compose YAML for a specific version |
+| `GET` | `/stacks/{id}/render-overrides` | View persisted render-time overrides (+ diff vs git) |
+| `PUT` | `/stacks/{id}/render-overrides` | Set per-service image/ports/networks overrides (not committed to git); gated by `allow_render_overrides` worker policy; force-recreates |
+| `DELETE` | `/stacks/{id}/render-overrides` | Clear render overrides; force-recreates |
 | `GET` | `/stacks/{id}/stream` | SSE log stream |
 | `GET` | `/stacks/{id}/container/{cid}/stats` | CPU/mem stats |
 | `GET` | `/stacks/{id}/container/{cid}/logs` | Container logs |
@@ -214,6 +238,13 @@ All custom routes are prefixed `/api/custom/`. PocketBase also auto-exposes CRUD
 | `GET` | `/repositories/{id}/files` | List `.yml`/`.yaml` files |
 | `POST` | `/credentials/test` | Test git credentials |
 | `POST` | `/credentials/keyscan` | SSH host key scan |
+
+### SOPS (`internal/routes/sops_routes.go`)
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/custom/stacks/{id}/sops-env-vars` | List `secrets.yaml` key names only, never values (`CapViewStacks`) |
+| `POST` | `/api/custom/repositories/{id}/sops-rotate-key` | Regenerate the repo's age keypair — old `secrets.yaml` becomes undecryptable until re-encrypted (`CapManageRepos`) |
+| `POST` | `/api/custom/repositories/{id}/sops-encrypt` | Encrypt a key/value map into `secrets.yaml` content using the repo's public key; nothing persisted server-side (`CapManageRepos`) |
 
 ### Workers (superuser only)
 | Method | Path | Description |
@@ -331,7 +362,8 @@ Events: `sync.started`, `sync.done`, `sync.error`, `sync.test`.
 ## Access Control, Policy & Audit
 
 - **RBAC** (`internal/rbac/rbac.go`): four roles — `viewer` < `operator` < `admin`, plus a separate `monitoring` role scoped to metrics-only access. Capabilities (`CapViewStacks`, `CapOperateStacks`, `CapManageSettings`, `CapManageSecurity`, `CapViewAuditLogs`, …) map to a minimum required role; route handlers check capabilities, not raw role strings.
-- **Worker deploy policy** (`internal/policy/`): resolves an effective `WorkerPolicy` per worker from the `worker_policies` singleton (global) with optional per-worker overrides. Enforces allowlists (volumes/networks/images/cap-add/devices/security-opt) and boolean blocks (`BlockPrivileged`, `BlockHostNetwork`, `BlockHostPID`, `BlockHostIPC`, `BlockDockerSocket`, `PreventLatestImages`, `BlockHostVolumes`). Empty allowlist = open; first entry added = allowlist-only from then on. `policy_inherit` controls whether a worker without a local override falls back to the global value.
+- **Worker deploy policy** (`internal/policy/`): resolves an effective `WorkerPolicy` per worker from the `worker_policies` singleton (global) with optional per-worker overrides. Enforces allowlists (volumes/networks/images/cap-add/devices/security-opt) and boolean blocks (`BlockPrivileged`, `BlockHostNetwork`, `BlockHostPID`, `BlockHostIPC`, `BlockDockerSocket`, `PreventLatestImages`, `BlockHostVolumes`), plus `AllowRenderOverrides` (off by default) gating whether a stack's `render_overrides` (per-service image/ports/networks, not committed to git — see `internal/sync/renderer.go`'s `ApplyServiceOverrides`) may be applied at all; overridden values still pass through the same allowlist/block checks after being applied. Empty allowlist = open; first entry added = allowlist-only from then on. `policy_inherit` controls whether a worker without a local override falls back to the global value.
+- **SOPS+age secrets** (`internal/integrations/sops/`, `internal/secrets/sops.go`): a third, distinct secrets mechanism alongside the per-env-var `internal/secrets` providers (internal/vault/infisical) above — file-based and repo-scoped rather than per-variable. Each repository gets an auto-generated age keypair (`repositories.sops_age_key`\* / `sops_age_public_key`, keygen in `internal/hooks/pb_hooks.go` on repo create). `internal/sync/reconciler.go` auto-decrypts a `secrets.yaml` found next to `wireops.yaml` and overlays its values on top of the stack's env vars during sync, rollback, redeploy, and transfer — no explicit provider selection per key. Registered as a locked/always-enabled `Secret Backend` integration (slug `sops`) that can't be toggled off. Key rotation (`POST /api/custom/repositories/{id}/sops-rotate-key`) is explicit and destructive-ish: it invalidates any `secrets.yaml` encrypted for the old public key until re-encrypted.
 - **Audit log** (`internal/audit/audit.go`): records custom-route requests and system events (actor, action, resource, status, origin) with a configurable retention window, purged by a periodic sweep. Exposed via `GET /api/custom/audit-logs` (filterable by `from`/`to`/`actor_type`/`actor_id`/`action`/`resource_type`/`resource_id`/`origin`/`status`).
 - **Secrets providers** (`internal/secrets/`): pluggable `SecretProvider` registry, `ValidProviders = ["internal", "vault", "infisical"]`, all three implemented and functional. `internal` encrypts the value at rest (AES-GCM, `SECRET_KEY`). `vault`/`infisical` store a reference string (`<mount>/data/<path>#<field>` / `<project-id>/<environment>/<secret-path>#<SECRET_NAME>`) resolved at deploy time against a backend configured via the `integrations` collection (category "Secret Backend"), not server env vars. Once an env var is saved as a secret its `secret_provider` is immutable (`preventEnvSecretProviderChange` in `internal/hooks/pb_hooks.go`) — must delete/recreate to switch backends. `internal/envvars/backend_check.go` pre-flight-blocks stack/job execution if a referenced backend is disabled, naming the provider and offending keys.
 - **OIDC / SSO** (`internal/oidc/collection.go`): PocketBase collection glue for OIDC client secret hydration; see README's OIDC env var table for the user-facing setup and the SSO role-override warning.
