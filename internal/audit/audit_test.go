@@ -113,6 +113,30 @@ func TestMatchCustomRoute(t *testing.T) {
 			resourceID:   "worker123",
 			ok:           true,
 		},
+		{
+			name:         "render overrides set",
+			method:       http.MethodPut,
+			path:         "/api/custom/stacks/stack123/render-overrides",
+			action:       "stack.render_overrides.set",
+			resourceType: "stack",
+			resourceID:   "stack123",
+			ok:           true,
+		},
+		{
+			name:         "render overrides clear",
+			method:       http.MethodDelete,
+			path:         "/api/custom/stacks/stack123/render-overrides",
+			action:       "stack.render_overrides.clear",
+			resourceType: "stack",
+			resourceID:   "stack123",
+			ok:           true,
+		},
+		{
+			name:   "render overrides read ignored",
+			method: http.MethodGet,
+			path:   "/api/custom/stacks/stack123/render-overrides",
+			ok:     false,
+		},
 	}
 
 	for _, tc := range tests {

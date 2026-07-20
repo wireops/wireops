@@ -648,6 +648,58 @@ services:
 	if !contains(contentStr, "proxy") {
 		t.Errorf("expected overridden network in rendered compose, got:\n%s", contentStr)
 	}
+	if !contains(contentStr, "external: true") {
+		t.Errorf("expected override network 'proxy' to be declared external at the top level, got:\n%s", contentStr)
+	}
+}
+
+// A network already declared at the top level (e.g. by the compose file itself) must
+// not be clobbered by ApplyServiceOverrides — only names missing from the top-level
+// networks block get an external:true entry added.
+func TestRendererRenderOverridesReusesAlreadyDeclaredNetwork(t *testing.T) {
+	app, workDir, composePath := setupRendererTest(t)
+	writeTestComposeFile(t, composePath, `
+name: overrides_stack
+networks:
+  proxy:
+    driver: bridge
+services:
+  web:
+    image: nginx:alpine
+    networks:
+      - proxy
+`)
+
+	col, _ := app.FindCollectionByNameOrId("worker_policies")
+	globalPolicy := core.NewRecord(col)
+	globalPolicy.Set("enabled", true)
+	globalPolicy.Set("allow_render_overrides", true)
+	if err := app.Save(globalPolicy); err != nil {
+		t.Fatalf("failed to save global policy: %v", err)
+	}
+
+	repo := createTestRepo(t, app, "overrides-existing-network", "main")
+	stack := createTestStack(t, app, repo.Id, "overrides_stack")
+
+	renderer := sync.NewRenderer(app)
+	ctx := context.Background()
+
+	overrides := map[string]sync.ServiceOverride{
+		"web": {Networks: []string{"proxy"}},
+	}
+
+	res, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitA", false, "", "embedded", overrides)
+	if err != nil {
+		t.Fatalf("unexpected error applying overrides: %v", err)
+	}
+
+	contentStr := readRenderedFile(t, renderer, stack.Id, res.Version)
+	if contains(contentStr, "external: true") {
+		t.Errorf("expected already-declared network 'proxy' to keep its own definition, not be marked external:\n%s", contentStr)
+	}
+	if !contains(contentStr, "driver: bridge") {
+		t.Errorf("expected original network declaration to survive, got:\n%s", contentStr)
+	}
 }
 
 func TestRendererRenderOverridesUnknownServiceErrors(t *testing.T) {

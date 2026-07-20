@@ -279,6 +279,17 @@ func (rr routeRegistrar) registerStackInspectionRoutes() {
 			}
 		}
 
+		// Apply the overrides to the resolved config and run them through the same
+		// policy check the renderer applies at deploy time, so a blocked image/network
+		// or a :latest tag is rejected here instead of being persisted and only failing
+		// (and getting auto-cleared) on the next reconcile.
+		if err := sync.ApplyServiceOverrides(configMap, body.Overrides); err != nil {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+		}
+		if err := wp.ValidateComposeConfig(configMap); err != nil {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+		}
+
 		stack.Set("render_overrides", body.Overrides)
 		if err := rr.app.Save(stack); err != nil {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to save overrides"})

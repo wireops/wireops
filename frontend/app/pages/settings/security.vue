@@ -259,6 +259,7 @@ async function applyStrictProductionPreset() {
   workerPolicy.value.block_host_pid = true
   workerPolicy.value.block_host_ipc = true
   workerPolicy.value.block_docker_socket = true
+  workerPolicy.value.allow_render_overrides = false
   await saveWorkerPolicyGlobal()
   showStrictPresetModal.value = false
 }

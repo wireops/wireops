@@ -134,11 +134,13 @@ func (r *Renderer) GenerateRevision(
 		if !wp.AllowRenderOverrides {
 			return nil, fmt.Errorf("render-time overrides are disabled by the worker policy")
 		}
-		if err := applyServiceOverrides(services, overrides); err != nil {
+		configMap["services"] = services
+		if err := ApplyServiceOverrides(configMap, overrides); err != nil {
 			return nil, err
 		}
+	} else {
+		configMap["services"] = services
 	}
-	configMap["services"] = services
 
 	// Validated after overrides are applied, so overridden images/networks are also
 	// checked against the worker's allowlists and boolean-flag restrictions.
@@ -296,17 +298,30 @@ func (r *Renderer) GenerateRevision(
 	}, nil
 }
 
-// ErrUnknownOverrideService is wrapped into the error returned by applyServiceOverrides
+// ErrUnknownOverrideService is wrapped into the error returned by ApplyServiceOverrides
 // when a persisted override targets a service that no longer exists in the compose
 // config — e.g. the service was renamed or removed in a later Git commit. Callers on
 // unattended reconcile paths use errors.Is against this to decide whether to clear the
 // stale override and self-heal instead of failing the sync indefinitely.
 var ErrUnknownOverrideService = errors.New("render override targets unknown service")
 
-// applyServiceOverrides mutates services in place, replacing image/ports/networks for
+// ApplyServiceOverrides mutates services in place, replacing image/ports/networks for
 // each named service per the given overrides. It returns an error if an override
-// targets a service that doesn't exist in the compose config.
-func applyServiceOverrides(services map[string]interface{}, overrides map[string]ServiceOverride) error {
+// targets a service that doesn't exist in the compose config. Exported so the
+// render-overrides API route can run the exact same mutation against a resolved
+// compose config before persisting, and reject policy-violating overrides (blocked
+// images/networks/:latest) up front instead of only failing at the next reconcile.
+//
+// Any override network name not already declared in configMap's top-level "networks"
+// block is added there as external:true — an override can only reasonably point at a
+// network that already exists on the host (e.g. a shared proxy network), and compose
+// rejects a service referencing an undeclared network, so leaving it undeclared would
+// turn a valid-looking override into a deploy-time failure.
+func ApplyServiceOverrides(configMap map[string]interface{}, overrides map[string]ServiceOverride) error {
+	services, _ := configMap["services"].(map[string]interface{})
+	declaredNetworks, _ := configMap["networks"].(map[string]interface{})
+	networksAdded := false
+
 	for serviceName, override := range overrides {
 		svcRaw, ok := services[serviceName]
 		if !ok {
@@ -331,11 +346,23 @@ func applyServiceOverrides(services map[string]interface{}, overrides map[string
 			networks := make([]interface{}, len(override.Networks))
 			for i, n := range override.Networks {
 				networks[i] = n
+				if _, exists := declaredNetworks[n]; !exists {
+					if declaredNetworks == nil {
+						declaredNetworks = map[string]interface{}{}
+					}
+					declaredNetworks[n] = map[string]interface{}{"external": true}
+					networksAdded = true
+				}
 			}
 			svc["networks"] = networks
 		}
 
 		services[serviceName] = svc
+	}
+
+	configMap["services"] = services
+	if networksAdded {
+		configMap["networks"] = declaredNetworks
 	}
 	return nil
 }

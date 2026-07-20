@@ -2,7 +2,7 @@
 FROM docker:27-cli AS docker-cli
 
 # Stage 2: Go build — compile only the worker binary
-FROM golang:1.23-alpine AS go-builder
+FROM golang:1.25-alpine AS go-builder
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
