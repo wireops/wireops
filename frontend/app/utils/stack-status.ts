@@ -31,6 +31,11 @@ function getWorkerFromLookup(workerID: string, workersById?: WorkerLookup) {
   return workersById[workerID] || null
 }
 
+export function stackHasRenderOverrides(stack: any): boolean {
+  const overrides = stack?.render_overrides
+  return !!overrides && typeof overrides === 'object' && Object.keys(overrides).length > 0
+}
+
 export function stackRepositorySubtitle(stack: any): string {
   if (stack?.source_type === 'local') {
     return stack.import_path || 'Local stack'

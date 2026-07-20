@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import type { IntegrationAction } from '~/composables/useIntegrations'
-import { stackSourceStatus, stackVisibleDeployStatus, stackWorkerStatus } from '../../utils/stack-status'
+import { stackHasRenderOverrides, stackSourceStatus, stackVisibleDeployStatus, stackWorkerStatus } from '../../utils/stack-status'
 import { WORKER_STATUS } from '../../utils/worker'
 
 const route = useRoute()
 const { $pb } = useNuxtApp()
 const { subscribe } = useRealtime()
 const { copy } = useCopy()
-const { triggerSync, triggerRollback, forceRedeploy, deleteStack, getServices, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, transferStack, getWorkers, stopContainer, restartContainer } = useApi()
+const { triggerSync, triggerRollback, forceRedeploy, setRenderOverrides, clearRenderOverrides, getRenderOverridesDiff, deleteStack, getServices, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, transferStack, getWorkers, stopContainer, restartContainer } = useApi()
 const { getStackIntegrationActions } = useIntegrations()
 const { validateComposePath, validateComposeFile } = useValidation()
 const toast = useToast()
@@ -411,6 +411,193 @@ async function handleForceRedeploy() {
   }
 }
 
+// Render-time overrides (image/ports/networks) — ephemeral, not committed to git
+const showOverridesModal = ref(false)
+type OverrideFormEntry = { image: string; ports: string; networks: string }
+const overridesForm = ref<Record<string, OverrideFormEntry>>({})
+const overrideServiceNames = computed(() => [...new Set(services.value.map((s: any) => s.service_name).filter(Boolean))] as string[])
+
+function getOverrideServiceSlug(name: string) {
+  const containersList = (stack.value?.containers_list || []) as { name?: string; slug?: string }[]
+  return containersList.find(c => c.name === name)?.slug
+}
+
+// services (and therefore overrideServiceNames) can change reactively via realtime
+// updates while the modal is open/closing — keep overridesForm in sync so the template
+// never indexes a name that isn't there yet.
+watch(overrideServiceNames, (names) => {
+  const existing = (stack.value?.render_overrides || {}) as Record<string, { image?: string; ports?: string[]; networks?: string[] }>
+  for (const name of names) {
+    if (!overridesForm.value[name]) {
+      const current = existing[name]
+      overridesForm.value[name] = {
+        image: current?.image || '',
+        ports: joinList(current?.ports),
+        networks: joinList(current?.networks),
+      }
+    }
+  }
+}, { immediate: true })
+
+function joinList(value: unknown): string {
+  return Array.isArray(value) ? value.join(', ') : ''
+}
+
+type OverrideValue = { image?: string; ports?: string[]; networks?: string[] }
+const renderOverridesGit = ref<Record<string, OverrideValue>>({})
+const renderOverridesGitError = ref('')
+
+let renderOverridesDiffPending = false
+
+// Called from both the render_overrides watcher and the realtime stack subscribe
+// handler, which commonly fire together for the same update — skip starting a
+// second fetch while one is already in flight rather than issuing both.
+async function loadRenderOverridesDiff() {
+  if (!stackHasRenderOverrides(stack.value)) {
+    renderOverridesGit.value = {}
+    renderOverridesGitError.value = ''
+    return
+  }
+  if (renderOverridesDiffPending) return
+  renderOverridesDiffPending = true
+  try {
+    const res = await getRenderOverridesDiff(stackId)
+    renderOverridesGit.value = res.git || {}
+    renderOverridesGitError.value = res.git_error || ''
+  } catch {
+    renderOverridesGit.value = {}
+  } finally {
+    renderOverridesDiffPending = false
+  }
+}
+
+function sameList(a?: string[], b?: string[]): boolean {
+  const x = a || []
+  const y = b || []
+  return x.length === y.length && x.every((v, i) => v === y[i])
+}
+
+type DiffLine = { text: string; type: 'context' | 'add' | 'remove' }
+
+// Prefixes a line with a diff marker (-/+/space) followed by `indent` spaces of
+// actual YAML indentation, so markers line up in column 0 like a real unified diff.
+function diffLine(marker: '-' | '+' | ' ', indent: number, text: string): DiffLine {
+  return {
+    text: `${marker}${' '.repeat(indent)}${text}`,
+    type: marker === '-' ? 'remove' : marker === '+' ? 'add' : 'context',
+  }
+}
+
+const renderOverridesDiffLines = computed<DiffLine[]>(() => {
+  const overrides = (stack.value?.render_overrides || {}) as Record<string, OverrideValue>
+  const lines: DiffLine[] = []
+  if (!Object.keys(overrides).length) return lines
+
+  lines.push(diffLine(' ', 0, 'services:'))
+  for (const [name, override] of Object.entries(overrides)) {
+    const git = renderOverridesGit.value[name]
+    lines.push(diffLine(' ', 2, `${name}:`))
+
+    if (override.image) {
+      if (git?.image && git.image !== override.image) {
+        lines.push(diffLine('-', 4, `image: ${git.image}`))
+        lines.push(diffLine('+', 4, `image: ${override.image}`))
+      } else {
+        lines.push(diffLine(' ', 4, `image: ${override.image}`))
+      }
+    }
+
+    if (override.ports?.length) {
+      if (git && !sameList(git.ports, override.ports)) {
+        lines.push(diffLine('-', 4, 'ports:'))
+        for (const p of git.ports || []) lines.push(diffLine('-', 6, `- ${p}`))
+        lines.push(diffLine('+', 4, 'ports:'))
+        for (const p of override.ports) lines.push(diffLine('+', 6, `- ${p}`))
+      } else {
+        lines.push(diffLine(' ', 4, 'ports:'))
+        for (const p of override.ports) lines.push(diffLine(' ', 6, `- ${p}`))
+      }
+    }
+
+    if (override.networks?.length) {
+      if (git && !sameList(git.networks, override.networks)) {
+        lines.push(diffLine('-', 4, 'networks:'))
+        for (const n of git.networks || []) lines.push(diffLine('-', 6, `- ${n}`))
+        lines.push(diffLine('+', 4, 'networks:'))
+        for (const n of override.networks) lines.push(diffLine('+', 6, `- ${n}`))
+      } else {
+        lines.push(diffLine(' ', 4, 'networks:'))
+        for (const n of override.networks) lines.push(diffLine(' ', 6, `- ${n}`))
+      }
+    }
+  }
+  return lines
+})
+
+function openOverridesModal() {
+  const existing = (stack.value?.render_overrides || {}) as Record<string, { image?: string; ports?: string[]; networks?: string[] }>
+  const form: Record<string, OverrideFormEntry> = {}
+  for (const name of overrideServiceNames.value) {
+    const current = existing[name]
+    form[name] = {
+      image: current?.image || '',
+      ports: joinList(current?.ports),
+      networks: joinList(current?.networks),
+    }
+  }
+  overridesForm.value = form
+  showOverridesModal.value = true
+}
+
+function splitList(value: string): string[] | undefined {
+  const parts = value.split(',').map((p) => p.trim()).filter(Boolean)
+  return parts.length ? parts : undefined
+}
+
+async function handleApplyOverrides() {
+  const payload: Record<string, { image?: string; ports?: string[]; networks?: string[] }> = {}
+  for (const [name, entry] of Object.entries(overridesForm.value)) {
+    const override: { image?: string; ports?: string[]; networks?: string[] } = {}
+    if (entry.image.trim()) override.image = entry.image.trim()
+    const ports = splitList(entry.ports)
+    if (ports) override.ports = ports
+    const networks = splitList(entry.networks)
+    if (networks) override.networks = networks
+    if (Object.keys(override).length) payload[name] = override
+  }
+  if (!Object.keys(payload).length) {
+    toast.add({ title: 'No overrides to apply', color: 'warning' })
+    return
+  }
+  try {
+    await setRenderOverrides(stackId, payload)
+    showOverridesModal.value = false
+    activeTab.value = 'logs'
+    toast.add({ title: 'Render overrides applied, redeploying', color: 'info' })
+    refreshLogs()
+    // The PUT above already persists render_overrides, which the realtime 'stacks'
+    // subscribe handler picks up and refreshes the diff for — no need to call
+    // loadRenderOverridesDiff() again here.
+    setTimeout(() => { refreshStack(); refreshLogs(); servicesCard.value?.refresh() }, 5000)
+  } catch (e: any) {
+    toast.add({ title: e?.message || 'Failed to apply overrides', color: 'error' })
+  }
+}
+
+async function handleClearOverrides() {
+  try {
+    await clearRenderOverrides(stackId)
+    showOverridesModal.value = false
+    activeTab.value = 'logs'
+    toast.add({ title: 'Render overrides cleared, reverting to Git state', color: 'info' })
+    refreshLogs()
+    // Same as apply: the DELETE above already clears render_overrides, and the
+    // realtime 'stacks' subscribe handler refreshes the diff for that update.
+    setTimeout(() => { refreshStack(); refreshLogs(); servicesCard.value?.refresh() }, 5000)
+  } catch (e: any) {
+    toast.add({ title: e?.message || 'Failed to clear overrides', color: 'error' })
+  }
+}
 
 async function onStackDeleted() {
   showDeleteModal.value = false
@@ -430,6 +617,13 @@ function onTransferDone() {
   setTimeout(() => { refreshStack(); refreshLogs() }, 4000)
 }
 
+// stack is loaded async via useAsyncData, so stack.value may still be null when
+// onMounted runs — watch (with immediate) instead of a one-shot call, so the diff
+// loads once the record actually arrives (and reloads whenever overrides change).
+watch(() => stack.value?.render_overrides, () => {
+  loadRenderOverridesDiff()
+}, { immediate: true })
+
 onMounted(() => {
   loadServices()
   const workerRefreshTimer = window.setInterval(() => {
@@ -441,6 +635,7 @@ onMounted(() => {
     if (e.record?.id === stackId) {
       refreshStack()
       servicesCard.value?.refresh()
+      loadRenderOverridesDiff()
     }
   })
 
@@ -486,7 +681,7 @@ onMounted(() => {
       <div v-if="stack?.containers_list?.length" class="mt-2 sm:mt-0 sm:ml-4 flex-1">
         <StackContainersList :containers="stack.containers_list" />
       </div>
-      <div class="grid grid-cols-3 sm:flex sm:items-center gap-2 sm:shrink-0">
+      <div class="grid grid-cols-2 sm:flex sm:items-center gap-2 sm:shrink-0">
         <UButton
           :icon="stack?.status === 'paused' ? 'i-lucide-play' : 'i-lucide-pause'"
           :label="stack?.status === 'paused' ? 'Resume' : 'Pause'"
@@ -496,6 +691,7 @@ onMounted(() => {
           @click="togglePause"
         />
         <UButton icon="i-lucide-recycle" label="Redeploy" variant="outline" block @click="showForceRedeploy = true" />
+        <UButton icon="i-lucide-sliders-horizontal" label="Overrides" variant="outline" block @click="openOverridesModal" />
         <StackSyncButton
           :can-sync="canSyncDeploy"
           :disabled-reason="syncDisabledReason"
@@ -503,6 +699,19 @@ onMounted(() => {
         />
       </div>
     </div>
+
+    <UAlert
+      v-if="stackHasRenderOverrides(stack)"
+      title="Running with manual overrides"
+      description="This stack is deployed with render-time overrides that are not committed to Git. They stay in effect on every deploy — including Sync Now and automatic reconciles — until you clear them below."
+      icon="i-lucide-triangle-alert"
+      color="warning"
+      variant="subtle"
+    >
+      <template #actions>
+        <UButton label="Manage overrides" size="xs" variant="outline" color="warning" @click="openOverridesModal" />
+      </template>
+    </UAlert>
 
     <UTabs v-model="activeTab" :items="tabs" />
 
@@ -600,6 +809,36 @@ onMounted(() => {
             <UButton type="submit" label="Save" />
           </div>
         </form>
+      </UCard>
+
+      <UCard v-if="stackHasRenderOverrides(stack)">
+        <template #header>
+          <div class="flex justify-between items-center">
+            <div class="flex items-center gap-2">
+              <UIcon name="i-lucide-sliders-horizontal" class="w-4 h-4 text-amber-500" />
+              <h3 class="font-semibold">Render Overrides</h3>
+              <UBadge color="warning" variant="subtle" size="sm">Active</UBadge>
+            </div>
+            <div class="flex items-center gap-1">
+              <UButton icon="i-lucide-pencil" variant="ghost" size="xs" @click="openOverridesModal" />
+              <UButton icon="i-lucide-x" label="Clear" variant="ghost" color="neutral" size="xs" @click="handleClearOverrides" />
+            </div>
+          </div>
+        </template>
+        <p class="text-xs text-gray-500 mb-3">
+          Applied at deploy time, not committed to Git. Stays in effect on every deploy — including Sync Now and automatic reconciles — until cleared.
+        </p>
+        <p v-if="renderOverridesGitError" class="text-xs text-amber-500 mb-2">{{ renderOverridesGitError }}</p>
+        <pre class="text-xs font-mono bg-gray-50 dark:bg-carbon-900/55 rounded-md p-3 overflow-x-auto"><span
+          v-for="(line, i) in renderOverridesDiffLines"
+          :key="i"
+          class="block"
+          :class="{
+            'text-red-500 dark:text-red-400': line.type === 'remove',
+            'text-emerald-600 dark:text-emerald-400': line.type === 'add',
+            'text-gray-700 dark:text-wire-200/80': line.type === 'context',
+          }"
+        >{{ line.text }}</span></pre>
       </UCard>
 
       <StackServicesCard
@@ -924,6 +1163,58 @@ onMounted(() => {
             </div>
           </div>
           <UButton label="Force Redeploy" color="info" block @click="handleForceRedeploy" />
+        </div>
+      </template>
+    </UModal>
+
+    <!-- Render Overrides Modal -->
+    <UModal v-model:open="showOverridesModal">
+      <template #content>
+        <div class="p-4 space-y-4">
+          <div class="flex items-center justify-between">
+            <h3 class="font-semibold">Render Overrides</h3>
+            <UButton icon="i-lucide-x" variant="ghost" size="xs" @click="showOverridesModal = false" />
+          </div>
+          <p class="text-sm text-gray-500">
+            Override image, ports, or networks per service at deploy time without touching Git. Blank field keeps Git value. Stays active on every deploy until cleared.
+          </p>
+          <p v-if="!overrideServiceNames.length" class="text-sm text-gray-400 py-4 text-center">
+            No services detected yet — load the stack's services before setting overrides.
+          </p>
+          <div v-else class="space-y-4 max-h-96 overflow-y-auto">
+            <div v-for="name in overrideServiceNames" :key="name" class="space-y-2 border border-gray-200 dark:border-carbon-700 rounded-md p-3">
+              <div class="flex items-center gap-2">
+                <ContainerIcon
+                  :name="name"
+                  :slug="getOverrideServiceSlug(name)"
+                  wrapper-class="w-6 h-6 flex shrink-0 items-center justify-center rounded bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 overflow-hidden"
+                  icon-class="w-4 h-4 object-contain"
+                />
+                <p class="text-sm font-medium">{{ name }}</p>
+              </div>
+              <template v-if="overridesForm[name]">
+                <UFormField label="Image" size="sm">
+                  <AppTextInput v-model="overridesForm[name].image" placeholder="e.g. nginx:test" aria-label="Image override" />
+                </UFormField>
+                <UFormField label="Ports" size="sm" hint="comma-separated, e.g. 8081:80, 9090:90">
+                  <AppTextInput v-model="overridesForm[name].ports" placeholder="8081:80" aria-label="Ports override" />
+                </UFormField>
+                <UFormField label="Networks" size="sm" hint="comma-separated network names">
+                  <AppTextInput v-model="overridesForm[name].networks" placeholder="proxy" aria-label="Networks override" />
+                </UFormField>
+              </template>
+            </div>
+          </div>
+          <div class="flex justify-end gap-2 pt-1">
+            <UButton
+              v-if="stackHasRenderOverrides(stack)"
+              label="Clear overrides"
+              variant="outline"
+              color="neutral"
+              @click="handleClearOverrides"
+            />
+            <UButton label="Apply overrides" color="warning" @click="handleApplyOverrides" />
+          </div>
         </div>
       </template>
     </UModal>

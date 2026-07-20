@@ -260,6 +260,14 @@ func MatchCustomRoute(method, path string) (Event, bool) {
 			return custom("stack.transfer", "stack", p[1]), true
 		}
 	}
+	if len(p) == 3 && p[0] == "stacks" && p[2] == "render-overrides" {
+		switch method {
+		case http.MethodPut:
+			return custom("stack.render_overrides.set", "stack", p[1]), true
+		case http.MethodDelete:
+			return custom("stack.render_overrides.clear", "stack", p[1]), true
+		}
+	}
 	if len(p) == 2 && p[0] == "stacks" && method == http.MethodDelete {
 		return custom("stack.delete", "stack", p[1]), true
 	}

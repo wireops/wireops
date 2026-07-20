@@ -145,6 +145,7 @@ const policyForm = ref<{
   block_host_pid: boolean | null
   block_host_ipc: boolean | null
   block_docker_socket: boolean | null
+  allow_render_overrides: boolean | null
 }>({
   inherit: false,
   allowed_images: [],
@@ -160,6 +161,7 @@ const policyForm = ref<{
   block_host_pid: null,
   block_host_ipc: null,
   block_docker_socket: null,
+  allow_render_overrides: null,
 })
 
 async function loadPolicy() {
@@ -181,6 +183,7 @@ async function loadPolicy() {
       block_host_pid: data.block_host_pid !== undefined ? data.block_host_pid : null,
       block_host_ipc: data.block_host_ipc !== undefined ? data.block_host_ipc : null,
       block_docker_socket: data.block_docker_socket !== undefined ? data.block_docker_socket : null,
+      allow_render_overrides: data.allow_render_overrides !== undefined ? data.allow_render_overrides : null,
     }
     isGlobalPolicyEnabled.value = data.effective?.enabled ?? true
     policyLoaded.value = true
@@ -200,6 +203,7 @@ async function loadPolicy() {
       block_host_pid: null,
       block_host_ipc: null,
       block_docker_socket: null,
+      allow_render_overrides: null,
     }
   } finally {
     policyLoading.value = false

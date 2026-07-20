@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -27,6 +28,14 @@ type RenderResult struct {
 	Version      int
 	Checksum     string
 	RenderedPath string // e.g., v5.yml
+}
+
+// ServiceOverride holds render-time (not committed to git) overrides for a single
+// compose service. Fields left empty are not overridden.
+type ServiceOverride struct {
+	Image    string   `json:"image,omitempty"`
+	Ports    []string `json:"ports,omitempty"`
+	Networks []string `json:"networks,omitempty"`
 }
 
 const (
@@ -66,6 +75,7 @@ func (r *Renderer) GenerateRevision(
 	forceIncrement bool,
 	workerID string,
 	workerFingerprint string,
+	overrides map[string]ServiceOverride,
 ) (*RenderResult, error) {
 
 	stackID := stack.Id
@@ -106,9 +116,6 @@ func (r *Renderer) GenerateRevision(
 	if err != nil {
 		return nil, fmt.Errorf("failed to load worker policy: %w", err)
 	}
-	if err := wp.ValidateComposeConfig(configMap); err != nil {
-		return nil, err
-	}
 
 	// Validation: Ensure services exist
 	servicesRaw, ok := configMap["services"]
@@ -118,6 +125,25 @@ func (r *Renderer) GenerateRevision(
 	services, ok := servicesRaw.(map[string]interface{})
 	if !ok || len(services) == 0 {
 		return nil, fmt.Errorf("services block is invalid or empty")
+	}
+
+	if len(overrides) > 0 {
+		// AllowRenderOverrides gates this capability on its own, independent of
+		// wp.Disabled — disabling the rest of the policy's allowlist/Block* checks
+		// must not implicitly grant override capability too.
+		if !wp.AllowRenderOverrides {
+			return nil, fmt.Errorf("render-time overrides are disabled by the worker policy")
+		}
+		if err := applyServiceOverrides(services, overrides); err != nil {
+			return nil, err
+		}
+	}
+	configMap["services"] = services
+
+	// Validated after overrides are applied, so overridden images/networks are also
+	// checked against the worker's allowlists and boolean-flag restrictions.
+	if err := wp.ValidateComposeConfig(configMap); err != nil {
+		return nil, err
 	}
 
 	// Determine version number
@@ -268,6 +294,50 @@ func (r *Renderer) GenerateRevision(
 		Checksum:     checksum,
 		RenderedPath: fileName,
 	}, nil
+}
+
+// ErrUnknownOverrideService is wrapped into the error returned by applyServiceOverrides
+// when a persisted override targets a service that no longer exists in the compose
+// config — e.g. the service was renamed or removed in a later Git commit. Callers on
+// unattended reconcile paths use errors.Is against this to decide whether to clear the
+// stale override and self-heal instead of failing the sync indefinitely.
+var ErrUnknownOverrideService = errors.New("render override targets unknown service")
+
+// applyServiceOverrides mutates services in place, replacing image/ports/networks for
+// each named service per the given overrides. It returns an error if an override
+// targets a service that doesn't exist in the compose config.
+func applyServiceOverrides(services map[string]interface{}, overrides map[string]ServiceOverride) error {
+	for serviceName, override := range overrides {
+		svcRaw, ok := services[serviceName]
+		if !ok {
+			return fmt.Errorf("%w: %q", ErrUnknownOverrideService, serviceName)
+		}
+		svc, ok := svcRaw.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("render override targets invalid service %q", serviceName)
+		}
+
+		if override.Image != "" {
+			svc["image"] = override.Image
+		}
+		if override.Ports != nil {
+			ports := make([]interface{}, len(override.Ports))
+			for i, p := range override.Ports {
+				ports[i] = p
+			}
+			svc["ports"] = ports
+		}
+		if override.Networks != nil {
+			networks := make([]interface{}, len(override.Networks))
+			for i, n := range override.Networks {
+				networks[i] = n
+			}
+			svc["networks"] = networks
+		}
+
+		services[serviceName] = svc
+	}
+	return nil
 }
 
 func injectVersionMetadata(services map[string]interface{}, commitSHA, checksum, generatedAt string, version int) {

@@ -20,6 +20,7 @@ import (
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 
+	"github.com/wireops/wireops/internal/audit"
 	"github.com/wireops/wireops/internal/config"
 	"github.com/wireops/wireops/internal/constants"
 	"github.com/wireops/wireops/internal/crypto"
@@ -307,7 +308,11 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	prevChecksum := stack.GetString("checksum")
 	prevVersion := stack.GetInt("current_version")
 
-	renderRes, err := r.renderer.GenerateRevision(ctx, stack, repo, workDir, composeFile, envVars, remoteSHA, false, workerID, workerFingerprint)
+	renderRes, err := r.renderer.GenerateRevision(ctx, stack, repo, workDir, composeFile, envVars, remoteSHA, false, workerID, workerFingerprint, LoadRenderOverrides(stack))
+	if err != nil && errors.Is(err, ErrUnknownOverrideService) {
+		r.clearStaleRenderOverrides(stack, stackID, err.Error())
+		renderRes, err = r.renderer.GenerateRevision(ctx, stack, repo, workDir, composeFile, envVars, remoteSHA, false, workerID, workerFingerprint, nil)
+	}
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to generate label revision: %v", err)
 		r.logFailureWithPhase(stackID, trigger, remoteSHA, errMsg, constants.PhaseRender, renderStart)
@@ -610,7 +615,7 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 		log.Printf("[reconciler] warning: failed to update .gitignore for stack %s (rollback): %v", stackID, giErr)
 	}
 
-	renderRes, err := r.renderer.GenerateRevision(ctx, stack, repo, workDir, composeFile, envVars, commitSHA, true, workerID, workerFingerprint)
+	renderRes, err := r.renderer.GenerateRevision(ctx, stack, repo, workDir, composeFile, envVars, commitSHA, true, workerID, workerFingerprint, LoadRenderOverrides(stack))
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to generate label revision on rollback: %v", err)
 		r.logFailureWithPhase(stackID, "manual", commitSHA, errMsg, constants.PhaseRender, renderStart)
@@ -771,6 +776,8 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 }
 
 // ForceRedeployStack runs a force redeploy with recreate options, logs it, and pauses the stack.
+// Like every other reconcile path, it reapplies whatever render_overrides are persisted
+// on the stack record — a plain force redeploy must not silently drop active overrides.
 func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, recreateContainers, recreateVolumes, recreateNetworks bool) error {
 	mu := r.stackMutex(stackID)
 	if !mu.TryLock() {
@@ -889,7 +896,7 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 		log.Printf("[reconciler] warning: failed to update .gitignore for stack %s (redeploy): %v", stackID, giErr)
 	}
 
-	renderRes, err := r.renderer.GenerateRevision(ctx, stack, repo, workDir, composeFile, envVars, lastSHA, true, workerID, workerFingerprint)
+	renderRes, err := r.renderer.GenerateRevision(ctx, stack, repo, workDir, composeFile, envVars, lastSHA, true, workerID, workerFingerprint, LoadRenderOverrides(stack))
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to generate label revision on redeploy: %v", err)
 		return failRedeploy(errMsg, time.Since(start).Milliseconds())
@@ -1151,7 +1158,11 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 		log.Printf("[reconciler] warning: failed to ensure .gitignore for stack %s (local sync): %v", stackID, gitignoreErr)
 	}
 
-	renderRes, err := r.renderer.GenerateRevision(ctx, stack, nil, workDir, composeFile, envVars, "imported", false, workerID, workerFingerprint)
+	renderRes, err := r.renderer.GenerateRevision(ctx, stack, nil, workDir, composeFile, envVars, "imported", false, workerID, workerFingerprint, LoadRenderOverrides(stack))
+	if err != nil && errors.Is(err, ErrUnknownOverrideService) {
+		r.clearStaleRenderOverrides(stack, stackID, err.Error())
+		renderRes, err = r.renderer.GenerateRevision(ctx, stack, nil, workDir, composeFile, envVars, "imported", false, workerID, workerFingerprint, nil)
+	}
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to generate label revision: %v", err)
 		r.logFailureWithPhase(stackID, trigger, "", errMsg, constants.PhaseRender, renderStart)
@@ -1429,6 +1440,31 @@ func isTransientGitError(err error) bool {
 
 func (r *Reconciler) loadEnvVars(ctx context.Context, stackID string) ([]string, error) {
 	return envvars.LoadStack(ctx, r.app, r.secretsRegistry, stackID)
+}
+
+// LoadRenderOverrides reads any persisted render-time overrides for the stack.
+// Overrides stay in effect across every deploy (sync, rollback, force-redeploy)
+// until explicitly cleared via DELETE /stacks/{id}/render-overrides. It's a plain
+// function of the record (no reconciler state needed) so routes can reuse it too,
+// instead of re-implementing the same UnmarshalJSONField call inline.
+func LoadRenderOverrides(stack *core.Record) map[string]ServiceOverride {
+	var overrides map[string]ServiceOverride
+	_ = stack.UnmarshalJSONField("render_overrides", &overrides)
+	return overrides
+}
+
+// clearStaleRenderOverrides drops a persisted render_overrides value that no longer
+// applies (e.g. it targets a service renamed/removed by an unrelated Git commit).
+// Used only on unattended reconcile paths so a stale override self-heals back to
+// pure Git state instead of failing every sync indefinitely.
+func (r *Reconciler) clearStaleRenderOverrides(stack *core.Record, stackID, cause string) {
+	stack.Set("render_overrides", nil)
+	if err := r.app.Save(stack); err != nil {
+		log.Printf("[reconciler] failed to auto-clear stale render overrides for stack %s: %v", stackID, err)
+		return
+	}
+	log.Printf("[reconciler] auto-cleared stale render overrides for stack %s: %s", stackID, cause)
+	audit.RecordSystem(r.app, "stack.render_overrides.auto_cleared", "stack", stackID, audit.StatusSuccess, "")
 }
 
 // loadSopsEnv looks for a secrets.yaml/secrets.yml next to the stack's
