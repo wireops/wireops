@@ -106,17 +106,17 @@ func ParseWireopsFile(repoWorkspace, repoID, filePath string) (*Definition, erro
 		return nil, fmt.Errorf("invalid wireops.yaml: multiple YAML documents or invalid trailing content found: %w", err)
 	}
 
-	if err := def.validate(); err != nil {
+	if err := def.Validate(); err != nil {
 		return nil, err
 	}
 
 	if def.Timeout != "" {
-		d, _ := time.ParseDuration(def.Timeout) // already validated in validate()
+		d, _ := time.ParseDuration(def.Timeout) // already validated in Validate()
 		def.DeployTimeoutSeconds = int(d.Seconds())
 	}
 
 	if def.Sync != nil && def.Sync.Interval != "" {
-		d, _ := time.ParseDuration(def.Sync.Interval) // already validated in validate()
+		d, _ := time.ParseDuration(def.Sync.Interval) // already validated in Validate()
 		def.SyncIntervalSeconds = int(d.Seconds())
 	}
 
@@ -130,7 +130,11 @@ func IsWireopsFile(filename string) bool {
 	return base == "wireops.yaml" || base == "wireops.yml"
 }
 
-func (d *Definition) validate() error {
+// Validate checks the definition for required fields and well-formed
+// duration strings. Exported so callers that build a Definition
+// programmatically (e.g. the MCP scaffolding tools) can validate before
+// marshaling, using the same rules ParseWireopsFile enforces.
+func (d *Definition) Validate() error {
 	var errs []string
 
 	if d.Version == "" {

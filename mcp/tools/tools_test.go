@@ -306,3 +306,153 @@ func TestGetWorkerMetricsPath(t *testing.T) {
 		t.Fatalf("unexpected path: %s", gotPath)
 	}
 }
+
+func TestGenerateWireopsYAMLValidInput(t *testing.T) {
+	handler := generateWireopsYAML()
+	_, out, err := handler(context.Background(), nil, models.GenerateWireopsYAMLInput{
+		Name:       "my-stack",
+		Timeout:    "5m",
+		WorkerTags: []string{"node", "local"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	file, ok := out.(generatedFile)
+	if !ok {
+		t.Fatalf("expected generatedFile, got %T", out)
+	}
+	if file.Filename != "wireops.yaml" {
+		t.Fatalf("unexpected filename: %s", file.Filename)
+	}
+	if !strings.Contains(file.Content, "name: my-stack") || !strings.Contains(file.Content, "version: wireops.v1") {
+		t.Fatalf("expected generated content to include name/version, got: %s", file.Content)
+	}
+}
+
+func TestGenerateWireopsYAMLMissingNameFails(t *testing.T) {
+	handler := generateWireopsYAML()
+	_, _, err := handler(context.Background(), nil, models.GenerateWireopsYAMLInput{})
+	if err == nil {
+		t.Fatal("expected error when name is missing")
+	}
+}
+
+func TestGenerateJobYAMLValidInput(t *testing.T) {
+	handler := generateJobYAML()
+	_, out, err := handler(context.Background(), nil, models.GenerateJobYAMLInput{
+		Name:        "cleanup",
+		Description: "cleans stuff up",
+		Cron:        "0 * * * *",
+		Image:       "docker",
+		CPU:         "1",
+		Memory:      "512mb",
+		ResTimeout:  "30s",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	file, ok := out.(generatedFile)
+	if !ok {
+		t.Fatalf("expected generatedFile, got %T", out)
+	}
+	if file.Filename != "job.yaml" {
+		t.Fatalf("unexpected filename: %s", file.Filename)
+	}
+	if !strings.Contains(file.Content, "name: cleanup") || !strings.Contains(file.Content, "cron: 0 * * * *") {
+		t.Fatalf("expected generated content to include name/cron, got: %s", file.Content)
+	}
+}
+
+func TestGenerateJobYAMLMissingRequiredFieldsFails(t *testing.T) {
+	handler := generateJobYAML()
+	_, _, err := handler(context.Background(), nil, models.GenerateJobYAMLInput{Name: "cleanup"})
+	if err == nil {
+		t.Fatal("expected error when required fields are missing")
+	}
+}
+
+func TestScaffoldStackValidInputNoWorker(t *testing.T) {
+	handler := scaffoldStack(client.New("http://unused"))
+	_, out, err := handler(context.Background(), nil, models.ScaffoldStackInput{
+		Name: "my-stack",
+		Services: []models.ComposeServiceInput{
+			{Name: "web", Image: "nginx:1.27", Ports: []string{"80:80"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	result, ok := out.(scaffoldStackOutput)
+	if !ok {
+		t.Fatalf("expected scaffoldStackOutput, got %T", out)
+	}
+	if result.Wireops.Filename != "wireops.yaml" || !strings.Contains(result.Wireops.Content, "name: my-stack") {
+		t.Fatalf("unexpected wireops file: %+v", result.Wireops)
+	}
+	if result.Compose.Filename != "docker-compose.yml" || !strings.Contains(result.Compose.Content, "nginx:1.27") {
+		t.Fatalf("unexpected compose file: %+v", result.Compose)
+	}
+}
+
+func TestScaffoldStackRequiresAtLeastOneService(t *testing.T) {
+	handler := scaffoldStack(client.New("http://unused"))
+	_, _, err := handler(context.Background(), nil, models.ScaffoldStackInput{Name: "my-stack"})
+	if err == nil {
+		t.Fatal("expected error when no services are given")
+	}
+}
+
+func TestScaffoldStackWithWorkerIDSurfacesPolicyViolation(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"inherit":true,"effective":{"enabled":true,"allowed_volumes":[],"allowed_networks":[],"allowed_images":["redis:*"],"allowed_cap_add":[],"allowed_devices":[],"allowed_security_opt":[],"prevent_latest_images":false,"block_host_volumes":false,"block_privileged":false,"block_host_network":false,"block_host_pid":false,"block_host_ipc":false,"block_docker_socket":false,"allow_render_overrides":false}}`))
+	}))
+	defer srv.Close()
+
+	handler := scaffoldStack(client.New(srv.URL))
+	_, _, err := handler(ctxWithKey(), nil, models.ScaffoldStackInput{
+		Name:     "my-stack",
+		WorkerID: "worker1",
+		Services: []models.ComposeServiceInput{
+			{Name: "web", Image: "nginx:1.27", Ports: []string{"80:80"}},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected policy violation error: nginx image is not in the worker's allowed_images list")
+	}
+	if !strings.Contains(err.Error(), "policy") {
+		t.Fatalf("expected error to mention policy violation, got: %v", err)
+	}
+}
+
+func TestScaffoldStackWithWorkerIDAllowsCompliantCompose(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"inherit":true,"effective":{"enabled":true,"allowed_volumes":[],"allowed_networks":[],"allowed_images":[],"allowed_cap_add":[],"allowed_devices":[],"allowed_security_opt":[],"prevent_latest_images":false,"block_host_volumes":false,"block_privileged":false,"block_host_network":false,"block_host_pid":false,"block_host_ipc":false,"block_docker_socket":false,"allow_render_overrides":false}}`))
+	}))
+	defer srv.Close()
+
+	handler := scaffoldStack(client.New(srv.URL))
+	_, _, err := handler(ctxWithKey(), nil, models.ScaffoldStackInput{
+		Name:     "my-stack",
+		WorkerID: "worker1",
+		Services: []models.ComposeServiceInput{
+			{Name: "web", Image: "nginx:1.27", Ports: []string{"80:80"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error for policy-compliant compose: %v", err)
+	}
+}
+
+func TestScaffoldStackMissingAPIKeyWithWorkerID(t *testing.T) {
+	handler := scaffoldStack(client.New("http://unused"))
+	_, _, err := handler(context.Background(), nil, models.ScaffoldStackInput{
+		Name:     "my-stack",
+		WorkerID: "worker1",
+		Services: []models.ComposeServiceInput{
+			{Name: "web", Image: "nginx:1.27"},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error when API key missing from context but worker_id was set")
+	}
+}
