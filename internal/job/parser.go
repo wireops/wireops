@@ -88,7 +88,7 @@ func ParseJobFile(repoWorkspace, repoID, filePath string) (*Definition, error) {
 		return nil, fmt.Errorf("invalid job.yaml: multiple YAML documents or invalid trailing content found: %w", err)
 	}
 
-	if err := def.validate(); err != nil {
+	if err := def.Validate(); err != nil {
 		return nil, err
 	}
 
@@ -127,7 +127,11 @@ func IsJobFile(data []byte) bool {
 	return true
 }
 
-func (d *Definition) validate() error {
+// Validate checks the definition for required fields, valid mode, and a
+// well-formed resources.timeout duration. Exported so callers that build a
+// Definition programmatically (e.g. the MCP scaffolding tools) can validate
+// before marshaling, using the same rules ParseJobFile enforces.
+func (d *Definition) Validate() error {
 	var errs []string
 
 	if d.Name == "" {

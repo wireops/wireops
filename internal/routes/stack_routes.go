@@ -583,6 +583,31 @@ func (rr routeRegistrar) registerStackComposeRoute() {
 	}).BindFunc(rbac.Require(rbac.CapViewStacks))
 }
 
+// registerStackRevisionRoute exposes a single past rendered revision's
+// content, unlike registerStackComposeRoute which only ever reads the
+// stack's current_version.
+func (rr routeRegistrar) registerStackRevisionRoute() {
+	rr.r.GET("/api/custom/stacks/{id}/revisions/{version}", func(e *core.RequestEvent) error {
+		stackID := e.Request.PathValue("id")
+		version, err := strconv.Atoi(e.Request.PathValue("version"))
+		if err != nil || version <= 0 {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid version"})
+		}
+		if _, err := rr.app.FindRecordById("stacks", stackID); err != nil {
+			return e.JSON(http.StatusNotFound, map[string]string{"error": "stack not found"})
+		}
+		renderer := sync.NewRenderer(rr.app)
+		data, err := os.ReadFile(renderer.GetRevisionFilePath(stackID, version))
+		if err != nil {
+			return e.JSON(http.StatusNotFound, map[string]string{"error": "revision not found"})
+		}
+		return e.JSON(http.StatusOK, map[string]string{
+			"content":  string(data),
+			"filename": fmt.Sprintf("v%d.yml", version),
+		})
+	}).BindFunc(rbac.Require(rbac.CapViewStacks))
+}
+
 func (rr routeRegistrar) registerContainerActionRoutes() {
 	rr.r.POST("/api/custom/stacks/{id}/container/stop", func(e *core.RequestEvent) error {
 		stackID := e.Request.PathValue("id")

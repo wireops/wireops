@@ -118,3 +118,47 @@ func TestDiagnoseStackFailureFetchesStatusAndLogs(t *testing.T) {
 		t.Fatalf("expected prompt text to embed fetched data, got: %s", text.Text)
 	}
 }
+
+func TestScaffoldNewStackRequiresAppDescription(t *testing.T) {
+	handler := scaffoldNewStack()
+	_, err := handler(context.Background(), &mcp.GetPromptRequest{
+		Params: &mcp.GetPromptParams{Name: "scaffold_new_stack", Arguments: map[string]string{}},
+	})
+	if err == nil {
+		t.Fatal("expected error when app_description argument is missing")
+	}
+}
+
+func TestScaffoldNewStackWithoutImageHintsAtWebSearch(t *testing.T) {
+	handler := scaffoldNewStack()
+	result, err := handler(context.Background(), &mcp.GetPromptRequest{
+		Params: &mcp.GetPromptParams{Name: "scaffold_new_stack", Arguments: map[string]string{"app_description": "a Postgres database"}},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text, ok := result.Messages[0].Content.(*mcp.TextContent)
+	if !ok {
+		t.Fatalf("expected TextContent, got %T", result.Messages[0].Content)
+	}
+	if !strings.Contains(text.Text, "a Postgres database") || !strings.Contains(text.Text, "web search") || !strings.Contains(text.Text, "scaffold_stack") {
+		t.Fatalf("expected prompt to embed description and reference web search + scaffold_stack, got: %s", text.Text)
+	}
+}
+
+func TestScaffoldNewStackWithImageHintEmbedsIt(t *testing.T) {
+	handler := scaffoldNewStack()
+	result, err := handler(context.Background(), &mcp.GetPromptRequest{
+		Params: &mcp.GetPromptParams{Name: "scaffold_new_stack", Arguments: map[string]string{"app_description": "a blog", "image": "ghost:5"}},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text, ok := result.Messages[0].Content.(*mcp.TextContent)
+	if !ok {
+		t.Fatalf("expected TextContent, got %T", result.Messages[0].Content)
+	}
+	if !strings.Contains(text.Text, "ghost:5") {
+		t.Fatalf("expected prompt to embed the given image hint, got: %s", text.Text)
+	}
+}

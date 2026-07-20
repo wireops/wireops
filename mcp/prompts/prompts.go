@@ -26,6 +26,15 @@ func Register(server *mcp.Server, c *client.Client) {
 			{Name: "stack_id", Description: "The wireops stack record id to diagnose.", Required: true},
 		},
 	}, diagnoseStackFailure(c))
+
+	server.AddPrompt(&mcp.Prompt{
+		Name:        "scaffold_new_stack",
+		Description: "Research and scaffold a new wireops stack (docker-compose.yml + wireops.yaml) for a described application.",
+		Arguments: []*mcp.PromptArgument{
+			{Name: "app_description", Description: "What the stack should run, e.g. 'a Postgres database with pgAdmin' or 'Ghost blog behind Traefik'.", Required: true},
+			{Name: "image", Description: "A specific Docker image to use, if already known. Optional — leave empty to have the model research one.", Required: false},
+		},
+	}, scaffoldNewStack())
 }
 
 func apiKeyFrom(ctx context.Context) (string, error) {
@@ -76,6 +85,41 @@ Identify the most likely root cause (e.g. missing/invalid env var, port conflict
 
 		return &mcp.GetPromptResult{
 			Description: "Root-cause diagnosis for a failing wireops stack, grounded in its current status and recent sync history.",
+			Messages: []*mcp.PromptMessage{
+				{
+					Role:    "user",
+					Content: &mcp.TextContent{Text: text},
+				},
+			},
+		}, nil
+	}
+}
+
+func scaffoldNewStack() mcp.PromptHandler {
+	return func(_ context.Context, req *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+		appDescription := req.Params.Arguments["app_description"]
+		if appDescription == "" {
+			return nil, fmt.Errorf("app_description argument is required")
+		}
+		image := req.Params.Arguments["image"]
+
+		imageHint := "You do not have a specific image yet — use your own web search tool to find the official Docker image (its official site, official Docker Hub/GHCR page, or official GitHub repository) and its current required configuration (ports, volumes, required environment variables) before proceeding."
+		if image != "" {
+			imageHint = fmt.Sprintf("A candidate image was given: %q. Do not trust this as-is — use your own web search tool to confirm it against the project's official site, official image registry page, or official GitHub repository, and pull its current required configuration (ports, volumes, required environment variables) before proceeding.", image)
+		}
+
+		text := fmt.Sprintf(`Scaffold a new wireops stack for: %s
+
+%s
+
+Always look up current information, never rely on memorized/training-data knowledge of the image — versions, default ports, volume paths, and required env vars change over time. Prefer the project's official website, official image registry listing, or official GitHub repository over blog posts, forums, or third-party tutorials.
+
+Once you have the image(s) and their verified, up-to-date ports/volumes/environment variables, call the scaffold_stack tool with a service definition for each container. Do not invent image names, tags, or configuration you have not verified against an official source.
+
+If you know which wireops worker this stack will run on, pass its worker_id to scaffold_stack so the generated compose file is checked against that worker's deploy security policy before you present it.`, appDescription, imageHint)
+
+		return &mcp.GetPromptResult{
+			Description: "Research-grounded scaffolding for a new wireops stack from a natural-language description.",
 			Messages: []*mcp.PromptMessage{
 				{
 					Role:    "user",

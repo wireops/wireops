@@ -360,6 +360,62 @@ Store the header line in `credentials_file`:
 X-Wireops-Api-Key: wireops_sk_...
 ```
 
+## MCP Server
+
+Wireops ships a standalone **MCP server** (`mcp/`, built as `wireops-mcp`) exposing read-only stack/worker/job data as MCP tools, resources, and prompts over streamable HTTP. It never holds a credential of its own — every client sends its own wireops API key on each request (pass-through auth), so tool access is scoped by that key's role exactly like the REST API.
+
+| Env var | Purpose |
+|---|---|
+| `SERVER_URL` (required) | Base URL of the wireops server the MCP process proxies to |
+| `MCP_LISTEN_ADDR` | Listen address (default `:8091`) |
+
+Endpoints: `POST /mcp` (streamable HTTP, requires auth) and `GET /healthz` (no auth).
+
+**Authentication:** create a **service account** (Settings → Service Accounts) with whatever role you want the agent limited to, generate an **API key**, and send it as `X-Wireops-Api-Key` — or `Authorization: Bearer <key>` — on every MCP request.
+
+Run it with the provided image:
+
+```bash
+docker run -d --name wireops-mcp -p 8091:8091 \
+  -e SERVER_URL=http://wireops-host:8090 \
+  ghcr.io/wireops/wireops-mcp:latest
+```
+
+or from source: `go run ./mcp`.
+
+### Claude Code
+
+Register it as a project or user-level MCP server with the CLI:
+
+```bash
+claude mcp add --transport http wireops http://localhost:8091/mcp \
+  --header "X-Wireops-Api-Key: wireops_sk_your_api_key_here"
+```
+
+Or add it directly to `.mcp.json` (project scope) or `~/.claude.json` (user scope):
+
+```json
+{
+  "mcpServers": {
+    "wireops": {
+      "type": "http",
+      "url": "http://localhost:8091/mcp",
+      "headers": {
+        "X-Wireops-Api-Key": "wireops_sk_your_api_key_here"
+      }
+    }
+  }
+}
+```
+
+Verify it's connected with `claude mcp list`, then ask Claude to list stacks, inspect sync logs, or scaffold a new stack — the available tools are discovered automatically.
+
+### Other MCP clients
+
+Any client that supports the streamable HTTP transport (Cursor, Windsurf, the MCP Inspector, custom SDK clients, …) can point at the same `http://<host>:8091/mcp` URL with the `X-Wireops-Api-Key` header — the JSON shape above is the de facto standard `mcpServers` config most of them accept, modulo minor key naming differences per client.
+
+Prefer injecting the API key from your secrets manager rather than committing it to a config file that lands in git.
+
 ## Disaster Recovery
 
 Wireops wraps PocketBase's built-in backup/restore (full DB + `DATA_DIR`, scheduled cron backups with retention) behind wireops's own RBAC, so any admin (not just PocketBase superusers) can manage it from **Settings → Backups**:

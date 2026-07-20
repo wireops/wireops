@@ -255,7 +255,7 @@ func TestDefinitionValidate(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := tc.def.validate()
+			err := tc.def.Validate()
 			if tc.wantErr == "" {
 				if err != nil {
 					t.Errorf("expected no error, got: %v", err)
