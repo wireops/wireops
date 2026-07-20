@@ -53,6 +53,72 @@ func TestListStacksBuildsRequestAndReturnsOutput(t *testing.T) {
 	}
 }
 
+func TestListStacksAddsNoticeWhenRenderOverridesActive(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"items":[{"id":"stack1","render_overrides":{"web":{"image":"nginx:1.28"}}},{"id":"stack2","render_overrides":{}}]}`))
+	}))
+	defer srv.Close()
+
+	handler := listStacks(client.New(srv.URL))
+	_, out, err := handler(ctxWithKey(), nil, models.ListStacksInput{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	result, ok := out.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected map output, got %T", out)
+	}
+	items, ok := result["items"].([]interface{})
+	if !ok || len(items) != 2 {
+		t.Fatalf("expected 2 items, got %v", result["items"])
+	}
+	stack1 := items[0].(map[string]interface{})
+	if stack1["_notice"] != renderOverridesNotice {
+		t.Fatalf("expected notice on stack1, got %v", stack1["_notice"])
+	}
+	stack2 := items[1].(map[string]interface{})
+	if _, ok := stack2["_notice"]; ok {
+		t.Fatalf("expected no notice on stack2 with empty overrides, got %v", stack2["_notice"])
+	}
+}
+
+func TestListReposBuildsRequestAndReturnsOutput(t *testing.T) {
+	var gotPath, gotHeader, gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotHeader = r.Header.Get(auth.APIKeyHeader)
+		gotQuery = r.URL.RawQuery
+		w.Write([]byte(`{"items":[{"id":"repo1","name":"my-repo","git_url":"https://example.com/my-repo.git"}]}`))
+	}))
+	defer srv.Close()
+
+	handler := listRepos(client.New(srv.URL))
+	_, out, err := handler(ctxWithKey(), nil, models.ListReposInput{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotPath != "/api/collections/repositories/records" {
+		t.Fatalf("unexpected path: %s", gotPath)
+	}
+	if gotHeader != "wireops_sk_test" {
+		t.Fatalf("expected API key forwarded, got %q", gotHeader)
+	}
+	if !strings.Contains(gotQuery, "perPage=50") {
+		t.Fatalf("expected default perPage=50, got query %q", gotQuery)
+	}
+	if out == nil {
+		t.Fatal("expected non-nil output")
+	}
+}
+
+func TestListReposMissingAPIKey(t *testing.T) {
+	handler := listRepos(client.New("http://unused"))
+	_, _, err := handler(context.Background(), nil, models.ListReposInput{})
+	if err == nil {
+		t.Fatal("expected error when API key missing from context")
+	}
+}
+
 func TestListStacksMissingAPIKey(t *testing.T) {
 	handler := listStacks(client.New("http://unused"))
 	_, _, err := handler(context.Background(), nil, models.ListStacksInput{})
@@ -82,6 +148,46 @@ func TestGetStackStatusPathEscapesID(t *testing.T) {
 	}
 }
 
+func TestGetStackStatusAddsNoticeWhenRenderOverridesActive(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"id":"stack1","render_overrides":{"web":{"image":"nginx:1.28"}}}`))
+	}))
+	defer srv.Close()
+
+	handler := getStackStatus(client.New(srv.URL))
+	_, out, err := handler(ctxWithKey(), nil, models.StackIDInput{StackID: "stack1"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	result, ok := out.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected map output, got %T", out)
+	}
+	if result["_notice"] != renderOverridesNotice {
+		t.Fatalf("expected render overrides notice, got %v", result["_notice"])
+	}
+}
+
+func TestGetStackStatusNoNoticeWithoutRenderOverrides(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"id":"stack1"}`))
+	}))
+	defer srv.Close()
+
+	handler := getStackStatus(client.New(srv.URL))
+	_, out, err := handler(ctxWithKey(), nil, models.StackIDInput{StackID: "stack1"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	result, ok := out.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected map output, got %T", out)
+	}
+	if _, ok := result["_notice"]; ok {
+		t.Fatalf("expected no notice when render_overrides is absent, got %v", result["_notice"])
+	}
+}
+
 func TestGetSyncLogsFiltersByStackID(t *testing.T) {
 	var gotQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -107,17 +213,25 @@ func TestGetStackServicesPath(t *testing.T) {
 	var gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
-		w.Write([]byte(`[]`))
+		w.Write([]byte(`[{"service_name":"web"}]`))
 	}))
 	defer srv.Close()
 
 	handler := getStackServices(client.New(srv.URL))
-	_, _, err := handler(ctxWithKey(), nil, models.StackIDInput{StackID: "stack1"})
+	_, out, err := handler(ctxWithKey(), nil, models.StackIDInput{StackID: "stack1"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if gotPath != "/api/custom/stacks/stack1/services" {
 		t.Fatalf("unexpected path: %s", gotPath)
+	}
+	obj, ok := out.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected object output, got %T", out)
+	}
+	services, ok := obj["services"].([]interface{})
+	if !ok || len(services) != 1 {
+		t.Fatalf("expected services array to be preserved, got %#v", obj["services"])
 	}
 }
 
@@ -136,6 +250,407 @@ func TestGetStackResourcesPath(t *testing.T) {
 	}
 	if gotPath != "/api/custom/stacks/stack1/resources" {
 		t.Fatalf("unexpected path: %s", gotPath)
+	}
+}
+
+func TestGetStackComposePath(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Write([]byte(`{"content":"services: {}","filename":"v1.yml"}`))
+	}))
+	defer srv.Close()
+
+	handler := getStackCompose(client.New(srv.URL))
+	_, _, err := handler(ctxWithKey(), nil, models.StackIDInput{StackID: "stack1"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotPath != "/api/custom/stacks/stack1/compose" {
+		t.Fatalf("unexpected path: %s", gotPath)
+	}
+}
+
+func TestGetStackRevisionPath(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Write([]byte(`{"content":"services: {}","filename":"v34.yml"}`))
+	}))
+	defer srv.Close()
+
+	handler := getStackRevision(client.New(srv.URL))
+	_, _, err := handler(ctxWithKey(), nil, models.StackRevisionInput{StackID: "stack1", Version: 34})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotPath != "/api/custom/stacks/stack1/revisions/34" {
+		t.Fatalf("unexpected path: %s", gotPath)
+	}
+}
+
+func TestGetStackRevisionMissingAPIKey(t *testing.T) {
+	handler := getStackRevision(client.New("http://unused"))
+	_, _, err := handler(context.Background(), nil, models.StackRevisionInput{StackID: "stack1", Version: 1})
+	if err == nil {
+		t.Fatal("expected error when API key missing from context")
+	}
+}
+
+func TestGetContainerStatsPath(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Write([]byte(`{"cpu_percent":1.2}`))
+	}))
+	defer srv.Close()
+
+	handler := getContainerStats(client.New(srv.URL))
+	_, _, err := handler(ctxWithKey(), nil, models.ContainerStatsInput{StackID: "stack1", ContainerID: "web-1"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotPath != "/api/custom/stacks/stack1/container/web-1/stats" {
+		t.Fatalf("unexpected path: %s", gotPath)
+	}
+}
+
+func TestGetContainerStatsMissingAPIKey(t *testing.T) {
+	handler := getContainerStats(client.New("http://unused"))
+	_, _, err := handler(context.Background(), nil, models.ContainerStatsInput{StackID: "stack1", ContainerID: "web-1"})
+	if err == nil {
+		t.Fatal("expected error when API key missing from context")
+	}
+}
+
+func TestListAuditLogsDefaultsPagination(t *testing.T) {
+	var gotPath, gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotQuery = r.URL.RawQuery
+		w.Write([]byte(`{"page":1,"items":[]}`))
+	}))
+	defer srv.Close()
+
+	handler := listAuditLogs(client.New(srv.URL))
+	_, _, err := handler(ctxWithKey(), nil, models.AuditLogsInput{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotPath != "/api/custom/audit-logs" {
+		t.Fatalf("unexpected path: %s", gotPath)
+	}
+	if !strings.Contains(gotQuery, "page=1") || !strings.Contains(gotQuery, "perPage=25") {
+		t.Fatalf("expected default pagination, got query %q", gotQuery)
+	}
+}
+
+func TestListAuditLogsForwardsFilters(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.Write([]byte(`{"page":2,"items":[]}`))
+	}))
+	defer srv.Close()
+
+	handler := listAuditLogs(client.New(srv.URL))
+	_, _, err := handler(ctxWithKey(), nil, models.AuditLogsInput{
+		Page:    2,
+		PerPage: 10,
+		Action:  "stack.pause",
+		ActorID: "user1",
+		Status:  "success",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, want := range []string{"page=2", "perPage=10", "action=stack.pause", "actor_id=user1", "status=success"} {
+		if !strings.Contains(gotQuery, want) {
+			t.Fatalf("expected query to contain %q, got %q", want, gotQuery)
+		}
+	}
+}
+
+func TestListAuditLogsMissingAPIKey(t *testing.T) {
+	handler := listAuditLogs(client.New("http://unused"))
+	_, _, err := handler(context.Background(), nil, models.AuditLogsInput{})
+	if err == nil {
+		t.Fatal("expected error when API key missing from context")
+	}
+}
+
+func TestListIntegrationsPath(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Write([]byte(`[{"slug":"traefik"}]`))
+	}))
+	defer srv.Close()
+
+	handler := listIntegrations(client.New(srv.URL))
+	_, out, err := handler(ctxWithKey(), nil, models.ListIntegrationsInput{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotPath != "/api/custom/integrations" {
+		t.Fatalf("unexpected path: %s", gotPath)
+	}
+	obj, ok := out.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected object output, got %T", out)
+	}
+	items, ok := obj["integrations"].([]interface{})
+	if !ok || len(items) != 1 {
+		t.Fatalf("expected integrations array to be preserved, got %#v", obj["integrations"])
+	}
+}
+
+func TestListIntegrationsMissingAPIKey(t *testing.T) {
+	handler := listIntegrations(client.New("http://unused"))
+	_, _, err := handler(context.Background(), nil, models.ListIntegrationsInput{})
+	if err == nil {
+		t.Fatal("expected error when API key missing from context")
+	}
+}
+
+func TestListOrphansPath(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Write([]byte(`[{"dir_name":"old-repo"}]`))
+	}))
+	defer srv.Close()
+
+	handler := listOrphans(client.New(srv.URL))
+	_, out, err := handler(ctxWithKey(), nil, models.ListOrphansInput{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotPath != "/api/custom/orphans" {
+		t.Fatalf("unexpected path: %s", gotPath)
+	}
+	obj, ok := out.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected object output, got %T", out)
+	}
+	items, ok := obj["orphans"].([]interface{})
+	if !ok || len(items) != 1 {
+		t.Fatalf("expected orphans array to be preserved, got %#v", obj["orphans"])
+	}
+}
+
+func TestListOrphansMissingAPIKey(t *testing.T) {
+	handler := listOrphans(client.New("http://unused"))
+	_, _, err := handler(context.Background(), nil, models.ListOrphansInput{})
+	if err == nil {
+		t.Fatal("expected error when API key missing from context")
+	}
+}
+
+func TestGetSystemInfoPath(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Write([]byte(`{"version":"1.0.0","disk_usage":123}`))
+	}))
+	defer srv.Close()
+
+	handler := getSystemInfo(client.New(srv.URL))
+	_, _, err := handler(ctxWithKey(), nil, models.GetSystemInfoInput{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotPath != "/api/custom/system/info" {
+		t.Fatalf("unexpected path: %s", gotPath)
+	}
+}
+
+func TestGetSystemInfoMissingAPIKey(t *testing.T) {
+	handler := getSystemInfo(client.New("http://unused"))
+	_, _, err := handler(context.Background(), nil, models.GetSystemInfoInput{})
+	if err == nil {
+		t.Fatal("expected error when API key missing from context")
+	}
+}
+
+func TestListRepoStackFilesPath(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Write([]byte(`["docker-compose.yml"]`))
+	}))
+	defer srv.Close()
+
+	handler := listRepoStackFiles(client.New(srv.URL))
+	_, out, err := handler(ctxWithKey(), nil, models.RepositoryIDInput{RepositoryID: "repo1"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotPath != "/api/custom/repositories/repo1/stack-files" {
+		t.Fatalf("unexpected path: %s", gotPath)
+	}
+	obj, ok := out.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected object output, got %T", out)
+	}
+	files, ok := obj["files"].([]interface{})
+	if !ok || len(files) != 1 {
+		t.Fatalf("expected files array to be preserved, got %#v", obj["files"])
+	}
+}
+
+func TestListRepoJobFilesPath(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Write([]byte(`["job.yaml"]`))
+	}))
+	defer srv.Close()
+
+	handler := listRepoJobFiles(client.New(srv.URL))
+	_, out, err := handler(ctxWithKey(), nil, models.RepositoryIDInput{RepositoryID: "repo1"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotPath != "/api/custom/repositories/repo1/job-files" {
+		t.Fatalf("unexpected path: %s", gotPath)
+	}
+	obj, ok := out.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected object output, got %T", out)
+	}
+	files, ok := obj["files"].([]interface{})
+	if !ok || len(files) != 1 {
+		t.Fatalf("expected files array to be preserved, got %#v", obj["files"])
+	}
+}
+
+func TestListSecretsCombinesAllSourcesMaskedOnly(t *testing.T) {
+	var gotPaths []string
+	var gotQueries []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPaths = append(gotPaths, r.URL.Path)
+		gotQueries = append(gotQueries, r.URL.RawQuery)
+		switch r.URL.Path {
+		case "/api/collections/stack_env_vars/records":
+			w.Write([]byte(`{"items":[{"key":"DB_PASSWORD","secret_provider":"vault"},{"key":"API_TOKEN","secret_provider":""}]}`))
+		case "/api/collections/stack_global_env_vars/records":
+			w.Write([]byte(`{"items":[{"expand":{"global_env_var":{"key":"SHARED_SECRET","secret":true,"secret_provider":"infisical"}}}]}`))
+		case "/api/custom/stacks/stack1/sops-env-vars":
+			w.Write([]byte(`{"keys":["SOPS_KEY"],"available":true,"source_file":"secrets.yaml"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	handler := listSecrets(client.New(srv.URL))
+	_, out, err := handler(ctxWithKey(), nil, models.StackIDInput{StackID: "stack1"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Every query must request "fields" so values never leave the server,
+	// regardless of provider.
+	for i, q := range gotQueries {
+		if !strings.Contains(q, "fields=") && gotPaths[i] != "/api/custom/stacks/stack1/sops-env-vars" {
+			t.Fatalf("expected fields= restriction on %s, got query %q", gotPaths[i], q)
+		}
+	}
+
+	result, ok := out.(map[string]any)
+	if !ok {
+		t.Fatalf("expected map output, got %T", out)
+	}
+
+	stackSecrets, ok := result["stack_secrets"].([]secretSummary)
+	if !ok || len(stackSecrets) != 2 {
+		t.Fatalf("expected 2 stack secrets, got %v", result["stack_secrets"])
+	}
+	globalSecrets, ok := result["global_secrets"].([]secretSummary)
+	if !ok || len(globalSecrets) != 1 || globalSecrets[0].Key != "SHARED_SECRET" {
+		t.Fatalf("expected 1 global secret SHARED_SECRET, got %v", result["global_secrets"])
+	}
+	sopsSecrets, ok := result["sops_secrets"].(map[string]interface{})
+	if !ok || sopsSecrets["available"] != true {
+		t.Fatalf("expected sops secrets to be available, got %v", result["sops_secrets"])
+	}
+}
+
+func TestListSecretsMissingAPIKey(t *testing.T) {
+	handler := listSecrets(client.New("http://unused"))
+	_, _, err := handler(context.Background(), nil, models.StackIDInput{StackID: "stack1"})
+	if err == nil {
+		t.Fatal("expected error when API key missing from context")
+	}
+}
+
+func TestGetStackRenderOverridesPath(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Write([]byte(`{"overrides":{"web":{"image":"nginx:1.28"}},"git":{"web":{"image":"nginx:1.27"}}}`))
+	}))
+	defer srv.Close()
+
+	handler := getStackRenderOverrides(client.New(srv.URL))
+	_, _, err := handler(ctxWithKey(), nil, models.StackIDInput{StackID: "stack1"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotPath != "/api/custom/stacks/stack1/render-overrides" {
+		t.Fatalf("unexpected path: %s", gotPath)
+	}
+}
+
+func TestDiffStackVersionFetchesBothRevisions(t *testing.T) {
+	var gotPaths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPaths = append(gotPaths, r.URL.Path)
+		switch r.URL.Path {
+		case "/api/custom/stacks/stack1/revisions/33":
+			w.Write([]byte(`{"content":"image: nginx:1.27","filename":"v33.yml"}`))
+		case "/api/custom/stacks/stack1/revisions/34":
+			w.Write([]byte(`{"content":"image: nginx:1.28","filename":"v34.yml"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	handler := diffStackVersion(client.New(srv.URL))
+	_, out, err := handler(ctxWithKey(), nil, models.DiffStackVersionInput{StackID: "stack1", VersionA: 33, VersionB: 34})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(gotPaths) != 2 || gotPaths[0] != "/api/custom/stacks/stack1/revisions/33" || gotPaths[1] != "/api/custom/stacks/stack1/revisions/34" {
+		t.Fatalf("unexpected requested paths: %v", gotPaths)
+	}
+	result, ok := out.(map[string]any)
+	if !ok {
+		t.Fatalf("expected map output, got %T", out)
+	}
+	versionA, ok := result["version_a"].(map[string]interface{})
+	if !ok || versionA["filename"] != "v33.yml" {
+		t.Fatalf("unexpected version_a: %v", result["version_a"])
+	}
+	versionB, ok := result["version_b"].(map[string]interface{})
+	if !ok || versionB["filename"] != "v34.yml" {
+		t.Fatalf("unexpected version_b: %v", result["version_b"])
+	}
+}
+
+func TestDiffStackVersionPropagatesFetchError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(`{"error":"revision not found"}`))
+	}))
+	defer srv.Close()
+
+	handler := diffStackVersion(client.New(srv.URL))
+	_, _, err := handler(ctxWithKey(), nil, models.DiffStackVersionInput{StackID: "stack1", VersionA: 99, VersionB: 100})
+	if err == nil {
+		t.Fatal("expected error when a revision fetch fails")
 	}
 }
 
@@ -184,12 +699,12 @@ func TestListJobsPath(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		gotHeader = r.Header.Get(auth.APIKeyHeader)
-		w.Write([]byte(`[]`))
+		w.Write([]byte(`[{"id":"job1"}]`))
 	}))
 	defer srv.Close()
 
 	handler := listJobs(client.New(srv.URL))
-	_, _, err := handler(ctxWithKey(), nil, models.ListJobsInput{})
+	_, out, err := handler(ctxWithKey(), nil, models.ListJobsInput{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -198,6 +713,14 @@ func TestListJobsPath(t *testing.T) {
 	}
 	if gotHeader != "wireops_sk_test" {
 		t.Fatalf("expected API key forwarded, got %q", gotHeader)
+	}
+	obj, ok := out.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected object output, got %T", out)
+	}
+	jobs, ok := obj["jobs"].([]interface{})
+	if !ok || len(jobs) != 1 {
+		t.Fatalf("expected jobs array to be preserved, got %#v", obj["jobs"])
 	}
 }
 
@@ -231,17 +754,25 @@ func TestGetRepoCommitsPath(t *testing.T) {
 	var gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
-		w.Write([]byte(`[]`))
+		w.Write([]byte(`[{"sha":"abc123"}]`))
 	}))
 	defer srv.Close()
 
 	handler := getRepoCommits(client.New(srv.URL))
-	_, _, err := handler(ctxWithKey(), nil, models.RepositoryIDInput{RepositoryID: "repo1"})
+	_, out, err := handler(ctxWithKey(), nil, models.RepositoryIDInput{RepositoryID: "repo1"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if gotPath != "/api/custom/repositories/repo1/commits" {
 		t.Fatalf("unexpected path: %s", gotPath)
+	}
+	obj, ok := out.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected object output, got %T", out)
+	}
+	commits, ok := obj["commits"].([]interface{})
+	if !ok || len(commits) != 1 {
+		t.Fatalf("expected commits array to be preserved, got %#v", obj["commits"])
 	}
 }
 
@@ -267,17 +798,25 @@ func TestListWorkersPath(t *testing.T) {
 	var gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
-		w.Write([]byte(`[]`))
+		w.Write([]byte(`[{"id":"worker1"}]`))
 	}))
 	defer srv.Close()
 
 	handler := listWorkers(client.New(srv.URL))
-	_, _, err := handler(ctxWithKey(), nil, models.ListWorkersInput{})
+	_, out, err := handler(ctxWithKey(), nil, models.ListWorkersInput{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if gotPath != "/api/custom/workers" {
 		t.Fatalf("unexpected path: %s", gotPath)
+	}
+	obj, ok := out.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected object output, got %T", out)
+	}
+	workers, ok := obj["workers"].([]interface{})
+	if !ok || len(workers) != 1 {
+		t.Fatalf("expected workers array to be preserved, got %#v", obj["workers"])
 	}
 }
 

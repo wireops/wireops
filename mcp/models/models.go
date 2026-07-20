@@ -38,6 +38,54 @@ type RepositoryIDInput struct {
 	RepositoryID string `json:"repository_id" jsonschema:"The wireops repository record id."`
 }
 
+// ListReposInput is the input for the list_repos tool.
+type ListReposInput struct {
+	Limit int `json:"limit,omitempty" jsonschema:"Maximum number of repositories to return (default 50)."`
+}
+
+// DiffStackVersionInput is the input for the diff_stack_version tool.
+type DiffStackVersionInput struct {
+	StackID  string `json:"stack_id" jsonschema:"The wireops stack record id."`
+	VersionA int    `json:"version_a" jsonschema:"The first rendered revision number to compare, e.g. 33."`
+	VersionB int    `json:"version_b" jsonschema:"The second rendered revision number to compare, e.g. 34."`
+}
+
+// ContainerStatsInput is the input for the get_container_stats tool.
+type ContainerStatsInput struct {
+	StackID     string `json:"stack_id" jsonschema:"The wireops stack record id."`
+	ContainerID string `json:"container_id" jsonschema:"The Docker container id or name, as returned by get_stack_services."`
+}
+
+// StackRevisionInput is the input for the get_stack_revision tool.
+type StackRevisionInput struct {
+	StackID string `json:"stack_id" jsonschema:"The wireops stack record id."`
+	Version int    `json:"version" jsonschema:"The rendered revision number to fetch, e.g. 34."`
+}
+
+// AuditLogsInput is the input for the list_audit_logs tool.
+type AuditLogsInput struct {
+	Page         int    `json:"page,omitempty" jsonschema:"Page number, 1-indexed (default 1)."`
+	PerPage      int    `json:"per_page,omitempty" jsonschema:"Entries per page, max 100 (default 25)."`
+	From         string `json:"from,omitempty" jsonschema:"RFC3339 timestamp lower bound on the log's created time. Optional."`
+	To           string `json:"to,omitempty" jsonschema:"RFC3339 timestamp upper bound on the log's created time. Optional."`
+	ActorType    string `json:"actor_type,omitempty" jsonschema:"Filter by actor type (e.g. 'user', 'api_key', 'system'). Optional."`
+	ActorID      string `json:"actor_id,omitempty" jsonschema:"Filter by actor record id. Optional."`
+	Action       string `json:"action,omitempty" jsonschema:"Filter by action name (e.g. 'stack.pause', 'stack.deploy'). Optional."`
+	ResourceType string `json:"resource_type,omitempty" jsonschema:"Filter by resource type (e.g. 'stack', 'worker'). Optional."`
+	ResourceID   string `json:"resource_id,omitempty" jsonschema:"Filter by resource record id. Optional."`
+	Origin       string `json:"origin,omitempty" jsonschema:"Filter by request origin. Optional."`
+	Status       string `json:"status,omitempty" jsonschema:"Filter by outcome status (e.g. 'success', 'failure'). Optional."`
+}
+
+// ListIntegrationsInput is the input for the list_integrations tool.
+type ListIntegrationsInput struct{}
+
+// ListOrphansInput is the input for the list_orphans tool.
+type ListOrphansInput struct{}
+
+// GetSystemInfoInput is the input for the get_system_info tool.
+type GetSystemInfoInput struct{}
+
 // ListWorkersInput is the input for the list_workers tool.
 type ListWorkersInput struct{}
 

@@ -103,16 +103,18 @@ func scaffoldNewStack() mcp.PromptHandler {
 		}
 		image := req.Params.Arguments["image"]
 
-		imageHint := "You do not have a specific image yet — use your own web search tool to find the official/most appropriate Docker image and its required configuration (ports, volumes, required environment variables) before proceeding."
+		imageHint := "You do not have a specific image yet — use your own web search tool to find the official Docker image (its official site, official Docker Hub/GHCR page, or official GitHub repository) and its current required configuration (ports, volumes, required environment variables) before proceeding."
 		if image != "" {
-			imageHint = fmt.Sprintf("A candidate image was given: %q. Use your own web search tool to confirm its required configuration (ports, volumes, required environment variables) before proceeding.", image)
+			imageHint = fmt.Sprintf("A candidate image was given: %q. Do not trust this as-is — use your own web search tool to confirm it against the project's official site, official image registry page, or official GitHub repository, and pull its current required configuration (ports, volumes, required environment variables) before proceeding.", image)
 		}
 
 		text := fmt.Sprintf(`Scaffold a new wireops stack for: %s
 
 %s
 
-Once you have the image(s) and their required ports/volumes/environment variables, call the scaffold_stack tool with a service definition for each container. Do not invent image names or configuration you have not verified — if unsure, search for the image's official documentation or Docker Hub page first.
+Always look up current information, never rely on memorized/training-data knowledge of the image — versions, default ports, volume paths, and required env vars change over time. Prefer the project's official website, official image registry listing, or official GitHub repository over blog posts, forums, or third-party tutorials.
+
+Once you have the image(s) and their verified, up-to-date ports/volumes/environment variables, call the scaffold_stack tool with a service definition for each container. Do not invent image names, tags, or configuration you have not verified against an official source.
 
 If you know which wireops worker this stack will run on, pass its worker_id to scaffold_stack so the generated compose file is checked against that worker's deploy security policy before you present it.`, appDescription, imageHint)
 
