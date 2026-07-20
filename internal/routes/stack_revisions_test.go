@@ -60,60 +60,76 @@ func writeStackRevisionFile(t *testing.T, app core.App, stackID string, version 
 	}
 }
 
-func TestStackRevisionRouteReturnsContent(t *testing.T) {
-	app, mux := setupStackRevisionsTestApp(t)
-	repo, worker := createOverridesTestRepoAndWorker(t, app)
-	stack := createOverridesTestStack(t, app, repo.Id, worker.Id, t.TempDir())
-	writeStackRevisionFile(t, app, stack.Id, 34, "name: my_stack\nservices:\n  web:\n    image: nginx:1.28\n")
-
-	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/custom/stacks/%s/revisions/34", stack.Id), nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+func TestStackRevisionRoute(t *testing.T) {
+	tests := []struct {
+		name           string
+		version        string
+		unknownStack   bool
+		writeRevision  bool
+		expectedStatus int
+		bodyContains   []string
+	}{
+		{
+			name:           "valid revision",
+			version:        "34",
+			writeRevision:  true,
+			expectedStatus: http.StatusOK,
+			bodyContains:   []string{"nginx:1.28", `"filename":"v34.yml"`},
+		},
+		{
+			name:           "missing revision",
+			version:        "99",
+			expectedStatus: http.StatusNotFound,
+		},
+		{
+			name:           "invalid version text",
+			version:        "not-a-number",
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:           "zero version",
+			version:        "0",
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:           "negative version",
+			version:        "-1",
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:           "unknown stack",
+			version:        "1",
+			unknownStack:   true,
+			expectedStatus: http.StatusNotFound,
+		},
 	}
-	if !strings.Contains(rec.Body.String(), "nginx:1.28") || !strings.Contains(rec.Body.String(), `"filename":"v34.yml"`) {
-		t.Fatalf("unexpected response body: %s", rec.Body.String())
-	}
-}
 
-func TestStackRevisionRouteMissingRevisionReturns404(t *testing.T) {
-	app, mux := setupStackRevisionsTestApp(t)
-	repo, worker := createOverridesTestRepoAndWorker(t, app)
-	stack := createOverridesTestStack(t, app, repo.Id, worker.Id, t.TempDir())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app, mux := setupStackRevisionsTestApp(t)
 
-	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/custom/stacks/%s/revisions/99", stack.Id), nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
+			stackID := "nonexistent"
+			if !tt.unknownStack {
+				repo, worker := createOverridesTestRepoAndWorker(t, app)
+				stack := createOverridesTestStack(t, app, repo.Id, worker.Id, t.TempDir())
+				stackID = stack.Id
+			}
+			if tt.writeRevision {
+				writeStackRevisionFile(t, app, stackID, 34, "name: my_stack\nservices:\n  web:\n    image: nginx:1.28\n")
+			}
 
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
-	}
-}
+			req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/custom/stacks/%s/revisions/%s", stackID, tt.version), nil)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
 
-func TestStackRevisionRouteInvalidVersionReturns400(t *testing.T) {
-	app, mux := setupStackRevisionsTestApp(t)
-	repo, worker := createOverridesTestRepoAndWorker(t, app)
-	stack := createOverridesTestStack(t, app, repo.Id, worker.Id, t.TempDir())
-
-	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/custom/stacks/%s/revisions/not-a-number", stack.Id), nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
-	}
-}
-
-func TestStackRevisionRouteUnknownStackReturns404(t *testing.T) {
-	_, mux := setupStackRevisionsTestApp(t)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/custom/stacks/nonexistent/revisions/1", nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
+			if rec.Code != tt.expectedStatus {
+				t.Fatalf("expected %d, got %d: %s", tt.expectedStatus, rec.Code, rec.Body.String())
+			}
+			for _, want := range tt.bodyContains {
+				if !strings.Contains(rec.Body.String(), want) {
+					t.Fatalf("expected body to contain %q, got: %s", want, rec.Body.String())
+				}
+			}
+		})
 	}
 }

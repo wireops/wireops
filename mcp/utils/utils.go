@@ -18,6 +18,13 @@ func ToInterfaceSlice(ss []string) []interface{} {
 // applies when checking volumes against worker policy.
 func VolumeSource(spec string) string {
 	spec = strings.TrimSpace(spec)
+	if isWindowsDriveLetterPath(spec) {
+		rest := spec[2:]
+		if idx := strings.Index(rest, ":"); idx != -1 {
+			return spec[:2+idx]
+		}
+		return spec
+	}
 	parts := strings.Split(spec, ":")
 	if len(parts) > 1 {
 		return strings.TrimSpace(parts[0])
@@ -27,6 +34,18 @@ func VolumeSource(spec string) string {
 		return p
 	}
 	return ""
+}
+
+// isWindowsDriveLetterPath reports whether spec starts with a Windows drive
+// letter (e.g. "C:\" or "C:/"), whose colon must not be treated as the
+// source:target separator that strings.Split(spec, ":") assumes.
+func isWindowsDriveLetterPath(spec string) bool {
+	if len(spec) < 3 || spec[1] != ':' {
+		return false
+	}
+	c := spec[0]
+	isLetter := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+	return isLetter && (spec[2] == '\\' || spec[2] == '/')
 }
 
 // IsHostPath reports whether a volume source string looks like a host filesystem
