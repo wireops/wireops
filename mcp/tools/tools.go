@@ -19,6 +19,7 @@ import (
 	"github.com/wireops/wireops/mcp/auth"
 	"github.com/wireops/wireops/mcp/client"
 	"github.com/wireops/wireops/mcp/models"
+	"github.com/wireops/wireops/mcp/utils"
 )
 
 // Register adds every wireops read-only tool to server, calling the
@@ -396,6 +397,8 @@ func composeConfigFrom(services []models.ComposeServiceInput) (map[string]interf
 		return nil, fmt.Errorf("at least one service is required")
 	}
 	svcMap := map[string]interface{}{}
+	namedVolumes := map[string]struct{}{}
+	networks := map[string]struct{}{}
 	for _, svc := range services {
 		if svc.Name == "" {
 			return nil, fmt.Errorf("every service requires a name")
@@ -414,17 +417,41 @@ func composeConfigFrom(services []models.ComposeServiceInput) (map[string]interf
 			entry["ports"] = svc.Ports
 		}
 		if len(svc.Volumes) > 0 {
-			entry["volumes"] = svc.Volumes
+			entry["volumes"] = utils.ToInterfaceSlice(svc.Volumes)
+			for _, v := range svc.Volumes {
+				if src := utils.VolumeSource(v); src != "" && !utils.IsHostPath(src) {
+					namedVolumes[src] = struct{}{}
+				}
+			}
 		}
 		if len(svc.Networks) > 0 {
-			entry["networks"] = svc.Networks
+			entry["networks"] = utils.ToInterfaceSlice(svc.Networks)
+			for _, n := range svc.Networks {
+				networks[n] = struct{}{}
+			}
 		}
 		if len(svc.DependsOn) > 0 {
 			entry["depends_on"] = svc.DependsOn
 		}
 		svcMap[svc.Name] = entry
 	}
-	return map[string]interface{}{"services": svcMap}, nil
+
+	config := map[string]interface{}{"services": svcMap}
+	if len(namedVolumes) > 0 {
+		topVolumes := map[string]interface{}{}
+		for name := range namedVolumes {
+			topVolumes[name] = map[string]interface{}{}
+		}
+		config["volumes"] = topVolumes
+	}
+	if len(networks) > 0 {
+		topNetworks := map[string]interface{}{}
+		for name := range networks {
+			topNetworks[name] = map[string]interface{}{}
+		}
+		config["networks"] = topNetworks
+	}
+	return config, nil
 }
 
 // workerPolicyFromEffective converts the "effective" PolicyJSON object

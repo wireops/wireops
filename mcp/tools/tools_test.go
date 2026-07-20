@@ -394,6 +394,60 @@ func TestScaffoldStackValidInputNoWorker(t *testing.T) {
 	}
 }
 
+func TestComposeConfigFromDeclaresTopLevelVolumesAndNetworks(t *testing.T) {
+	config, err := composeConfigFrom([]models.ComposeServiceInput{
+		{
+			Name:     "web",
+			Image:    "nginx:1.27",
+			Volumes:  []string{"data:/var/data", "/host/path:/etc/config", "cache:/var/cache"},
+			Networks: []string{"frontend", "backend"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	volumes, ok := config["volumes"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected top-level volumes map, got %T", config["volumes"])
+	}
+	if _, ok := volumes["data"]; !ok {
+		t.Fatalf("expected named volume %q declared at top level, got %v", "data", volumes)
+	}
+	if _, ok := volumes["cache"]; !ok {
+		t.Fatalf("expected named volume %q declared at top level, got %v", "cache", volumes)
+	}
+	if _, ok := volumes["/host/path"]; ok {
+		t.Fatalf("host bind-mount source should not be declared as a top-level volume, got %v", volumes)
+	}
+
+	networks, ok := config["networks"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected top-level networks map, got %T", config["networks"])
+	}
+	if _, ok := networks["frontend"]; !ok {
+		t.Fatalf("expected network %q declared at top level, got %v", "frontend", networks)
+	}
+	if _, ok := networks["backend"]; !ok {
+		t.Fatalf("expected network %q declared at top level, got %v", "backend", networks)
+	}
+
+	svcs, ok := config["services"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected services map, got %T", config["services"])
+	}
+	web, ok := svcs["web"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected web service map, got %T", svcs["web"])
+	}
+	if _, ok := web["volumes"]; !ok {
+		t.Fatal("expected service-level volumes to still be present")
+	}
+	if _, ok := web["networks"]; !ok {
+		t.Fatal("expected service-level networks to still be present")
+	}
+}
+
 func TestScaffoldStackRequiresAtLeastOneService(t *testing.T) {
 	handler := scaffoldStack(client.New("http://unused"))
 	_, _, err := handler(context.Background(), nil, models.ScaffoldStackInput{Name: "my-stack"})
@@ -440,6 +494,72 @@ func TestScaffoldStackWithWorkerIDAllowsCompliantCompose(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("unexpected error for policy-compliant compose: %v", err)
+	}
+}
+
+func TestScaffoldStackWithWorkerIDRejectsDisallowedVolume(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"inherit":true,"effective":{"enabled":true,"allowed_volumes":["data"],"allowed_networks":[],"allowed_images":[],"allowed_cap_add":[],"allowed_devices":[],"allowed_security_opt":[],"prevent_latest_images":false,"block_host_volumes":false,"block_privileged":false,"block_host_network":false,"block_host_pid":false,"block_host_ipc":false,"block_docker_socket":false,"allow_render_overrides":false}}`))
+	}))
+	defer srv.Close()
+
+	handler := scaffoldStack(client.New(srv.URL))
+	_, _, err := handler(ctxWithKey(), nil, models.ScaffoldStackInput{
+		Name:     "my-stack",
+		WorkerID: "worker1",
+		Services: []models.ComposeServiceInput{
+			{Name: "web", Image: "nginx:1.27", Volumes: []string{"other-volume:/data"}},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected policy violation error: volume not in worker's allowed_volumes list")
+	}
+	if !strings.Contains(err.Error(), "policy") {
+		t.Fatalf("expected error to mention policy violation, got: %v", err)
+	}
+}
+
+func TestScaffoldStackWithWorkerIDRejectsDisallowedNetwork(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"inherit":true,"effective":{"enabled":true,"allowed_volumes":[],"allowed_networks":["frontend"],"allowed_images":[],"allowed_cap_add":[],"allowed_devices":[],"allowed_security_opt":[],"prevent_latest_images":false,"block_host_volumes":false,"block_privileged":false,"block_host_network":false,"block_host_pid":false,"block_host_ipc":false,"block_docker_socket":false,"allow_render_overrides":false}}`))
+	}))
+	defer srv.Close()
+
+	handler := scaffoldStack(client.New(srv.URL))
+	_, _, err := handler(ctxWithKey(), nil, models.ScaffoldStackInput{
+		Name:     "my-stack",
+		WorkerID: "worker1",
+		Services: []models.ComposeServiceInput{
+			{Name: "web", Image: "nginx:1.27", Networks: []string{"backend"}},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected policy violation error: network not in worker's allowed_networks list")
+	}
+	if !strings.Contains(err.Error(), "policy") {
+		t.Fatalf("expected error to mention policy violation, got: %v", err)
+	}
+}
+
+func TestScaffoldStackWithWorkerIDRejectsHostVolumeWhenBlocked(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"inherit":true,"effective":{"enabled":true,"allowed_volumes":[],"allowed_networks":[],"allowed_images":[],"allowed_cap_add":[],"allowed_devices":[],"allowed_security_opt":[],"prevent_latest_images":false,"block_host_volumes":true,"block_privileged":false,"block_host_network":false,"block_host_pid":false,"block_host_ipc":false,"block_docker_socket":false,"allow_render_overrides":false}}`))
+	}))
+	defer srv.Close()
+
+	handler := scaffoldStack(client.New(srv.URL))
+	_, _, err := handler(ctxWithKey(), nil, models.ScaffoldStackInput{
+		Name:     "my-stack",
+		WorkerID: "worker1",
+		Services: []models.ComposeServiceInput{
+			{Name: "web", Image: "nginx:1.27", Volumes: []string{"/host/path:/data"}},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected policy violation error: host bind-mount blocked by worker policy")
+	}
+	if !strings.Contains(err.Error(), "policy") {
+		t.Fatalf("expected error to mention policy violation, got: %v", err)
 	}
 }
 
