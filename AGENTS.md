@@ -240,6 +240,7 @@ All custom routes are prefixed `/api/custom/`. PocketBase also auto-exposes CRUD
 | `POST` | `/credentials/keyscan` | SSH host key scan |
 
 ### SOPS (`internal/routes/sops_routes.go`)
+
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/api/custom/stacks/{id}/sops-env-vars` | List `secrets.yaml` key names only, never values (`CapViewStacks`) |
