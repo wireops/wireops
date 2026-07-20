@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pocketbase/dbx"
@@ -43,6 +44,7 @@ type Payload struct {
 type Notifier struct {
 	app    core.App
 	client *http.Client
+	wg     sync.WaitGroup
 }
 
 // New creates a new Notifier.
@@ -58,11 +60,18 @@ func New(app core.App) *Notifier {
 // Dispatch sends a notification for the given event to all enabled notification integrations.
 // It is fire-and-forget: failures are only logged, never returned.
 func (n *Notifier) Dispatch(ctx context.Context, p Payload) {
-	go func() {
+	n.wg.Go(func() {
 		if err := n.dispatch(ctx, p); err != nil {
 			log.Printf("[notify] dispatch %s for stack %s failed: %v", p.Event, p.StackID, err)
 		}
-	}()
+	})
+}
+
+// Wait blocks until all in-flight Dispatch goroutines have completed. It
+// exists for tests, which need to observe the effects of a dispatch (or
+// avoid tearing down the app while one is still using it) before returning.
+func (n *Notifier) Wait() {
+	n.wg.Wait()
 }
 
 // DispatchWithConfig sends a notification using the provided configuration, bypassing db lookup.

@@ -402,7 +402,7 @@ func Execute() error {
 		return se.Next()
 	})
 
-	hooks.Register(app, scheduler, jobSched, logBroker)
+	_ = hooks.Register(app, scheduler, jobSched, logBroker)
 
 	syncHandler := func(e *core.RecordEvent) error {
 		syncSuperusers(app)
