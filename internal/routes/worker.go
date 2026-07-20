@@ -196,13 +196,14 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 
 		// Read nullable boolean overrides from policy_flags.
 		type flagsType struct {
-			PreventLatestImages *bool `json:"prevent_latest_images"`
-			BlockHostVolumes    *bool `json:"block_host_volumes"`
-			BlockPrivileged     *bool `json:"block_privileged"`
-			BlockHostNetwork    *bool `json:"block_host_network"`
-			BlockHostPID        *bool `json:"block_host_pid"`
-			BlockHostIPC        *bool `json:"block_host_ipc"`
-			BlockDockerSocket   *bool `json:"block_docker_socket"`
+			PreventLatestImages  *bool `json:"prevent_latest_images"`
+			BlockHostVolumes     *bool `json:"block_host_volumes"`
+			BlockPrivileged      *bool `json:"block_privileged"`
+			BlockHostNetwork     *bool `json:"block_host_network"`
+			BlockHostPID         *bool `json:"block_host_pid"`
+			BlockHostIPC         *bool `json:"block_host_ipc"`
+			BlockDockerSocket    *bool `json:"block_docker_socket"`
+			AllowRenderOverrides *bool `json:"allow_render_overrides"`
 		}
 		var flagsOut flagsType
 		if raw := rec.GetString("policy_flags"); raw != "" {
@@ -215,21 +216,22 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 		}
 
 		return e.JSON(http.StatusOK, map[string]interface{}{
-			"inherit":               inherit,
-			"allowed_volumes":       localVolumes,
-			"allowed_networks":      localNetworks,
-			"allowed_images":        localImages,
-			"allowed_cap_add":       localCapAdd,
-			"allowed_devices":       localDevices,
-			"allowed_security_opt":  localSecurityOpt,
-			"prevent_latest_images": flagsOut.PreventLatestImages,
-			"block_host_volumes":    flagsOut.BlockHostVolumes,
-			"block_privileged":      flagsOut.BlockPrivileged,
-			"block_host_network":    flagsOut.BlockHostNetwork,
-			"block_host_pid":        flagsOut.BlockHostPID,
-			"block_host_ipc":        flagsOut.BlockHostIPC,
-			"block_docker_socket":   flagsOut.BlockDockerSocket,
-			"effective":             effective.ToJSON(),
+			"inherit":                inherit,
+			"allowed_volumes":        localVolumes,
+			"allowed_networks":       localNetworks,
+			"allowed_images":         localImages,
+			"allowed_cap_add":        localCapAdd,
+			"allowed_devices":        localDevices,
+			"allowed_security_opt":   localSecurityOpt,
+			"prevent_latest_images":  flagsOut.PreventLatestImages,
+			"block_host_volumes":     flagsOut.BlockHostVolumes,
+			"block_privileged":       flagsOut.BlockPrivileged,
+			"block_host_network":     flagsOut.BlockHostNetwork,
+			"block_host_pid":         flagsOut.BlockHostPID,
+			"block_host_ipc":         flagsOut.BlockHostIPC,
+			"block_docker_socket":    flagsOut.BlockDockerSocket,
+			"allow_render_overrides": flagsOut.AllowRenderOverrides,
+			"effective":              effective.ToJSON(),
 		})
 	}).BindFunc(rbac.Require(rbac.CapManageSettings))
 
@@ -257,22 +259,24 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 
 		// Persist nullable boolean flags as a JSON object.
 		type flagsPayload struct {
-			PreventLatestImages *bool `json:"prevent_latest_images"`
-			BlockHostVolumes    *bool `json:"block_host_volumes"`
-			BlockPrivileged     *bool `json:"block_privileged"`
-			BlockHostNetwork    *bool `json:"block_host_network"`
-			BlockHostPID        *bool `json:"block_host_pid"`
-			BlockHostIPC        *bool `json:"block_host_ipc"`
-			BlockDockerSocket   *bool `json:"block_docker_socket"`
+			PreventLatestImages  *bool `json:"prevent_latest_images"`
+			BlockHostVolumes     *bool `json:"block_host_volumes"`
+			BlockPrivileged      *bool `json:"block_privileged"`
+			BlockHostNetwork     *bool `json:"block_host_network"`
+			BlockHostPID         *bool `json:"block_host_pid"`
+			BlockHostIPC         *bool `json:"block_host_ipc"`
+			BlockDockerSocket    *bool `json:"block_docker_socket"`
+			AllowRenderOverrides *bool `json:"allow_render_overrides"`
 		}
 		flags := flagsPayload{
-			PreventLatestImages: body.PreventLatestImages,
-			BlockHostVolumes:    body.BlockHostVolumes,
-			BlockPrivileged:     body.BlockPrivileged,
-			BlockHostNetwork:    body.BlockHostNetwork,
-			BlockHostPID:        body.BlockHostPID,
-			BlockHostIPC:        body.BlockHostIPC,
-			BlockDockerSocket:   body.BlockDockerSocket,
+			PreventLatestImages:  body.PreventLatestImages,
+			BlockHostVolumes:     body.BlockHostVolumes,
+			BlockPrivileged:      body.BlockPrivileged,
+			BlockHostNetwork:     body.BlockHostNetwork,
+			BlockHostPID:         body.BlockHostPID,
+			BlockHostIPC:         body.BlockHostIPC,
+			BlockDockerSocket:    body.BlockDockerSocket,
+			AllowRenderOverrides: body.AllowRenderOverrides,
 		}
 		if flagsJSON, err := json.Marshal(flags); err == nil {
 			rec.Set("policy_flags", string(flagsJSON))
@@ -374,6 +378,7 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 		rec.Set("block_host_pid", body.BlockHostPID)
 		rec.Set("block_host_ipc", body.BlockHostIPC)
 		rec.Set("block_docker_socket", body.BlockDockerSocket)
+		rec.Set("allow_render_overrides", body.AllowRenderOverrides)
 
 		if err := app.Save(rec); err != nil {
 			log.Printf("[POLICY] Failed to save global worker policy: %v", err)

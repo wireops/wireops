@@ -46,18 +46,24 @@ type WorkerPolicy struct {
 	BlockHostPID        bool // when true, services with pid: host are rejected
 	BlockHostIPC        bool // when true, services with ipc: host are rejected
 	BlockDockerSocket   bool // when true, mounting /var/run/docker.sock (or /run/docker.sock) is rejected
+
+	// AllowRenderOverrides gates render-time (not-committed-to-git) image/ports/networks
+	// overrides. Unlike the Block*/Prevent* flags above, this defaults to false (blocked)
+	// since the capability itself must be explicitly opted into per worker.
+	AllowRenderOverrides bool
 }
 
 // policyFlags is the nullable wire format for per-worker boolean flag overrides.
 // A nil pointer means "inherit from global"; a non-nil value overrides explicitly.
 type policyFlags struct {
-	PreventLatestImages *bool `json:"prevent_latest_images"`
-	BlockHostVolumes    *bool `json:"block_host_volumes"`
-	BlockPrivileged     *bool `json:"block_privileged"`
-	BlockHostNetwork    *bool `json:"block_host_network"`
-	BlockHostPID        *bool `json:"block_host_pid"`
-	BlockHostIPC        *bool `json:"block_host_ipc"`
-	BlockDockerSocket   *bool `json:"block_docker_socket"`
+	PreventLatestImages  *bool `json:"prevent_latest_images"`
+	BlockHostVolumes     *bool `json:"block_host_volumes"`
+	BlockPrivileged      *bool `json:"block_privileged"`
+	BlockHostNetwork     *bool `json:"block_host_network"`
+	BlockHostPID         *bool `json:"block_host_pid"`
+	BlockHostIPC         *bool `json:"block_host_ipc"`
+	BlockDockerSocket    *bool `json:"block_docker_socket"`
+	AllowRenderOverrides *bool `json:"allow_render_overrides"`
 }
 
 // Load returns the effective WorkerPolicy for the given workerID.
@@ -169,6 +175,7 @@ func Load(app core.App, workerID string) (*WorkerPolicy, error) {
 	local.BlockHostPID = resolveFlag(flags.BlockHostPID, global.BlockHostPID, inherit)
 	local.BlockHostIPC = resolveFlag(flags.BlockHostIPC, global.BlockHostIPC, inherit)
 	local.BlockDockerSocket = resolveFlag(flags.BlockDockerSocket, global.BlockDockerSocket, inherit)
+	local.AllowRenderOverrides = resolveFlag(flags.AllowRenderOverrides, global.AllowRenderOverrides, inherit)
 
 	return local, nil
 }
@@ -223,6 +230,7 @@ func loadGlobal(app core.App) (*WorkerPolicy, error) {
 	p.BlockHostPID = rec.GetBool("block_host_pid")
 	p.BlockHostIPC = rec.GetBool("block_host_ipc")
 	p.BlockDockerSocket = rec.GetBool("block_docker_socket")
+	p.AllowRenderOverrides = rec.GetBool("allow_render_overrides")
 	return p, nil
 }
 
@@ -486,39 +494,41 @@ func stringInList(s string, list []string) bool {
 
 // PolicyJSON is the wire format used by the API for reading and writing global policies.
 type PolicyJSON struct {
-	Enabled             bool     `json:"enabled"`
-	AllowedVolumes      []string `json:"allowed_volumes"`
-	AllowedNetworks     []string `json:"allowed_networks"`
-	AllowedImages       []string `json:"allowed_images"`
-	AllowedCapAdd       []string `json:"allowed_cap_add"`
-	AllowedDevices      []string `json:"allowed_devices"`
-	AllowedSecurityOpt  []string `json:"allowed_security_opt"`
-	PreventLatestImages bool     `json:"prevent_latest_images"`
-	BlockHostVolumes    bool     `json:"block_host_volumes"`
-	BlockPrivileged     bool     `json:"block_privileged"`
-	BlockHostNetwork    bool     `json:"block_host_network"`
-	BlockHostPID        bool     `json:"block_host_pid"`
-	BlockHostIPC        bool     `json:"block_host_ipc"`
-	BlockDockerSocket   bool     `json:"block_docker_socket"`
+	Enabled              bool     `json:"enabled"`
+	AllowedVolumes       []string `json:"allowed_volumes"`
+	AllowedNetworks      []string `json:"allowed_networks"`
+	AllowedImages        []string `json:"allowed_images"`
+	AllowedCapAdd        []string `json:"allowed_cap_add"`
+	AllowedDevices       []string `json:"allowed_devices"`
+	AllowedSecurityOpt   []string `json:"allowed_security_opt"`
+	PreventLatestImages  bool     `json:"prevent_latest_images"`
+	BlockHostVolumes     bool     `json:"block_host_volumes"`
+	BlockPrivileged      bool     `json:"block_privileged"`
+	BlockHostNetwork     bool     `json:"block_host_network"`
+	BlockHostPID         bool     `json:"block_host_pid"`
+	BlockHostIPC         bool     `json:"block_host_ipc"`
+	BlockDockerSocket    bool     `json:"block_docker_socket"`
+	AllowRenderOverrides bool     `json:"allow_render_overrides"`
 }
 
 // ToJSON converts a WorkerPolicy to the API wire format.
 func (p *WorkerPolicy) ToJSON() PolicyJSON {
 	res := PolicyJSON{
-		Enabled:             !p.Disabled,
-		AllowedVolumes:      p.AllowedVolumes,
-		AllowedNetworks:     p.AllowedNetworks,
-		AllowedImages:       p.AllowedImages,
-		AllowedCapAdd:       p.AllowedCapAdd,
-		AllowedDevices:      p.AllowedDevices,
-		AllowedSecurityOpt:  p.AllowedSecurityOpt,
-		PreventLatestImages: p.PreventLatestImages,
-		BlockHostVolumes:    p.BlockHostVolumes,
-		BlockPrivileged:     p.BlockPrivileged,
-		BlockHostNetwork:    p.BlockHostNetwork,
-		BlockHostPID:        p.BlockHostPID,
-		BlockHostIPC:        p.BlockHostIPC,
-		BlockDockerSocket:   p.BlockDockerSocket,
+		Enabled:              !p.Disabled,
+		AllowedVolumes:       p.AllowedVolumes,
+		AllowedNetworks:      p.AllowedNetworks,
+		AllowedImages:        p.AllowedImages,
+		AllowedCapAdd:        p.AllowedCapAdd,
+		AllowedDevices:       p.AllowedDevices,
+		AllowedSecurityOpt:   p.AllowedSecurityOpt,
+		PreventLatestImages:  p.PreventLatestImages,
+		BlockHostVolumes:     p.BlockHostVolumes,
+		BlockPrivileged:      p.BlockPrivileged,
+		BlockHostNetwork:     p.BlockHostNetwork,
+		BlockHostPID:         p.BlockHostPID,
+		BlockHostIPC:         p.BlockHostIPC,
+		BlockDockerSocket:    p.BlockDockerSocket,
+		AllowRenderOverrides: p.AllowRenderOverrides,
 	}
 	if res.AllowedVolumes == nil {
 		res.AllowedVolumes = []string{}
@@ -552,11 +562,12 @@ type WorkerPolicyOverrideJSON struct {
 	AllowedDevices     *[]string `json:"allowed_devices"`
 	AllowedSecurityOpt *[]string `json:"allowed_security_opt"`
 	// Nullable booleans: use a pointer so null (unset/inherit) is distinguishable from false.
-	PreventLatestImages *bool `json:"prevent_latest_images"`
-	BlockHostVolumes    *bool `json:"block_host_volumes"`
-	BlockPrivileged     *bool `json:"block_privileged"`
-	BlockHostNetwork    *bool `json:"block_host_network"`
-	BlockHostPID        *bool `json:"block_host_pid"`
-	BlockHostIPC        *bool `json:"block_host_ipc"`
-	BlockDockerSocket   *bool `json:"block_docker_socket"`
+	PreventLatestImages  *bool `json:"prevent_latest_images"`
+	BlockHostVolumes     *bool `json:"block_host_volumes"`
+	BlockPrivileged      *bool `json:"block_privileged"`
+	BlockHostNetwork     *bool `json:"block_host_network"`
+	BlockHostPID         *bool `json:"block_host_pid"`
+	BlockHostIPC         *bool `json:"block_host_ipc"`
+	BlockDockerSocket    *bool `json:"block_docker_socket"`
+	AllowRenderOverrides *bool `json:"allow_render_overrides"`
 }

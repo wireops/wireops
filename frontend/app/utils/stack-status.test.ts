@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest'
-import { stackDeployStatus, stackSourceStatus, stackVisibleDeployStatus, stackWorkerStatus } from './stack-status'
+import { stackDeployStatus, stackHasRenderOverrides, stackSourceStatus, stackVisibleDeployStatus, stackWorkerStatus } from './stack-status'
+
+describe('stackHasRenderOverrides', () => {
+  it('is false when render_overrides is missing or empty', () => {
+    expect(stackHasRenderOverrides({})).toBe(false)
+    expect(stackHasRenderOverrides({ render_overrides: null })).toBe(false)
+    expect(stackHasRenderOverrides({ render_overrides: {} })).toBe(false)
+  })
+
+  it('is true when render_overrides has at least one service entry', () => {
+    expect(stackHasRenderOverrides({ render_overrides: { web: { image: 'nginx:test' } } })).toBe(true)
+  })
+})
 
 describe('stack status helpers', () => {
   it('normalizes repository source states and dot colors', () => {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { stackRepositorySubtitle, stackSourceStatus, stackVisibleDeployStatus, stackWorkerName, stackWorkerStatus } from '../utils/stack-status'
+import { stackHasRenderOverrides, stackRepositorySubtitle, stackSourceStatus, stackVisibleDeployStatus, stackWorkerName, stackWorkerStatus } from '../utils/stack-status'
 
 const { $pb } = useNuxtApp()
 const { getWorkers, listOrphans, purgeOrphan } = useApi()
@@ -334,9 +334,21 @@ async function handlePurge(dirName: string) {
                 :aria-label="`Open stack ${stack.name}`"
               >
                 <div class="mb-3 min-w-0">
-                  <h3 class="truncate text-base font-bold tracking-tight text-gray-950 transition-colors group-hover:text-yellow-500 group-focus-visible:text-yellow-500 dark:text-white">
-                    {{ stack.name }}
-                  </h3>
+                  <div class="flex min-w-0 items-center gap-2">
+                    <h3 class="truncate text-base font-bold tracking-tight text-gray-950 transition-colors group-hover:text-yellow-500 group-focus-visible:text-yellow-500 dark:text-white">
+                      {{ stack.name }}
+                    </h3>
+                    <UBadge
+                      v-if="stackHasRenderOverrides(stack)"
+                      color="warning"
+                      variant="subtle"
+                      size="sm"
+                      class="shrink-0"
+                      title="Running with manual render overrides, not what's in Git"
+                    >
+                      Customized
+                    </UBadge>
+                  </div>
                   <div class="mt-1 flex min-w-0 items-center gap-2 text-xs text-gray-500 dark:text-wire-200/50">
                     <span class="inline-flex min-w-0 items-center gap-1.5">
                       <UIcon

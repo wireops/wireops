@@ -189,6 +189,7 @@ const workerPolicy = ref({
   block_host_pid: false,
   block_host_ipc: false,
   block_docker_socket: false,
+  allow_render_overrides: false,
 })
 const workerPolicyLoading = ref(false)
 const workerPolicySaving = ref(false)
@@ -215,6 +216,7 @@ async function loadWorkerPolicy() {
       block_host_pid:        data?.block_host_pid        ?? false,
       block_host_ipc:        data?.block_host_ipc        ?? false,
       block_docker_socket:   data?.block_docker_socket   ?? false,
+      allow_render_overrides: data?.allow_render_overrides ?? false,
     }
   } catch {
     // no policy yet — defaults are fine
@@ -257,6 +259,7 @@ async function applyStrictProductionPreset() {
   workerPolicy.value.block_host_pid = true
   workerPolicy.value.block_host_ipc = true
   workerPolicy.value.block_docker_socket = true
+  workerPolicy.value.allow_render_overrides = false
   await saveWorkerPolicyGlobal()
   showStrictPresetModal.value = false
 }

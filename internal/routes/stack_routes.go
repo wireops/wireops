@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/pocketbase/dbx"
@@ -18,13 +20,14 @@ import (
 	"github.com/wireops/wireops/internal/config"
 	"github.com/wireops/wireops/internal/crypto"
 	"github.com/wireops/wireops/internal/envvars"
+	"github.com/wireops/wireops/internal/manifest"
+	"github.com/wireops/wireops/internal/policy"
 	"github.com/wireops/wireops/internal/protocol"
 	"github.com/wireops/wireops/internal/rbac"
 	"github.com/wireops/wireops/internal/safepath"
 	"github.com/wireops/wireops/internal/secrets"
 	"github.com/wireops/wireops/internal/sync"
 	"github.com/wireops/wireops/internal/webhook"
-	"github.com/wireops/wireops/internal/manifest"
 )
 
 func (rr routeRegistrar) registerStackTriggerRoutes() {
@@ -146,7 +149,188 @@ func (rr routeRegistrar) registerStackInspectionRoutes() {
 		if e.Auth != nil {
 			userID = e.Auth.Id
 		}
+		// Any persisted render_overrides are reapplied automatically by
+		// ForceRedeployStack, same as every other reconcile path — no need to
+		// load and pass them explicitly here.
 		rr.scheduler.TriggerForceRedeploy(stackID, body.RecreateContainers, body.RecreateVolumes, body.RecreateNetworks, userID)
+		return e.JSON(http.StatusOK, map[string]string{"status": "triggered"})
+	}).BindFunc(rbac.Require(rbac.CapOperateStacks))
+
+	rr.r.GET("/api/custom/stacks/{id}/render-overrides", func(e *core.RequestEvent) error {
+		stackID := e.Request.PathValue("id")
+		stack, err := rr.app.FindRecordById("stacks", stackID)
+		if err != nil {
+			return e.JSON(http.StatusNotFound, map[string]string{"error": "stack not found"})
+		}
+
+		overrides := sync.LoadRenderOverrides(stack)
+		resp := map[string]interface{}{"overrides": overrides}
+		if len(overrides) == 0 {
+			return e.JSON(http.StatusOK, resp)
+		}
+
+		// Best-effort: resolve what each overridden service's image/ports/networks would
+		// be from Git alone, so the UI can show a diff against the active override.
+		composeFile := stack.GetString("compose_file")
+		if composeFile == "" {
+			composeFile = "docker-compose.yml"
+		}
+		if err := safepath.ValidateComposeFile(composeFile); err != nil {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+		}
+		envVars, envErr := rr.scheduler.LoadStackEnvVars(e.Request.Context(), stackID)
+		if envErr != nil {
+			resp["git_error"] = "failed to resolve env vars: " + envErr.Error()
+			return e.JSON(http.StatusOK, resp)
+		}
+		configOut, err := compose.Config(e.Request.Context(), compose.ConfigOptions{
+			WorkDir:     stackWorkDir(rr.app, stack),
+			ComposeFile: composeFile,
+			EnvVars:     envVars,
+		}, true)
+		if err != nil {
+			resp["git_error"] = "failed to resolve Git-defined values: " + err.Error()
+			return e.JSON(http.StatusOK, resp)
+		}
+		configMap, err := compose.ParseConfigJSON(configOut)
+		if err != nil {
+			resp["git_error"] = "failed to parse Git-defined compose config: " + err.Error()
+			return e.JSON(http.StatusOK, resp)
+		}
+		services, _ := configMap["services"].(map[string]interface{})
+		gitValues := map[string]interface{}{}
+		for name := range overrides {
+			svc, ok := services[name].(map[string]interface{})
+			if !ok {
+				continue
+			}
+			image, _ := svc["image"].(string)
+			gitValues[name] = map[string]interface{}{
+				"image":    image,
+				"ports":    composePortsToShortForm(svc["ports"]),
+				"networks": composeNetworksToList(svc["networks"]),
+			}
+		}
+		resp["git"] = gitValues
+		return e.JSON(http.StatusOK, resp)
+	}).BindFunc(rbac.Require(rbac.CapOperateStacks))
+
+	rr.r.PUT("/api/custom/stacks/{id}/render-overrides", func(e *core.RequestEvent) error {
+		stackID := e.Request.PathValue("id")
+		if stackID == "" {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "missing id"})
+		}
+		stack, err := rr.app.FindRecordById("stacks", stackID)
+		if err != nil {
+			return e.JSON(http.StatusNotFound, map[string]string{"error": "stack not found"})
+		}
+		if !rr.workerOnline(e, stackID) {
+			return nil
+		}
+
+		var body struct {
+			Overrides map[string]sync.ServiceOverride `json:"overrides"`
+		}
+		if err := json.NewDecoder(e.Request.Body).Decode(&body); err != nil {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		}
+		if len(body.Overrides) == 0 {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "overrides must not be empty"})
+		}
+
+		// Validate before persisting: a rejected or unresolvable override must never
+		// be written to the stack record, since every future reconcile reapplies
+		// whatever is stored there.
+		wp, err := policy.Load(rr.app, stack.GetString("worker"))
+		if err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load worker policy"})
+		}
+		if !wp.AllowRenderOverrides {
+			return e.JSON(http.StatusForbidden, map[string]string{"error": "render-time overrides are disabled by the worker policy"})
+		}
+
+		composeFile := stack.GetString("compose_file")
+		if composeFile == "" {
+			composeFile = "docker-compose.yml"
+		}
+		if err := safepath.ValidateComposeFile(composeFile); err != nil {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+		}
+		envVars, err := rr.scheduler.LoadStackEnvVars(e.Request.Context(), stackID)
+		if err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to resolve env vars: " + err.Error()})
+		}
+		configOut, err := compose.Config(e.Request.Context(), compose.ConfigOptions{
+			WorkDir:     stackWorkDir(rr.app, stack),
+			ComposeFile: composeFile,
+			EnvVars:     envVars,
+		}, true)
+		if err != nil {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "failed to resolve compose config: " + err.Error()})
+		}
+		configMap, err := compose.ParseConfigJSON(configOut)
+		if err != nil {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "failed to parse compose config: " + err.Error()})
+		}
+		services, _ := configMap["services"].(map[string]interface{})
+		for name := range body.Overrides {
+			if _, ok := services[name]; !ok {
+				return e.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("render override targets unknown service %q", name)})
+			}
+		}
+
+		// Apply the overrides to the resolved config and run them through the same
+		// policy check the renderer applies at deploy time, so a blocked image/network
+		// or a :latest tag is rejected here instead of being persisted and only failing
+		// (and getting auto-cleared) on the next reconcile.
+		if err := sync.ApplyServiceOverrides(configMap, body.Overrides); err != nil {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+		}
+		if err := wp.ValidateComposeConfig(configMap); err != nil {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+		}
+
+		stack.Set("render_overrides", body.Overrides)
+		if err := rr.app.Save(stack); err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to save overrides"})
+		}
+
+		var userID string
+		if e.Auth != nil {
+			userID = e.Auth.Id
+		}
+		// Applying overrides always changes the service definition (image/ports/networks),
+		// so force-recreate the containers rather than relying on docker compose's own
+		// diffing to notice the change.
+		rr.scheduler.TriggerForceRedeploy(stackID, true, false, false, userID)
+		return e.JSON(http.StatusOK, map[string]string{"status": "triggered"})
+	}).BindFunc(rbac.Require(rbac.CapOperateStacks))
+
+	rr.r.DELETE("/api/custom/stacks/{id}/render-overrides", func(e *core.RequestEvent) error {
+		stackID := e.Request.PathValue("id")
+		if stackID == "" {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "missing id"})
+		}
+		stack, err := rr.app.FindRecordById("stacks", stackID)
+		if err != nil {
+			return e.JSON(http.StatusNotFound, map[string]string{"error": "stack not found"})
+		}
+		if !rr.workerOnline(e, stackID) {
+			return nil
+		}
+
+		stack.Set("render_overrides", nil)
+		if err := rr.app.Save(stack); err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to clear overrides"})
+		}
+
+		var userID string
+		if e.Auth != nil {
+			userID = e.Auth.Id
+		}
+		// Reverting to Git state changes the service definition back, same as applying
+		// overrides — force-recreate so the revert is guaranteed to take effect.
+		rr.scheduler.TriggerForceRedeploy(stackID, true, false, false, userID)
 		return e.JSON(http.StatusOK, map[string]string{"status": "triggered"})
 	}).BindFunc(rbac.Require(rbac.CapOperateStacks))
 
@@ -813,4 +997,70 @@ func (rr routeRegistrar) registerCreateFromWireopsRoute() {
 		log.Printf("[routes] create-from-wireops stack=%s repository=%s worker=%s file=%s", stack.Id, body.Repository, workerRecord.GetString("hostname"), body.WireopsFile)
 		return e.JSON(http.StatusOK, map[string]string{"id": stack.Id, "name": def.Name, "status": "pending"})
 	}).BindFunc(rbac.Require(rbac.CapManageRepos))
+}
+
+// composePortsToShortForm converts a service's "ports" value from `docker compose config`
+// JSON output (long-form objects, e.g. {"published":"8080","target":80,"protocol":"tcp"})
+// into short-syntax strings ("8080:80") comparable to a ServiceOverride.Ports value.
+func composePortsToShortForm(raw interface{}) []string {
+	list, ok := raw.([]interface{})
+	if !ok {
+		return nil
+	}
+	var out []string
+	for _, item := range list {
+		switch v := item.(type) {
+		case string:
+			out = append(out, v)
+		case map[string]interface{}:
+			published := portNumberString(v["published"])
+			target := portNumberString(v["target"])
+			if published == "" || target == "" {
+				continue
+			}
+			short := published + ":" + target
+			if protocol, _ := v["protocol"].(string); protocol != "" && protocol != "tcp" {
+				short += "/" + protocol
+			}
+			out = append(out, short)
+		}
+	}
+	return out
+}
+
+// portNumberString formats a `docker compose config` JSON port field (decoded as
+// float64, string, or absent) as a plain integer string, avoiding fmt.Sprint's
+// scientific-notation rendering of large float64 values.
+func portNumberString(v interface{}) string {
+	switch n := v.(type) {
+	case float64:
+		return strconv.FormatFloat(n, 'f', 0, 64)
+	case string:
+		return n
+	default:
+		return ""
+	}
+}
+
+// composeNetworksToList converts a service's "networks" value (map or list form) into a
+// plain list of network names comparable to a ServiceOverride.Networks value.
+func composeNetworksToList(raw interface{}) []string {
+	switch v := raw.(type) {
+	case map[string]interface{}:
+		names := make([]string, 0, len(v))
+		for name := range v {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		return names
+	case []interface{}:
+		var out []string
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
 }

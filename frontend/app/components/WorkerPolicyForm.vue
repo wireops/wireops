@@ -14,6 +14,7 @@ const policy = defineModel<{
   block_host_pid: boolean | null
   block_host_ipc: boolean | null
   block_docker_socket: boolean | null
+  allow_render_overrides: boolean | null
 }>({ required: true })
 
 const emit = defineEmits<{
@@ -362,6 +363,35 @@ function removeCapAdd(cap: string) {
               @save="emit('save')"
             />
           </div>
+        </div>
+      </UCard>
+
+      <!-- Render Overrides Policy Card -->
+      <UCard>
+        <template #header>
+          <div class="flex items-center gap-3">
+            <div class="flex items-center justify-center w-8 h-8 rounded-lg bg-amber-400/10 shrink-0">
+              <UIcon name="i-lucide-sliders-horizontal" class="w-4 h-4 text-amber-400" />
+            </div>
+            <div class="min-w-0">
+              <h3 class="font-semibold text-gray-900 dark:text-wire-200 text-sm">Render Overrides Policy</h3>
+              <p class="text-xs text-gray-500 mt-0.5">Controls whether render-time (not committed to git) image/ports/networks overrides can be applied to stacks on this worker.</p>
+            </div>
+          </div>
+        </template>
+
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="text-sm font-medium text-gray-900 dark:text-wire-200 flex items-center gap-2">
+              <UIcon name="i-lucide-sliders-horizontal" class="w-4 h-4 text-gray-400 shrink-0" />
+              Allow render-time overrides
+            </p>
+            <p class="text-xs text-gray-400 mt-0.5 ml-6">
+              Blocked by default. When enabled, users can override a service's image, ports, or networks for a
+              one-off redeploy without touching Git. Overridden values still pass the allowlists and checks above.
+            </p>
+          </div>
+          <TriStateToggle v-model="policy.allow_render_overrides" @change="emit('save')" />
         </div>
       </UCard>
     </div>

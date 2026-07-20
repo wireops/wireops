@@ -99,6 +99,13 @@ export function useApi() {
     customGet<{ logs: string }>(`/api/custom/stacks/${stackId}/container/${containerId}/logs?tail=${tail}`)
   const forceRedeploy = (stackId: string, options: { recreate_containers: boolean; recreate_volumes: boolean; recreate_networks: boolean }) =>
     customPost(`/api/custom/stacks/${stackId}/force-redeploy`, options)
+  type ServiceOverride = { image?: string; ports?: string[]; networks?: string[] }
+  const setRenderOverrides = (stackId: string, overrides: Record<string, ServiceOverride>) =>
+    customPut(`/api/custom/stacks/${stackId}/render-overrides`, { overrides })
+  const clearRenderOverrides = (stackId: string) =>
+    customDelete(`/api/custom/stacks/${stackId}/render-overrides`)
+  const getRenderOverridesDiff = (stackId: string) =>
+    customGet<{ overrides: Record<string, ServiceOverride> | null; git?: Record<string, ServiceOverride>; git_error?: string }>(`/api/custom/stacks/${stackId}/render-overrides`)
   const getRepoCommits = (repoId: string) =>
     customGet<{ sha: string; message: string; author: string; date: string }[]>(`/api/custom/repositories/${repoId}/commits`)
   const getRepoFiles = (repoId: string) =>
@@ -239,6 +246,7 @@ export function useApi() {
     block_host_pid: boolean
     block_host_ipc: boolean
     block_docker_socket: boolean
+    allow_render_overrides: boolean
   }
   type PolicyOverrideFlagKeys =
     | 'prevent_latest_images'
@@ -248,6 +256,7 @@ export function useApi() {
     | 'block_host_pid'
     | 'block_host_ipc'
     | 'block_docker_socket'
+    | 'allow_render_overrides'
   type PolicyOverrideNullableAllowlistKeys =
     | 'allowed_images'
     | 'allowed_volumes'
@@ -272,6 +281,7 @@ export function useApi() {
     block_host_pid: boolean | null
     block_host_ipc: boolean | null
     block_docker_socket: boolean | null
+    allow_render_overrides: boolean | null
   }
   type WorkerPolicyResponse = WorkerPolicyOverride & { effective: PolicyData }
 
@@ -372,5 +382,5 @@ export function useApi() {
   const getBackupSettings = () => customGet<BackupSettings>('/api/custom/backups/settings')
   const saveBackupSettings = (data: BackupSettings) => customPut<BackupSettings>('/api/custom/backups/settings', data)
 
-  return { triggerSync, triggerRollback, forceRedeploy, getServices, getStackResources, stopContainer, restartContainer, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, getRepoFiles, getStackFiles, getJobFiles, getJobDefinitionFromFile, getWireopsFiles, getWireopsDefinitionFromFile, createStackFromWireops, testCredentials, keyscan, listOrphans, purgeOrphan, getSystemInfo, customPost, customGet, customPut, customPatch, customDelete, getWorkers, createWorkerToken, revokeWorker, transferStack, discoverProjects, importStack, listJobs, triggerJobRun, cancelJobRun, deleteJobRun, getJobDefinition, getJobRaw, getWorkerPolicy, saveWorkerPolicy, resetWorkerPolicy, getGlobalWorkerPolicy, saveGlobalWorkerPolicy, getAppSettings, saveAppSettings, listAuditLogs, listBackups, createBackup, deleteBackup, restoreBackup, syncLocalBackup, getBackupSettings, saveBackupSettings }
+  return { triggerSync, triggerRollback, forceRedeploy, setRenderOverrides, clearRenderOverrides, getRenderOverridesDiff, getServices, getStackResources, stopContainer, restartContainer, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, getRepoFiles, getStackFiles, getJobFiles, getJobDefinitionFromFile, getWireopsFiles, getWireopsDefinitionFromFile, createStackFromWireops, testCredentials, keyscan, listOrphans, purgeOrphan, getSystemInfo, customPost, customGet, customPut, customPatch, customDelete, getWorkers, createWorkerToken, revokeWorker, transferStack, discoverProjects, importStack, listJobs, triggerJobRun, cancelJobRun, deleteJobRun, getJobDefinition, getJobRaw, getWorkerPolicy, saveWorkerPolicy, resetWorkerPolicy, getGlobalWorkerPolicy, saveGlobalWorkerPolicy, getAppSettings, saveAppSettings, listAuditLogs, listBackups, createBackup, deleteBackup, restoreBackup, syncLocalBackup, getBackupSettings, saveBackupSettings }
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/pocketbase/pocketbase/tests"
 
 	"github.com/wireops/wireops/internal/crypto"
+	"github.com/wireops/wireops/internal/notify"
 )
 
 // fakeS3PutOKServer answers every request with 200 OK — enough for the real
@@ -28,7 +29,7 @@ func fakeS3PutOKServer(t *testing.T) *httptest.Server {
 
 const testBackupHookSecretKey = "dddddddddddddddddddddddddddddddd" // 32 bytes
 
-func newBackupHookTestApp(t *testing.T) core.App {
+func newBackupHookTestApp(t *testing.T) (core.App, *notify.Notifier) {
 	t.Helper()
 	t.Setenv("SECRET_KEY", testBackupHookSecretKey)
 	app, err := tests.NewTestApp()
@@ -61,12 +62,16 @@ func newBackupHookTestApp(t *testing.T) core.App {
 		t.Fatalf("save integrations collection: %v", err)
 	}
 
-	Register(app, nil, nil, nil)
-	return app
+	notifier := Register(app, nil, nil, nil)
+	// Dispatch runs notifications asynchronously; wait for any in-flight
+	// goroutine to finish before app.Cleanup tears down the test app, or it
+	// panics on a closed/nil app mid-query.
+	t.Cleanup(notifier.Wait)
+	return app, notifier
 }
 
 func TestOnBackupCreateAuditsFailedMirrorAttempt(t *testing.T) {
-	app := newBackupHookTestApp(t)
+	app, _ := newBackupHookTestApp(t)
 
 	// Enabled but missing required fields — the mirror attempt fails
 	// deterministically without any real network call.
@@ -105,7 +110,7 @@ func TestOnBackupCreateAuditsFailedMirrorAttempt(t *testing.T) {
 }
 
 func TestOnBackupCreateAuditsSuccessfulMirrorAttempt(t *testing.T) {
-	app := newBackupHookTestApp(t)
+	app, _ := newBackupHookTestApp(t)
 	server := fakeS3PutOKServer(t)
 
 	encryptedSecret, err := crypto.Encrypt([]byte("fake-secret-key"), crypto.NormalizeSecretKey(testBackupHookSecretKey))
@@ -153,7 +158,7 @@ func TestOnBackupCreateAuditsSuccessfulMirrorAttempt(t *testing.T) {
 }
 
 func TestOnBackupCreateNotAuditedWhenRemoteDisabled(t *testing.T) {
-	app := newBackupHookTestApp(t)
+	app, _ := newBackupHookTestApp(t)
 
 	if err := app.CreateBackup(context.Background(), "wireops_hook_local_test.zip"); err != nil {
 		t.Fatalf("CreateBackup failed: %v", err)

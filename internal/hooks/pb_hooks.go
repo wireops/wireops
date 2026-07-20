@@ -219,9 +219,9 @@ func triggerRepositoryBackgroundClone(app core.App, repoID, gitURL, branch strin
 	}()
 }
 
-func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Scheduler, logBroker *logstream.Broker) {
+func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Scheduler, logBroker *logstream.Broker) *notify.Notifier {
 	secretKey := crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))
-	registerAuditHooks(app)
+	notifier := registerAuditHooks(app)
 
 	// Fan out sync_logs writes to the live tail broker (GET /api/custom/stacks/{id}/stream).
 	publishSyncLogEvent := func(e *core.RecordEvent) error {
@@ -731,9 +731,11 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 		}
 		return e.Next()
 	})
+
+	return notifier
 }
 
-func registerAuditHooks(app core.App) {
+func registerAuditHooks(app core.App) *notify.Notifier {
 	auditedCollections := map[string]string{
 		core.CollectionNameSuperusers: "user",
 		"app_settings":                "app_settings",
@@ -956,6 +958,8 @@ func registerAuditHooks(app core.App) {
 		audit.Record(e.App, ev)
 		return nil
 	})
+
+	return notifier
 }
 
 func shouldSkipRequestAudit(req *core.RequestEvent) bool {

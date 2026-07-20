@@ -2,6 +2,7 @@ package sync_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -37,7 +38,7 @@ services:
 	ctx := context.Background()
 
 	// 1. First Generation
-	res1, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitA", false, "", "embedded")
+	res1, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitA", false, "", "embedded", nil)
 	if err != nil {
 		t.Fatalf("unexpected error on first render: %v", err)
 	}
@@ -51,7 +52,7 @@ services:
 
 	// 2. Second Generation, no changes (using SAME commitA to verify identity)
 	time.Sleep(50 * time.Millisecond) // ensure time moves
-	res2, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitA", false, "", "embedded")
+	res2, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitA", false, "", "embedded", nil)
 	if err != nil {
 		t.Fatalf("unexpected error on second render: %v", err)
 	}
@@ -63,7 +64,7 @@ services:
 	}
 
 	// 3. Third Generation, force bump (still using commitA, but forced)
-	res3, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitA", true, "", "embedded")
+	res3, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitA", true, "", "embedded", nil)
 	if err != nil {
 		t.Fatalf("unexpected error on forced render: %v", err)
 	}
@@ -85,7 +86,7 @@ services:
 `
 	writeTestComposeFile(t, composePath, composeContent2)
 
-	res4, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitC", false, "", "embedded")
+	res4, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitC", false, "", "embedded", nil)
 	if err != nil {
 		t.Fatalf("unexpected error on changed render: %v", err)
 	}
@@ -140,7 +141,7 @@ services:
 	renderer := sync.NewRenderer(app)
 	ctx := context.Background()
 
-	res, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitX", false, "", "embedded")
+	res, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitX", false, "", "embedded", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -194,7 +195,7 @@ services:
 		"ANOTHER_VAR=my_override",
 	}
 
-	res, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", envVars, "commit123", false, "", "embedded")
+	res, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", envVars, "commit123", false, "", "embedded", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -302,6 +303,7 @@ func createTestCollections(t *testing.T, app core.App) {
 	policies.Fields.Add(&core.JSONField{Name: "allowed_cap_add"})
 	policies.Fields.Add(&core.JSONField{Name: "allowed_devices"})
 	policies.Fields.Add(&core.JSONField{Name: "allowed_security_opt"})
+	policies.Fields.Add(&core.BoolField{Name: "allow_render_overrides"})
 	if err := app.Save(policies); err != nil {
 		t.Fatalf("failed to create worker_policies collection: %v", err)
 	}
@@ -388,7 +390,7 @@ services:
 	renderer := sync.NewRenderer(app)
 	ctx := context.Background()
 
-	res, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitL", false, "", "embedded")
+	res, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitL", false, "", "embedded", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -487,7 +489,7 @@ services:
 			ctx := context.Background()
 
 			// Generation should fail due to policy violation
-			_, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitA", false, "", "embedded")
+			_, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitA", false, "", "embedded", nil)
 			if err == nil {
 				t.Fatalf("expected error due to policy violation, got nil")
 			}
@@ -524,7 +526,7 @@ services:
 		ctx := context.Background()
 
 		// Generation should fail due to policy violation on the specific worker path
-		_, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitA", false, "workeroverride1", "embedded")
+		_, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitA", false, "workeroverride1", "embedded", nil)
 		if err == nil {
 			t.Fatalf("expected error due to policy violation, got nil")
 		}
@@ -533,4 +535,210 @@ services:
 			t.Errorf("expected policy violation error, got: %v", err)
 		}
 	})
+}
+
+func TestRendererRenderOverridesBlockedByDefault(t *testing.T) {
+	app, workDir, composePath := setupRendererTest(t)
+	writeTestComposeFile(t, composePath, `
+name: overrides_stack
+services:
+  web:
+    image: nginx:alpine
+`)
+
+	repo := createTestRepo(t, app, "overrides-blocked", "main")
+	stack := createTestStack(t, app, repo.Id, "overrides_stack")
+
+	renderer := sync.NewRenderer(app)
+	ctx := context.Background()
+
+	overrides := map[string]sync.ServiceOverride{
+		"web": {Image: "nginx:test"},
+	}
+
+	_, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitA", false, "", "embedded", overrides)
+	if err == nil {
+		t.Fatalf("expected error because render overrides are disabled by default, got nil")
+	}
+	if !contains(err.Error(), "disabled by the worker policy") {
+		t.Errorf("expected worker-policy error, got: %v", err)
+	}
+}
+
+// AllowRenderOverrides gates this capability on its own: disabling the rest of the
+// worker policy's allowlist/Block* enforcement must not implicitly grant override
+// capability too, since that would let anyone bypass image/network allowlists by
+// disabling policy for an unrelated reason.
+func TestRendererRenderOverridesStillBlockedWhenPolicyDisabled(t *testing.T) {
+	app, workDir, composePath := setupRendererTest(t)
+	writeTestComposeFile(t, composePath, `
+name: overrides_stack
+services:
+  web:
+    image: nginx:alpine
+`)
+
+	col, _ := app.FindCollectionByNameOrId("worker_policies")
+	globalPolicy := core.NewRecord(col)
+	globalPolicy.Set("enabled", false) // Disabled = true; allow_render_overrides left unset/false
+	if err := app.Save(globalPolicy); err != nil {
+		t.Fatalf("failed to save global policy: %v", err)
+	}
+
+	repo := createTestRepo(t, app, "overrides-policy-disabled", "main")
+	stack := createTestStack(t, app, repo.Id, "overrides_stack")
+
+	renderer := sync.NewRenderer(app)
+	ctx := context.Background()
+
+	overrides := map[string]sync.ServiceOverride{
+		"web": {Image: "nginx:test"},
+	}
+
+	_, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitA", false, "", "embedded", overrides)
+	if err == nil {
+		t.Fatal("expected error: render overrides must stay blocked when AllowRenderOverrides is unset, even with the rest of policy disabled")
+	}
+	if !contains(err.Error(), "render-time overrides are disabled by the worker policy") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestRendererRenderOverridesAppliedWhenAllowed(t *testing.T) {
+	app, workDir, composePath := setupRendererTest(t)
+	writeTestComposeFile(t, composePath, `
+name: overrides_stack
+services:
+  web:
+    image: nginx:alpine
+    ports:
+      - "8080:80"
+`)
+
+	col, _ := app.FindCollectionByNameOrId("worker_policies")
+	globalPolicy := core.NewRecord(col)
+	globalPolicy.Set("enabled", true)
+	globalPolicy.Set("allow_render_overrides", true)
+	if err := app.Save(globalPolicy); err != nil {
+		t.Fatalf("failed to save global policy: %v", err)
+	}
+
+	repo := createTestRepo(t, app, "overrides-allowed", "main")
+	stack := createTestStack(t, app, repo.Id, "overrides_stack")
+
+	renderer := sync.NewRenderer(app)
+	ctx := context.Background()
+
+	overrides := map[string]sync.ServiceOverride{
+		"web": {Image: "nginx:test", Ports: []string{"8081:80"}, Networks: []string{"proxy"}},
+	}
+
+	res, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitA", false, "", "embedded", overrides)
+	if err != nil {
+		t.Fatalf("unexpected error applying overrides: %v", err)
+	}
+
+	contentStr := readRenderedFile(t, renderer, stack.Id, res.Version)
+	if !contains(contentStr, "nginx:test") {
+		t.Errorf("expected overridden image in rendered compose, got:\n%s", contentStr)
+	}
+	if !contains(contentStr, "8081:80") {
+		t.Errorf("expected overridden port in rendered compose, got:\n%s", contentStr)
+	}
+	if !contains(contentStr, "proxy") {
+		t.Errorf("expected overridden network in rendered compose, got:\n%s", contentStr)
+	}
+	if !contains(contentStr, "external: true") {
+		t.Errorf("expected override network 'proxy' to be declared external at the top level, got:\n%s", contentStr)
+	}
+}
+
+// A network already declared at the top level (e.g. by the compose file itself) must
+// not be clobbered by ApplyServiceOverrides — only names missing from the top-level
+// networks block get an external:true entry added.
+func TestRendererRenderOverridesReusesAlreadyDeclaredNetwork(t *testing.T) {
+	app, workDir, composePath := setupRendererTest(t)
+	writeTestComposeFile(t, composePath, `
+name: overrides_stack
+networks:
+  proxy:
+    driver: bridge
+services:
+  web:
+    image: nginx:alpine
+    networks:
+      - proxy
+`)
+
+	col, _ := app.FindCollectionByNameOrId("worker_policies")
+	globalPolicy := core.NewRecord(col)
+	globalPolicy.Set("enabled", true)
+	globalPolicy.Set("allow_render_overrides", true)
+	if err := app.Save(globalPolicy); err != nil {
+		t.Fatalf("failed to save global policy: %v", err)
+	}
+
+	repo := createTestRepo(t, app, "overrides-existing-network", "main")
+	stack := createTestStack(t, app, repo.Id, "overrides_stack")
+
+	renderer := sync.NewRenderer(app)
+	ctx := context.Background()
+
+	overrides := map[string]sync.ServiceOverride{
+		"web": {Networks: []string{"proxy"}},
+	}
+
+	res, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitA", false, "", "embedded", overrides)
+	if err != nil {
+		t.Fatalf("unexpected error applying overrides: %v", err)
+	}
+
+	contentStr := readRenderedFile(t, renderer, stack.Id, res.Version)
+	if contains(contentStr, "external: true") {
+		t.Errorf("expected already-declared network 'proxy' to keep its own definition, not be marked external:\n%s", contentStr)
+	}
+	if !contains(contentStr, "driver: bridge") {
+		t.Errorf("expected original network declaration to survive, got:\n%s", contentStr)
+	}
+}
+
+func TestRendererRenderOverridesUnknownServiceErrors(t *testing.T) {
+	app, workDir, composePath := setupRendererTest(t)
+	writeTestComposeFile(t, composePath, `
+name: overrides_stack
+services:
+  web:
+    image: nginx:alpine
+`)
+
+	col, _ := app.FindCollectionByNameOrId("worker_policies")
+	globalPolicy := core.NewRecord(col)
+	globalPolicy.Set("enabled", true)
+	globalPolicy.Set("allow_render_overrides", true)
+	if err := app.Save(globalPolicy); err != nil {
+		t.Fatalf("failed to save global policy: %v", err)
+	}
+
+	repo := createTestRepo(t, app, "overrides-unknown-service", "main")
+	stack := createTestStack(t, app, repo.Id, "overrides_stack")
+
+	renderer := sync.NewRenderer(app)
+	ctx := context.Background()
+
+	overrides := map[string]sync.ServiceOverride{
+		"does-not-exist": {Image: "nginx:test"},
+	}
+
+	_, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitA", false, "", "embedded", overrides)
+	if err == nil {
+		t.Fatalf("expected error for unknown service override, got nil")
+	}
+	if !contains(err.Error(), "unknown service") {
+		t.Errorf("expected unknown-service error, got: %v", err)
+	}
+	// Reconciler.ReconcileStack/reconcileLocalStack use errors.Is against this sentinel
+	// to decide whether to auto-clear a stale override and self-heal.
+	if !errors.Is(err, sync.ErrUnknownOverrideService) {
+		t.Errorf("expected error to wrap sync.ErrUnknownOverrideService, got: %v", err)
+	}
 }

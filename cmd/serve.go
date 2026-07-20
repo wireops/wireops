@@ -402,7 +402,7 @@ func Execute() error {
 		return se.Next()
 	})
 
-	hooks.Register(app, scheduler, jobSched, logBroker)
+	notifier := hooks.Register(app, scheduler, jobSched, logBroker)
 
 	syncHandler := func(e *core.RecordEvent) error {
 		syncSuperusers(app)
@@ -418,6 +418,7 @@ func Execute() error {
 	app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
 		scheduler.Shutdown()
 		jobSched.Shutdown()
+		notifier.Wait()
 		return e.Next()
 	})
 

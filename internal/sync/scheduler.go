@@ -139,6 +139,9 @@ func (s *Scheduler) TriggerRollback(stackID, commitSHA string, userID string) {
 	})
 }
 
+// TriggerForceRedeploy runs a force redeploy with the given recreate options.
+// Any render_overrides persisted on the stack record are reapplied automatically
+// by ForceRedeployStack, same as every other reconcile path.
 func (s *Scheduler) TriggerForceRedeploy(stackID string, recreateContainers, recreateVolumes, recreateNetworks bool, userID string) {
 	ctx := contextutil.WithUserID(s.rootCtx, userID)
 	go s.safeRun(ctx, fmt.Sprintf("force-redeploy[%s]", stackID), func() error {
@@ -150,6 +153,13 @@ func (s *Scheduler) TriggerForceRedeploy(stackID string, recreateContainers, rec
 		}
 		return s.reconciler.ForceRedeployStack(ctx, stackID, recreateContainers, recreateVolumes, recreateNetworks)
 	})
+}
+
+// LoadStackEnvVars resolves the stack's effective env vars (repo .env + secret-backed
+// values), for callers outside the sync package that need to reproduce the same
+// resolution the renderer uses (e.g. the render-overrides diff endpoint).
+func (s *Scheduler) LoadStackEnvVars(ctx context.Context, stackID string) ([]string, error) {
+	return s.reconciler.loadEnvVars(ctx, stackID)
 }
 
 func (s *Scheduler) TriggerTransfer(stackID, targetWorkerID string, userID string) {
