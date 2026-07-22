@@ -22,6 +22,13 @@ const creating = ref(false)
 const showCreateModal = ref(false)
 const variableToDelete = ref<any | null>(null)
 const showSopsEncryptModal = ref(false)
+const search = ref('')
+
+const filteredGlobals = computed(() => {
+  if (!search.value.trim()) return globals.value
+  const query = search.value.trim().toLowerCase()
+  return globals.value.filter(v => v.key.toLowerCase().includes(query))
+})
 
 const { load: loadProviderOptions, providerOptions, hasActiveBackends, iconFor, avatarFor, labelFor } = useSecretProviderOptions()
 
@@ -297,7 +304,11 @@ onMounted(() => {
         </div>
       </template>
 
-      <div v-if="creating || globals.length" class="divide-y divide-gray-200 dark:divide-carbon-800">
+      <div v-if="globals.length" role="search" aria-label="Filter global variables">
+        <UInput v-model="search" icon="i-lucide-search" placeholder="Search variables..." class="w-full" aria-label="Search global variables" />
+      </div>
+
+      <div v-if="creating || filteredGlobals.length" class="divide-y divide-gray-200 dark:divide-carbon-800">
         <form v-if="creating" class="grid grid-cols-1 gap-2 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2rem_2rem_2rem] sm:items-center" @submit.prevent="createVariable">
           <AppTextInput v-model="form.key" placeholder="KEY" class="font-mono" />
           <div class="flex items-center gap-1">
@@ -340,7 +351,7 @@ onMounted(() => {
           </div>
         </form>
 
-        <div v-for="variable in globals" :key="variable.id" class="py-2">
+        <div v-for="variable in filteredGlobals" :key="variable.id" class="py-2">
           <div v-if="editingId === variable.id" class="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2rem_2rem_2rem] sm:items-center">
             <AppTextInput v-model="editForm.key" placeholder="KEY" class="font-mono" />
             <div class="flex items-center gap-1">
@@ -433,6 +444,12 @@ onMounted(() => {
             </div>
           </div>
         </div>
+      </div>
+
+      <div v-else-if="globals.length" class="py-10 text-center" role="status" aria-live="polite">
+        <UIcon name="i-lucide-search-x" class="mx-auto h-8 w-8 text-gray-400" />
+        <p class="mt-2 text-sm text-gray-500">No variables found</p>
+        <p class="mt-1 text-xs text-gray-400">Try adjusting your search</p>
       </div>
 
       <div v-else class="py-10 text-center">

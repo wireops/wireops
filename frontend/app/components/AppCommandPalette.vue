@@ -57,7 +57,7 @@ const groups = computed(() => {
       label: 'Jobs',
       items: jobs.value.map(j => ({
         id: `job-${j.id}`,
-        label: j.definition?.title || j.id,
+        label: j.name || j.definition?.name || j.id,
         icon: 'i-lucide-calendar-clock',
         onSelect: () => {
           isShowingCommandPalette.value = false

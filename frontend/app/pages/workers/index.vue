@@ -32,9 +32,22 @@ const sortedWorkers = computed(() => {
 const revokedCount = computed(() => actualWorkers.value.filter(a => workerStatus(a) === WORKER_STATUS.REVOKED).length)
 const activeCount = computed(() => actualWorkers.value.filter(a => workerStatus(a) === WORKER_STATUS.ACTIVE || workerStatus(a) === WORKER_STATUS.OFFLINE).length)
 
-const visibleWorkers = computed(() =>
-  showRevoked.value ? sortedWorkers.value : sortedWorkers.value.filter(a => workerStatus(a) !== WORKER_STATUS.REVOKED)
-)
+const searchQuery = ref('')
+
+const visibleWorkers = computed(() => {
+  let filtered = showRevoked.value ? sortedWorkers.value : sortedWorkers.value.filter(a => workerStatus(a) !== WORKER_STATUS.REVOKED)
+
+  if (searchQuery.value) {
+    const query = searchQuery.value.toLowerCase()
+    filtered = filtered.filter((w: any) =>
+      (w.hostname || '').toLowerCase().includes(query) ||
+      (w.id || '').toLowerCase().includes(query) ||
+      (w.tags || []).some((tag: string) => tag.toLowerCase().includes(query))
+    )
+  }
+
+  return filtered
+})
 
 function workerStatus(worker: any) {
   return String(worker?.status || '').toUpperCase()
@@ -153,7 +166,7 @@ onUnmounted(() => {
         <USkeleton v-for="i in 3" :key="i" class="h-16 w-full" />
       </div>
 
-      <div v-else-if="!workers || visibleWorkers.length === 0" class="text-center py-12">
+      <div v-else-if="!workers || actualWorkers.length === 0" class="text-center py-12">
         <div class="w-14 h-14 rounded-full bg-wire-400/10 border border-wire-400/20 flex items-center justify-center mx-auto mb-3">
           <UIcon name="i-lucide-network" class="w-7 h-7 text-wire-400" />
         </div>
@@ -161,7 +174,24 @@ onUnmounted(() => {
         <p class="text-gray-500 dark:text-wire-200/50 text-sm">Once a worker registers, it will appear here.</p>
       </div>
 
-      <div v-else class="space-y-3">
+      <div v-else class="space-y-4">
+        <div role="search" aria-label="Filter workers">
+          <UInput
+            v-model="searchQuery"
+            icon="i-lucide-search"
+            placeholder="Search workers..."
+            class="w-full"
+            aria-label="Search workers"
+          />
+        </div>
+
+        <div v-if="visibleWorkers.length === 0" class="text-center py-12" role="status" aria-live="polite">
+          <UIcon name="i-lucide-search-x" class="w-12 h-12 text-gray-300 mx-auto mb-4" />
+          <p class="text-gray-500">No workers found</p>
+          <p class="text-xs text-gray-400 mt-1">Try adjusting your search</p>
+        </div>
+
+        <div v-else class="space-y-3">
         <div
           v-for="worker in visibleWorkers"
           :key="worker.id"
@@ -221,6 +251,7 @@ onUnmounted(() => {
               <UBadge v-for="tag in worker.tags" :key="tag" :label="tag" variant="subtle" color="neutral" size="xs" class="font-mono" />
             </div>
           </div>
+        </div>
         </div>
       </div>
     </UCard>

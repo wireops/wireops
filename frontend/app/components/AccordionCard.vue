@@ -4,6 +4,7 @@ const open = defineModel<boolean>('open', { default: false })
 const props = defineProps<{
   title: string
   icon?: string
+  iconClass?: string
   titleClass?: string
   chevronClass?: string
 }>()
@@ -14,12 +15,12 @@ const props = defineProps<{
     <template #header>
       <button
         type="button"
-        class="flex w-full items-center justify-between gap-3 text-left"
+        class="flex w-full items-center justify-between gap-3 text-left cursor-pointer"
         :aria-expanded="open"
         @click="open = !open"
       >
         <div class="flex items-center gap-2">
-          <UIcon v-if="props.icon" :name="props.icon" class="h-5 w-5" />
+          <UIcon v-if="props.icon" :name="props.icon" class="h-5 w-5" :class="props.iconClass" />
           <h3 class="font-semibold" :class="props.titleClass">{{ props.title }}</h3>
         </div>
         <UIcon
@@ -37,12 +38,12 @@ const props = defineProps<{
     <template #header>
       <button
         type="button"
-        class="flex w-full items-center justify-between gap-3 text-left"
+        class="flex w-full items-center justify-between gap-3 text-left cursor-pointer"
         :aria-expanded="open"
         @click="open = !open"
       >
         <div class="flex items-center gap-2">
-          <UIcon v-if="props.icon" :name="props.icon" class="h-5 w-5" />
+          <UIcon v-if="props.icon" :name="props.icon" class="h-5 w-5" :class="props.iconClass" />
           <h3 class="font-semibold" :class="props.titleClass">{{ props.title }}</h3>
         </div>
         <UIcon

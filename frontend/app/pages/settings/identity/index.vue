@@ -155,6 +155,7 @@ const showApiKeyModal = ref(false)
 const targetAccountName = ref('')
 const saSearchQuery = ref('')
 const showDisabledSAs = ref(false)
+const usersSearchQuery = ref('')
 const openApiKeys = ref<Record<string, boolean>>({})
 
 function toggleApiKeyAccordion(saId: string) {
@@ -175,6 +176,12 @@ const filteredServiceAccounts = computed(() => {
       )
     })
     .sort((a, b) => a.name.localeCompare(b.name))
+})
+
+const filteredUsers = computed(() => {
+  const query = usersSearchQuery.value.toLowerCase().trim()
+  if (!query) return users.value
+  return users.value.filter((u) => u.email.toLowerCase().includes(query))
 })
 
 async function apiFetch(path: string, options: RequestInit = {}) {
@@ -323,10 +330,14 @@ onMounted(() => {
 
       <UCard>
         <template #header><h3 class="font-semibold">Users</h3></template>
-        <div v-if="usersLoading" class="text-sm text-gray-500">Loading...</div>
-        <div v-else-if="users.length === 0" class="text-sm text-gray-500">No users found.</div>
-        <ul v-else class="divide-y divide-gray-100 dark:divide-gray-800">
-          <li v-for="u in users" :key="u.id" class="flex items-center justify-between py-3 first:pt-0 last:pb-0">
+        <div class="space-y-4">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-gray-100 dark:border-gray-800">
+            <UInput v-model="usersSearchQuery" placeholder="Search email..." icon="i-lucide-search" class="w-full" size="sm" />
+          </div>
+          <div v-if="usersLoading" class="text-sm text-gray-500">Loading...</div>
+          <div v-else-if="filteredUsers.length === 0" class="text-sm text-gray-500">No users found.</div>
+          <ul v-else class="divide-y divide-gray-100 dark:divide-gray-800">
+            <li v-for="u in filteredUsers" :key="u.id" class="flex items-center justify-between py-3 first:pt-0 last:pb-0">
             <div class="flex items-center gap-3">
               <div class="flex items-center justify-center w-8 h-8 rounded-full" :class="u.disabled ? 'bg-gray-400/10' : 'bg-yellow-400/10'">
                 <UIcon name="i-lucide-user" class="w-4 h-4" :class="u.disabled ? 'text-gray-400' : 'text-yellow-400'" />
@@ -372,7 +383,8 @@ onMounted(() => {
               />
             </div>
           </li>
-        </ul>
+          </ul>
+        </div>
       </UCard>
     </div>
 
@@ -397,9 +409,9 @@ onMounted(() => {
         <div class="space-y-4">
           <!-- Search and Filter controls -->
           <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-gray-100 dark:border-gray-800">
-            <div class="flex items-center gap-3">
-              <UInput v-model="saSearchQuery" placeholder="Search name or description..." icon="i-lucide-search" class="w-64" size="sm" />
-              <div class="flex items-center gap-2">
+            <div class="flex items-center gap-3 flex-1">
+              <UInput v-model="saSearchQuery" placeholder="Search name or description..." icon="i-lucide-search" class="flex-1" size="sm" />
+              <div class="flex items-center gap-2 shrink-0">
                 <USwitch v-model="showDisabledSAs" size="sm" />
                 <span class="text-xs text-gray-500 dark:text-gray-400">Show disabled</span>
               </div>

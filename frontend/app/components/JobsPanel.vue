@@ -14,12 +14,50 @@ const { data: jobWorkers } = useAsyncData('job_builder_workers', () =>
 
 const { data: jobs, refresh, pending } = useAsyncData('jobs_list', () => listJobs())
 
+const searchQuery = ref('')
+const statusFilter = ref('all')
+const repositoryFilter = ref('all')
+
 const jobsWithReversedRuns = computed(() => {
   if (!jobs.value) return []
   return jobs.value.map((job: any) => ({
     ...job,
     reversedRecentRuns: job.recent_runs ? [...job.recent_runs].reverse() : []
   }))
+})
+
+const repositoryOptions = computed(() => {
+  const seen = new Map<string, string>()
+  for (const job of jobsWithReversedRuns.value) {
+    if (job.repository?.id) seen.set(job.repository.id, job.repository.name)
+  }
+  return [
+    { label: 'All Repositories', value: 'all' },
+    ...[...seen.entries()].map(([value, label]) => ({ label, value }))
+  ]
+})
+
+const filteredJobs = computed(() => {
+  let filtered = jobsWithReversedRuns.value
+
+  if (searchQuery.value) {
+    const query = searchQuery.value.toLowerCase()
+    filtered = filtered.filter((job: any) =>
+      (job.name || job.definition?.name || '').toLowerCase().includes(query) ||
+      (job.repository?.name || '').toLowerCase().includes(query) ||
+      (job.job_file || '').toLowerCase().includes(query)
+    )
+  }
+
+  if (statusFilter.value !== 'all') {
+    filtered = filtered.filter((job: any) => job.status === statusFilter.value)
+  }
+
+  if (repositoryFilter.value !== 'all') {
+    filtered = filtered.filter((job: any) => job.repository?.id === repositoryFilter.value)
+  }
+
+  return filtered
 })
 
 onMounted(() => {
@@ -129,9 +167,46 @@ function formatRelative(dateStr: string) {
         <p class="text-gray-500 dark:text-wire-200/50 text-sm">Create a new job to get started.</p>
       </div>
 
+      <div v-else class="space-y-4">
+        <div class="flex flex-col gap-3 sm:flex-row" role="search" aria-label="Filter jobs">
+          <UInput
+            v-model="searchQuery"
+            icon="i-lucide-search"
+            placeholder="Search jobs..."
+            class="flex-1"
+            aria-label="Search jobs"
+          />
+          <USelect
+            v-model="statusFilter"
+            :items="[
+              { label: 'All Statuses', value: 'all' },
+              { label: 'Active', value: 'active' },
+              { label: 'Paused', value: 'paused' },
+              { label: 'Stalled', value: 'stalled' },
+              { label: 'Error', value: 'error' }
+            ]"
+            placeholder="Filter by status"
+            class="w-full sm:w-40"
+            aria-label="Filter jobs by status"
+          />
+          <USelect
+            v-model="repositoryFilter"
+            :items="repositoryOptions"
+            placeholder="Filter by repository"
+            class="w-full sm:w-48"
+            aria-label="Filter jobs by repository"
+          />
+        </div>
+
+        <div v-if="filteredJobs.length === 0" class="text-center py-12" role="status" aria-live="polite">
+          <UIcon name="i-lucide-search-x" class="w-12 h-12 text-gray-300 mx-auto mb-4" />
+          <p class="text-gray-500">No jobs found</p>
+          <p class="text-xs text-gray-400 mt-1">Try adjusting your search</p>
+        </div>
+
         <div v-else class="space-y-3">
           <div
-            v-for="job in jobsWithReversedRuns"
+            v-for="job in filteredJobs"
             :key="job.id"
             class="flex items-center justify-between p-4 bg-gray-50 dark:bg-carbon-800/40 rounded-xl border border-gray-200 dark:border-carbon-700 hover:shadow-[0_0_0_2px_rgba(255,198,0,0.35),0_0_20px_rgba(255,198,0,0.12)] transition-all"
           >
@@ -252,10 +327,11 @@ function formatRelative(dateStr: string) {
             </div>
           </div>
         </div>
+        </div>
       </UCard>
     </div>
 
-    <JobCreateModal 
+    <JobCreateModal
       v-model:open="showCreate"
       :repos="repos || []" 
       @created="onCreated" 
