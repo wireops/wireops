@@ -332,7 +332,7 @@ onMounted(() => {
         <template #header><h3 class="font-semibold">Users</h3></template>
         <div class="space-y-4">
           <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-gray-100 dark:border-gray-800">
-            <UInput v-model="usersSearchQuery" placeholder="Search email..." icon="i-lucide-search" class="w-full" size="sm" />
+            <UInput v-model="usersSearchQuery" placeholder="Search email..." icon="i-lucide-search" class="w-full" size="sm" aria-label="Search users by email" />
           </div>
           <div v-if="usersLoading" class="text-sm text-gray-500">Loading...</div>
           <div v-else-if="filteredUsers.length === 0" class="text-sm text-gray-500">No users found.</div>

@@ -26,6 +26,34 @@ export function workerHasReportedInfo(worker: { os?: string, docker_version?: st
   return !!(worker?.os || worker?.docker_version)
 }
 
+export function workerStatus(worker: { status?: string } | null | undefined): string {
+  return String(worker?.status || '').toUpperCase()
+}
+
+export function isWorkerClickable(worker: { status?: string } | null | undefined): boolean {
+  return workerStatus(worker) !== WORKER_STATUS.REVOKED
+}
+
+export function matchesWorkerSearch(worker: { hostname?: string, id?: string, tags?: string[] } | null | undefined, query: string): boolean {
+  const q = query.toLowerCase()
+  return (
+    (worker?.hostname || '').toLowerCase().includes(q) ||
+    (worker?.id || '').toLowerCase().includes(q) ||
+    (worker?.tags || []).some(tag => tag.toLowerCase().includes(q))
+  )
+}
+
+export function filterVisibleWorkers<T extends { status?: string, hostname?: string, id?: string, tags?: string[] }>(
+  workers: T[],
+  { showRevoked, searchQuery }: { showRevoked: boolean, searchQuery: string }
+): T[] {
+  let filtered = showRevoked ? workers : workers.filter(w => workerStatus(w) !== WORKER_STATUS.REVOKED)
+  if (searchQuery) {
+    filtered = filtered.filter(w => matchesWorkerSearch(w, searchQuery))
+  }
+  return filtered
+}
+
 export function usageColor(pct: number): 'success' | 'warning' | 'error' {
   if (pct > 90) return 'error'
   if (pct >= 70) return 'warning'

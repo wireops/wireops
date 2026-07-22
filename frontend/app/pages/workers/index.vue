@@ -34,28 +34,9 @@ const activeCount = computed(() => actualWorkers.value.filter(a => workerStatus(
 
 const searchQuery = ref('')
 
-const visibleWorkers = computed(() => {
-  let filtered = showRevoked.value ? sortedWorkers.value : sortedWorkers.value.filter(a => workerStatus(a) !== WORKER_STATUS.REVOKED)
-
-  if (searchQuery.value) {
-    const query = searchQuery.value.toLowerCase()
-    filtered = filtered.filter((w: any) =>
-      (w.hostname || '').toLowerCase().includes(query) ||
-      (w.id || '').toLowerCase().includes(query) ||
-      (w.tags || []).some((tag: string) => tag.toLowerCase().includes(query))
-    )
-  }
-
-  return filtered
-})
-
-function workerStatus(worker: any) {
-  return String(worker?.status || '').toUpperCase()
-}
-
-function isWorkerClickable(worker: any) {
-  return workerStatus(worker) !== WORKER_STATUS.REVOKED
-}
+const visibleWorkers = computed(() =>
+  filterVisibleWorkers(sortedWorkers.value, { showRevoked: showRevoked.value, searchQuery: searchQuery.value })
+)
 
 function openWorker(worker: any) {
   if (!isWorkerClickable(worker)) return
@@ -188,7 +169,8 @@ onUnmounted(() => {
         <div v-if="visibleWorkers.length === 0" class="text-center py-12" role="status" aria-live="polite">
           <UIcon name="i-lucide-search-x" class="w-12 h-12 text-gray-300 mx-auto mb-4" />
           <p class="text-gray-500">No workers found</p>
-          <p class="text-xs text-gray-400 mt-1">Try adjusting your search</p>
+          <p v-if="!searchQuery && !showRevoked && revokedCount > 0" class="text-xs text-gray-400 mt-1">Enable "Show revoked" to see hidden workers</p>
+          <p v-else class="text-xs text-gray-400 mt-1">Try adjusting your search</p>
         </div>
 
         <div v-else class="space-y-3">

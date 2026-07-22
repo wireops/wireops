@@ -37,28 +37,13 @@ const repositoryOptions = computed(() => {
   ]
 })
 
-const filteredJobs = computed(() => {
-  let filtered = jobsWithReversedRuns.value
-
-  if (searchQuery.value) {
-    const query = searchQuery.value.toLowerCase()
-    filtered = filtered.filter((job: any) =>
-      (job.name || job.definition?.name || '').toLowerCase().includes(query) ||
-      (job.repository?.name || '').toLowerCase().includes(query) ||
-      (job.job_file || '').toLowerCase().includes(query)
-    )
-  }
-
-  if (statusFilter.value !== 'all') {
-    filtered = filtered.filter((job: any) => job.status === statusFilter.value)
-  }
-
-  if (repositoryFilter.value !== 'all') {
-    filtered = filtered.filter((job: any) => job.repository?.id === repositoryFilter.value)
-  }
-
-  return filtered
-})
+const filteredJobs = computed(() =>
+  filterJobs(jobsWithReversedRuns.value, {
+    searchQuery: searchQuery.value,
+    statusFilter: statusFilter.value,
+    repositoryFilter: repositoryFilter.value
+  })
+)
 
 onMounted(() => {
   subscribe('scheduled_jobs', () => refresh())
