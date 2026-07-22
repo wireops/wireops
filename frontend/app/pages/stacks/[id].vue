@@ -606,6 +606,25 @@ async function onStackDeleted() {
 
 // Transfer stack modal
 const showTransferModal = ref(false)
+
+const dangerZoneActions = computed(() => [
+  {
+    key: 'transfer',
+    label: 'Transfer Stack',
+    description: 'Move this stack to another worker. Data will not be preserved.',
+    buttonLabel: 'Transfer Stack',
+    icon: 'i-lucide-arrow-right-left',
+    color: 'warning' as const,
+    onClick: () => { showTransferModal.value = true }
+  },
+  {
+    key: 'remove',
+    label: 'Remove Stack',
+    description: 'This will stop all containers and delete the stack permanently.',
+    buttonLabel: 'Remove Stack',
+    onClick: () => { showDeleteModal.value = true }
+  }
+])
 function onTransferDone() {
   showTransferModal.value = false
   // Switch to Sync Logs tab so the user can watch the transfer progress in real-time
@@ -935,45 +954,7 @@ onMounted(() => {
       </AccordionCard>
 
       <!-- Danger Zone -->
-      <AccordionCard
-        v-model:open="showDangerZone"
-        title="Danger Zone"
-        title-class="text-red-500"
-        chevron-class="text-red-500"
-      >
-        <div class="space-y-4">
-          <!-- Transfer Stack -->
-          <div class="flex items-center justify-between">
-            <div>
-              <p class="text-sm font-medium">Transfer Stack</p>
-              <p class="text-xs text-gray-500">Move this stack to another worker. Data will not be preserved.</p>
-            </div>
-            <UButton
-              label="Transfer Stack"
-              color="warning"
-              variant="outline"
-              size="sm"
-              icon="i-lucide-arrow-right-left"
-              @click="showTransferModal = true"
-            />
-          </div>
-          <hr class="border-gray-200 dark:border-carbon-700" >
-          <!-- Remove Stack -->
-          <div class="flex items-center justify-between">
-            <div>
-              <p class="text-sm font-medium">Remove Stack</p>
-              <p class="text-xs text-gray-500">This will stop all containers and delete the stack permanently.</p>
-            </div>
-            <UButton
-              label="Remove Stack"
-              color="error"
-              variant="outline"
-              size="sm"
-              @click="showDeleteModal = true"
-            />
-          </div>
-        </div>
-      </AccordionCard>
+      <DangerZoneCard v-model:open="showDangerZone" :actions="dangerZoneActions" />
     </div>
 
     <!-- Variables -->

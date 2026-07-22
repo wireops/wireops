@@ -110,6 +110,17 @@ const showRevokeModal = ref(false)
 const showDangerZone = ref(false)
 const revoking = ref(false)
 
+const dangerZoneActions = computed(() => [
+  {
+    key: 'revoke',
+    label: 'Revoke Worker',
+    description: 'This worker will be disconnected and its token invalidated. This action cannot be undone.',
+    buttonLabel: 'Revoke Worker',
+    icon: 'i-lucide-ban',
+    onClick: () => { showRevokeModal.value = true }
+  }
+])
+
 async function confirmRevoke() {
   revoking.value = true
   try {
@@ -451,31 +462,7 @@ onUnmounted(() => {
         </div>
 
         <!-- Danger Zone -->
-        <AccordionCard
-          v-if="worker && !isRevoked"
-          v-model:open="showDangerZone"
-          title="Danger Zone"
-          title-class="text-red-500"
-          chevron-class="text-red-500"
-        >
-          <div class="space-y-4">
-            <!-- Revoke Worker -->
-            <div class="flex items-center justify-between">
-              <div>
-                <p class="text-sm font-medium">Revoke Worker</p>
-                <p class="text-xs text-gray-500">This worker will be disconnected and its token invalidated. This action cannot be undone.</p>
-              </div>
-              <UButton
-                label="Revoke Worker"
-                color="error"
-                variant="outline"
-                size="sm"
-                icon="i-lucide-ban"
-                @click="showRevokeModal = true"
-              />
-            </div>
-          </div>
-        </AccordionCard>
+        <DangerZoneCard v-if="worker && !isRevoked" v-model:open="showDangerZone" :actions="dangerZoneActions" />
       </div>
 
       <!-- ==================== STACKS ==================== -->

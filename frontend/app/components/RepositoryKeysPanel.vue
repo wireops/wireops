@@ -111,7 +111,7 @@ defineExpose({
     </template>
 
     <div v-if="data?.keys.length" class="space-y-4">
-      <UInput ref="searchInput" v-model="search" icon="i-lucide-search" placeholder="Search keys..." class="w-full sm:max-w-sm" />
+      <UInput ref="searchInput" v-model="search" icon="i-lucide-search" placeholder="Search keys..." class="w-full" />
 
       <div v-if="filteredKeys.length" class="space-y-3">
         <div

@@ -10,14 +10,25 @@ const toast = useToast()
 const jobId = computed(() => route.params.id as string)
 const activeTab = ref('definition')
 const tabs = [
-  { id: 'definition', label: 'Definition', icon: 'i-lucide-file-code' },
-  { id: 'env', label: 'Env Vars', icon: 'i-lucide-key' },
-  { id: 'runs', label: 'Runs', icon: 'i-lucide-history' },
+  { label: 'Definition', value: 'definition', icon: 'i-lucide-file-code' },
+  { label: 'Env Vars', value: 'env', icon: 'i-lucide-key' },
+  { label: 'Runs', value: 'runs', icon: 'i-lucide-history' },
 ]
 
 // --- Delete job
 const showDangerZone = ref(false)
 const showDeleteModal = ref(false)
+
+const dangerZoneActions = computed(() => [
+  {
+    key: 'remove',
+    label: 'Remove Job',
+    description: 'This will permanently delete this scheduled job and its run history.',
+    buttonLabel: 'Remove Job',
+    icon: 'i-lucide-trash-2',
+    onClick: () => { showDeleteModal.value = true }
+  }
+])
 
 async function onJobDeleted() {
   showDeleteModal.value = false
@@ -157,21 +168,7 @@ async function toggleEnabled() {
       </div>
     </div>
 
-    <!-- Tabs -->
-    <div class="flex gap-1 border-b border-gray-200 dark:border-carbon-800">
-      <button
-        v-for="tab in tabs"
-        :key="tab.id"
-        class="flex items-center gap-1.5 px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px"
-        :class="activeTab === tab.id
-          ? 'border-yellow-400 text-yellow-400'
-          : 'border-transparent text-gray-500 dark:text-wire-200/50 hover:text-gray-800 dark:hover:text-wire-200'"
-        @click="activeTab = tab.id"
-      >
-        <UIcon :name="tab.icon" class="w-4 h-4" />
-        {{ tab.label }}
-      </button>
-    </div>
+    <UTabs v-model="activeTab" :items="tabs" />
 
     <!-- Runs tab -->
     <div v-if="activeTab === 'runs'">
@@ -332,27 +329,7 @@ async function toggleEnabled() {
       </div>
 
       <!-- Danger Zone -->
-      <AccordionCard
-        v-model:open="showDangerZone"
-        title="Danger Zone"
-        title-class="text-red-500"
-        chevron-class="text-red-500"
-      >
-        <div class="flex items-center justify-between">
-          <div>
-            <p class="text-sm font-medium">Remove Job</p>
-            <p class="text-xs text-gray-500">This will permanently delete this scheduled job and its run history.</p>
-          </div>
-          <UButton
-            label="Remove Job"
-            color="error"
-            variant="outline"
-            size="sm"
-            icon="i-lucide-trash-2"
-            @click="showDeleteModal = true"
-          />
-        </div>
-      </AccordionCard>
+      <DangerZoneCard v-model:open="showDangerZone" :actions="dangerZoneActions" />
     </div>
 
     <!-- YAML File Modal -->
