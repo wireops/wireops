@@ -7,7 +7,7 @@ export interface FilterableJob {
 }
 
 export function matchesJobSearch(job: FilterableJob, query: string): boolean {
-  const q = query.toLowerCase()
+  const q = query.trim().toLowerCase()
   return (
     (job.name || job.definition?.name || '').toLowerCase().includes(q) ||
     (job.repository?.name || '').toLowerCase().includes(q) ||
@@ -21,7 +21,7 @@ export function filterJobs<T extends FilterableJob>(
 ): T[] {
   let filtered = jobs
 
-  if (searchQuery) {
+  if (searchQuery.trim()) {
     filtered = filtered.filter(job => matchesJobSearch(job, searchQuery))
   }
 

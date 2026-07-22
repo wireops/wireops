@@ -35,7 +35,7 @@ export function isWorkerClickable(worker: { status?: string } | null | undefined
 }
 
 export function matchesWorkerSearch(worker: { hostname?: string, id?: string, tags?: string[] } | null | undefined, query: string): boolean {
-  const q = query.toLowerCase()
+  const q = query.trim().toLowerCase()
   return (
     (worker?.hostname || '').toLowerCase().includes(q) ||
     (worker?.id || '').toLowerCase().includes(q) ||
@@ -48,7 +48,7 @@ export function filterVisibleWorkers<T extends { status?: string, hostname?: str
   { showRevoked, searchQuery }: { showRevoked: boolean, searchQuery: string }
 ): T[] {
   let filtered = showRevoked ? workers : workers.filter(w => workerStatus(w) !== WORKER_STATUS.REVOKED)
-  if (searchQuery) {
+  if (searchQuery.trim()) {
     filtered = filtered.filter(w => matchesWorkerSearch(w, searchQuery))
   }
   return filtered

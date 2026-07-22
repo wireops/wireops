@@ -26,6 +26,10 @@ describe('matchesWorkerSearch', () => {
     expect(matchesWorkerSearch(workers[0], 'gpu')).toBe(true)
     expect(matchesWorkerSearch(workers[0], 'nope')).toBe(false)
   })
+
+  it('trims leading/trailing whitespace from the query', () => {
+    expect(matchesWorkerSearch(workers[0], '  edge-eu  ')).toBe(true)
+  })
 })
 
 describe('filterVisibleWorkers', () => {
@@ -42,5 +46,10 @@ describe('filterVisibleWorkers', () => {
   it('returns an empty array when no worker is visible', () => {
     expect(filterVisibleWorkers(workers, { showRevoked: false, searchQuery: 'nonexistent' })).toEqual([])
     expect(filterVisibleWorkers([workers[2]!], { showRevoked: false, searchQuery: '' })).toEqual([])
+  })
+
+  it('trims whitespace and treats whitespace-only queries as empty', () => {
+    expect(filterVisibleWorkers(workers, { showRevoked: false, searchQuery: '  us  ' }).map(w => w.id)).toEqual(['def456'])
+    expect(filterVisibleWorkers(workers, { showRevoked: false, searchQuery: '   ' }).map(w => w.id)).toEqual(['abc123', 'def456'])
   })
 })

@@ -35,4 +35,9 @@ describe('filterJobs', () => {
     expect(filterJobs(jobs, { searchQuery: 'nonexistent', statusFilter: 'all', repositoryFilter: 'all' })).toEqual([])
     expect(filterJobs(jobs, { searchQuery: '', statusFilter: 'stalled', repositoryFilter: 'all' })).toEqual([])
   })
+
+  it('trims leading/trailing whitespace and treats whitespace-only queries as empty', () => {
+    expect(filterJobs(jobs, { searchQuery: '  backup  ', statusFilter: 'all', repositoryFilter: 'all' }).map(j => j.id)).toEqual(['1'])
+    expect(filterJobs(jobs, { searchQuery: '   ', statusFilter: 'all', repositoryFilter: 'all' }).map(j => j.id)).toEqual(['1', '2', '3'])
+  })
 })
