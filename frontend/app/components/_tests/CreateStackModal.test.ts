@@ -58,12 +58,12 @@ const stubs = {
   UCard: { template: '<div><slot name="header" /><slot /><slot name="footer" /></div>' },
   UStepper: { props: ['modelValue', 'items'], template: '<div />' },
   UFormField: { props: ['label', 'error', 'required'], template: '<div><label>{{ label }}</label><slot /><div class="field-error">{{ error }}</div></div>' },
-  UInput: {
+  AppTextInput: {
     props: ['modelValue'],
     emits: ['update:modelValue'],
     template: '<input :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
   },
-  USelect: {
+  AppSelectInput: {
     props: ['modelValue', 'items', 'disabled'],
     emits: ['update:modelValue'],
     template: `<select :value="modelValue" :disabled="disabled" @change="$emit('update:modelValue', $event.target.value)">

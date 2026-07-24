@@ -27,6 +27,8 @@ withDefaults(
 
 defineEmits<{
   (e: 'update:modelValue', value: string): void
+  (e: 'focus' | 'blur', event: FocusEvent): void
+  (e: 'keyup', event: KeyboardEvent): void
 }>()
 </script>
 
@@ -47,6 +49,9 @@ defineEmits<{
       :disabled="disabled"
       :readonly="readonly"
       @input="$emit('update:modelValue', ($event.target as HTMLInputElement).value)"
+      @focus="$emit('focus', $event)"
+      @blur="$emit('blur', $event)"
+      @keyup="$emit('keyup', $event)"
     >
     <slot name="trailing" />
   </div>

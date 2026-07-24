@@ -69,8 +69,8 @@ describe('StacksPanel', () => {
             props: ['label', 'icon', 'ariaLabel'],
             template: '<button v-bind="$attrs">{{ label }}<slot /></button>',
           },
-          UInput: { template: '<div><input /></div>' },
-          USelect: { template: '<select />' },
+          AppTextInput: { template: '<div><input /></div>' },
+          AppSelectInput: { template: '<select />' },
           UTooltip: { template: '<div><slot /></div>' },
           UIcon: { template: '<span />' },
           NuxtLink: {

@@ -3,22 +3,21 @@ import { mount } from '@vue/test-utils'
 import PolicyAllowlistEditor from '../PolicyAllowlistEditor.vue'
 
 const stubs = {
-  UInput: {
+  AppTextInput: {
     inheritAttrs: false,
     props: ['modelValue', 'placeholder', 'readonly'],
-    emits: ['update:modelValue'],
+    emits: ['update:modelValue', 'focus', 'blur', 'keyup'],
     template: `
-      <div>
-        <slot name="leading" />
-        <input
-          v-bind="$attrs"
-          :value="modelValue"
-          :placeholder="placeholder"
-          :readonly="readonly"
-          @input="$emit('update:modelValue', $event.target.value)"
-        />
-        <slot name="trailing" />
-      </div>
+      <input
+        v-bind="$attrs"
+        :value="modelValue"
+        :placeholder="placeholder"
+        :readonly="readonly"
+        @input="$emit('update:modelValue', $event.target.value)"
+        @focus="$emit('focus', $event)"
+        @blur="$emit('blur', $event)"
+        @keyup="$emit('keyup', $event)"
+      />
     `,
   },
   UButton: {

@@ -322,8 +322,8 @@ onMounted(() => {
           <p class="text-xs text-gray-500 mt-0.5">Send a magic-link invitation to a new administrator.</p>
         </template>
         <form class="flex flex-col gap-2 sm:flex-row" @submit.prevent="sendInvite">
-          <UInput v-model="inviteEmail" type="email" placeholder="user@example.com" icon="i-lucide-mail" class="flex-1" required />
-          <USelectMenu v-model="inviteRole" :items="roleOptions" value-key="value" class="w-full sm:w-40" />
+          <AppTextInput v-model="inviteEmail" type="email" placeholder="user@example.com" icon="i-lucide-mail" aria-label="Invite email" class="flex-1" />
+          <AppSelectInput v-model="inviteRole" :items="roleOptions" content-width class="w-full sm:w-auto sm:min-w-40" />
           <UButton type="submit" label="Send Invite" icon="i-lucide-send" :loading="inviteLoading" />
         </form>
       </UCard>
@@ -332,7 +332,7 @@ onMounted(() => {
         <template #header><h3 class="font-semibold">Users</h3></template>
         <div class="space-y-4">
           <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-gray-100 dark:border-gray-800">
-            <UInput v-model="usersSearchQuery" placeholder="Search email..." icon="i-lucide-search" class="w-full" size="sm" aria-label="Search users by email" />
+            <AppTextInput v-model="usersSearchQuery" placeholder="Search email..." icon="i-lucide-search" class="w-full" aria-label="Search users by email" />
           </div>
           <div v-if="usersLoading" class="text-sm text-gray-500">Loading...</div>
           <div v-else-if="filteredUsers.length === 0" class="text-sm text-gray-500">No users found.</div>
@@ -410,7 +410,7 @@ onMounted(() => {
           <!-- Search and Filter controls -->
           <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-gray-100 dark:border-gray-800">
             <div class="flex items-center gap-3 flex-1">
-              <UInput v-model="saSearchQuery" placeholder="Search name or description..." icon="i-lucide-search" class="flex-1" size="sm" />
+              <AppTextInput v-model="saSearchQuery" placeholder="Search name or description..." icon="i-lucide-search" class="flex-1" aria-label="Search service accounts" />
               <div class="flex items-center gap-2 shrink-0">
                 <USwitch v-model="showDisabledSAs" size="sm" />
                 <span class="text-xs text-gray-500 dark:text-gray-400">Show disabled</span>

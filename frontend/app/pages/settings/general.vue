@@ -155,9 +155,15 @@ async function runKeyscan() {
         Scan a remote host to retrieve its SSH public key for use in credentials.
       </p>
       <form class="flex flex-col sm:flex-row gap-2" @submit.prevent="runKeyscan">
-        <UInput v-model="keyscanHost" placeholder="github.com" class="flex-1" />
+        <AppTextInput v-model="keyscanHost" placeholder="github.com" class="flex-1" />
         <div class="flex gap-2">
-          <UInput v-model.number="keyscanPort" type="number" placeholder="22" class="w-20" />
+          <AppTextInput
+            :model-value="String(keyscanPort)"
+            type="number"
+            placeholder="22"
+            class="w-20"
+            @update:model-value="(v) => keyscanPort = Number(v)"
+          />
           <UButton type="submit" label="Scan" :loading="keyscanLoading" />
         </div>
       </form>
