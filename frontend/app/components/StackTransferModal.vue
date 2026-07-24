@@ -75,7 +75,7 @@ async function confirmTransfer() {
 
       <!-- Worker selector -->
       <UFormField label="Target Worker" :help="workerOptions.length === 0 ? 'No other active workers available.' : undefined">
-        <USelect
+        <AppSelectInput
           v-model="selectedWorkerId"
           :items="workerOptions"
           placeholder="Select a target worker"

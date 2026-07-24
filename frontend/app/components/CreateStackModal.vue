@@ -394,19 +394,19 @@ async function handleSubmit() {
               </div>
 
               <UFormField label="Repository" required>
-                <USelect v-model="form.repository" :items="repoOptions" placeholder="Select a repository" class="w-full" />
+                <AppSelectInput v-model="form.repository" :items="repoOptions" placeholder="Select a repository" class="w-full" />
               </UFormField>
 
               <template v-if="creationMode === 'manual'">
                 <UFormField label="Name" required>
-                  <UInput v-model="form.name" placeholder="my-stack" autofocus />
+                  <AppTextInput v-model="form.name" placeholder="my-stack" aria-label="Stack name" />
                 </UFormField>
               </template>
 
               <template v-else>
                 <UFormField label="wireops.yaml file" required>
                   <div class="flex items-center gap-2">
-                    <USelect
+                    <AppSelectInput
                       v-model="selectedWireopsFile"
                       :items="wireopsFileOptions"
                       placeholder="Select a wireops.yaml file"
@@ -478,7 +478,7 @@ async function handleSubmit() {
 
             <div v-show="currentStep === 2" class="space-y-4">
               <UFormField label="Worker" :error="createErrors.worker" required>
-                <USelect v-model="form.worker" :items="workerOptions" placeholder="Select a worker" autofocus class="w-full" />
+                <AppSelectInput v-model="form.worker" :items="workerOptions" placeholder="Select a worker" class="w-full" />
               </UFormField>
               <UAlert
                 v-if="workerTagsFilterEmpty"
@@ -496,7 +496,7 @@ async function handleSubmit() {
                     required
                   >
                     <div class="flex items-center gap-2">
-                      <USelect
+                      <AppSelectInput
                         v-model="form.selected_file"
                         :items="fileOptions"
                         placeholder="Select a compose file"

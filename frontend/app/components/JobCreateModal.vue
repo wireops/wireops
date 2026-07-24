@@ -209,7 +209,7 @@ async function submit() {
 
           <div v-show="currentStep === 1">
             <UFormField label="Repository" required>
-              <USelect
+              <AppSelectInput
                 v-model="form.repository"
                 :items="repoItems"
                 placeholder="Select a repository"
@@ -224,7 +224,7 @@ async function submit() {
             </p>
             <UFormField label="Job file" :error="repoFiles.length === 0 && !!form.repository && !loadingFiles ? 'No job.yaml files found in this repository' : undefined" required>
               <div class="flex items-center gap-2">
-                <USelect
+                <AppSelectInput
                   v-model="form.job_file"
                   :items="fileItems"
                   :disabled="!form.repository || loadingFiles"

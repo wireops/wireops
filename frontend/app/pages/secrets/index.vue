@@ -305,7 +305,7 @@ onMounted(() => {
       </template>
 
       <div v-if="globals.length" role="search" aria-label="Filter global variables">
-        <UInput v-model="search" icon="i-lucide-search" placeholder="Search variables..." class="w-full" aria-label="Search global variables" />
+        <AppTextInput v-model="search" icon="i-lucide-search" placeholder="Search variables..." class="w-full" aria-label="Search global variables" />
       </div>
 
       <div v-if="creating || filteredGlobals.length" class="divide-y divide-gray-200 dark:divide-carbon-800">

@@ -154,14 +154,14 @@ function formatRelative(dateStr: string) {
 
       <div v-else class="space-y-4">
         <div class="flex flex-col gap-3 sm:flex-row" role="search" aria-label="Filter jobs">
-          <UInput
+          <AppTextInput
             v-model="searchQuery"
             icon="i-lucide-search"
             placeholder="Search jobs..."
             class="flex-1"
             aria-label="Search jobs"
           />
-          <USelect
+          <AppSelectInput
             v-model="statusFilter"
             :items="[
               { label: 'All Statuses', value: 'all' },
@@ -171,14 +171,16 @@ function formatRelative(dateStr: string) {
               { label: 'Error', value: 'error' }
             ]"
             placeholder="Filter by status"
-            class="w-full sm:w-40"
+            content-width
+            class="w-full sm:w-auto sm:min-w-28"
             aria-label="Filter jobs by status"
           />
-          <USelect
+          <AppSelectInput
             v-model="repositoryFilter"
             :items="repositoryOptions"
             placeholder="Filter by repository"
-            class="w-full sm:w-48"
+            content-width
+            class="w-full sm:w-auto sm:min-w-28"
             aria-label="Filter jobs by repository"
           />
         </div>

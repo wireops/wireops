@@ -125,7 +125,7 @@ async function confirmImport() {
       <!-- Worker selector + discover button -->
       <div class="flex gap-2 items-end">
         <UFormField label="Worker" class="flex-1">
-          <USelect
+          <AppSelectInput
             v-model="selectedWorkerId"
             :items="workerOptions"
             placeholder="Select a worker"
@@ -179,14 +179,14 @@ async function confirmImport() {
       <!-- Manual / pre-filled form -->
       <div class="space-y-3">
         <UFormField label="Stack name" required>
-          <UInput v-model="stackName" placeholder="my-stack" class="w-full" />
+          <AppTextInput v-model="stackName" placeholder="my-stack" aria-label="Stack name" class="w-full" />
         </UFormField>
         <UFormField
           label="Compose file path (absolute)"
           help="Absolute path to the docker-compose.yml on the worker host."
           required
         >
-          <UInput v-model="importPath" placeholder="/opt/myapp/docker-compose.yml" class="w-full" />
+          <AppTextInput v-model="importPath" placeholder="/opt/myapp/docker-compose.yml" aria-label="Compose file path" class="w-full" />
         </UFormField>
       </div>
     </div>

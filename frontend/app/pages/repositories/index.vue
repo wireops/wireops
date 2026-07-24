@@ -195,14 +195,15 @@ const statusColor = (s: string) => {
 
       <div v-if="repos?.length" class="space-y-4">
         <div class="flex flex-col sm:flex-row gap-3">
-          <UInput
+          <AppTextInput
             ref="repositorySearchInput"
             v-model="searchQuery"
             icon="i-lucide-search"
             placeholder="Search repositories..."
+            aria-label="Search repositories"
             class="flex-1"
           />
-          <USelect
+          <AppSelectInput
             v-model="statusFilter"
             :items="[
               { label: 'All', value: 'all' },
@@ -210,9 +211,10 @@ const statusColor = (s: string) => {
               { label: 'Error', value: 'error' }
             ]"
             placeholder="Filter by status"
-            class="w-full sm:w-40"
+            content-width
+            class="w-full sm:w-auto sm:min-w-28"
           />
-          <USelect
+          <AppSelectInput
             v-model="sortBy"
             :items="[
               { label: 'Updated', value: 'updated' },
@@ -220,7 +222,8 @@ const statusColor = (s: string) => {
               { label: 'Last Fetched', value: 'last_fetched' }
             ]"
             placeholder="Sort by"
-            class="w-full sm:w-40"
+            content-width
+            class="w-full sm:w-auto sm:min-w-28"
           />
         </div>
 

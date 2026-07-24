@@ -157,7 +157,7 @@ onUnmounted(() => {
 
       <div v-else class="space-y-4">
         <div role="search" aria-label="Filter workers">
-          <UInput
+          <AppTextInput
             v-model="searchQuery"
             icon="i-lucide-search"
             placeholder="Search workers..."

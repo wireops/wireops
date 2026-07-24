@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { ref } from 'vue'
+import { h, ref } from 'vue'
 import StacksPanel from '../StacksPanel.vue'
 
 describe('StacksPanel', () => {
@@ -69,8 +69,16 @@ describe('StacksPanel', () => {
             props: ['label', 'icon', 'ariaLabel'],
             template: '<button v-bind="$attrs">{{ label }}<slot /></button>',
           },
-          UInput: { template: '<div><input /></div>' },
-          USelect: { template: '<select />' },
+          AppTextInput: {
+            setup() {
+              return () => h('div', [h('input')])
+            },
+          },
+          AppSelectInput: {
+            setup() {
+              return () => h('select')
+            },
+          },
           UTooltip: { template: '<div><slot /></div>' },
           UIcon: { template: '<span />' },
           NuxtLink: {

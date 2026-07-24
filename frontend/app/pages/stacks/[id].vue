@@ -812,13 +812,13 @@ onMounted(() => {
           </div>
         </div>
         <form v-else class="grid grid-cols-1 sm:grid-cols-2 gap-4" @submit.prevent="saveEdit">
-          <UFormField label="Name"><UInput v-model="editForm.name" /></UFormField>
-          <UFormField label="Worker"><USelect v-model="editForm.worker" :items="workerOptions" /></UFormField>
+          <UFormField label="Name"><AppTextInput v-model="editForm.name" aria-label="Stack name" /></UFormField>
+          <UFormField label="Worker"><AppSelectInput v-model="editForm.worker" :items="workerOptions" /></UFormField>
           <UFormField label="Compose Path" :error="editErrors.compose_path">
-            <UInput v-model="editForm.compose_path" :disabled="isWireopsManaged" />
+            <AppTextInput v-model="editForm.compose_path" aria-label="Compose path" :disabled="isWireopsManaged" />
           </UFormField>
           <UFormField label="Compose File" :error="editErrors.compose_file">
-            <UInput v-model="editForm.compose_file" :disabled="isWireopsManaged" />
+            <AppTextInput v-model="editForm.compose_file" aria-label="Compose file" :disabled="isWireopsManaged" />
           </UFormField>
           <div v-if="isWireopsManaged" class="col-span-2 text-xs text-gray-500">
             Compose path/file are managed by <code>{{ stack?.wireops_file_path }}</code> and can't be edited here.
@@ -880,9 +880,10 @@ onMounted(() => {
           <div>
             <label class="text-xs text-gray-500 uppercase tracking-wide font-semibold">Webhook URL</label>
             <div class="flex items-center gap-2 mt-1">
-              <UInput 
-                :model-value="webhookUrl ?? ''" 
-                readonly 
+              <AppTextInput
+                :model-value="webhookUrl ?? ''"
+                readonly
+                aria-label="Webhook URL"
                 class="flex-1 font-mono text-xs"
                 placeholder="Loading..."
               />
@@ -900,9 +901,10 @@ onMounted(() => {
           <div v-if="canOperate">
             <label class="text-xs text-gray-500 uppercase tracking-wide font-semibold">Webhook Secret</label>
             <div class="flex items-center gap-2 mt-1">
-              <UInput
+              <AppTextInput
                 v-model="webhookSecretInput"
                 type="password"
+                aria-label="Webhook secret"
                 class="flex-1 font-mono text-xs"
                 :placeholder="webhookSecretConfigured ? 'Configured — leave empty to keep current' : 'Not configured — required to enable this webhook'"
               />
@@ -1257,7 +1259,7 @@ onMounted(() => {
               </div>
             </div>
             <div class="relative">
-              <UInput v-model="rollbackSha" placeholder="Or paste a commit SHA" class="font-mono w-full" />
+              <AppTextInput v-model="rollbackSha" placeholder="Or paste a commit SHA" aria-label="Commit SHA" class="font-mono w-full" />
               <button
                 v-if="rollbackSha"
                 class="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"

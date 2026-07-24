@@ -52,7 +52,32 @@ const appSettings = ref({
 const appSettingsSaving = ref(false)
 const appSettingsLoaded = ref(false)
 
+function parsePositiveInteger(value: unknown) {
+  const text = String(value).trim()
+  if (!/^\d+$/.test(text)) return null
+  const numberValue = Number(text)
+  return Number.isFinite(numberValue) && Number.isInteger(numberValue) && numberValue > 0 ? numberValue : null
+}
+
+function isPositiveInteger(value: unknown) {
+  return parsePositiveInteger(value) !== null
+}
+
+function updateAuditRetentionDays(value: unknown) {
+  const next = parsePositiveInteger(value)
+  if (next !== null) appSettings.value.audit_retention_days = next
+}
+
+function updateJobRunRetentionDays(value: unknown) {
+  const next = parsePositiveInteger(value)
+  if (next !== null) appSettings.value.job_run_retention_days = next
+}
+
 async function handleSaveAppSettings(options: { title?: string; description?: string } = {}) {
+  if (!isPositiveInteger(appSettings.value.audit_retention_days) || !isPositiveInteger(appSettings.value.job_run_retention_days)) {
+    toast.add({ title: 'Invalid retention settings', description: 'Retention values must be positive whole numbers.', color: 'error' })
+    return false
+  }
   appSettingsSaving.value = true
   try {
     const tzToSave = appSettings.value.timezone === 'system' ? '' : appSettings.value.timezone
@@ -89,6 +114,14 @@ const changePasswordForm = ref({ oldPassword: '', password: '', passwordConfirm:
 const changePasswordLoading = ref(false)
 
 async function handleChangePassword() {
+  if (
+    !changePasswordForm.value.oldPassword.trim()
+    || !changePasswordForm.value.password.trim()
+    || !changePasswordForm.value.passwordConfirm.trim()
+  ) {
+    toast.add({ title: 'All password fields are required', color: 'error' })
+    return
+  }
   if (changePasswordForm.value.password !== changePasswordForm.value.passwordConfirm) {
     toast.add({ title: 'Passwords do not match', color: 'error' })
     return
@@ -150,10 +183,15 @@ async function loadSSOGroupRoles() {
 }
 
 async function createSSOGroupRole() {
+  const group = ssoGroupRoleForm.value.group.trim()
+  if (!group) {
+    toast.add({ title: 'SSO group is required', color: 'error' })
+    return
+  }
   try {
     await apiFetch('/api/custom/sso-group-roles', {
       method: 'POST',
-      body: JSON.stringify(ssoGroupRoleForm.value),
+      body: JSON.stringify({ ...ssoGroupRoleForm.value, group }),
     })
     ssoGroupRoleForm.value = { group: '', role: 'viewer' }
     await loadSSOGroupRoles()
@@ -484,13 +522,13 @@ onMounted(async () => {
         <template #header><h3 class="font-semibold">Change Password</h3></template>
         <form class="space-y-4" @submit.prevent="handleChangePassword">
           <UFormField label="Current Password">
-            <UInput v-model="changePasswordForm.oldPassword" type="password" placeholder="••••••••" icon="i-lucide-lock" class="w-full" required />
+            <AppTextInput v-model="changePasswordForm.oldPassword" type="password" placeholder="••••••••" icon="i-lucide-lock" aria-label="Current password" class="w-full" />
           </UFormField>
           <UFormField label="New Password">
-            <UInput v-model="changePasswordForm.password" type="password" placeholder="••••••••" icon="i-lucide-lock" class="w-full" required />
+            <AppTextInput v-model="changePasswordForm.password" type="password" placeholder="••••••••" icon="i-lucide-lock" aria-label="New password" class="w-full" />
           </UFormField>
           <UFormField label="Confirm New Password">
-            <UInput v-model="changePasswordForm.passwordConfirm" type="password" placeholder="••••••••" icon="i-lucide-lock" class="w-full" required />
+            <AppTextInput v-model="changePasswordForm.passwordConfirm" type="password" placeholder="••••••••" icon="i-lucide-lock" aria-label="Confirm new password" class="w-full" />
           </UFormField>
           <UButton type="submit" label="Update Password" icon="i-lucide-check" :loading="changePasswordLoading" />
         </form>
@@ -507,12 +545,12 @@ onMounted(async () => {
         <div class="space-y-4">
           <UFormField label="Groups Claim">
             <div class="flex gap-2">
-              <UInput v-model="appSettings.sso_groups_claim" placeholder="groups" class="max-w-sm" />
+              <AppTextInput v-model="appSettings.sso_groups_claim" placeholder="groups" class="max-w-sm" />
               <UButton label="Save Claim" :loading="appSettingsSaving" @click="handleSaveAppSettings({ title: 'SSO claim saved', description: 'SSO group claim mapping was updated.' })" />
             </div>
           </UFormField>
           <form class="flex flex-col gap-2 sm:flex-row" @submit.prevent="createSSOGroupRole">
-            <UInput v-model="ssoGroupRoleForm.group" placeholder="wireops-admins" class="flex-1" required />
+            <AppTextInput v-model="ssoGroupRoleForm.group" placeholder="wireops-admins" aria-label="SSO group name" class="flex-1" />
             <USelectMenu v-model="ssoGroupRoleForm.role" :items="roleOptions" value-key="value" class="w-full sm:w-40" />
             <UButton type="submit" label="Add Mapping" icon="i-lucide-plus" />
           </form>
@@ -630,15 +668,19 @@ onMounted(async () => {
           </div>
         </template>
 
-        <form class="flex flex-wrap items-center gap-2 mb-4" @submit.prevent="applyAuditFilters">
-          <UInput v-model="auditFilters.action" placeholder="Action" size="sm" class="w-32" />
-          <UInput v-model="auditFilters.resource_type" placeholder="Resource Type" size="sm" class="w-32" />
-          <UInput v-model="auditFilters.resource_id" placeholder="Resource ID" size="sm" class="w-32" />
-          <USelect v-model="auditFilters.actor_type" :items="auditActorTypeOptions" size="sm" class="w-32" />
-          <UInput v-model="auditFilters.actor_id" placeholder="Actor ID" size="sm" class="w-32" />
-          <USelect v-model="auditFilters.origin" :items="auditOriginOptions" size="sm" class="w-32" />
-          <USelect v-model="auditFilters.status" :items="auditStatusOptions" size="sm" class="w-32" />
-          <div class="flex gap-1 ml-auto">
+        <form class="space-y-2 mb-4" @submit.prevent="applyAuditFilters">
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <AppTextInput v-model="auditFilters.action" placeholder="Action" />
+            <AppTextInput v-model="auditFilters.resource_type" placeholder="Resource Type" />
+            <AppTextInput v-model="auditFilters.resource_id" placeholder="Resource ID" />
+          </div>
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 items-center">
+            <AppSelectInput v-model="auditFilters.actor_type" :items="auditActorTypeOptions" />
+            <AppTextInput v-model="auditFilters.actor_id" placeholder="Actor ID" />
+            <AppSelectInput v-model="auditFilters.origin" :items="auditOriginOptions" />
+            <AppSelectInput v-model="auditFilters.status" :items="auditStatusOptions" />
+          </div>
+          <div class="flex justify-end gap-1">
             <UButton icon="i-lucide-x" variant="ghost" size="sm" @click="clearAuditFilters" />
             <UButton type="submit" icon="i-lucide-search" size="sm" />
           </div>
@@ -714,17 +756,17 @@ onMounted(async () => {
 
             <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 p-4">
               <UFormField label="Audit retention (days)">
-                <UInput
-                  v-model.number="appSettings.audit_retention_days"
+                <AppTextInput
+                  :model-value="String(appSettings.audit_retention_days)"
                   type="number"
-                  min="1"
+                  @update:model-value="updateAuditRetentionDays"
                 />
               </UFormField>
               <UFormField label="Job run retention (days)">
-                <UInput
-                  v-model.number="appSettings.job_run_retention_days"
+                <AppTextInput
+                  :model-value="String(appSettings.job_run_retention_days)"
                   type="number"
-                  min="1"
+                  @update:model-value="updateJobRunRetentionDays"
                 />
               </UFormField>
             </div>

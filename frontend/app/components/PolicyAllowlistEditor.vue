@@ -134,44 +134,37 @@ function executeDelete(index: number) {
         :key="keys[i]"
         class="flex items-center gap-2"
       >
-        <UInput
+        <UButton
+          :icon="activeEditIndex === i ? 'i-lucide-lock-open' : 'i-lucide-lock'"
+          variant="ghost"
+          :color="activeEditIndex === i ? 'primary' : 'neutral'"
+          size="xs"
+          class="shrink-0"
+          :aria-label="activeEditIndex === i ? 'Lock' : 'Unlock'"
+          tabindex="-1"
+          @click.stop="activeEditIndex === i ? lock(i, $event) : unlock(i)"
+        />
+        <AppTextInput
           v-model="list[i]"
           :placeholder="props.placeholder"
           class="flex-1 font-mono text-sm"
           :readonly="activeEditIndex !== i"
-          :ui="{ base: 'pl-12 pr-11', leading: 'pointer-events-auto h-full pl-0', trailing: 'pointer-events-auto h-full pr-0' }"
           @click="unlock(i)"
           @focus="onFocusInput(i)"
           @blur="onBlurInput(list[i], i)"
           @keyup.enter="($event.target as any).blur()"
-        >
-          <template #leading>
-            <div class="flex items-center h-[calc(100%-4px)] bg-white dark:bg-carbon-950 px-2.5 border-r border-gray-200 dark:border-carbon-800 rounded-l-[4px] shrink-0 ml-[2px] my-[2px]">
-              <UButton
-                :icon="activeEditIndex === i ? 'i-lucide-lock-open' : 'i-lucide-lock'"
-                variant="ghost"
-                :color="activeEditIndex === i ? 'primary' : 'neutral'"
-                size="xs"
-                :class="['p-0.5 hover:bg-gray-50 dark:hover:bg-carbon-900 bg-transparent rounded transition-opacity', activeEditIndex === i ? 'opacity-100' : 'opacity-50']"
-                :aria-label="activeEditIndex === i ? 'Lock' : 'Unlock'"
-                tabindex="-1"
-                @click.stop="activeEditIndex === i ? lock(i, $event) : unlock(i)"
-              />
-            </div>
-          </template>
-          <template #trailing>
-            <UButton
-              icon="i-lucide-x"
-              variant="ghost"
-              color="error"
-              class="h-[calc(100%-4px)] flex items-center justify-center bg-white dark:bg-carbon-950 px-4 border-l border-gray-200 dark:border-carbon-800 rounded-r-[4px] shrink-0 mr-[2px] my-[2px] text-red-500 hover:!bg-red-500 hover:!text-white focus:!bg-red-500 focus:!text-white focus-visible:!bg-red-500 focus-visible:!text-white focus:!outline-none focus-visible:!outline-none transition-colors"
-              aria-label="Delete entry"
-              @click.stop="requestDelete(i, list[i])"
-              @keydown.enter.prevent.stop="requestDelete(i, list[i])"
-              @keyup.enter.prevent.stop
-            />
-          </template>
-        </UInput>
+        />
+        <UButton
+          icon="i-lucide-x"
+          variant="ghost"
+          color="error"
+          size="xs"
+          class="shrink-0"
+          aria-label="Delete entry"
+          @click.stop="requestDelete(i, list[i])"
+          @keydown.enter.prevent.stop="requestDelete(i, list[i])"
+          @keyup.enter.prevent.stop
+        />
       </div>
       <div v-if="list.length === 0" class="text-xs text-gray-400 italic ml-6">{{ props.emptyText }}</div>
     </div>

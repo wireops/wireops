@@ -67,6 +67,8 @@ const DOCKER_CAPABILITIES = [
   'WAKE_ALARM',
 ]
 
+const capabilityOptions = DOCKER_CAPABILITIES.map(cap => ({ label: cap, value: cap }))
+
 function removeCapAdd(cap: string) {
   policy.value.allowed_cap_add = policy.value.allowed_cap_add.filter(c => c !== cap)
   emit('save')
@@ -303,11 +305,11 @@ function removeCapAdd(cap: string) {
               <UIcon name="i-lucide-key-round" class="w-4 h-4 text-gray-400 shrink-0" />
               Allowed Linux Capabilities (<code>cap_add</code>)
             </h4>
-            <USelectMenu
+            <AppMultiSelectInput
               v-model="policy.allowed_cap_add"
-              :items="DOCKER_CAPABILITIES"
-              multiple
+              :items="capabilityOptions"
               placeholder="No restrictions — all capabilities permitted."
+              aria-label="Allowed Linux capabilities"
               class="w-full"
               @update:model-value="emit('save')"
             />

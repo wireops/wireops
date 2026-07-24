@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { reactive, ref } from 'vue'
+import { h, reactive, ref } from 'vue'
 import CreateStackModal from '../CreateStackModal.vue'
 
 function setupGlobals() {
@@ -58,12 +58,17 @@ const stubs = {
   UCard: { template: '<div><slot name="header" /><slot /><slot name="footer" /></div>' },
   UStepper: { props: ['modelValue', 'items'], template: '<div />' },
   UFormField: { props: ['label', 'error', 'required'], template: '<div><label>{{ label }}</label><slot /><div class="field-error">{{ error }}</div></div>' },
-  UInput: {
+  AppTextInput: {
     props: ['modelValue'],
     emits: ['update:modelValue'],
-    template: '<input :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
+    setup(props: { modelValue?: string }, { emit }: { emit: (event: 'update:modelValue', value: string) => void }) {
+      return () => h('input', {
+        value: props.modelValue,
+        onInput: (event: Event) => emit('update:modelValue', (event.target as HTMLInputElement).value),
+      })
+    },
   },
-  USelect: {
+  AppSelectInput: {
     props: ['modelValue', 'items', 'disabled'],
     emits: ['update:modelValue'],
     template: `<select :value="modelValue" :disabled="disabled" @change="$emit('update:modelValue', $event.target.value)">

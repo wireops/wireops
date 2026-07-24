@@ -257,7 +257,7 @@ async function handlePurge(dirName: string) {
 
       <div v-if="stacks?.length" class="space-y-4">
         <div class="flex flex-col gap-3 sm:flex-row" role="search" aria-label="Filter stacks">
-          <UInput
+          <AppTextInput
             ref="searchInputRef"
             v-model="searchQuery"
             icon="i-lucide-search"
@@ -265,7 +265,7 @@ async function handlePurge(dirName: string) {
             class="flex-1"
             aria-label="Search stacks"
           />
-          <USelect
+          <AppSelectInput
             v-model="statusFilter"
             :items="[
               { label: 'All', value: 'all' },
@@ -276,10 +276,11 @@ async function handlePurge(dirName: string) {
               { label: 'Pending', value: 'pending' }
             ]"
             placeholder="Filter by status"
-            class="w-full sm:w-40"
+            content-width
+            class="w-full sm:w-auto sm:min-w-28"
             aria-label="Filter stacks by status"
           />
-          <USelect
+          <AppSelectInput
             v-model="sortBy"
             :items="[
               { label: 'Updated', value: 'updated' },
@@ -288,7 +289,8 @@ async function handlePurge(dirName: string) {
               { label: 'Status', value: 'status' }
             ]"
             placeholder="Sort by"
-            class="w-full sm:w-40"
+            content-width
+            class="w-full sm:w-auto sm:min-w-28"
             aria-label="Sort stacks"
           />
         </div>
