@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { reactive, ref } from 'vue'
+import { h, reactive, ref } from 'vue'
 import CreateStackModal from '../CreateStackModal.vue'
 
 function setupGlobals() {
@@ -61,7 +61,12 @@ const stubs = {
   AppTextInput: {
     props: ['modelValue'],
     emits: ['update:modelValue'],
-    template: '<input :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
+    setup(props: { modelValue?: string }, { emit }: { emit: (event: 'update:modelValue', value: string) => void }) {
+      return () => h('input', {
+        value: props.modelValue,
+        onInput: (event: Event) => emit('update:modelValue', (event.target as HTMLInputElement).value),
+      })
+    },
   },
   AppSelectInput: {
     props: ['modelValue', 'items', 'disabled'],

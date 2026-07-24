@@ -52,7 +52,32 @@ const appSettings = ref({
 const appSettingsSaving = ref(false)
 const appSettingsLoaded = ref(false)
 
+function parsePositiveInteger(value: unknown) {
+  const text = String(value).trim()
+  if (!/^\d+$/.test(text)) return null
+  const numberValue = Number(text)
+  return Number.isFinite(numberValue) && Number.isInteger(numberValue) && numberValue > 0 ? numberValue : null
+}
+
+function isPositiveInteger(value: unknown) {
+  return parsePositiveInteger(value) !== null
+}
+
+function updateAuditRetentionDays(value: unknown) {
+  const next = parsePositiveInteger(value)
+  if (next !== null) appSettings.value.audit_retention_days = next
+}
+
+function updateJobRunRetentionDays(value: unknown) {
+  const next = parsePositiveInteger(value)
+  if (next !== null) appSettings.value.job_run_retention_days = next
+}
+
 async function handleSaveAppSettings(options: { title?: string; description?: string } = {}) {
+  if (!isPositiveInteger(appSettings.value.audit_retention_days) || !isPositiveInteger(appSettings.value.job_run_retention_days)) {
+    toast.add({ title: 'Invalid retention settings', description: 'Retention values must be positive whole numbers.', color: 'error' })
+    return false
+  }
   appSettingsSaving.value = true
   try {
     const tzToSave = appSettings.value.timezone === 'system' ? '' : appSettings.value.timezone
@@ -89,6 +114,14 @@ const changePasswordForm = ref({ oldPassword: '', password: '', passwordConfirm:
 const changePasswordLoading = ref(false)
 
 async function handleChangePassword() {
+  if (
+    !changePasswordForm.value.oldPassword.trim()
+    || !changePasswordForm.value.password.trim()
+    || !changePasswordForm.value.passwordConfirm.trim()
+  ) {
+    toast.add({ title: 'All password fields are required', color: 'error' })
+    return
+  }
   if (changePasswordForm.value.password !== changePasswordForm.value.passwordConfirm) {
     toast.add({ title: 'Passwords do not match', color: 'error' })
     return
@@ -150,10 +183,15 @@ async function loadSSOGroupRoles() {
 }
 
 async function createSSOGroupRole() {
+  const group = ssoGroupRoleForm.value.group.trim()
+  if (!group) {
+    toast.add({ title: 'SSO group is required', color: 'error' })
+    return
+  }
   try {
     await apiFetch('/api/custom/sso-group-roles', {
       method: 'POST',
-      body: JSON.stringify(ssoGroupRoleForm.value),
+      body: JSON.stringify({ ...ssoGroupRoleForm.value, group }),
     })
     ssoGroupRoleForm.value = { group: '', role: 'viewer' }
     await loadSSOGroupRoles()
@@ -721,14 +759,14 @@ onMounted(async () => {
                 <AppTextInput
                   :model-value="String(appSettings.audit_retention_days)"
                   type="number"
-                  @update:model-value="(v) => appSettings.audit_retention_days = Number(v)"
+                  @update:model-value="updateAuditRetentionDays"
                 />
               </UFormField>
               <UFormField label="Job run retention (days)">
                 <AppTextInput
                   :model-value="String(appSettings.job_run_retention_days)"
                   type="number"
-                  @update:model-value="(v) => appSettings.job_run_retention_days = Number(v)"
+                  @update:model-value="updateJobRunRetentionDays"
                 />
               </UFormField>
             </div>

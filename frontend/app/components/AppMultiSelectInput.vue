@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick, useId } from 'vue'
 import { PopoverRoot, PopoverTrigger, PopoverPortal, PopoverContent } from 'reka-ui'
 
 interface SelectItem {
@@ -40,6 +40,7 @@ const isOpen = ref(false)
 const query = ref('')
 const activeIndex = ref(-1)
 const searchEl = ref<HTMLInputElement | null>(null)
+const generatedId = useId()
 
 const selectedLabels = computed(() =>
   props.items.filter(item => props.modelValue.includes(item.value)).map(item => item.label)
@@ -57,6 +58,16 @@ const filteredItems = computed(() => {
   if (!q) return props.items
   return props.items.filter(item => item.label.toLowerCase().includes(q))
 })
+
+const listboxId = computed(() => `${props.id || generatedId}-listbox`)
+const activeOptionId = computed(() => {
+  const item = filteredItems.value[activeIndex.value]
+  return item ? optionId(item.value) : undefined
+})
+
+function optionId(value: string) {
+  return `${listboxId.value}-option-${value.replace(/[^a-zA-Z0-9_-]/g, '_')}`
+}
 
 function onOpenChange(open: boolean) {
   if (!open) {
@@ -120,6 +131,8 @@ watch(query, () => { activeIndex.value = 0 })
         :disabled="disabled || loading"
         :aria-label="ariaLabel"
         :aria-expanded="isOpen"
+        aria-haspopup="listbox"
+        :aria-controls="listboxId"
       >
         <span
           class="truncate text-left"
@@ -148,13 +161,23 @@ watch(query, () => { activeIndex.value = 0 })
             class="w-full bg-transparent border-0 p-1 focus:ring-0 focus:outline-hidden text-sm text-gray-900/90 dark:text-white/90 placeholder-gray-400 dark:placeholder-wire-200/30"
             :placeholder="searchPlaceholder"
             :aria-label="searchPlaceholder"
+            :aria-controls="listboxId"
+            :aria-activedescendant="activeOptionId"
             @keydown="onKeydown"
           >
         </div>
-        <ul class="max-h-56 overflow-y-auto py-1">
+        <ul
+          :id="listboxId"
+          role="listbox"
+          aria-multiselectable="true"
+          class="max-h-56 overflow-y-auto py-1"
+        >
           <li
             v-for="(item, idx) in filteredItems"
+            :id="optionId(item.value)"
             :key="item.value"
+            role="option"
+            :aria-selected="isSelected(item.value)"
             class="px-2.5 py-1.5 text-sm cursor-pointer flex items-center justify-between gap-2"
             :class="idx === activeIndex ? 'bg-yellow-400/10 text-yellow-600 dark:text-yellow-400' : 'text-gray-700 dark:text-wire-200 hover:bg-gray-100 dark:hover:bg-carbon-900/60'"
             @mouseenter="activeIndex = idx"

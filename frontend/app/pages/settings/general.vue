@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 
 const toast = useToast()
 const { getAppSettings, saveAppSettings, keyscan } = useApi()
 
 const keyscanHost = ref('')
-const keyscanPort = ref(22)
+const keyscanPort = ref('22')
 const keyscanLoading = ref(false)
 const keyscanResult = ref('')
 
@@ -25,6 +25,8 @@ const systemTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone
 const availableTimezones = ref<{ label: string; value: string }[]>([
   { label: `System Default (${systemTimezone})`, value: 'system' }
 ])
+const parsedKeyscanPort = computed(() => parsePort(keyscanPort.value))
+const canRunKeyscan = computed(() => Boolean(keyscanHost.value.trim()) && parsedKeyscanPort.value !== null)
 
 onMounted(() => {
   try {
@@ -102,12 +104,26 @@ async function copyToClipboard(text: string) {
   }
 }
 
+function parsePort(value: string) {
+  const trimmed = value.trim()
+  if (!/^\d+$/.test(trimmed)) return null
+  const port = Number(trimmed)
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return null
+  return port
+}
+
 async function runKeyscan() {
-  if (!keyscanHost.value) return
+  const host = keyscanHost.value.trim()
+  const port = parsedKeyscanPort.value
+  if (!host) return
+  if (port === null) {
+    toast.add({ title: 'Invalid SSH port', description: 'Use a whole number from 1 through 65535.', color: 'error' })
+    return
+  }
   keyscanLoading.value = true
   keyscanResult.value = ''
   try {
-    const res = await keyscan(keyscanHost.value, keyscanPort.value) as any
+    const res = await keyscan(host, port) as any
     if (res.success === 'true') {
       keyscanResult.value = res.result
       toast.add({ title: 'Host key retrieved', color: 'success' })
@@ -158,13 +174,13 @@ async function runKeyscan() {
         <AppTextInput v-model="keyscanHost" placeholder="github.com" class="flex-1" />
         <div class="flex gap-2">
           <AppTextInput
-            :model-value="String(keyscanPort)"
+            :model-value="keyscanPort"
             type="number"
             placeholder="22"
             class="w-20"
-            @update:model-value="(v) => keyscanPort = Number(v)"
+            @update:model-value="(v) => keyscanPort = String(v)"
           />
-          <UButton type="submit" label="Scan" :loading="keyscanLoading" />
+          <UButton type="submit" label="Scan" :loading="keyscanLoading" :disabled="!canRunKeyscan" />
         </div>
       </form>
       <div v-if="keyscanResult" class="mt-3">

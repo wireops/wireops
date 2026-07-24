@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { h } from 'vue'
 import PolicyAllowlistEditor from '../PolicyAllowlistEditor.vue'
 
 const stubs = {
@@ -7,18 +8,21 @@ const stubs = {
     inheritAttrs: false,
     props: ['modelValue', 'placeholder', 'readonly'],
     emits: ['update:modelValue', 'focus', 'blur', 'keyup'],
-    template: `
-      <input
-        v-bind="$attrs"
-        :value="modelValue"
-        :placeholder="placeholder"
-        :readonly="readonly"
-        @input="$emit('update:modelValue', $event.target.value)"
-        @focus="$emit('focus', $event)"
-        @blur="$emit('blur', $event)"
-        @keyup="$emit('keyup', $event)"
-      />
-    `,
+    setup(
+      props: { modelValue?: string, placeholder?: string, readonly?: boolean },
+      { attrs, emit }: { attrs: Record<string, unknown>, emit: (event: string, ...args: unknown[]) => void }
+    ) {
+      return () => h('input', {
+        ...attrs,
+        value: props.modelValue,
+        placeholder: props.placeholder,
+        readonly: props.readonly,
+        onInput: (event: Event) => emit('update:modelValue', (event.target as HTMLInputElement).value),
+        onFocus: (event: FocusEvent) => emit('focus', event),
+        onBlur: (event: FocusEvent) => emit('blur', event),
+        onKeyup: (event: KeyboardEvent) => emit('keyup', event),
+      })
+    },
   },
   UButton: {
     inheritAttrs: false,
