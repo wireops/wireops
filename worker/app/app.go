@@ -131,7 +131,8 @@ func Run() {
 	if workerToken == "" {
 		log.Fatal("WORKER_TOKEN must be set")
 	}
-	if workerTags == "" {
+	tags := parseTags(workerTags)
+	if len(tags) == 0 {
 		log.Fatal("WORKER_TAGS must be set")
 	}
 	if hostname == "" {
@@ -187,7 +188,6 @@ func Run() {
 		shutdownCancel()
 	}()
 
-	tags := parseTags(workerTags)
 	backoff := initialBackoff
 	for {
 		reason, connected := transport.RunSession(serverURL, workerToken, hostname, stackDir, tags, shutdownCtx)
