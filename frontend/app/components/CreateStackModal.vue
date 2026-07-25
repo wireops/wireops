@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
+import { computed, ref, watch } from 'vue'
 const route = useRoute()
 const router = useRouter()
 
@@ -97,15 +97,6 @@ const fileOptions = computed(() =>
 const wireopsFileOptions = computed(() =>
   wireopsFiles.value.map(f => ({ label: f, value: f }))
 )
-
-const isMobile = ref(false)
-
-onMounted(() => {
-  isMobile.value = window.innerWidth < 768
-  const resizeListener = () => { isMobile.value = window.innerWidth < 768 }
-  window.addEventListener('resize', resizeListener)
-  onUnmounted(() => window.removeEventListener('resize', resizeListener))
-})
 
 watch(() => props.open, async (val) => {
   if (val) {
@@ -346,7 +337,6 @@ async function handleSubmit() {
 <template>
   <UModal
     :open="open"
-    :fullscreen="isMobile"
     :ui="{ content: 'sm:max-w-2xl w-full' }"
     @update:open="emit('update:open', $event)"
   >

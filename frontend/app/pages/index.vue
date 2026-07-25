@@ -1,29 +1,41 @@
 <script setup lang="ts">
 const { $pb } = useNuxtApp()
 const { subscribe } = useRealtime()
+const { listJobs, getWorkers } = useApi()
 
 const { data: stacks, refresh } = useAsyncData('stacks', () =>
   $pb.collection('stacks').getFullList({ sort: '-updated', expand: 'repository' })
 )
 
-const { data: repos, refresh: refreshRepos } = useAsyncData('repos_count', () =>
-  $pb.collection('repositories').getFullList({ fields: 'id' })
+const { data: jobs, refresh: refreshJobs } = useAsyncData('dashboard_jobs', () =>
+  listJobs().catch(() => [])
+)
+
+const { data: workers, refresh: refreshWorkers } = useAsyncData('dashboard_workers', () =>
+  getWorkers().catch(() => [])
 )
 
 const showCreateRepo = ref(false)
 
-function onRepoCreated() {
-  refreshRepos()
+function refreshAll() {
+  refresh()
+  refreshJobs()
+  refreshWorkers()
 }
 
 const stats = computed(() => {
   const s = stacks.value || []
+  const j = jobs.value || []
+  const w = workers.value || []
   return {
-    repos: repos.value?.length || 0,
     stacks: s.length,
-    active: s.filter((r: any) => r.status === 'active').length,
-    error: s.filter((r: any) => r.status === 'error').length,
+    jobs: j.length,
+    active: s.filter((r: any) => r.status === 'active').length + j.filter((r: any) => r.status === 'active').length,
+    error: s.filter((r: any) => r.status === 'error').length + j.filter((r: any) => r.status === 'error').length,
     paused: s.filter((r: any) => r.status === 'paused').length,
+    stalledJobs: j.filter((r: any) => r.status === 'stalled').length,
+    workersOnline: w.filter((r: any) => r.status === 'ACTIVE').length,
+    workersTotal: w.length,
   }
 })
 
@@ -41,13 +53,13 @@ const statusColor = (status: string) => {
 const isUpdating = ref(false)
 
 onMounted(() => {
-  // Subscribe to stacks changes
   subscribe('stacks', () => {
     isUpdating.value = true
     refresh()
     setTimeout(() => { isUpdating.value = false }, 500)
   })
-
+  subscribe('scheduled_jobs', () => refreshJobs())
+  subscribe('workers', () => refreshWorkers())
 })
 </script>
 
@@ -68,26 +80,15 @@ onMounted(() => {
       </div>
       <div class="flex items-center gap-2">
         <BadgeStatus :status="'active'" class="hidden sm:flex uppercase" />
-        <UButton icon="i-lucide-refresh-cw" label="Refresh" variant="outline" size="sm" @click="refresh()" />
+        <RefreshButton label size="sm" @click="refreshAll()" />
       </div>
     </div>
 
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-      <UCard>
-        <div class="flex items-center gap-3">
-          <div class="p-2 rounded-lg bg-wire-700/20">
-            <UIcon name="i-lucide-git-branch" class="w-5 h-5 text-wire-400" />
-          </div>
-          <div>
-            <p class="text-sm text-wire-200/60">Repositories</p>
-            <p class="text-2xl font-bold">{{ stats.repos }}</p>
-          </div>
-        </div>
-      </UCard>
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
       <UCard>
         <div class="flex items-center gap-3">
           <div class="p-2 rounded-lg bg-wire-400/10">
-            <UIcon name="i-lucide-container" class="w-5 h-5 text-wire-400" />
+            <UIcon name="i-lucide-layers" class="w-5 h-5 text-wire-400" />
           </div>
           <div>
             <p class="text-sm text-wire-200/60">Stacks</p>
@@ -97,23 +98,70 @@ onMounted(() => {
       </UCard>
       <UCard>
         <div class="flex items-center gap-3">
-          <div class="p-2 rounded-lg bg-yellow-400/10">
-            <UIcon name="i-lucide-zap" class="w-5 h-5 text-yellow-400" />
+          <div class="p-2 rounded-lg bg-wire-400/10">
+            <UIcon name="i-lucide-calendar-clock" class="w-5 h-5 text-wire-400" />
           </div>
           <div>
-            <p class="text-sm text-wire-200/60">Active</p>
-            <p class="text-2xl font-bold text-yellow-400">{{ stats.active }}</p>
+            <p class="text-sm text-wire-200/60">Jobs</p>
+            <p class="text-2xl font-bold">{{ stats.jobs }}</p>
           </div>
         </div>
       </UCard>
       <UCard>
         <div class="flex items-center gap-3">
-          <div class="p-2 rounded-lg bg-red-500/10">
-            <UIcon name="i-lucide-alert-triangle" class="w-5 h-5 text-red-400" />
+          <div class="p-2 rounded-lg bg-emerald-500/10">
+            <UIcon name="i-lucide-circle-check" class="w-5 h-5 text-emerald-400" />
+          </div>
+          <div>
+            <p class="text-sm text-wire-200/60">Active</p>
+            <p class="text-2xl font-bold">{{ stats.active }}</p>
+          </div>
+        </div>
+      </UCard>
+      <UCard>
+        <div class="flex items-center gap-3">
+          <div class="p-2 rounded-lg" :class="stats.error > 0 ? 'bg-red-500/10' : 'bg-gray-400/10 dark:bg-carbon-700/40'">
+            <UIcon name="i-lucide-alert-triangle" class="w-5 h-5" :class="stats.error > 0 ? 'text-red-400' : 'text-gray-400 dark:text-gray-500'" />
           </div>
           <div>
             <p class="text-sm text-wire-200/60">Error</p>
-            <p class="text-2xl font-bold text-red-400">{{ stats.error }}</p>
+            <p class="text-2xl font-bold" :class="stats.error > 0 ? 'text-red-400' : 'text-gray-400 dark:text-gray-500'">{{ stats.error }}</p>
+          </div>
+        </div>
+      </UCard>
+    </div>
+
+    <div class="grid grid-cols-3 gap-3 sm:gap-4">
+      <UCard>
+        <div class="flex items-center gap-3">
+          <div class="p-2 rounded-lg bg-emerald-500/10">
+            <UIcon name="i-lucide-network" class="w-5 h-5 text-emerald-400" />
+          </div>
+          <div>
+            <p class="text-sm text-wire-200/60">Workers Online</p>
+            <p class="text-2xl font-bold">{{ stats.workersOnline }}<span class="text-base font-medium text-wire-200/40">/{{ stats.workersTotal }}</span></p>
+          </div>
+        </div>
+      </UCard>
+      <UCard>
+        <div class="flex items-center gap-3">
+          <div class="p-2 rounded-lg" :class="stats.stalledJobs > 0 ? 'bg-amber-500/10' : 'bg-gray-400/10 dark:bg-carbon-700/40'">
+            <UIcon name="i-lucide-pause-circle" class="w-5 h-5" :class="stats.stalledJobs > 0 ? 'text-amber-400' : 'text-gray-400 dark:text-gray-500'" />
+          </div>
+          <div>
+            <p class="text-sm text-wire-200/60">Stalled Jobs</p>
+            <p class="text-2xl font-bold" :class="stats.stalledJobs > 0 ? 'text-amber-400' : 'text-gray-400 dark:text-gray-500'">{{ stats.stalledJobs }}</p>
+          </div>
+        </div>
+      </UCard>
+      <UCard>
+        <div class="flex items-center gap-3">
+          <div class="p-2 rounded-lg" :class="stats.paused > 0 ? 'bg-amber-500/10' : 'bg-gray-400/10 dark:bg-carbon-700/40'">
+            <UIcon name="i-lucide-pause-circle" class="w-5 h-5" :class="stats.paused > 0 ? 'text-amber-400' : 'text-gray-400 dark:text-gray-500'" />
+          </div>
+          <div>
+            <p class="text-sm text-wire-200/60">Paused Stacks</p>
+            <p class="text-2xl font-bold" :class="stats.paused > 0 ? 'text-amber-400' : 'text-gray-400 dark:text-gray-500'">{{ stats.paused }}</p>
           </div>
         </div>
       </UCard>
@@ -219,6 +267,6 @@ onMounted(() => {
       </div>
     </div>
     
-    <RepositoryCreateModal v-model:open="showCreateRepo" @created="onRepoCreated" />
+    <RepositoryCreateModal v-model:open="showCreateRepo" />
   </div>
 </template>

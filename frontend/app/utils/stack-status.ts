@@ -139,6 +139,30 @@ export function stackDeployStatus(status?: string): StackStatusDisplay {
   }
 }
 
+export type StackStatusBadge = {
+  label: string
+  color: StackStatusColor
+  dotClass: string
+  borderClass: string
+}
+
+export function stackStatusBadge(stack: any): StackStatusBadge {
+  switch (stack?.status) {
+    case 'active':
+      return { label: 'Active', color: 'success', dotClass: 'bg-emerald-400', borderClass: 'border-l-emerald-400 dark:border-l-emerald-400' }
+    case 'syncing':
+      return { label: 'Syncing', color: 'primary', dotClass: 'bg-sky-400', borderClass: 'border-l-sky-400 dark:border-l-sky-400' }
+    case 'paused':
+      return { label: 'Paused', color: 'warning', dotClass: 'bg-amber-400', borderClass: 'border-l-amber-400 dark:border-l-amber-400' }
+    case 'pending':
+      return { label: 'Pending', color: 'warning', dotClass: 'bg-amber-400', borderClass: 'border-l-amber-400 dark:border-l-amber-400' }
+    case 'error':
+      return { label: 'Error', color: 'error', dotClass: 'bg-rose-400', borderClass: 'border-l-rose-400 dark:border-l-rose-400' }
+    default:
+      return { label: 'Unknown', color: 'neutral', dotClass: 'bg-gray-400', borderClass: 'border-l-gray-300 dark:border-l-carbon-600' }
+  }
+}
+
 export function stackVisibleDeployStatus(stack: any, workersById?: WorkerLookup): StackStatusDisplay {
   const deploy = stackDeployStatus(stack?.status)
   const worker = stackWorkerStatus(stack, workersById)
@@ -173,9 +197,9 @@ export function stackWorkerStatus(stack: any, workersById?: WorkerLookup): Stack
       return {
         key: 'offline',
         label: 'Offline',
-        color: 'warning',
+        color: 'neutral',
         icon: 'i-lucide-wifi-off',
-        iconClass: 'text-amber-500',
+        iconClass: 'text-gray-400',
       }
     case WORKER_STATUS.REVOKED:
       return {

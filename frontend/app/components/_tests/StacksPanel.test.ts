@@ -2,9 +2,10 @@ import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { h, ref } from 'vue'
 import StacksPanel from '../StacksPanel.vue'
+import StackCard from '../StackCard.vue'
 
 describe('StacksPanel', () => {
-  it('renders a keyboard-focusable link for each stack and keeps sync separate', () => {
+  it('renders a keyboard-focusable link for each stack with a status badge', () => {
     const refresh = vi.fn()
     ;(globalThis as any).useNuxtApp = () => ({
       $pb: {
@@ -63,7 +64,11 @@ describe('StacksPanel', () => {
 
     const wrapper = mount(StacksPanel, {
       global: {
+        components: {
+          StackCard,
+        },
         stubs: {
+          BadgeStatus: { template: '<span class="badge-status">{{ status }}</span>', props: ['status'] },
           UCard: { template: '<section><slot name="header" /><slot /></section>' },
           UButton: {
             props: ['label', 'icon', 'ariaLabel'],
@@ -88,7 +93,6 @@ describe('StacksPanel', () => {
           CreateStackModal: true,
           BadgeLabel: true,
           DeleteStackModal: true,
-          StackSyncModal: true,
           ImportStackModal: true,
           StackContainersList: true,
           UModal: { template: '<div><slot name="body" /></div>' },
@@ -108,10 +112,6 @@ describe('StacksPanel', () => {
     expect(wrapper.text()).not.toContain('Deployed')
     expect(wrapper.text()).not.toContain('Synced')
     expect(wrapper.find('[aria-label="Git: Connected"]').classes()).toContain('text-cyan-500')
-
-    const syncButtons = wrapper.findAll('button')
-    expect(syncButtons.some(button =>
-      button.attributes('aria-label') === 'Sync stack Payments' || button.text().includes('Sync')
-    )).toBe(true)
+    expect(wrapper.find('.badge-status').text()).toBe('active')
   })
 })

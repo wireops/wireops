@@ -138,7 +138,7 @@ onUnmounted(() => {
         Workers
       </h1>
       <div class="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
-        <UButton icon="i-lucide-key-round" label="Generate Token" :loading="isGenerating" class="w-full justify-center shadow-[0_0_16px_rgba(255,198,0,0.35)] transition-shadow hover:shadow-[0_0_24px_rgba(255,198,0,0.55)] sm:w-auto" @click="generateToken" />
+        <UButton icon="i-lucide-plus" label="Add Worker" :loading="isGenerating" class="w-full justify-center shadow-[0_0_16px_rgba(255,198,0,0.35)] transition-shadow hover:shadow-[0_0_24px_rgba(255,198,0,0.55)] sm:w-auto" @click="generateToken" />
       </div>
     </div>
 
@@ -157,9 +157,7 @@ onUnmounted(() => {
             <UTooltip :text="isAutoRefreshPaused ? 'Resume auto-refresh' : 'Pause auto-refresh'">
               <UButton :icon="isAutoRefreshPaused ? 'i-lucide-play' : 'i-lucide-pause'" variant="ghost" size="xs" color="neutral" @click="isAutoRefreshPaused = !isAutoRefreshPaused" />
             </UTooltip>
-            <UTooltip text="Refresh manually">
-              <UButton icon="i-lucide-refresh-cw" variant="ghost" size="xs" color="neutral" :loading="pending" @click="() => refresh()" />
-            </UTooltip>
+            <RefreshButton @click="refresh()" />
           </div>
         </div>
       </template>
