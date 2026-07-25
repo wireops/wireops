@@ -105,7 +105,7 @@ watch(mobileMenuOpen, (isOpen) => {
 </script>
 
 <template>
-  <div class="min-h-screen bg-white dark:bg-carbon-950">
+  <div class="min-h-screen bg-white dark:bg-carbon-950 safe-left safe-right safe-bottom">
     <div :class="isAuthenticated ? 'flex min-h-screen' : 'min-h-screen'">
       <template v-if="isAuthenticated">
         <AppSidebar
@@ -126,7 +126,7 @@ watch(mobileMenuOpen, (isOpen) => {
           v-if="isAuthenticated"
           class="sticky top-0 z-40 border-b border-gray-200 bg-white/95 backdrop-blur lg:hidden dark:border-carbon-800 dark:bg-carbon-950/95"
         >
-          <div class="flex items-center justify-between px-4 py-3 sm:px-6">
+          <div class="flex items-center justify-between px-4 pb-3 sm:px-6 safe-header-top">
             <div class="flex items-center gap-3">
               <UButton
                 :icon="mobileMenuOpen ? 'i-lucide-x' : 'i-lucide-menu'"
