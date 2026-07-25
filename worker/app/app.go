@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -96,7 +97,7 @@ func cleanupLeftoverWorkdirs(stackDirVar string) {
 
 var validTagPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
-func parseTags(raw string) []string {
+func parseTags(raw string) ([]string, error) {
 	var tags []string
 	for _, t := range strings.Split(raw, ",") {
 		trimmed := strings.TrimSpace(t)
@@ -104,11 +105,11 @@ func parseTags(raw string) []string {
 			continue
 		}
 		if !validTagPattern.MatchString(trimmed) {
-			log.Fatalf("[worker] invalid WORKER_TAGS entry %q: tags must be comma-separated and contain only letters, numbers, - or _ (no spaces or special characters)", trimmed)
+			return nil, fmt.Errorf("invalid WORKER_TAGS entry %q: tags must be comma-separated and contain only letters, numbers, - or _ (no spaces or special characters)", trimmed)
 		}
 		tags = append(tags, trimmed)
 	}
-	return tags
+	return tags, nil
 }
 
 func Run() {
@@ -131,7 +132,10 @@ func Run() {
 	if workerToken == "" {
 		log.Fatal("WORKER_TOKEN must be set")
 	}
-	tags := parseTags(workerTags)
+	tags, err := parseTags(workerTags)
+	if err != nil {
+		log.Fatalf("[worker] %v", err)
+	}
 	if len(tags) == 0 {
 		log.Fatal("WORKER_TAGS must be set")
 	}
