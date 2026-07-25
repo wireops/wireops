@@ -2,10 +2,12 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -93,14 +95,21 @@ func cleanupLeftoverWorkdirs(stackDirVar string) {
 	}
 }
 
-func parseTags(raw string) []string {
+var validTagPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+
+func parseTags(raw string) ([]string, error) {
 	var tags []string
 	for _, t := range strings.Split(raw, ",") {
-		if trimmed := strings.TrimSpace(t); trimmed != "" {
-			tags = append(tags, trimmed)
+		trimmed := strings.TrimSpace(t)
+		if trimmed == "" {
+			continue
 		}
+		if !validTagPattern.MatchString(trimmed) {
+			return nil, fmt.Errorf("invalid WORKER_TAGS entry %q: tags must be comma-separated and contain only letters, numbers, - or _ (no spaces or special characters)", trimmed)
+		}
+		tags = append(tags, trimmed)
 	}
-	return tags
+	return tags, nil
 }
 
 func Run() {
@@ -115,12 +124,20 @@ func Run() {
 	serverURL := os.Getenv("SERVER_URL")
 	workerToken := os.Getenv("WORKER_TOKEN")
 	hostname := os.Getenv("HOSTNAME")
+	workerTags := os.Getenv("WORKER_TAGS")
 
 	if serverURL == "" {
 		log.Fatal("SERVER_URL must be set")
 	}
 	if workerToken == "" {
 		log.Fatal("WORKER_TOKEN must be set")
+	}
+	tags, err := parseTags(workerTags)
+	if err != nil {
+		log.Fatalf("[worker] %v", err)
+	}
+	if len(tags) == 0 {
+		log.Fatal("WORKER_TAGS must be set")
 	}
 	if hostname == "" {
 		h, err := os.Hostname()
@@ -175,7 +192,6 @@ func Run() {
 		shutdownCancel()
 	}()
 
-	tags := parseTags(os.Getenv("WORKER_TAGS"))
 	backoff := initialBackoff
 	for {
 		reason, connected := transport.RunSession(serverURL, workerToken, hostname, stackDir, tags, shutdownCtx)

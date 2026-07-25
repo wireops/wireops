@@ -87,9 +87,30 @@ function hasVisibleTokenExpiry(worker: any) {
 
 const workerBootstrapCommand = computed(() =>
   `docker run -d \\
-  -e WIREOPS_SERVER=https://your-wireops-server.local \\
-  -e WIREOPS_WORKER_TOKEN=${issuedToken.value} \\
+  --name wireops-worker \\
+  -e SERVER_URL=https://your-wireops-server.local \\
+  -e WORKER_TOKEN=${issuedToken.value} \\
+  -e WORKER_TAGS=prod,edge \\
+  -v /var/run/docker.sock:/var/run/docker.sock \\
   ghcr.io/wireops/worker:latest`
+)
+
+const workerEnvFileExample = computed(() =>
+  `SERVER_URL=https://your-wireops-server.local
+WORKER_TOKEN=${issuedToken.value}
+WORKER_TAGS=prod,edge`
+)
+
+const workerComposeExample = computed(() =>
+  `services:
+  wireops-worker:
+    image: ghcr.io/wireops/worker:latest
+    container_name: wireops-worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock`
 )
 
 
@@ -253,7 +274,12 @@ onUnmounted(() => {
               This token is valid until <strong>{{ formatDate(issuedTokenExpiresAt) }}</strong>.
             </p>
             <ExecutableCommand label="Token" :content="issuedToken" />
-            <ExecutableCommand label="Executable Command" :content="workerBootstrapCommand" button-label="Copy Command" multiline />
+            <ExecutableCommand label="Docker Run" :content="workerBootstrapCommand" button-label="Copy Command" multiline />
+            <ExecutableCommand label="docker-compose.yml" :content="workerComposeExample" button-label="Copy Compose" multiline />
+            <ExecutableCommand label=".env" :content="workerEnvFileExample" button-label="Copy .env" multiline />
+            <p class="text-xs text-gray-400 dark:text-wire-200/40">
+              <code class="font-mono">WORKER_TAGS</code> is required and comma-separated. Tags may only contain letters, numbers, <code class="font-mono">-</code> and <code class="font-mono">_</code> — no spaces or special characters.
+            </p>
           </div>
 
           <template #footer>

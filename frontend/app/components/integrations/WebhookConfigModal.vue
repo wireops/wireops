@@ -145,15 +145,15 @@ async function handleTest() {
         </div>
 
         <UFormField label="Webhook URL" required>
-          <UInput v-model="form.url" placeholder="https://hooks.example.com/wireops" class="w-full font-mono text-sm" />
+          <AppTextInput v-model="form.url" placeholder="https://hooks.example.com/wireops" class="font-mono text-sm" />
         </UFormField>
 
         <UFormField label="HMAC Secret (optional)">
-          <UInput
+          <AppTextInput
             v-model="form.secret"
             :type="hasSecret && form.secret === '••••••••' ? 'password' : 'text'"
             placeholder="Leave empty to skip signature"
-            class="w-full font-mono text-sm"
+            class="font-mono text-sm"
             @focus="onSecretFocus"
           />
           <p class="text-xs text-gray-400 mt-1">Used to compute <code>X-wireops-Signature: sha256=&lt;hmac&gt;</code> header.</p>
@@ -166,8 +166,8 @@ async function handleTest() {
           </div>
           <div v-if="form.headers.length === 0" class="text-xs text-gray-400 italic">No custom headers.</div>
           <div v-for="(header, i) in form.headers" :key="i" class="flex items-center gap-2 mb-2">
-            <UInput v-model="header.key" placeholder="Header name" class="flex-1 font-mono text-sm" />
-            <UInput v-model="header.value" placeholder="Value" class="flex-1 font-mono text-sm" />
+            <AppTextInput v-model="header.key" placeholder="Header name" class="flex-1 font-mono text-sm" />
+            <AppTextInput v-model="header.value" placeholder="Value" class="flex-1 font-mono text-sm" />
             <UButton icon="i-lucide-x" size="xs" variant="ghost" color="error" @click="removeHeader(i)" />
           </div>
         </div>

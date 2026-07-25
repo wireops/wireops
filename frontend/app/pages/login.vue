@@ -9,6 +9,7 @@ const { announce } = useA11yAnnouncer()
 
 const email = ref('')
 const password = ref('')
+const showPassword = ref(false)
 const loading = ref(false)
 const ssoLoading = ref(false)
 const error = ref('')
@@ -90,28 +91,36 @@ async function handleSSOLogin(providerName: string) {
         <form class="flex flex-col gap-4" @submit.prevent="handleLogin">
           <UAlert v-if="error" color="error" :title="error" icon="i-lucide-alert-circle" role="alert" aria-live="assertive" />
 
-          <UFormField label="Email">
-            <UInput
+          <UFormField label="Email" required>
+            <AppTextInput
               v-model="email"
               type="email"
               placeholder="admin@example.com"
               icon="i-lucide-mail"
-              required
-              class="w-full"
               aria-label="Email"
             />
           </UFormField>
 
-          <UFormField label="Password">
-            <UInput
+          <UFormField label="Password" required>
+            <AppTextInput
               v-model="password"
-              type="password"
+              :type="showPassword ? 'text' : 'password'"
               placeholder="••••••••"
               icon="i-lucide-lock"
-              required
-              class="w-full"
               aria-label="Password"
-            />
+            >
+              <template #trailing>
+                <UButton
+                  type="button"
+                  color="neutral"
+                  variant="link"
+                  size="xs"
+                  :icon="showPassword ? 'i-lucide-eye-off' : 'i-lucide-eye'"
+                  :aria-label="showPassword ? 'Hide password' : 'Show password'"
+                  @click="showPassword = !showPassword"
+                />
+              </template>
+            </AppTextInput>
           </UFormField>
 
           <UButton

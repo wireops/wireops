@@ -181,11 +181,11 @@ async function handleTest() {
         </div>
 
         <UFormField label="Slack Webhook URL" required>
-          <UInput
+          <AppTextInput
             v-model="form.url"
             :type="hasWebhookUrl && form.url === '••••••••' ? 'password' : 'text'"
             placeholder="https://hooks.slack.com/services/..."
-            class="w-full font-mono text-sm"
+            class="font-mono text-sm"
             @focus="onWebhookUrlFocus"
           />
         </UFormField>
@@ -195,10 +195,10 @@ async function handleTest() {
             <USwitch v-model="form.mention_on_error" />
           </UFormField>
           <UFormField label="Mention Text">
-            <UInput
+            <AppTextInput
               v-model="form.mention_text"
               placeholder="<!subteam^S123456|deploys>"
-              class="w-full font-mono text-sm"
+              class="font-mono text-sm"
               :disabled="!form.mention_on_error"
             />
           </UFormField>

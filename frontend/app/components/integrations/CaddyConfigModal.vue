@@ -70,10 +70,10 @@ async function handleSave() {
       <div class="space-y-4" role="document">
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <UFormField label="Scheme">
-            <UInput v-model="form.scheme" placeholder="https" class="w-full font-mono text-sm" />
+            <AppTextInput v-model="form.scheme" placeholder="https" class="font-mono text-sm" />
           </UFormField>
           <UFormField label="Port">
-            <UInput v-model="form.port" placeholder="443" class="w-full font-mono text-sm" />
+            <AppTextInput v-model="form.port" placeholder="443" class="font-mono text-sm" />
           </UFormField>
         </div>
 

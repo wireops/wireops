@@ -148,11 +148,10 @@ async function runKeyscan() {
           <p class="text-sm text-gray-500 mb-2">
             Set the global timezone for scheduled jobs and database backups. If not set, the system's default timezone will be used.
           </p>
-          <USelectMenu
+          <AppSelectInput
             v-model="appSettings.timezone"
             :items="availableTimezones"
-            value-key="value"
-            virtualize
+            search-placeholder="Search timezones..."
             class="w-full sm:max-w-md"
           />
         </div>

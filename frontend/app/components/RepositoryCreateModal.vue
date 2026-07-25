@@ -209,7 +209,7 @@ async function handleKeySaved(key: Record<string, any>) {
 
         <form class="space-y-4" @submit.prevent="submit">
           <UFormField label="Name" required>
-            <UInput v-model="form.name" placeholder="my-app" class="w-full" />
+            <AppTextInput v-model="form.name" placeholder="my-app" />
           </UFormField>
 
           <div class="flex items-end gap-3">
@@ -233,11 +233,11 @@ async function handleKeySaved(key: Record<string, any>) {
           </div>
 
           <UFormField label="Git URL" required :error="gitUrlError">
-            <UInput v-model="form.git_url" :placeholder="urlPlaceholder" class="w-full" />
+            <AppTextInput v-model="form.git_url" :placeholder="urlPlaceholder" />
           </UFormField>
 
           <UFormField label="Branch">
-            <UInput v-model="form.branch" placeholder="main" class="w-full" />
+            <AppTextInput v-model="form.branch" placeholder="main" />
           </UFormField>
 
           <div v-if="urlScheme === 'http'" class="flex items-center gap-2">
