@@ -124,7 +124,7 @@ watch(
       @click="emit('close')"
     />
     <aside id="mobile-navigation" :class="sidebarClasses" class="safe-left safe-bottom">
-      <div class="flex items-center justify-between border-b border-carbon-800 px-5 pb-5 safe-header-top">
+      <div class="flex items-center justify-between border-b border-carbon-800 px-5 pb-5 safe-header-top-lg">
         <NuxtLink to="/" class="flex items-center gap-3" aria-label="Go to dashboard" @click="emit('close')">
           <div class="flex h-10 w-10 items-center justify-center rounded-2xl overflow-hidden">
             <img src="~/assets/img/logo.png" alt="wireops" class="h-7 w-7 object-contain">

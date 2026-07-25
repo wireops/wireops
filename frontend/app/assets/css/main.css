@@ -86,4 +86,7 @@
   .safe-header-top {
     padding-top: calc(0.75rem + env(safe-area-inset-top));
   }
+  .safe-header-top-lg {
+    padding-top: calc(1.25rem + env(safe-area-inset-top));
+  }
 }
