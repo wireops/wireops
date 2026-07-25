@@ -188,21 +188,21 @@ async function handleTest() {
         </div>
 
         <UFormField label="Discord Webhook URL" required>
-          <UInput
+          <AppTextInput
             v-model="form.url"
             :type="hasWebhookUrl && form.url === '••••••••' ? 'password' : 'text'"
             placeholder="https://discord.com/api/webhooks/..."
-            class="w-full font-mono text-sm"
+            class="font-mono text-sm"
             @focus="onWebhookUrlFocus"
           />
         </UFormField>
 
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <UFormField label="Username (optional)">
-            <UInput v-model="form.username" placeholder="wireops" class="w-full text-sm" />
+            <AppTextInput v-model="form.username" placeholder="wireops" class="text-sm" />
           </UFormField>
           <UFormField label="Avatar URL (optional)">
-            <UInput v-model="form.avatar_url" placeholder="https://example.com/avatar.png" class="w-full font-mono text-sm" />
+            <AppTextInput v-model="form.avatar_url" placeholder="https://example.com/avatar.png" class="font-mono text-sm" />
           </UFormField>
         </div>
 
@@ -211,10 +211,10 @@ async function handleTest() {
             <USwitch v-model="form.mention_on_error" />
           </UFormField>
           <UFormField label="Role ID">
-            <UInput
+            <AppTextInput
               v-model="form.role_id"
               placeholder="123456789012345678"
-              class="w-full font-mono text-sm"
+              class="font-mono text-sm"
               :disabled="!form.mention_on_error"
             />
           </UFormField>

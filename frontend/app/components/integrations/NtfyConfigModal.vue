@@ -146,23 +146,23 @@ async function handleTest() {
 
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <UFormField label="Server URL" required>
-            <UInput v-model="form.url" placeholder="https://ntfy.sh" class="w-full font-mono text-sm" />
+            <AppTextInput v-model="form.url" placeholder="https://ntfy.sh" class="font-mono text-sm" />
           </UFormField>
           <UFormField label="Topic" required>
-            <UInput v-model="form.topic" placeholder="my-topic" class="w-full font-mono text-sm" />
+            <AppTextInput v-model="form.topic" placeholder="my-topic" class="font-mono text-sm" />
           </UFormField>
         </div>
 
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <UFormField label="Username (optional)">
-            <UInput v-model="form.user" placeholder="user" class="w-full font-mono text-sm" />
+            <AppTextInput v-model="form.user" placeholder="user" class="font-mono text-sm" />
           </UFormField>
           <UFormField label="Password (optional)">
-            <UInput
+            <AppTextInput
               v-model="form.secret"
               :type="hasSecret && form.secret === '••••••••' ? 'password' : 'text'"
               placeholder="password"
-              class="w-full font-mono text-sm"
+              class="font-mono text-sm"
               @focus="onSecretFocus"
             />
           </UFormField>

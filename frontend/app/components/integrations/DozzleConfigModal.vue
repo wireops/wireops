@@ -64,7 +64,7 @@ async function handleSave() {
     <template #body>
       <div class="space-y-4" role="document">
         <UFormField label="Dozzle URL" required>
-          <UInput v-model="form.url" placeholder="http://dozzle.local:8080" class="w-full font-mono text-sm" />
+          <AppTextInput v-model="form.url" placeholder="http://dozzle.local:8080" class="font-mono text-sm" />
         </UFormField>
       </div>
     </template>

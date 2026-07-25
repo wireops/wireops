@@ -63,11 +63,11 @@ async function handleSave() {
     <template #body>
       <div class="space-y-4" role="document">
         <UFormField label="Scheme">
-          <UInput v-model="form.scheme" placeholder="https" class="w-full font-mono text-sm" />
+          <AppTextInput v-model="form.scheme" placeholder="https" class="font-mono text-sm" />
           <p class="text-xs text-gray-500 mt-1">Default is https</p>
         </UFormField>
         <UFormField label="Port">
-          <UInput v-model="form.port" placeholder="443" class="w-full font-mono text-sm" />
+          <AppTextInput v-model="form.port" placeholder="443" class="font-mono text-sm" />
           <p class="text-xs text-gray-500 mt-1">Optional port to append to the URL</p>
         </UFormField>
       </div>
