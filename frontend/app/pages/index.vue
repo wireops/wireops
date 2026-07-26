@@ -17,16 +17,14 @@ const { data: workers, refresh: refreshWorkers } = useAsyncData('dashboard_worke
 
 const showCreateRepo = ref(false)
 
-function refreshAll() {
-  refresh()
-  refreshJobs()
-  refreshWorkers()
+async function refreshAll() {
+  await Promise.all([refresh(), refreshJobs(), refreshWorkers()])
 }
 
 const stats = computed(() => {
   const s = stacks.value || []
   const j = jobs.value || []
-  const w = workers.value || []
+  const w = (workers.value || []).filter((r: any) => r.status !== WORKER_STATUS.PENDING && r.status !== WORKER_STATUS.REVOKED)
   return {
     stacks: s.length,
     jobs: j.length,
@@ -34,7 +32,7 @@ const stats = computed(() => {
     error: s.filter((r: any) => r.status === 'error').length + j.filter((r: any) => r.status === 'error').length,
     paused: s.filter((r: any) => r.status === 'paused').length,
     stalledJobs: j.filter((r: any) => r.status === 'stalled').length,
-    workersOnline: w.filter((r: any) => r.status === 'ACTIVE').length,
+    workersOnline: w.filter((r: any) => r.status === WORKER_STATUS.ACTIVE).length,
     workersTotal: w.length,
   }
 })

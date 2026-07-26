@@ -56,7 +56,7 @@ function isActive(segment: AvailabilitySegment) {
 
 <template>
   <div v-if="items.length" class="space-y-2">
-    <div class="flex w-full gap-0.5 h-2.5" role="img" :aria-label="ariaLabel">
+    <div class="flex w-full gap-0.5 h-2.5" :aria-label="ariaLabel">
       <UTooltip
         v-for="segment in breakdown"
         :key="segment.key"

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { computed, ref, useAttrs } from 'vue'
+
 defineOptions({ inheritAttrs: false })
 
 const props = withDefaults(
@@ -41,6 +43,7 @@ async function onClick(event: MouseEvent) {
     <UButton
       icon="i-lucide-refresh-cw"
       :label="label ? 'Refresh' : undefined"
+      :aria-label="label ? undefined : 'Refresh'"
       variant="ghost"
       :size="size"
       color="neutral"

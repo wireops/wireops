@@ -68,7 +68,12 @@ describe('StacksPanel', () => {
           StackCard,
         },
         stubs: {
-          BadgeStatus: { template: '<span class="badge-status">{{ status }}</span>', props: ['status'] },
+          BadgeStatus: {
+            props: ['status'],
+            setup(props) {
+              return () => h('span', { class: 'badge-status' }, props.status)
+            },
+          },
           UCard: { template: '<section><slot name="header" /><slot /></section>' },
           UButton: {
             props: ['label', 'icon', 'ariaLabel'],

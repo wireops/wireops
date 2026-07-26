@@ -21,9 +21,8 @@ const isUpdating = ref(false)
 
 let updateTimer: ReturnType<typeof setTimeout> | undefined
 
-function refreshList() {
-  refresh()
-  refreshWorkers()
+async function refreshList() {
+  await Promise.all([refresh(), refreshWorkers()])
 }
 
 onMounted(() => {
@@ -133,12 +132,16 @@ const filteredStacks = computed(() => {
     filtered = filtered.filter((s: any) =>
       s.name.toLowerCase().includes(query) ||
       stackRepositorySubtitle(s).toLowerCase().includes(query) ||
-      (s.containers_list || []).some((c: any) => c.name.toLowerCase().includes(query))
+      (s.containers_list || []).some((c: any) => c.name?.toLowerCase().includes(query))
     )
   }
 
   if (statusFilter.value !== 'all') {
-    filtered = filtered.filter((s: any) => s.status === statusFilter.value)
+    if (statusFilter.value === 'paused') {
+      filtered = filtered.filter((s: any) => s.status === 'paused' || s.status === 'pending')
+    } else {
+      filtered = filtered.filter((s: any) => s.status === statusFilter.value)
+    }
   }
 
   filtered = [...filtered].sort((a: any, b: any) => {

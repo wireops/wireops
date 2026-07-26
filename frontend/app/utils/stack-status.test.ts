@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { stackDeployStatus, stackHasRenderOverrides, stackSourceStatus, stackVisibleDeployStatus, stackWorkerStatus } from './stack-status'
+import { stackDeployStatus, stackHasRenderOverrides, stackSourceStatus, stackStatusBadge, stackVisibleDeployStatus, stackWorkerStatus } from './stack-status'
 
 describe('stackHasRenderOverrides', () => {
   it('is false when render_overrides is missing or empty', () => {
@@ -76,5 +76,27 @@ describe('stack status helpers', () => {
       label: 'Offline',
       icon: 'i-lucide-wifi-off',
     })
+  })
+})
+
+describe('stackStatusBadge', () => {
+  it('maps a known status to its label, color, dot and border classes', () => {
+    expect(stackStatusBadge({ status: 'active' })).toEqual({
+      label: 'Active',
+      color: 'success',
+      dotClass: 'bg-emerald-400',
+      borderClass: 'border-l-emerald-400 dark:border-l-emerald-400',
+    })
+  })
+
+  it('falls back to Unknown for missing or unrecognized status', () => {
+    const unknown = {
+      label: 'Unknown',
+      color: 'neutral',
+      dotClass: 'bg-gray-400',
+      borderClass: 'border-l-gray-300 dark:border-l-carbon-600',
+    }
+    expect(stackStatusBadge({ status: 'bogus' })).toEqual(unknown)
+    expect(stackStatusBadge({})).toEqual(unknown)
   })
 })
