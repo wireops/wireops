@@ -128,24 +128,23 @@ watch(mobileMenuOpen, (isOpen) => {
         >
           <div class="flex items-center justify-between px-4 pb-3 sm:px-6 safe-header-top">
             <div class="flex items-center gap-3">
-              <UButton
-                :icon="mobileMenuOpen ? 'i-lucide-x' : 'i-lucide-menu'"
-                variant="outline"
-                color="neutral"
-                size="sm"
+              <button
+                type="button"
+                class="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-white transition-all duration-200 hover:border-yellow-400/60 focus-visible:border-yellow-400/60 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-yellow-400/40 dark:border-carbon-800 dark:bg-carbon-950/70"
                 :aria-label="mobileMenuOpen ? 'Close navigation menu' : 'Open navigation menu'"
                 :aria-expanded="mobileMenuOpen"
                 aria-controls="mobile-navigation"
                 @click="mobileMenuOpen = !mobileMenuOpen"
-              />
+              >
+                <UIcon :name="mobileMenuOpen ? 'i-lucide-x' : 'i-lucide-menu'" class="h-4 w-4 text-gray-500 dark:text-wire-200/70" />
+              </button>
               <div>
                 <p class="text-xs uppercase tracking-[0.24em] text-gray-500 dark:text-wire-200/45">Current section</p>
                 <p class="text-sm font-semibold text-gray-900 dark:text-white">{{ activeNavLabel }}</p>
               </div>
             </div>
-            <NuxtLink to="/" class="flex items-center gap-2" aria-label="Go to dashboard">
-              <img src="~/assets/img/logo.png" alt="" class="h-5 w-5 object-contain">
-              <span class="font-black text-sm tracking-[0.28em] uppercase text-yellow-400">wireops</span>
+            <NuxtLink to="/" class="flex items-center" aria-label="Go to dashboard">
+              <AppLogo />
             </NuxtLink>
           </div>
         </header>

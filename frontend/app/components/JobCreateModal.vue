@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -51,15 +51,6 @@ const repoItems = computed(() =>
 const fileItems = computed(() =>
   repoFiles.value.map(f => ({ label: f, value: f }))
 )
-
-const isMobile = ref(false)
-
-onMounted(() => {
-  isMobile.value = window.innerWidth < 768
-  const resizeListener = () => { isMobile.value = window.innerWidth < 768 }
-  window.addEventListener('resize', resizeListener)
-  onUnmounted(() => window.removeEventListener('resize', resizeListener))
-})
 
 watch(() => props.open, (val) => {
   if (val) {
@@ -188,7 +179,6 @@ async function submit() {
 <template>
   <UModal
     :open="props.open"
-    :fullscreen="isMobile"
     title="New Scheduled Job"
     description="Select a repository and configure your scheduled job"
     @update:open="emit('update:open', $event)"

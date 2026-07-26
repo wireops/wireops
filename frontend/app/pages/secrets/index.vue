@@ -269,7 +269,7 @@ onMounted(() => {
       </div>
       <div class="flex items-center gap-2">
         <UButton v-if="canOperate" icon="i-lucide-file-lock-2" label="Encrypt for SOPS" variant="outline" @click="showSopsEncryptModal = true" />
-        <UButton icon="i-lucide-refresh-cw" label="Refresh" variant="outline" :loading="activeTab === 'global-variables' && loading" @click="refreshActiveTab" />
+        <RefreshButton label @click="refreshActiveTab" />
       </div>
     </div>
 

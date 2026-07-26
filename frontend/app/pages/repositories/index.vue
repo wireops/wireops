@@ -187,9 +187,7 @@ const statusColor = (s: string) => {
             Repositories
             <span v-if="repos?.length" class="ml-1.5 text-yellow-400">({{ repos.length }})</span>
           </h3>
-          <UTooltip text="Refresh">
-            <UButton icon="i-lucide-refresh-cw" variant="ghost" size="xs" color="neutral" @click="refresh()" />
-          </UTooltip>
+          <RefreshButton @click="refresh()" />
         </div>
       </template>
 

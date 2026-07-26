@@ -169,11 +169,11 @@ async function handleTest() {
         </div>
 
         <UFormField label="Custom Template (optional)">
-          <UTextarea
+          <AppTextArea
             v-model="form.template"
             placeholder="Event: {{.Event}}&#10;Stack: {{.StackName}}&#10;Trigger: {{.Trigger}}&#10;Commit: {{.CommitSHA}}&#10;{{if .Error}}Error: {{.Error}}{{end}}"
             :rows="5"
-            class="w-full font-mono text-sm"
+            class="font-mono"
           />
           <p v-pre class="text-[11px] text-gray-400 mt-1">
             Supports Go templates. Variables: <code>{{.StackName}}</code>, <code>{{.Event}}</code>, <code>{{.Trigger}}</code>, <code>{{.CommitSHA}}</code>, <code>{{.DurationMs}}</code>, <code>{{.Error}}</code>.

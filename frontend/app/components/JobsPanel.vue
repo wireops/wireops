@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import type { AvailabilitySegment } from './StatusAvailabilityBar.vue'
+
 const { $pb } = useNuxtApp()
 const { listJobs, triggerJobRun, getWorkers } = useApi()
 const { subscribe } = useRealtime()
@@ -82,6 +84,13 @@ async function triggerRun(job: any) {
   }
 }
 
+const jobStatusSegments: AvailabilitySegment[] = [
+  { key: 'active', label: 'Active', barClass: 'bg-emerald-400', dotClass: 'bg-emerald-400', statuses: ['active'] },
+  { key: 'stalled', label: 'Stalled', barClass: 'bg-amber-400', dotClass: 'bg-amber-400', statuses: ['stalled'] },
+  { key: 'error', label: 'Error', barClass: 'bg-rose-400', dotClass: 'bg-rose-400', statuses: ['error'] },
+  { key: 'paused', label: 'Paused', barClass: 'bg-gray-300 dark:bg-carbon-600', dotClass: 'bg-gray-300 dark:bg-carbon-600', statuses: ['paused'] },
+]
+
 function statusColor(status: string) {
   switch (status) {
     case 'active': return 'success'
@@ -89,6 +98,16 @@ function statusColor(status: string) {
     case 'error': return 'error'
     case 'paused': return 'neutral'
     default: return 'neutral'
+  }
+}
+
+function statusBorderClass(status: string) {
+  switch (status) {
+    case 'active': return 'border-l-emerald-400 dark:border-l-emerald-400'
+    case 'stalled': return 'border-l-amber-400 dark:border-l-amber-400'
+    case 'error': return 'border-l-rose-400 dark:border-l-rose-400'
+    case 'paused': return 'border-l-gray-300 dark:border-l-carbon-600'
+    default: return 'border-l-gray-300 dark:border-l-carbon-600'
   }
 }
 
@@ -134,9 +153,7 @@ function formatRelative(dateStr: string) {
       <template #header>
         <div class="flex items-center justify-between">
           <h3 class="font-semibold text-gray-900 dark:text-wire-200">Jobs</h3>
-          <UTooltip text="Refresh">
-            <UButton icon="i-lucide-refresh-cw" variant="ghost" size="xs" color="neutral" :loading="pending" @click="() => refresh()" />
-          </UTooltip>
+          <RefreshButton @click="refresh()" />
         </div>
       </template>
 
@@ -153,12 +170,12 @@ function formatRelative(dateStr: string) {
       </div>
 
       <div v-else class="space-y-4">
-        <div class="flex flex-col gap-3 sm:flex-row" role="search" aria-label="Filter jobs">
+        <div class="flex flex-row flex-wrap items-center gap-2 sm:gap-3" role="search" aria-label="Filter jobs">
           <AppTextInput
             v-model="searchQuery"
             icon="i-lucide-search"
             placeholder="Search jobs..."
-            class="flex-1"
+            class="min-w-[140px] flex-1"
             aria-label="Search jobs"
           />
           <AppSelectInput
@@ -172,7 +189,7 @@ function formatRelative(dateStr: string) {
             ]"
             placeholder="Filter by status"
             content-width
-            class="w-full sm:w-auto sm:min-w-28"
+            class="sm:min-w-28"
             aria-label="Filter jobs by status"
           />
           <AppSelectInput
@@ -180,10 +197,17 @@ function formatRelative(dateStr: string) {
             :items="repositoryOptions"
             placeholder="Filter by repository"
             content-width
-            class="w-full sm:w-auto sm:min-w-28"
+            class="sm:min-w-28"
             aria-label="Filter jobs by repository"
           />
         </div>
+
+        <StatusAvailabilityBar
+          v-model="statusFilter"
+          :items="jobs"
+          :segments="jobStatusSegments"
+          aria-label="Job status availability breakdown"
+        />
 
         <div v-if="filteredJobs.length === 0" class="text-center py-12" role="status" aria-live="polite">
           <UIcon name="i-lucide-search-x" class="w-12 h-12 text-gray-300 mx-auto mb-4" />
@@ -195,28 +219,29 @@ function formatRelative(dateStr: string) {
           <div
             v-for="job in filteredJobs"
             :key="job.id"
-            class="flex items-center justify-between p-4 bg-gray-50 dark:bg-carbon-800/40 rounded-xl border border-gray-200 dark:border-carbon-700 hover:shadow-[0_0_0_2px_rgba(255,198,0,0.35),0_0_20px_rgba(255,198,0,0.12)] transition-all"
+            class="flex items-center justify-between p-4 bg-gray-50 dark:bg-carbon-800/40 rounded-xl border border-gray-200 border-l-4 dark:border-carbon-700 hover:shadow-[0_0_0_2px_rgba(255,198,0,0.35),0_0_20px_rgba(255,198,0,0.12)] transition-all"
+            :class="statusBorderClass(job.status)"
           >
             <!-- Icon — left, separated -->
-            <div class="mr-2 border-r border-gray-200 dark:border-carbon-700 pr-4 flex items-center shrink-0">
+            <div class="hidden sm:flex mr-2 border-r border-gray-200 dark:border-carbon-700 pr-4 items-center shrink-0">
               <UIcon name="i-lucide-terminal" class="w-5 h-5 text-wire-400" />
             </div>
 
             <div class="flex-1 min-w-0">
-              <div class="flex items-center gap-2 mb-1 flex-wrap">
+              <div class="flex items-center gap-2 mb-1 min-w-0">
                 <NuxtLink
                   :to="`/jobs/${job.id}`"
-                  class="font-semibold text-gray-900 dark:text-wire-200 hover:text-yellow-400 transition-colors truncate"
+                  class="font-semibold text-gray-900 dark:text-wire-200 hover:text-yellow-400 transition-colors truncate min-w-0"
                 >
                   {{ job.name || job.definition?.name || 'Invalid Job' }}
                 </NuxtLink>
                 <UTooltip v-if="job.definition_error" :text="job.definition_error">
                   <UIcon name="i-lucide-triangle-alert" class="w-4 h-4 text-amber-500 shrink-0" />
                 </UTooltip>
-                <BadgeStatus :status="job.status" />
+                <BadgeStatus :status="job.status" class="shrink-0" />
 
                 <!-- Last 5 executions dots -->
-                <div v-if="job.recent_runs && job.recent_runs.length > 0" class="flex items-center gap-1 ml-2">
+                <div v-if="job.recent_runs && job.recent_runs.length > 0" class="hidden md:flex items-center gap-1 ml-2 shrink-0">
                   <span class="text-xs text-gray-400 dark:text-wire-200/40 mr-1 select-none">History:</span>
                   <UTooltip
                     v-for="run in job.reversedRecentRuns"
@@ -292,13 +317,20 @@ function formatRelative(dateStr: string) {
               </div>
               <template v-if="!isViewer">
                 <UTooltip :text="job.enabled ? 'Click to disable' : 'Click to enable'">
-                  <UBadge
-                    :label="job.enabled ? 'ENABLED' : 'DISABLED'"
-                    :color="job.enabled ? 'success' : 'neutral'"
-                    variant="subtle"
-                    class="cursor-pointer select-none hover:opacity-80 transition-opacity uppercase font-semibold text-xs px-2.5 py-0.5"
+                  <button
+                    type="button"
+                    class="flex items-center justify-center rounded-full p-1.5 cursor-pointer transition-opacity hover:opacity-80"
+                    :aria-label="job.enabled ? 'Disable job' : 'Enable job'"
                     @click="toggleEnabled(job)"
-                  />
+                  >
+                    <UIcon
+                      name="i-lucide-power"
+                      class="w-4 h-4"
+                      :class="job.enabled
+                        ? 'text-emerald-400 drop-shadow-[0_0_10px_rgba(52,211,153,1)]'
+                        : 'text-gray-400 opacity-70'"
+                    />
+                  </button>
                 </UTooltip>
                 <UTooltip text="Run now">
                   <UButton

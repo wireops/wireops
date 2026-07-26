@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { stackHasRenderOverrides, stackRepositorySubtitle, stackSourceStatus, stackVisibleDeployStatus, stackWorkerName, stackWorkerStatus } from '../utils/stack-status'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { stackRepositorySubtitle } from '../utils/stack-status'
+import type { AvailabilitySegment } from './StatusAvailabilityBar.vue'
 
 const { $pb } = useNuxtApp()
 const { getWorkers, listOrphans, purgeOrphan } = useApi()
@@ -20,9 +21,8 @@ const isUpdating = ref(false)
 
 let updateTimer: ReturnType<typeof setTimeout> | undefined
 
-function refreshList() {
-  refresh()
-  refreshWorkers()
+async function refreshList() {
+  await Promise.all([refresh(), refreshWorkers()])
 }
 
 onMounted(() => {
@@ -61,8 +61,6 @@ function onCreated() {
 
 const showDelete = ref(false)
 const deleteTarget = ref<any>(null)
-const showSyncConfirm = ref(false)
-const syncTarget = ref<any>(null)
 
 function openDelete(stack: any) {
   deleteTarget.value = stack
@@ -75,36 +73,16 @@ function onDeleted() {
   refreshList()
 }
 
-function openSyncConfirm(stack: any) {
-  syncTarget.value = stack
-  showSyncConfirm.value = true
-}
-
-function closeSyncConfirm() {
-  showSyncConfirm.value = false
-  syncTarget.value = null
-}
-
-watch(showSyncConfirm, (isOpen) => {
-  if (!isOpen) {
-    syncTarget.value = null
-  }
-})
-
-const cardAccentClass = (s: string) => {
-  switch (s) {
-    case 'active': return 'border-l-emerald-400 dark:border-l-emerald-400'
-    case 'syncing': return 'border-l-sky-400 dark:border-l-sky-400'
-    case 'error': return 'border-l-rose-400 dark:border-l-rose-400'
-    case 'paused':
-    case 'pending': return 'border-l-amber-400 dark:border-l-amber-400'
-    default: return 'border-l-gray-300 dark:border-l-carbon-600'
-  }
-}
-
 const workersById = computed(() =>
   Object.fromEntries((workers.value || []).map((worker: any) => [worker.id, worker]))
 )
+
+const stackStatusSegments: AvailabilitySegment[] = [
+  { key: 'active', label: 'Active', barClass: 'bg-emerald-400', dotClass: 'bg-emerald-400', statuses: ['active'] },
+  { key: 'syncing', label: 'Syncing', barClass: 'bg-sky-400', dotClass: 'bg-sky-400', statuses: ['syncing'] },
+  { key: 'paused', label: 'Paused', barClass: 'bg-amber-400', dotClass: 'bg-amber-400', statuses: ['paused', 'pending'], filterValue: 'paused' },
+  { key: 'error', label: 'Error', barClass: 'bg-rose-400', dotClass: 'bg-rose-400', statuses: ['error'] },
+]
 
 const searchQuery = ref('')
 const searchInputRef = ref<{ $el?: HTMLElement } | HTMLElement | null>(null)
@@ -153,12 +131,17 @@ const filteredStacks = computed(() => {
     const query = searchQuery.value.toLowerCase()
     filtered = filtered.filter((s: any) =>
       s.name.toLowerCase().includes(query) ||
-      stackRepositorySubtitle(s).toLowerCase().includes(query)
+      stackRepositorySubtitle(s).toLowerCase().includes(query) ||
+      (s.containers_list || []).some((c: any) => c.name?.toLowerCase().includes(query))
     )
   }
 
   if (statusFilter.value !== 'all') {
-    filtered = filtered.filter((s: any) => s.status === statusFilter.value)
+    if (statusFilter.value === 'paused') {
+      filtered = filtered.filter((s: any) => s.status === 'paused' || s.status === 'pending')
+    } else {
+      filtered = filtered.filter((s: any) => s.status === statusFilter.value)
+    }
   }
 
   filtered = [...filtered].sort((a: any, b: any) => {
@@ -248,21 +231,19 @@ async function handlePurge(dirName: string) {
           </h3>
           <div class="flex items-center gap-3">
             <UButton v-if="!isViewer" icon="i-lucide-package-search" label="Manage Orphans" variant="outline" color="warning" size="xs" class="hidden sm:inline-flex" @click="openOrphans" />
-            <UTooltip text="Refresh">
-              <UButton icon="i-lucide-refresh-cw" variant="ghost" size="xs" color="neutral" aria-label="Refresh stacks" @click="refreshList()" />
-            </UTooltip>
+            <RefreshButton @click="refreshList()" />
           </div>
         </div>
       </template>
 
       <div v-if="stacks?.length" class="space-y-4">
-        <div class="flex flex-col gap-3 sm:flex-row" role="search" aria-label="Filter stacks">
+        <div class="flex flex-row flex-wrap items-center gap-2 sm:gap-3" role="search" aria-label="Filter stacks">
           <AppTextInput
             ref="searchInputRef"
             v-model="searchQuery"
             icon="i-lucide-search"
-            placeholder="Search stacks..."
-            class="flex-1"
+            placeholder="Search stacks or services..."
+            class="min-w-[140px] flex-1"
             aria-label="Search stacks"
           />
           <AppSelectInput
@@ -277,7 +258,7 @@ async function handlePurge(dirName: string) {
             ]"
             placeholder="Filter by status"
             content-width
-            class="w-full sm:w-auto sm:min-w-28"
+            class="sm:min-w-28"
             aria-label="Filter stacks by status"
           />
           <AppSelectInput
@@ -290,10 +271,17 @@ async function handlePurge(dirName: string) {
             ]"
             placeholder="Sort by"
             content-width
-            class="w-full sm:w-auto sm:min-w-28"
+            class="sm:min-w-28"
             aria-label="Sort stacks"
           />
         </div>
+
+        <StatusAvailabilityBar
+          v-model="statusFilter"
+          :items="stacks"
+          :segments="stackStatusSegments"
+          aria-label="Stack status availability breakdown"
+        />
 
         <div v-if="filteredStacks.length === 0" class="text-center py-12" role="status" aria-live="polite">
           <UIcon name="i-lucide-search-x" class="w-12 h-12 text-gray-300 mx-auto mb-4" />
@@ -302,107 +290,12 @@ async function handlePurge(dirName: string) {
         </div>
 
         <div v-else class="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-3">
-          <article
+          <StackCard
             v-for="stack in filteredStacks"
             :key="stack.id"
-            class="relative w-full min-w-0 overflow-hidden border border-gray-200 border-l-4 border-l-gray-300 bg-white p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-[0_0_0_1px_rgba(255,198,0,0.28),0_12px_24px_rgba(15,23,42,0.08)] focus-within:-translate-y-0.5 focus-within:shadow-[0_0_0_2px_rgba(255,198,0,0.42),0_12px_24px_rgba(15,23,42,0.1)] dark:border-carbon-700 dark:border-l-carbon-600 dark:bg-carbon-800/55 dark:hover:shadow-[0_0_0_1px_rgba(255,198,0,0.24),0_14px_28px_rgba(0,0,0,0.24)] dark:focus-within:shadow-[0_0_0_2px_rgba(255,198,0,0.42),0_14px_28px_rgba(0,0,0,0.24)]"
-            :class="cardAccentClass(stack.status)"
-          >
-            <div class="relative">
-              <div v-if="!isViewer" class="absolute right-0 top-0 z-10 flex shrink-0 items-center gap-1">
-                <UButton
-                  icon="i-lucide-refresh-cw"
-                  variant="soft"
-                  color="primary"
-                  size="sm"
-                  class="hidden sm:inline-flex"
-                  :aria-label="`Sync stack ${stack.name}`"
-                  @click="openSyncConfirm(stack)"
-                />
-                <UButton
-                  icon="i-lucide-refresh-cw"
-                  label="Sync"
-                  variant="soft"
-                  color="primary"
-                  size="sm"
-                  class="min-h-10 min-w-28 justify-center text-sm font-semibold sm:hidden"
-                  @click="openSyncConfirm(stack)"
-                />
-              </div>
-
-              <NuxtLink
-                :to="`/stacks/${stack.id}`"
-                class="group block rounded-md pr-32 focus:outline-none sm:pr-16"
-                :aria-label="`Open stack ${stack.name}`"
-              >
-                <div class="mb-3 min-w-0">
-                  <div class="flex min-w-0 items-center gap-2">
-                    <h3 class="truncate text-base font-bold tracking-tight text-gray-950 transition-colors group-hover:text-yellow-500 group-focus-visible:text-yellow-500 dark:text-white">
-                      {{ stack.name }}
-                    </h3>
-                    <UBadge
-                      v-if="stackHasRenderOverrides(stack)"
-                      color="warning"
-                      variant="subtle"
-                      size="sm"
-                      class="shrink-0"
-                      title="Running with manual render overrides, not what's in Git"
-                    >
-                      Customized
-                    </UBadge>
-                  </div>
-                  <div class="mt-1 flex min-w-0 items-center gap-2 text-xs text-gray-500 dark:text-wire-200/50">
-                    <span class="inline-flex min-w-0 items-center gap-1.5">
-                      <UIcon
-                        :name="stackSourceStatus(stack).icon"
-                        class="h-3.5 w-3.5 shrink-0"
-                        :class="stackSourceStatus(stack).iconClass"
-                        :title="stackSourceStatus(stack).title"
-                        :aria-label="stackSourceStatus(stack).title"
-                      />
-                      <span class="truncate">{{ stackRepositorySubtitle(stack) }}</span>
-                    </span>
-                  </div>
-                </div>
-                <div class="space-y-1.5 bg-gray-50/90 px-3 py-2.5 transition-colors group-hover:bg-yellow-50/80 group-focus-visible:bg-yellow-50/80 dark:bg-carbon-900/55 dark:group-hover:bg-carbon-900/80 dark:group-focus-visible:bg-carbon-900/80">
-                  <div class="grid grid-cols-[78px_1fr] items-start gap-2 text-sm">
-                    <span class="text-gray-500 dark:text-wire-200/45">Deploy</span>
-                    <div class="flex min-w-0 items-center gap-2">
-                      <UIcon
-                        :name="stackVisibleDeployStatus(stack, workersById).icon"
-                        class="h-3.5 w-3.5 shrink-0"
-                        :class="stackVisibleDeployStatus(stack, workersById).iconClass"
-                      />
-                      <span class="truncate font-medium text-gray-900 dark:text-wire-200">{{ stackVisibleDeployStatus(stack, workersById).label }}</span>
-                    </div>
-                  </div>
-
-                  <div class="grid grid-cols-[78px_1fr] items-start gap-2 text-sm">
-                    <span class="text-gray-500 dark:text-wire-200/45">Worker</span>
-                    <div class="flex min-w-0 items-center gap-2">
-                      <UTooltip :text="stackWorkerName(stack)">
-                        <UIcon
-                          :name="stackWorkerStatus(stack, workersById).icon"
-                          class="h-3.5 w-3.5 shrink-0"
-                          :class="stackWorkerStatus(stack, workersById).iconClass"
-                          :title="stackWorkerName(stack)"
-                          :aria-label="`Worker: ${stackWorkerName(stack)}`"
-                        />
-                      </UTooltip>
-                      <span class="truncate font-medium text-gray-900 dark:text-wire-200">{{ stackWorkerStatus(stack, workersById).label }}</span>
-                    </div>
-                  </div>
-
-                  <div v-if="stack.containers_list?.length" class="grid grid-cols-[78px_1fr] items-start gap-2 text-sm">
-                    <span class="text-gray-500 dark:text-wire-200/45">Services</span>
-                    <div class="min-w-0">
-                      <StackContainersList :containers="stack.containers_list" />
-                    </div>
-                  </div>
-                </div>
-              </NuxtLink>
-            </div>
-          </article>
+            :stack="stack"
+            :workers-by-id="workersById"
+          />
         </div>
       </div>
 
@@ -457,12 +350,6 @@ async function handlePurge(dirName: string) {
         />
       </template>
     </UModal>
-
-    <StackSyncModal
-      v-model:open="showSyncConfirm"
-      :stack="syncTarget"
-      @synced="closeSyncConfirm"
-    />
 
     <UModal v-model:open="showImport" title="Import Compose Stack" description="Import an existing Docker Compose project into wireops">
       <template #body>
