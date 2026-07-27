@@ -1,8 +1,6 @@
 <p align="center">
-  <img src="frontend/app/assets/img/logo.png" alt="wireops logo" width="120">
+  <img src=".github/assets/logo-readme.png" alt="wireops" width="600">
 </p>
-
-# wireops
 
 [![Latest Release](https://img.shields.io/github/v/release/wireops/wireops?sort=semver)](https://github.com/wireops/wireops/releases/latest)
 [![Server CI](https://github.com/wireops/wireops/actions/workflows/server-ci.yml/badge.svg)](https://github.com/wireops/wireops/actions/workflows/server-ci.yml)
