@@ -1,19 +1,23 @@
 BINARY=wireops
 FRONTEND_DIR=frontend
 PB_PUBLIC=pb_public
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
-BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
-LDFLAGS=-X github.com/wireops/wireops/internal/buildinfo.Version=$(VERSION) \
-	-X github.com/wireops/wireops/internal/buildinfo.Commit=$(COMMIT) \
-	-X github.com/wireops/wireops/internal/buildinfo.BuildDate=$(BUILD_DATE)
+export VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+export COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
+export BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
 .PHONY: all build build-frontend dev clean docker-build
 
 all: build-frontend build
 
+# VERSION/COMMIT/BUILD_DATE are passed as real shell env vars (via `export`
+# above) rather than Make-substituted into the recipe text, so a hostile
+# value (e.g. a malicious git tag containing shell metacharacters) can't
+# break out of the command line before this validation runs.
 build:
-	go build -ldflags "$(LDFLAGS)" -o $(BINARY) .
+	case "$$VERSION" in *[!A-Za-z0-9._+-]*) echo "invalid VERSION: $$VERSION" >&2; exit 1;; esac
+	case "$$COMMIT" in *[!A-Za-z0-9._+-]*) echo "invalid COMMIT: $$COMMIT" >&2; exit 1;; esac
+	case "$$BUILD_DATE" in *[!A-Za-z0-9.:+-]*) echo "invalid BUILD_DATE: $$BUILD_DATE" >&2; exit 1;; esac
+	go build -ldflags "-X github.com/wireops/wireops/internal/buildinfo.Version=$$VERSION -X github.com/wireops/wireops/internal/buildinfo.Commit=$$COMMIT -X github.com/wireops/wireops/internal/buildinfo.BuildDate=$$BUILD_DATE" -o $(BINARY) .
 
 build-frontend:
 	cd $(FRONTEND_DIR) && npm install && npm run generate

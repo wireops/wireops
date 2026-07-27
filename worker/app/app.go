@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -84,7 +85,20 @@ func startHealthServer(ctx context.Context, addr string) {
 		w.Write([]byte("disconnected"))
 	})
 
-	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Printf("[worker] health endpoint bind error addr=%s error=%v (healthcheck will be unavailable)", addr, err)
+		return
+	}
 
 	go func() {
 		<-ctx.Done()
@@ -95,7 +109,7 @@ func startHealthServer(ctx context.Context, addr string) {
 
 	go func() {
 		log.Printf("[worker] health endpoint listening addr=%s", addr)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 			log.Printf("[worker] health endpoint error: %v", err)
 		}
 	}()
