@@ -1,13 +1,19 @@
 BINARY=wireops
 FRONTEND_DIR=frontend
 PB_PUBLIC=pb_public
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
+BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+LDFLAGS=-X github.com/wireops/wireops/internal/buildinfo.Version=$(VERSION) \
+	-X github.com/wireops/wireops/internal/buildinfo.Commit=$(COMMIT) \
+	-X github.com/wireops/wireops/internal/buildinfo.BuildDate=$(BUILD_DATE)
 
 .PHONY: all build build-frontend dev clean docker-build
 
 all: build-frontend build
 
 build:
-	go build -o $(BINARY) .
+	go build -ldflags "$(LDFLAGS)" -o $(BINARY) .
 
 build-frontend:
 	cd $(FRONTEND_DIR) && npm install && npm run generate
