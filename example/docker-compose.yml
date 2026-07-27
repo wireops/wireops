@@ -32,6 +32,7 @@ services:
     environment:
       - SERVER_URL=${SERVER_URL:-http://wireops:8443}
       - WORKER_TOKEN=${WORKER_TOKEN:-}
+      - WORKER_TAGS=${WORKER_TAGS:-}
       - WORKER_STACK_DIR=/tmp/wireops-worker
       - HOSTNAME=${WORKER_HOSTNAME:-}
     volumes:

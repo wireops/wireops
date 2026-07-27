@@ -53,20 +53,11 @@ function truncatePath(path: string): string {
           size="md"
         />
         <UButton
-          to="https://github.com/sponsors/wireops"
+          to="https://github.com/sponsors/jfxdev"
           target="_blank"
           icon="i-lucide-heart"
-          label="Sponsor"
+          label="Donate"
           color="error"
-          variant="solid"
-          size="md"
-        />
-        <UButton
-          to="https://www.buymeacoffee.com/wireops"
-          target="_blank"
-          icon="i-lucide-coffee"
-          label="Buy me a coffee"
-          color="primary"
           variant="solid"
           size="md"
         />
