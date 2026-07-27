@@ -52,29 +52,7 @@ jobs:
         run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
 
       - name: Run govulncheck
-        run: |
-          # GO-2026-5668/5617/4887/4883: symbols only reachable via docker/docker
-          # package init (client SDK). The actual vulnerable code (docker cp,
-          # AuthZ plugin validation) lives in the dockerd daemon, which we never
-          # call — no fix exists upstream for the client module. Allowlisted
-          # until moby/moby ships a fixed docker/docker release.
-          ALLOWED_VULNS="GO-2026-5668 GO-2026-5617 GO-2026-4887 GO-2026-4883"
-          govulncheck -json ./... > govulncheck.json || true
-          FOUND=$(jq -r 'select(.osv != null) | .osv.id' govulncheck.json | sort -u)
-          UNEXPECTED=""
-          for id in $FOUND; do
-            case " $ALLOWED_VULNS " in
-              *" $id "*) ;;
-              *) UNEXPECTED="$UNEXPECTED $id" ;;
-            esac
-          done
-          if [ -n "$FOUND" ]; then
-            echo "Vulnerabilities found: $FOUND"
-          fi
-          if [ -n "$UNEXPECTED" ]; then
-            echo "::error::Unallowed vulnerabilities found:$UNEXPECTED"
-            exit 1
-          fi
+        run: ./scripts/govulncheck.sh ./...
 
       - name: Build server binary
         env:
