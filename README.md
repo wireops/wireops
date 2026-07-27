@@ -17,7 +17,9 @@
 
 GitOps controller for Docker Compose stacks. Automatically sync and deploy your compose stacks from Git repositories, similar to Flux/ArgoCD for Kubernetes.
 
-> **Project status**: pre-1.0, actively developed (releases `v0.1.x`). Core GitOps sync, worker security policies, RBAC, and external secret providers (Vault, Infisical) are in daily use; the audited web terminal is intentionally not started yet — see [Known Limitations](#known-limitations).
+> **Project status**: pre-1.0 (releases `v0.1.x`), now in a maintenance phase — only point bugfixes, no active feature development. Core GitOps sync, worker security policies, RBAC, and external secret providers (Vault, Infisical) are in daily use; the audited web terminal is intentionally not started yet — see [Known Limitations](#known-limitations).
+
+📚 **Full technical docs** (architecture, data model, API reference, env vars, MCP server, disaster recovery, integrations) live in the **[Wiki](https://github.com/wireops/wireops/wiki)**.
 
 ## Project Scope
 
@@ -31,32 +33,27 @@ Targets developers, homelabs, and self-hosters running plain `docker compose` st
 - [Features](#features)
 - [Tech Stack](#tech-stack)
 - [Quick Start](#quick-start)
-- [Architecture](#architecture)
 - [Usage](#usage)
-- [Environment Variables](#environment-variables)
-- [Observability](#observability)
-- [MCP Server](#mcp-server)
-- [Disaster Recovery](#disaster-recovery)
+- [Customization](#customization)
 - [Development](#development)
-- [Integrations](#integrations)
 - [Known Limitations](#known-limitations)
 - [Backlog / Future Enhancements](#backlog--future-enhancements)
 - [License](#license)
 - [Contributing](#contributing)
+
+Deeper technical docs (moved to the [Wiki](https://github.com/wireops/wireops/wiki)): [Architecture](https://github.com/wireops/wireops/wiki/Architecture) · [Data Model](https://github.com/wireops/wireops/wiki/Data-Model) · [API Reference](https://github.com/wireops/wireops/wiki/API-Reference) · [Environment Variables](https://github.com/wireops/wireops/wiki/Environment-Variables) · [Observability](https://github.com/wireops/wireops/wiki/Observability) · [MCP Server](https://github.com/wireops/wireops/wiki/MCP-Server) · [Disaster Recovery](https://github.com/wireops/wireops/wiki/Disaster-Recovery) · [Integrations](https://github.com/wireops/wireops/wiki/Integrations)
 
 ## Features
 
 - 🔄 Automatic synchronization from Git repositories
 - 🐳 Docker Compose stack management
 - 📊 Real-time container monitoring (with worker runtime info and container ports)
-- 🔐 Encrypted credentials (SSH keys, passwords) + pluggable secret providers (internal AES-GCM, HashiCorp Vault, Infisical)
-- 🔏 SOPS+age support for git-committed `secrets.yaml`, auto-decrypted at deploy time
-- 🎛️ Render-time stack overrides (image/ports/networks) without a git commit
-- 🛡️ Role-based access control (viewer/operator/admin/monitoring) and audit logging
+- 🔐 Encrypted credentials and environment variables (SSH keys, passwords, secrets) with pluggable integrations (internal AES-GCM, SOPS+age, HashiCorp Vault, Infisical)
+- 🎛️ Optional render-time stack overrides (image/ports/networks) for one-off validation testing, without a git commit
+- 🛡️ Strong policy and RBAC system, with audit logging
 - 🚧 Worker-side deploy security policies (block privileged/host-network/docker.sock/host-PID/host-IPC)
 - 🔑 SSO login via any OIDC provider
 - 🌐 Webhook, Discord, Slack, and ntfy notifications
-- 📝 Environment variable management
 - 🔄 Rollback to previous commits
 - 🚀 Force redeploy with recreate options
 - 🗓️ Cron-scheduled one-shot Docker jobs (`job.yaml`)
@@ -70,66 +67,53 @@ Targets developers, homelabs, and self-hosters running plain `docker compose` st
 
 ## Quick Start
 
+wireops has two pieces you bring up separately: the **server** first, then one or more **workers** that register against it (see the [Architecture wiki page](https://github.com/wireops/wireops/wiki/Architecture) for why). The `example/docker-compose.yml` file has both services predefined.
+
+**1. Start the server**
+
+Generate a 32-byte key for `SECRET_KEY` (this encrypts every secret wireops stores — git passwords, SSH keys, integration tokens — so treat it like any other production credential):
+
 ```bash
-# Copy the example environment file
-cp .env.example .env
-
-# Edit .env and set your SECRET_KEY (generate with: openssl rand -hex 32)
-# Set a BOOTSTRAP_TOKEN for the first administrator setup
-# Optionally configure APP_URL for production deployments
-
-# Run with Docker Compose
-docker-compose up -d
-
-# Or run directly
-go run main.go serve
+openssl rand -hex 32
 ```
 
-Access the UI at `http://localhost:8090`
+```bash
+cp .env.example .env
+# Edit .env: set SECRET_KEY to the value generated above, and set BOOTSTRAP_TOKEN
+# Optionally set APP_URL for production deployments
 
-There are no default credentials. On a fresh instance, open `/setup` and create the first administrator account using the `BOOTSTRAP_TOKEN` you configured.
+cd example
+docker compose up -d wireops
+# Or run directly: go run main.go serve
+```
 
-### Initial Setup
-
-Wireops requires a bootstrap token for the first web-based setup.
-
-1. Set `BOOTSTRAP_TOKEN` before starting the server.
-2. Open `http://localhost:8090/setup` or `http://<server-ip>:8090/setup`.
-3. Enter the bootstrap token and create the first administrator account.
-4. After the first admin is created, the setup route is automatically closed.
-
-Example:
+Example `.env` values:
 
 ```bash
-SECRET_KEY=replace-with-32-byte-key
+SECRET_KEY=<paste the openssl output here>
 BOOTSTRAP_TOKEN=replace-with-a-strong-one-time-token
 ```
 
+**2. Create the first administrator account**
+
+There are no default credentials — wireops requires a bootstrap token for the first web-based setup. Open `http://localhost:8090/setup` (or `http://<server-ip>:8090/setup`), enter the `BOOTSTRAP_TOKEN` you set, and create the admin account. The setup route closes itself automatically once that first admin exists.
+
 Notes:
-- `BOOTSTRAP_TOKEN` is only used while no administrator exists yet.
-- If `BOOTSTRAP_TOKEN` is missing on a fresh instance, the setup page will stay blocked until it is configured.
-- After setup is complete, keeping or removing `BOOTSTRAP_TOKEN` does not reopen setup, but removing it is recommended.
+- `BOOTSTRAP_TOKEN` is only used while no administrator exists yet — if it's missing on a fresh instance, the setup page stays blocked until it's configured.
+- After setup is complete, keeping or removing `BOOTSTRAP_TOKEN` doesn't reopen setup, but removing it is recommended.
 
-## Architecture
+**3. Issue a worker token**
 
+Once logged in, go to **Workers → Generate Token** in the UI and copy the token it gives you.
+
+**4. Start a worker**
+
+```bash
+# in the same example/ directory
+WORKER_TOKEN=paste-the-token-here docker compose up -d wireops-worker
 ```
-┌─────────────┐     ┌──────────────┐     ┌─────────────┐
-│   Frontend  │────▶│   PocketBase │────▶│  Scheduler  │
-│  (Nuxt UI)  │     │   (REST API) │     │   (Cron)    │
-└─────────────┘     └──────────────┘     └──────┬──────┘
-                                                 │
-                                                 ▼
-                    ┌──────────────┐     ┌─────────────┐
-                    │ Git Repos    │◀────│  Reconciler │
-                    │ (Cloned)     │     │  (Sync)     │
-                    └──────────────┘     └──────┬──────┘
-                                                 │
-                                                 ▼
-                                         ┌─────────────┐
-                                         │   Docker    │
-                                         │  Compose    │
-                                         └─────────────┘
-```
+
+The worker connects out to the server, registers with that token, and starts polling for stacks/jobs to run. Check **Workers** in the UI — it should flip to `ACTIVE` within a few seconds.
 
 ## Usage
 
@@ -137,37 +121,6 @@ Notes:
 2. **Create a Stack**: Link a stack to a repository, specify compose file location
 3. **Configure**: Set environment variables, poll interval, and sync options
 4. **Deploy**: Stacks auto-sync on interval or trigger manually/via webhook
-
-### Container Image Customization
-
-You can customize the image slug (icon/identifier) displayed in the UI for your containers by adding the `customization.image.slug` label to your Docker Compose services. 
-
-These images are fetched from the [selfh.st/icons](https://selfh.st/icons/) catalog and served globally via its CDN. The slug you provide must match the identifier used in their catalog.
-
-The application automatically extracts this value from the service's `labels`, `annotations`, `deploy.labels`, or `deploy.annotations`.
-
-**Example `docker-compose.yml`:**
-
-```yaml
-services:
-  app:
-    image: my-app:latest
-    labels:
-      - "customization.image.slug=nuxtjs"
-    # Alternatively, you can use deploy labels/annotations:
-    # deploy:
-    #   labels:
-    #     - "customization.image.slug=nuxtjs"
-```
-
-### Render Overrides
-
-Stacks support render-time overrides — swapping a service's `image`, `ports`, or `networks` without committing anything to git. Overrides are stored on the stack (not the repo), applied only when the compose file is rendered for deploy, and only take effect the next time the stack is rendered/redeployed.
-
-- Gated by the **"Allow render overrides"** worker policy flag (`allow_render_overrides`), off by default — set it globally or per-worker in worker policy settings.
-- View, set, and clear overrides from the stack detail page, or via `GET`/`PUT`/`DELETE /api/custom/stacks/{id}/render-overrides`.
-- Overridden values still pass through the worker's other deploy policy checks (image/network allowlists, etc.) — an override can't be used to bypass policy.
-- Applying or clearing overrides force-recreates the stack's containers.
 
 ### Scheduled Jobs
 
@@ -194,288 +147,48 @@ resources:
   timeout: "15m"    # Mandatory: Job timeout duration (e.g., "10m", "1h")
 ```
 
-## Environment Variables
+## Customization
 
-### Server
+### Custom Container Thumbnails
 
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `SECRET_KEY` | **Yes** | — | 32-byte AES key for encrypting credentials and secrets at rest. Generate with `openssl rand -hex 32` |
-| `BOOTSTRAP_TOKEN` | **Yes** for first-time setup | — | One-time bootstrap secret required to create the first administrator account from the `/setup` page |
-| `APP_URL` | No | `http://localhost:8090` | Base URL used for CORS, webhook URLs, and emails |
-| `PORT` | No | `8090` | HTTP port for the UI, REST API, and Prometheus metrics (`/metrics`) |
-| `PB_DATA_DIR` | No | `./pb_data` | PocketBase data directory (SQLite database, uploads) |
-| `REPOS_WORKSPACE` | No | `./repos` | Directory where Git repositories are cloned |
-| `STACKS_STORAGE_PATH` | No | `{PB_DATA_DIR}/stacks` | Directory for rendered compose revision files |
-| `HEARTBEAT_INTERVAL` | No | `30` | Heartbeat interval in seconds. Remote worker read deadline is 3x this value |
-| `ALLOWED_PRIVATE_IP_RANGES` | No | — | Comma-separated CIDR ranges allowed for SSH host key scanning |
-| `BACKUP_UPLOAD_MAX_MB` | No | `4096` | Max size (MB) accepted when uploading a backup archive for restore (Settings → Backups) |
+You can customize the image slug (icon/identifier) displayed in the UI for your containers by adding the `customization.image.slug` label to your Docker Compose services.
 
-#### SMTP (optional)
+These images are fetched from the [selfh.st/icons](https://selfh.st/icons/) catalog and served globally via its CDN. The slug you provide must match the identifier used in their catalog.
 
-| Variable | Default | Description |
-|---|---|---|
-| `SMTP_HOST` | — | SMTP server host. When set, enables PocketBase email delivery |
-| `SMTP_PORT` | `587` | SMTP server port |
-| `SMTP_USERNAME` | — | SMTP authentication username |
-| `SMTP_PASSWORD` | — | SMTP authentication password |
-| `SMTP_SENDER` | — | Sender email address |
-| `SMTP_TLS` | `false` | Set to `true` to enable TLS for SMTP |
+The application automatically extracts this value from the service's `labels`, `annotations`, `deploy.labels`, or `deploy.annotations`.
 
-#### OIDC / SSO (optional)
-
-wireops supports SSO login via any OIDC-compatible provider (Keycloak, Authentik, Zitadel, Okta, etc.). When configured, a **"Continue with [name]"** button appears on the login page alongside the standard email/password form.
-
-| Variable | Required | Description |
-|---|---|---|
-| `OIDC_CLIENT_ID` | **Yes** (to enable) | OAuth2 Client ID from your identity provider |
-| `OIDC_CLIENT_SECRET` | **Yes** (to enable) | OAuth2 Client Secret |
-| `OIDC_AUTH_URL` | **Yes** (to enable) | Authorization endpoint of your IdP |
-| `OIDC_TOKEN_URL` | **Yes** (to enable) | Token endpoint of your IdP |
-| `OIDC_USER_INFO_URL` | No | UserInfo endpoint. If omitted, user data is read from the `id_token` claims |
-| `OIDC_DISPLAY_NAME` | No | Label shown on the login button (default: `SSO`) |
-
-> **Note on special characters:** If `OIDC_CLIENT_SECRET` (or any value) contains special characters (`$`, `%`, `*`, `!`, etc.), wrap it in **single quotes** in the `.env` file to prevent `godotenv` from interpreting them:
-> ```bash
-> OIDC_CLIENT_SECRET='my$ecret!@#%'
-> ```
-
-The **redirect/callback URL** to register in your identity provider is:
-```
-https://your-wireops-domain.com/api/oauth2-redirect
-```
-
-**Provider example:**
-
-```bash
-# Authentik
-OIDC_CLIENT_ID=wireops
-OIDC_CLIENT_SECRET=your-secret
-OIDC_AUTH_URL=https://authentik.example.com/application/o/wireops/authorize/
-OIDC_TOKEN_URL=https://authentik.example.com/application/o/token/
-OIDC_USER_INFO_URL=https://authentik.example.com/application/o/userinfo/
-OIDC_DISPLAY_NAME=Authentik
-```
-
-> [!WARNING]
-> **SSO and the Initial Admin Account**
->
-> If you log in via SSO using the **exact same email address** that you used to create the initial wireops instance (the first protected admin account), the system will automatically link your local account to the SSO identity.
->
-> When this happens, the wireops frontend **will forcibly override your local role** with whatever role your identity provider (IdP) assigns you. If your IdP maps your account to a lesser role (like `viewer`), you will lose your administrative privileges inside the wireops UI. 
-> 
-> **Make absolutely sure** that your initial admin email is mapped to the `admin` role in your IdP before logging in via SSO.
-
-### Worker
-
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `SERVER_URL` | **Yes** | — | URL of the wireops server (e.g. `https://wireops.example.com:8443`) |
-| `WORKER_TOKEN` | **Yes** | — | Worker registration and authentication token |
-| `HOSTNAME` | No | System hostname | Worker identifier sent during registration |
-| `WORKER_TAGS` | No | — | Comma-separated tags for job routing (e.g. `gpu,us-east`) |
-| `HEARTBEAT_INTERVAL` | No | `30` | Interval in seconds between heartbeats sent to the server |
-| `WORKER_STACK_DIR` | No | `<os.TempDir()>/wireops` | Directory where the worker writes temporary compose files |
-| `WORKER_TLS_SKIP_VERIFY` | No | `false` | Skip TLS certificate verification. Set to `true` when the server uses a self-signed certificate |
-
-### Secret Providers
-
-Every secret-flagged env var (stack, global, or job-scoped) picks a `secret_provider` at creation time: `internal` (default), `vault`, or `infisical`.
-
-| Provider | Where the secret lives | Value stored on the env var |
-|---|---|---|
-| `internal` | Encrypted at rest in wireops's own DB (AES-GCM, `SECRET_KEY`) | The plaintext secret, encrypted |
-| `vault` | HashiCorp Vault (KV v2) | A reference: `<mount>/data/<path>#<field>` |
-| `infisical` | Infisical | A reference: `<project-id>/<environment>/<secret-path>#<SECRET_NAME>` |
-
-Vault and Infisical are **not** configured via server env vars — enable and configure them from **Settings → Integrations** (category "Secret Backend"):
-
-- **Vault**: `address`, `token`, optional `allowed_mount` (scopes which mount the picker/resolver may touch). The token is encrypted at rest using the existing `SECRET_KEY`.
-- **Infisical**: `site_url` (defaults to `https://app.infisical.com`), `client_id`, `client_secret`, optional `allowed_project_id`. The client secret is encrypted at rest using the existing `SECRET_KEY`.
-
-Once a backend is enabled, its provider option appears in the env var editor; picking `vault` or `infisical` swaps the value field for a guided picker (mount/path/field, or project/environment/path/secret) that resolves against Vault/Infisical server-side — you never type or see a raw reference string by hand, and existing secret values are never displayed in plaintext.
-
-Notes:
-- **A secret's provider is locked once saved.** You can't switch an existing secret from `internal` to `vault` (or vice versa) — delete it and recreate it with the new provider instead.
-- **Disabled backends are caught before deploy.** If a stack or job references a `vault`/`infisical` env var whose backend integration is disabled or unconfigured, sync/job execution fails fast with an error naming the provider and the affected keys, instead of failing mid-deploy.
-
-### SOPS+age Secrets
-
-SOPS is a fundamentally different model from the per-variable providers above: it's file-based and scoped to a **repository**, not to an individual env var.
-
-- Each repository gets an auto-generated [age](https://github.com/FiloSottile/age) keypair the moment it's added — the private key is encrypted at rest under `SECRET_KEY`, the public key is stored in the clear so you (or CI) can encrypt a `secrets.yaml` for it.
-- Commit a SOPS-encrypted `secrets.yaml` next to the stack's `wireops.yaml` in the repo. On every sync, rollback, redeploy, and transfer, wireops decrypts it automatically and overlays its keys on top of the stack's env vars — no provider selection per variable, and decrypted values never reach the UI. (The `sops-encrypt` endpoint below does return ciphertext to the browser so you can download and commit it — that's encrypted content, not plaintext.)
-- Registered as an always-enabled "Secret Backend" integration (`sops`) that can't be disabled.
-- **Rotate a repo's age key** via `POST /api/custom/repositories/{id}/sops-rotate-key` — this is explicit and destructive-ish: any `secrets.yaml` encrypted for the old public key becomes undecryptable until re-encrypted with the new one.
-- **Build a `secrets.yaml`** without the `sops` CLI via `POST /api/custom/repositories/{id}/sops-encrypt` (Secrets page) — it encrypts a key/value map against the repo's public key and hands the result back to you to commit yourself; nothing is persisted server-side.
-- View which keys a stack's `secrets.yaml` provides via `GET /api/custom/stacks/{id}/sops-env-vars` — key names only, values are never returned.
-
-### APP_URL Configuration
-
-The `APP_URL` variable is used to:
-- Configure CORS for frontend access
-- Generate webhook URLs for CI/CD integration
-- Serve future image and media assets
-
-**Format**: `scheme://host[:port]` (no trailing slash or path)
-
-**Examples**:
-```bash
-# Local development
-APP_URL=http://localhost:8090
-
-# Production with domain
-APP_URL=https://wireops.example.com
-
-# Custom port
-APP_URL=http://192.168.1.100:8090
-```
-
-**Note**: When using `localhost` or `127.0.0.1`, the application automatically allows common development ports (3000, 5173) for CORS.
-
-## Observability
-
-Wireops exposes a single **operational port** (`PORT`, default `8090`) for the UI, REST API, and Prometheus metrics. Remote workers connect on a separate **worker port** (`TLS_WORKER_PORT`, default `8443`) — scrapers should not target that port.
-
-| Port | Purpose |
-|---|---|
-| `PORT` (8090) | UI, `/api/custom/*`, `GET /metrics` |
-| `TLS_WORKER_PORT` (8443) | Worker WebSocket and registration only |
-
-### Metrics
-
-| Endpoint | Description |
-|---|---|
-| `GET /metrics` | Aggregated worker metrics (canonical scrape path) |
-| `GET /api/custom/metrics` | Alias of `/metrics` |
-| `GET /api/custom/workers/{id}/metrics` | Metrics from a single connected worker |
-
-**Authentication:** create a **service account** with role `monitoring` (Settings → Service Accounts), generate an **API key**, and send it on every scrape via the `X-Wireops-Api-Key` header. Requests without a valid key receive `401`; keys tied to roles below `monitoring` receive `403`.
-
-**Quick test:**
-
-```bash
-curl -H "X-Wireops-Api-Key: wireops_sk_..." http://localhost:8090/metrics
-```
-
-#### Prometheus (`prometheus.yml`)
-
-Prometheus must send `X-Wireops-Api-Key` (not `Authorization: Bearer`). Use `http_headers` (Prometheus **2.45+**):
+**Example `docker-compose.yml`:**
 
 ```yaml
-scrape_configs:
-  - job_name: wireops
-    metrics_path: /metrics
-    scheme: http
-    scrape_interval: 30s
-    static_configs:
-      - targets:
-          - wireops-host:8090   # PORT — same host/port as the UI
-    http_headers:
-      X-Wireops-Api-Key:
-        values:
-          - wireops_sk_your_api_key_here
-
-    # Optional: skip TLS verification only when APP_URL uses a self-signed cert
-    # tls_config:
-    #   insecure_skip_verify: true
+services:
+  app:
+    image: nginx:latest
+    labels:
+      - "customization.image.slug=nginx"
 ```
 
-When `APP_URL` uses HTTPS, set `scheme: https` and point `targets` at the same host/port users open in the browser (for example `wireops.example.com:443`).
+### Override Deployment
 
-Prefer injecting the API key from your secrets manager or an env-expanded config file instead of committing it to git.
+Stacks support render-time overrides — swapping a service's `image`, `ports`, or `networks` without committing anything to git. Overrides are stored on the stack (not the repo), applied only when the compose file is rendered for deploy, and only take effect the next time the stack is rendered/redeployed.
 
-#### Grafana Agent / Alloy (alternative)
+- Gated by the **"Allow render overrides"** worker policy flag (`allow_render_overrides`), off by default — set it globally or per-worker in worker policy settings.
+- View, set, and clear overrides from the stack detail page, or via `GET`/`PUT`/`DELETE /api/custom/stacks/{id}/render-overrides`.
+- Overridden values still pass through the worker's other deploy policy checks (image/network allowlists, etc.) — an override can't be used to bypass policy.
+- Applying or clearing overrides force-recreates the stack's containers.
 
-```hcl
-prometheus.scrape "wireops" {
-  targets      = [{ __address__ = "wireops-host:8090" }]
-  forward_to   = [prometheus.remote_write.default.receiver]
-  metrics_path = "/metrics"
-  scheme       = "http"
+## Environment Variables
 
-  authorization {
-    type             = "Header"
-    credentials_file = "/etc/wireops/api-key"
-  }
-}
-```
+`SECRET_KEY` and `BOOTSTRAP_TOKEN` are required — see [Quick Start](#quick-start) above. 
 
-Store the header line in `credentials_file`:
+For the full server/worker env var reference, SMTP, OIDC/SSO, secret providers (Vault/Infisical), and SOPS+age, see the [Environment Variables wiki page](https://github.com/wireops/wireops/wiki/Environment-Variables).
 
-```text
-X-Wireops-Api-Key: wireops_sk_...
-```
+Metrics, Prometheus/Grafana scrape config, the MCP server, and the disaster-recovery runbook have also moved to the wiki: [Observability](https://github.com/wireops/wireops/wiki/Observability) · [MCP Server](https://github.com/wireops/wireops/wiki/MCP-Server) · [Disaster Recovery](https://github.com/wireops/wireops/wiki/Disaster-Recovery).
 
-## MCP Server
+## Integrations
 
-Wireops ships a standalone **MCP server** (`mcp/`, built as `wireops-mcp`) exposing stack/worker/job data as MCP tools, resources, and prompts over streamable HTTP. Most tools are read-only (stacks, workers, jobs, repos, revisions, audit logs, secrets key names, integrations, system info); a few generate manifest content for an agent to review and commit itself — `generate_wireops_yaml`, `generate_job_yaml`, and `scaffold_stack` (a matching `wireops.yaml` + `docker-compose.yml` pair) — none of them write to disk or git. It never holds a credential of its own — every client sends its own wireops API key on each request (pass-through auth), so tool access is scoped by that key's role exactly like the REST API.
+Wireops ships two kinds of integration plugin, registered the same way (`internal/integrations/`) and enabled/configured from the same Settings screen: **container-action** integrations (Traefik, Caddy, Nginx Proxy Manager, Dozzle) add clickable "Open"/"Logs" shortcuts to the container list; **notification** integrations (Webhook, Discord, Slack, Ntfy) send a message when a sync event fires and don't touch the container list.
 
-| Env var | Purpose |
-|---|---|
-| `SERVER_URL` (required) | Base URL of the wireops server the MCP process proxies to |
-| `MCP_LISTEN_ADDR` | Listen address (default `:8091`) |
-
-Endpoints: `POST /mcp` (streamable HTTP, requires auth) and `GET /healthz` (no auth).
-
-**Authentication:** create a **service account** (Settings → Service Accounts) with whatever role you want the agent limited to, generate an **API key**, and send it as `X-Wireops-Api-Key` — or `Authorization: Bearer <key>` — on every MCP request.
-
-Run it with the provided image:
-
-```bash
-docker run -d --name wireops-mcp -p 8091:8091 \
-  -e SERVER_URL=http://wireops-host:8090 \
-  ghcr.io/wireops/wireops-mcp:latest
-```
-
-or from source: `go run ./mcp`.
-
-### Claude Code
-
-Register it as a project or user-level MCP server with the CLI:
-
-```bash
-claude mcp add --transport http wireops http://localhost:8091/mcp \
-  --header "X-Wireops-Api-Key: wireops_sk_your_api_key_here"
-```
-
-Or add it directly to `.mcp.json` (project scope) or `~/.claude.json` (user scope):
-
-```json
-{
-  "mcpServers": {
-    "wireops": {
-      "type": "http",
-      "url": "http://localhost:8091/mcp",
-      "headers": {
-        "X-Wireops-Api-Key": "wireops_sk_your_api_key_here"
-      }
-    }
-  }
-}
-```
-
-Verify it's connected with `claude mcp list`, then ask Claude to list stacks, inspect sync logs, or scaffold a new stack — the available tools are discovered automatically.
-
-### Other MCP clients
-
-Any client that supports the streamable HTTP transport (Cursor, Windsurf, the MCP Inspector, custom SDK clients, …) can point at the same `http://<host>:8091/mcp` URL with the `X-Wireops-Api-Key` header — the JSON shape above is the de facto standard `mcpServers` config most of them accept, modulo minor key naming differences per client.
-
-Prefer injecting the API key from your secrets manager rather than committing it to a config file that lands in git.
-
-## Disaster Recovery
-
-Wireops wraps PocketBase's built-in backup/restore (full DB + `DATA_DIR`, scheduled cron backups with retention) behind wireops's own RBAC, so any admin (not just PocketBase superusers) can manage it from **Settings → Backups**:
-
-- Manual and scheduled backups, with history, download, and delete.
-- Uploading an existing backup file (`/api/custom/backups/upload`) requires a real PocketBase superuser session, not just a wireops admin role — see the [disaster recovery runbook](docs/DISASTER_RECOVERY.md#restoring-an-uploaded-file) for the no-superuser fallback.
-- Optional off-host mirroring to S3-compatible storage (AWS S3, R2, MinIO, B2, ...) via the **S3 Storage** integration (Settings → Integrations) — credentials encrypted at rest under `SECRET_KEY`, with optional prefix and KMS-wrapped content encryption.
-- Restore replaces `DATA_DIR` and restarts the server automatically; failed restores revert on their own.
-- `SECRET_KEY` mismatch protection: a canary value is checked against this host's data — a restore-triggered restart runs the decisive check, catching a `SECRET_KEY` that doesn't match instead of silently corrupting encrypted stack secrets (git passwords, SSH keys, integration tokens).
-
-**Critical:** back up `SECRET_KEY` separately from `DATA_DIR` backups (a secrets manager, not the same storage target) — without it, restored secrets are unreadable.
-
-Full runbook and worker-loss recovery scenarios: [`docs/DISASTER_RECOVERY.md`](docs/DISASTER_RECOVERY.md).
+Full plugin interface, config fields, and label/compose examples: [Integrations wiki page](https://github.com/wireops/wireops/wiki/Integrations).
 
 ## Development
 
@@ -487,74 +200,6 @@ go run main.go serve
 cd frontend
 npm install
 npm run dev
-```
-
-## Integrations
-
-Wireops ships two kinds of integration plugin, registered the same way (`internal/integrations/`) and enabled/configured from the same Settings screen, but functionally distinct:
-
-- **Container-action integrations** (Reverse Proxy / Logging) inspect your running containers' labels and add clickable shortcuts to the container list — e.g. an "Open" link or a "Logs" link.
-- **Notification integrations** (category `Notification`) do **not** touch the container list at all — they only send a message when a sync event fires (`sync.started`, `sync.done`, `sync.error`, `sync.test`). Their `ResolveContainerActions` is a no-op by design.
-
-### Container-action integrations
-
-| Integration | Category | What it adds |
-|---|---|---|
-| Traefik | Reverse Proxy | "Open" action from router host rule labels |
-| Caddy | Reverse Proxy | "Open" action from Caddy labels |
-| Nginx Proxy Manager | Reverse Proxy | "Open" action for NPM-fronted containers |
-| Dozzle | Logging | "Logs" action linking to a Dozzle instance |
-
-### Notification integrations (sync events only, no container actions)
-
-| Integration | What it does |
-|---|---|
-| Webhook | HMAC-signed HTTP POST on sync events |
-| Discord | Sync event messages to a Discord channel |
-| Slack | Sync event messages to a Slack channel |
-| Ntfy | Push notifications via ntfy.sh |
-
-Details for two container-action integrations (Traefik, Dozzle) are documented in depth below as examples; the rest follow the same enable-in-Settings pattern.
-
-### Traefik
-
-The Traefik integration reads Traefik HTTP router rules from container labels and generates an "Open" action linking straight to the configured host.
-
-- **Category**: Reverse Proxy
-- **Label required**: `traefik.http.routers.<name>.rule=Host(...)`
-- **Config**: You can customize the default `scheme` (e.g. `https`) and `port` (e.g. `443` or blank for default) when enabling the integration.
-- **Example**: If a container has the label ``traefik.http.routers.myapp.rule=Host(`myapp.example.com`)``, an action to open `https://myapp.example.com` is generated.
-
-**Example `docker-compose.yml` with Nginx:**
-
-```yaml
-services:
-  web:
-    image: nginx:latest
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.my-nginx.rule=Host(`nginx.example.com`)"
-      - "traefik.http.services.my-nginx.loadbalancer.server.port=80"
-```
-
-### Dozzle
-
-The Dozzle integration replaces the basic container log viewer by redirecting the user to your centrally deployed Dozzle logging instance.
-
-- **Category**: Logging
-- **Config**: Needs the base `url` to your Dozzle instance (e.g., `https://logs.example.com`).
-- **Action generated**: A "Dozzle Logs" action is created for all containers linking to `{baseURL}/container/{containerID}`. No container-specific labels are required as long as Dozzle can access your Docker socket.
-
-**Example `docker-compose.yml` with Nginx:**
-
-```yaml
-services:
-  web:
-    image: nginx:latest
-    # No extra labels needed! Dozzle automatically 
-    # connects to the docker socket and wireops will
-    # automatically generate the action linking to
-    # https://logs.example.com/container/<nginx-container-id>
 ```
 
 ---
