@@ -1,0 +1,15 @@
+wireops
+Copyright (C) 2026 João Felipe and wireops contributors
+
+This program is licensed under the GNU Affero General Public License v3.0
+(AGPLv3) or any later version — see the LICENSE file.
+
+Additional term under AGPLv3 Section 7(b)
+------------------------------------------
+As a further restriction permitted by Section 7(b) of the AGPLv3, any
+distributed or publicly-accessible modified version of this program
+(including forks) must retain a clear and visible attribution to the
+original project, "wireops" (https://github.com/wireops/wireops), in
+its documentation and/or "about"/credits interface. This attribution
+requirement may not be removed even if you exercise the "any later
+version" option.
