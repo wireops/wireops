@@ -1,0 +1,19 @@
+# govulncheck allowlist
+#
+# One vuln ID per line (blank lines and lines starting with # ignored).
+# Each entry MUST include a reason comment above it — never allowlist blind.
+#
+# GO-2026-5668, GO-2026-5617, GO-2026-4887, GO-2026-4883:
+# Flagged only via github.com/docker/docker client SDK package init
+# (docker.init -> client.init -> api/build/events/image/... init).
+# The vulnerable code (docker cp race conditions, AuthZ plugin bypass,
+# plugin privilege off-by-one) lives in the dockerd daemon, which wireops
+# never calls or embeds — only uses the client SDK to talk to the Docker
+# API (ContainerInspect, ContainerStatsOneShot, NetworkList, VolumeList,
+# Ping). No fixed docker/docker release exists upstream yet (fix only
+# lands in the new moby/moby/v2 module). Revisit when docker/docker ships
+# a patched release.
+GO-2026-5668
+GO-2026-5617
+GO-2026-4887
+GO-2026-4883

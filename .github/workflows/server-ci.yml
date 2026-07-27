@@ -52,8 +52,7 @@ jobs:
         run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
 
       - name: Run govulncheck
-        continue-on-error: true
-        run: govulncheck ./...
+        run: ./scripts/govulncheck.sh ./...
 
       - name: Build server binary
         env:
