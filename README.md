@@ -48,13 +48,12 @@ Deeper technical docs (moved to the [Wiki](https://github.com/wireops/wireops/wi
 - 🔄 Automatic synchronization from Git repositories
 - 🐳 Docker Compose stack management
 - 📊 Real-time container monitoring (with worker runtime info and container ports)
-- 🔐 Encrypted credentials (SSH keys, passwords, secrets) with pluggable integrations (internal AES-GCM, SOPS+age, HashiCorp Vault, Infisical)
-- 🎛️ Render-time stack overrides (image/ports/networks) without a git commit
+- 🔐 Encrypted credentials and environment variables (SSH keys, passwords, secrets) with pluggable integrations (internal AES-GCM, SOPS+age, HashiCorp Vault, Infisical)
+- 🎛️ Optional render-time stack overrides (image/ports/networks) for one-off validation testing, without a git commit
 - 🛡️ Strong policy and RBAC system, with audit logging
 - 🚧 Worker-side deploy security policies (block privileged/host-network/docker.sock/host-PID/host-IPC)
 - 🔑 SSO login via any OIDC provider
 - 🌐 Webhook, Discord, Slack, and ntfy notifications
-- 📝 Environment variable management
 - 🔄 Rollback to previous commits
 - 🚀 Force redeploy with recreate options
 - 🗓️ Cron-scheduled one-shot Docker jobs (`job.yaml`)
