@@ -50,7 +50,6 @@ jobs:
         run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
 
       - name: Run govulncheck
-        continue-on-error: true
         run: govulncheck ./worker/... ./internal/worker/...
 
       - name: Build worker binary
