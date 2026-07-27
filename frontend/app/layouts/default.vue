@@ -40,6 +40,7 @@ const navItems = computed(() => {
         { label: 'General', icon: 'i-lucide-settings-2', to: '/settings/general' },
         ...(isAdmin.value ? [{ label: 'Backups', icon: 'i-lucide-database-backup', to: '/settings/backups' }] : []),
         { label: 'Security', icon: 'i-lucide-shield', to: '/settings/security' },
+        { label: 'Audit', icon: 'i-lucide-clipboard-list', to: '/settings/audit' },
         { label: 'Integrations', icon: 'i-lucide-puzzle', to: '/settings/integrations' },
         { label: 'Identity', icon: 'i-lucide-users', to: '/settings/identity' },
       ]

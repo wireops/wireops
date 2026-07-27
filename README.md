@@ -104,16 +104,18 @@ Notes:
 
 **3. Issue a worker token**
 
-Once logged in, go to **Workers → Generate Token** in the UI and copy the token it gives you.
+Once logged in, go to **Workers → Add Worker** in the UI and copy the token it gives you.
 
 **4. Start a worker**
 
 ```bash
 # in the same example/ directory
-WORKER_TOKEN=paste-the-token-here docker compose up -d wireops-worker
+WORKER_TOKEN=paste-the-token-here WORKER_TAGS=prod,eu-west-1 docker compose up -d wireops-worker
 ```
 
 The worker connects out to the server, registers with that token, and starts polling for stacks/jobs to run. Check **Workers** in the UI — it should flip to `ACTIVE` within a few seconds.
+
+`WORKER_TAGS` labels what a worker is for (e.g. `prod`, `eu-west-1`) — required, comma-separated, set on the worker itself, not in the UI. Stacks and jobs can require specific tags in their `wireops.yaml`/`job.yaml`, so only matching workers show up as valid targets.
 
 ## Usage
 

@@ -73,7 +73,7 @@ func getHealthAddr() string {
 // worker currently holds a live WebSocket session with the server, so
 // Docker/orchestrator healthchecks can tell "process alive" apart from
 // "actually doing its job".
-func startHealthServer(ctx context.Context, addr string) {
+func startHealthServer(ctx context.Context, addr string) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		if atomic.LoadInt64(&metrics.Connected) == 1 {
@@ -96,8 +96,7 @@ func startHealthServer(ctx context.Context, addr string) {
 
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		log.Printf("[worker] health endpoint bind error addr=%s error=%v (healthcheck will be unavailable)", addr, err)
-		return
+		return fmt.Errorf("health endpoint bind addr=%s: %w", addr, err)
 	}
 
 	go func() {
@@ -113,6 +112,7 @@ func startHealthServer(ctx context.Context, addr string) {
 			log.Printf("[worker] health endpoint error: %v", err)
 		}
 	}()
+	return nil
 }
 
 func sanitizeProcessPATH() {
@@ -250,7 +250,9 @@ func Run() {
 		shutdownCancel()
 	}()
 
-	startHealthServer(shutdownCtx, getHealthAddr())
+	if err := startHealthServer(shutdownCtx, getHealthAddr()); err != nil {
+		log.Printf("[worker] %v (healthcheck will be unavailable)", err)
+	}
 
 	backoff := initialBackoff
 	for {
