@@ -4,18 +4,22 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/wireops/wireops/internal/buildinfo"
 	"github.com/wireops/wireops/pkg/logger"
 	"github.com/wireops/wireops/worker/handlers"
+	"github.com/wireops/wireops/worker/metrics"
 	"github.com/wireops/wireops/worker/telemetry"
 	"github.com/wireops/wireops/worker/transport"
 )
@@ -55,6 +59,60 @@ func getStackDir() string {
 		return getSecureDefaultStackDir()
 	}
 	return stackDirVar
+}
+
+func getHealthAddr() string {
+	addr := strings.TrimSpace(os.Getenv("WORKER_HEALTH_ADDR"))
+	if addr == "" {
+		return ":8095"
+	}
+	return addr
+}
+
+// startHealthServer runs a local-only HTTP endpoint reporting whether the
+// worker currently holds a live WebSocket session with the server, so
+// Docker/orchestrator healthchecks can tell "process alive" apart from
+// "actually doing its job".
+func startHealthServer(ctx context.Context, addr string) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		if atomic.LoadInt64(&metrics.Connected) == 1 {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("ok"))
+			return
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte("disconnected"))
+	})
+
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Printf("[worker] health endpoint bind error addr=%s error=%v (healthcheck will be unavailable)", addr, err)
+		return
+	}
+
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shutdownCtx)
+	}()
+
+	go func() {
+		log.Printf("[worker] health endpoint listening addr=%s", addr)
+		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+			log.Printf("[worker] health endpoint error: %v", err)
+		}
+	}()
 }
 
 func sanitizeProcessPATH() {
@@ -191,6 +249,8 @@ func Run() {
 		log.Printf("[worker] received signal %v, starting graceful shutdown...", sig)
 		shutdownCancel()
 	}()
+
+	startHealthServer(shutdownCtx, getHealthAddr())
 
 	backoff := initialBackoff
 	for {

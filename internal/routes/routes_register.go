@@ -20,6 +20,7 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/router"
 
+	"github.com/wireops/wireops/internal/buildinfo"
 	"github.com/wireops/wireops/internal/compose"
 	"github.com/wireops/wireops/internal/config"
 	"github.com/wireops/wireops/internal/crypto"
@@ -784,7 +785,7 @@ func (rr routeRegistrar) registerSystemRoutes() {
 		})
 
 		return e.JSON(http.StatusOK, map[string]interface{}{
-			"version":        "1.0.0",
+			"version":        buildinfo.Version,
 			"disk_usage":     diskUsage,
 			"workspace_path": workspace,
 		})
