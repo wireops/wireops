@@ -1,7 +1,9 @@
 <script setup lang="ts">
+import type { ButtonProps } from '@nuxt/ui/components/Button.vue'
+
 const props = withDefaults(defineProps<{
   ariaLabel?: string
-  size?: string
+  size?: ButtonProps['size']
   class?: string
 }>(), {
   ariaLabel: 'Close',

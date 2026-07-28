@@ -1,7 +1,9 @@
 <script setup lang="ts">
+import type { ButtonProps } from '@nuxt/ui/components/Button.vue'
+
 withDefaults(defineProps<{
   label?: string
-  size?: string
+  size?: ButtonProps['size']
   disabled?: boolean
   block?: boolean
   type?: 'button' | 'submit' | 'reset'

@@ -27,13 +27,28 @@ const props = withDefaults(
   }
 )
 
-defineEmits<{
+const emit = defineEmits<{
   (e: 'update:modelValue', value: string): void
   (e: 'focus' | 'blur', event: FocusEvent): void
   (e: 'keyup', event: KeyboardEvent): void
 }>()
 
-const { id: fieldId, name: fieldName, disabled: fieldDisabled, ariaAttrs } = useFormField(props)
+const { id: fieldId, name: fieldName, disabled: fieldDisabled, ariaAttrs, emitFormInput, emitFormFocus, emitFormBlur } = useFormField(props)
+
+function onInput(event: Event) {
+  emit('update:modelValue', (event.target as HTMLInputElement).value)
+  emitFormInput()
+}
+
+function onFocus(event: FocusEvent) {
+  emit('focus', event)
+  emitFormFocus()
+}
+
+function onBlur(event: FocusEvent) {
+  emit('blur', event)
+  emitFormBlur()
+}
 </script>
 
 <template>
@@ -54,9 +69,9 @@ const { id: fieldId, name: fieldName, disabled: fieldDisabled, ariaAttrs } = use
       :value="modelValue"
       :disabled="fieldDisabled ?? disabled"
       :readonly="readonly"
-      @input="$emit('update:modelValue', ($event.target as HTMLInputElement).value)"
-      @focus="$emit('focus', $event)"
-      @blur="$emit('blur', $event)"
+      @input="onInput"
+      @focus="onFocus"
+      @blur="onBlur"
       @keyup="$emit('keyup', $event)"
     >
     <slot name="trailing" />

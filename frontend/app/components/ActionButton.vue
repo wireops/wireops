@@ -1,10 +1,12 @@
 <script setup lang="ts">
+import type { ButtonProps } from '@nuxt/ui/components/Button.vue'
+
 withDefaults(defineProps<{
   icon: string
   label?: string
-  color?: string
-  variant?: string
-  size?: string
+  color?: ButtonProps['color']
+  variant?: ButtonProps['variant']
+  size?: ButtonProps['size']
   disabled?: boolean
   loading?: boolean
 }>(), {

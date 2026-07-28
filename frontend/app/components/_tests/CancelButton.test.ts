@@ -16,7 +16,7 @@ const stubs = {
         'data-block': props.block,
         'data-variant': props.variant,
         'data-color': props.color,
-        onClick: (ev: MouseEvent) => emit('click', ev),
+        onClick: (ev: MouseEvent) => { if (!props.disabled) emit('click', ev) },
       })
     },
   },
