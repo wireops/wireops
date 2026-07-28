@@ -59,7 +59,7 @@ defineExpose({ reset })
       </UFormField>
 
       <div class="flex justify-end gap-2 pt-2">
-        <UButton label="Cancel" variant="outline" color="neutral" @click="handleCancel" />
+        <CancelButton @click="handleCancel" />
         <UButton type="submit" label="Create" icon="i-lucide-plus" />
       </div>
     </form>

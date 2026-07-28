@@ -287,7 +287,7 @@ watch(showCreateModal, (open) => {
               @click="newEnvSecret = !newEnvSecret"
             />
             <UButton type="submit" icon="i-lucide-check" variant="ghost" color="success" size="xs" class="h-8 w-full justify-center !bg-green-500/10 p-0 !text-green-600 hover:!bg-green-500/15 sm:w-8 sm:!bg-transparent sm:!text-inherit sm:hover:!bg-transparent dark:!text-green-400" :loading="saving" :disabled="!newEnvKey.trim()" aria-label="Add environment variable" />
-            <UButton type="button" icon="i-lucide-x" variant="ghost" color="neutral" size="xs" class="h-8 w-full justify-center !bg-gray-100 p-0 !text-gray-600 hover:!bg-gray-200 sm:w-8 sm:!bg-transparent sm:!text-inherit sm:hover:!bg-transparent dark:!bg-carbon-800 dark:!text-gray-400 dark:hover:!bg-carbon-700 sm:dark:!bg-transparent sm:dark:hover:!bg-transparent" aria-label="Cancel" @click="cancelCreateEnv" />
+            <CloseButton size="xs" class="h-8 w-full justify-center !bg-gray-100 p-0 !text-gray-600 hover:!bg-gray-200 sm:w-8 sm:!bg-transparent sm:!text-inherit sm:hover:!bg-transparent dark:!bg-carbon-800 dark:!text-gray-400 dark:hover:!bg-carbon-700 sm:dark:!bg-transparent sm:dark:hover:!bg-transparent" aria-label="Cancel" @click="cancelCreateEnv" />
           </div>
         </form>
 
@@ -331,7 +331,7 @@ watch(showCreateModal, (open) => {
                 @click="editEnvSecret = !editEnvSecret"
               />
               <UButton icon="i-lucide-check" variant="ghost" color="success" size="xs" class="h-8 w-8 justify-center p-0" :loading="saving" aria-label="Save environment variable" @click="saveEditEnv(env.id)" />
-              <UButton icon="i-lucide-x" variant="ghost" color="neutral" size="xs" class="h-8 w-8 justify-center p-0" aria-label="Cancel" @click="cancelEditEnv" />
+              <CloseButton size="xs" class="h-8 w-8 justify-center p-0" aria-label="Cancel" @click="cancelEditEnv" />
             </div>
           </template>
 
@@ -448,7 +448,7 @@ watch(showCreateModal, (open) => {
             </UButton>
 
             <div class="grid grid-cols-2 gap-2 pt-2">
-              <UButton type="button" label="Cancel" variant="outline" color="neutral" block @click="cancelCreateEnv" />
+              <CancelButton type="button" block @click="cancelCreateEnv" />
               <UButton type="submit" label="Create" icon="i-lucide-check" color="success" block :loading="saving" :disabled="!newEnvKey.trim()" />
             </div>
           </form>
@@ -472,7 +472,7 @@ watch(showCreateModal, (open) => {
 
           <template #footer>
             <div class="flex justify-end gap-2">
-              <UButton label="Cancel" variant="outline" color="neutral" @click="cancelDeleteEnv" />
+              <CancelButton @click="cancelDeleteEnv" />
               <UButton
                 label="Delete"
                 icon="i-lucide-trash-2"

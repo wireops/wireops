@@ -130,11 +130,8 @@ watch(
             <span id="mobile-navigation-title" class="text-xs uppercase tracking-[0.24em] text-wire-200/45">{{ brandSubtitle }}</span>
           </AppLogo>
         </NuxtLink>
-        <UButton
+        <CloseButton
           ref="closeButtonRef"
-          icon="i-lucide-x"
-          variant="ghost"
-          color="neutral"
           size="sm"
           aria-label="Close navigation menu"
           @click="emit('close')"

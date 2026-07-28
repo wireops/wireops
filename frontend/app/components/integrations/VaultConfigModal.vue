@@ -123,7 +123,7 @@ async function testConnection() {
 
     <template #footer>
       <div class="flex w-full items-center gap-2">
-        <UButton label="Cancel" variant="outline" @click="close" />
+        <CancelButton @click="close" />
         <UButton
           label="Test Connection"
           icon="i-lucide-plug"

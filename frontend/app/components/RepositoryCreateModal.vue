@@ -277,7 +277,7 @@ async function handleKeySaved(key: Record<string, any>) {
               @click="testConnection"
             />
             <div class="flex gap-2">
-              <UButton label="Cancel" variant="outline" @click="isOpen = false" />
+              <CancelButton @click="isOpen = false" />
               <UButton type="submit" :label="isEditMode ? 'Save' : 'Create'" :loading="saving" />
             </div>
           </div>

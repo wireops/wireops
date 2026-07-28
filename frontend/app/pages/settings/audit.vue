@@ -375,10 +375,7 @@ onMounted(async () => {
 
           <template #footer>
             <div class="flex justify-end gap-2">
-              <UButton
-                label="Cancel"
-                color="neutral"
-                variant="ghost"
+              <CancelButton
                 :disabled="appSettingsSaving"
                 @click="showAuditSettingsModal = false"
               />

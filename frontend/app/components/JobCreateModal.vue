@@ -258,7 +258,7 @@ async function submit() {
             <div v-else/>
 
             <div class="flex gap-2">
-              <UButton label="Cancel" variant="ghost" color="neutral" @click="emit('update:open', false)" />
+              <CancelButton @click="emit('update:open', false)" />
               <UButton v-if="currentStep === 1" type="button" label="Next" icon="i-lucide-arrow-right" trailing :disabled="!form.repository" @click="nextStep" />
               <UButton
                 v-else

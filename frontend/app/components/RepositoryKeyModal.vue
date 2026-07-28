@@ -155,7 +155,7 @@ async function submit() {
 
         <form class="space-y-4" @submit.prevent="submit">
           <UFormField label="Name" required>
-            <UInput v-model="form.name" placeholder="GitHub production" class="w-full" />
+            <AppTextInput v-model="form.name" placeholder="GitHub production" class="w-full" />
           </UFormField>
 
           <UFormField v-if="!isEditMode" label="Type" required>
@@ -171,10 +171,10 @@ async function submit() {
 
           <template v-if="form.auth_type === 'basic'">
             <UFormField label="Username" required>
-              <UInput v-model="form.git_username" class="w-full" />
+              <AppTextInput v-model="form.git_username" class="w-full" />
             </UFormField>
             <UFormField label="Password / Token" :required="!isEditMode">
-              <UInput
+              <AppTextInput
                 v-model="form.git_password"
                 type="password"
                 :placeholder="isEditMode ? 'Leave empty to keep current' : ''"
@@ -185,15 +185,15 @@ async function submit() {
 
           <template v-else>
             <UFormField label="SSH Private Key" :required="!isEditMode">
-              <UTextarea
+              <AppTextArea
                 v-model="form.ssh_private_key"
                 :placeholder="isEditMode ? 'Leave empty to keep current key' : 'Paste your private key here'"
                 :rows="8"
-                class="w-full font-mono text-xs"
+                class="w-full font-mono"
               />
             </UFormField>
             <UFormField label="Passphrase">
-              <UInput
+              <AppTextInput
                 v-model="form.ssh_passphrase"
                 type="password"
                 :placeholder="isEditMode ? 'Leave empty to keep current' : 'Optional'"
@@ -201,11 +201,11 @@ async function submit() {
               />
             </UFormField>
             <UFormField label="Known Hosts">
-              <UTextarea
+              <AppTextArea
                 v-model="form.ssh_known_host"
                 placeholder="Optional known_hosts entry"
                 :rows="3"
-                class="w-full font-mono text-xs"
+                class="w-full font-mono"
               />
             </UFormField>
           </template>
@@ -222,7 +222,7 @@ async function submit() {
             />
             <div v-else />
             <div class="flex gap-2">
-              <UButton label="Cancel" variant="outline" @click="isOpen = false" />
+              <CancelButton @click="isOpen = false" />
               <UButton type="submit" :label="isEditMode ? 'Save' : 'Create Key'" :loading="saving" />
             </div>
           </div>

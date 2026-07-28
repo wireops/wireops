@@ -156,7 +156,7 @@ async function syncRepo() {
           >
             {{ confirmingRotate ? 'Confirm rotate (breaks existing secrets.yaml)' : 'Rotate key' }}
           </UButton>
-          <UButton v-if="confirmingRotate" variant="ghost" size="xs" @click="confirmingRotate = false">Cancel</UButton>
+          <CancelButton v-if="confirmingRotate" size="xs" @click="confirmingRotate = false" />
         </div>
       </div>
     </UCard>

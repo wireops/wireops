@@ -79,12 +79,9 @@ async function onConfirm() {
           </div>
         </div>
         <div class="flex justify-end gap-2 pt-1">
-          <UButton 
-            label="Cancel" 
-            variant="outline" 
-            color="neutral" 
-            :disabled="loading" 
-            @click="open = false" 
+          <CancelButton
+            :disabled="loading"
+            @click="open = false"
           />
           <UButton 
             :label="confirmLabel" 

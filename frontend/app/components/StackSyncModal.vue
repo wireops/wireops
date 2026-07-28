@@ -80,7 +80,7 @@ async function confirmSync() {
 
     <template #footer>
       <div class="flex w-full items-center gap-2">
-        <UButton label="Cancel" variant="outline" @click="close" />
+        <CancelButton @click="close" />
         <UButton
           label="Run Sync"
           color="primary"

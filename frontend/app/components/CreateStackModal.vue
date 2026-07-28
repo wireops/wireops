@@ -350,10 +350,7 @@ async function handleSubmit() {
                   <UIcon name="i-lucide-layers" class="w-5 h-5 text-primary-500" />
                   <h2 class="font-semibold text-lg">Add Stack</h2>
                 </div>
-                <UButton
-                  color="neutral"
-                  variant="ghost"
-                  icon="i-lucide-x"
+                <CloseButton
                   class="-my-1"
                   aria-label="Close modal"
                   @click="close"
@@ -513,7 +510,7 @@ async function handleSubmit() {
               <div v-else/>
 
               <div class="flex gap-2">
-                <UButton label="Cancel" variant="ghost" color="neutral" @click="close" />
+                <CancelButton @click="close" />
                 <UButton v-if="currentStep === 1" type="button" label="Next" icon="i-lucide-arrow-right" trailing :disabled="!canProceedToStep2" @click="nextStep" />
                 <UButton v-else type="submit" label="Create" icon="i-lucide-check" :loading="saving" />
               </div>

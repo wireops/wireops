@@ -152,9 +152,9 @@ watch(() => props.open, (open) => {
 
         <template #footer>
           <div class="flex justify-end gap-2">
-            <UButton v-if="!result" label="Cancel" variant="outline" color="neutral" @click="emit('update:open', false)" />
+            <CancelButton v-if="!result" @click="emit('update:open', false)" />
             <UButton v-if="!result" label="Encrypt" icon="i-lucide-file-lock-2" color="primary" :loading="encrypting" :disabled="!canEncrypt" @click="encrypt" />
-            <UButton v-else label="Close" variant="outline" color="neutral" @click="emit('update:open', false)" />
+            <CancelButton v-else label="Close" @click="emit('update:open', false)" />
           </div>
         </template>
       </UCard>

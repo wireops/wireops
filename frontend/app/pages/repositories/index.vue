@@ -192,14 +192,14 @@ const statusColor = (s: string) => {
       </template>
 
       <div v-if="repos?.length" class="space-y-4">
-        <div class="flex flex-col sm:flex-row gap-3">
+        <div class="flex flex-row flex-wrap items-center gap-2 sm:gap-3">
           <AppTextInput
             ref="repositorySearchInput"
             v-model="searchQuery"
             icon="i-lucide-search"
             placeholder="Search repositories..."
             aria-label="Search repositories"
-            class="flex-1"
+            class="min-w-[140px] flex-1"
           />
           <AppSelectInput
             v-model="statusFilter"
@@ -210,7 +210,7 @@ const statusColor = (s: string) => {
             ]"
             placeholder="Filter by status"
             content-width
-            class="w-full sm:w-auto sm:min-w-28"
+            class="sm:min-w-28"
           />
           <AppSelectInput
             v-model="sortBy"
@@ -221,7 +221,7 @@ const statusColor = (s: string) => {
             ]"
             placeholder="Sort by"
             content-width
-            class="w-full sm:w-auto sm:min-w-28"
+            class="sm:min-w-28"
           />
         </div>
 

@@ -34,7 +34,7 @@ const isOpen = defineModel<boolean>('open', { default: false })
 
         <template #footer>
           <div class="flex justify-end gap-2">
-            <UButton label="Cancel" variant="outline" color="neutral" @click="isOpen = false; emit('cancel')" />
+            <CancelButton @click="isOpen = false; emit('cancel')" />
             <UButton 
               :color="confirmColor || 'primary'" 
               :label="confirmLabel || 'Confirm'" 

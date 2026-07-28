@@ -522,10 +522,7 @@ onMounted(() => {
           </div>
           <template #footer>
             <div class="flex justify-end gap-2">
-              <UButton
-                label="Cancel"
-                variant="outline"
-                color="neutral"
+              <CancelButton
                 :disabled="uploadLoading"
                 @click="showUploadModal = false; uploadTarget = null"
               />
@@ -560,7 +557,7 @@ onMounted(() => {
           </div>
           <template #footer>
             <div class="flex justify-end gap-2">
-              <UButton label="Cancel" variant="outline" color="neutral" @click="showDeleteModal = false" />
+              <CancelButton @click="showDeleteModal = false" />
               <UButton
                 label="Delete Backup"
                 color="error"
@@ -611,7 +608,7 @@ onMounted(() => {
 
           <template v-if="!restoreStarted" #footer>
             <div class="flex justify-end gap-2">
-              <UButton label="Cancel" color="neutral" variant="ghost" :disabled="restoreLoading" @click="showRestoreModal = false" />
+              <CancelButton :disabled="restoreLoading" @click="showRestoreModal = false" />
               <UButton
                 label="Restore"
                 color="error"

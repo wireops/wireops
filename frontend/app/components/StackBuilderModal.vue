@@ -257,10 +257,7 @@ function handleImportYaml() {
                 <p class="text-xs text-gray-500 dark:text-wire-200/50">Configure and generate a wireops.yaml for your stack</p>
               </div>
             </div>
-            <UButton
-              color="neutral"
-              variant="ghost"
-              icon="i-lucide-x"
+            <CloseButton
               class="-my-1"
               aria-label="Close modal"
               @click="emit('update:open', false)"
@@ -550,11 +547,8 @@ function handleImportYaml() {
                     aria-label="Paste your wireops.yaml content"
                   />
                   <div class="flex justify-end gap-2 shrink-0">
-                    <UButton
-                      label="Cancel"
+                    <CancelButton
                       size="xs"
-                      color="neutral"
-                      variant="outline"
                       @click="isImportOpen = false; importContent = ''"
                     />
                     <UButton
@@ -581,7 +575,7 @@ function handleImportYaml() {
 
         <template #footer>
           <div class="flex justify-end gap-2">
-            <UButton label="Close" color="neutral" variant="outline" @click="emit('update:open', false)" />
+            <CancelButton label="Close" @click="emit('update:open', false)" />
           </div>
         </template>
       </UCard>

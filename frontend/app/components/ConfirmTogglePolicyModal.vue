@@ -42,7 +42,7 @@ const emit = defineEmits<{
     
     <template #footer>
       <div class="flex justify-end gap-2">
-        <UButton label="Cancel" variant="outline" color="neutral" @click="emit('cancel')" />
+        <CancelButton @click="emit('cancel')" />
         <UButton
           :label="enabled ? 'Enable Policies' : 'Disable Policies'"
           :color="enabled ? 'warning' : 'error'"

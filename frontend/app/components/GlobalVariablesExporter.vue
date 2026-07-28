@@ -209,7 +209,7 @@ onMounted(() => {
                 <h3 class="font-semibold">Add Global Variable</h3>
                 <p class="text-xs text-gray-500 mt-0.5">Select a global variable to attach.</p>
               </div>
-              <UButton icon="i-lucide-x" variant="ghost" color="neutral" size="xs" @click="showAddModal = false" />
+              <CloseButton size="xs" @click="showAddModal = false" />
             </div>
           </template>
 
@@ -263,7 +263,7 @@ onMounted(() => {
 
           <template #footer>
             <div class="flex justify-end gap-2">
-              <UButton label="Cancel" variant="outline" color="neutral" @click="cancelDetach" />
+              <CancelButton @click="cancelDetach" />
               <UButton
                 label="Detach"
                 icon="i-lucide-unlink"

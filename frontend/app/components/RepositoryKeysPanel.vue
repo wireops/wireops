@@ -111,7 +111,7 @@ defineExpose({
     </template>
 
     <div v-if="data?.keys.length" class="space-y-4">
-      <UInput ref="searchInput" v-model="search" icon="i-lucide-search" placeholder="Search keys..." class="w-full" />
+      <AppTextInput ref="searchInput" v-model="search" icon="i-lucide-search" placeholder="Search keys..." aria-label="Search keys" class="w-full" />
 
       <div v-if="filteredKeys.length" class="space-y-3">
         <div
@@ -139,9 +139,9 @@ defineExpose({
             <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" aria-label="Edit key" @click="editKey(key)" />
             <UTooltip :text="usage[key.id] ? 'Remove this key from its repositories before deleting it' : 'Delete key'">
               <UButton
-                icon="i-lucide-trash-2"
+                :icon="usage[key.id] ? 'i-lucide-link' : 'i-lucide-trash-2'"
                 variant="ghost"
-                color="error"
+                :color="usage[key.id] ? 'neutral' : 'error'"
                 aria-label="Delete key"
                 :disabled="!!usage[key.id]"
                 @click="requestDelete(key)"
