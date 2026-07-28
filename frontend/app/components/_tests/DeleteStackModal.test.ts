@@ -17,6 +17,13 @@ const stubs = {
   UIcon: { template: '<span />' },
   WorkerNameLabel: { props: ['name'], template: '<span>{{ name }}</span>' },
   TerminalOutput: { props: ['lines'], template: '<pre />' },
+  CancelButton: {
+    props: ['label'],
+    emits: ['click'],
+    setup(props: { label?: string }, { emit }: { emit: (e: string, ev: MouseEvent) => void }) {
+      return () => h('button', { onClick: (ev: MouseEvent) => emit('click', ev) }, props.label ?? 'Cancel')
+    },
+  },
 }
 
 function setupGlobals() {

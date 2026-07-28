@@ -155,9 +155,9 @@ onUnmounted(() => {
 
     <template #footer>
       <div class="flex justify-end gap-2">
-        <UButton v-if="deleted" label="Close" @click="closeAfterDelete" />
+        <CancelButton v-if="deleted" label="Close" @click="closeAfterDelete" />
         <template v-else>
-          <UButton label="Cancel" variant="outline" @click="emit('cancel')" />
+          <CancelButton @click="emit('cancel')" />
           <UButton
             label="Delete Stack"
             color="error"

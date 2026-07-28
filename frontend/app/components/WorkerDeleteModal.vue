@@ -54,7 +54,7 @@ async function confirmRevoke() {
 
       <template #footer>
         <div class="flex justify-end gap-2">
-          <UButton label="Cancel" variant="outline" @click="emit('cancel')" />
+          <CancelButton @click="emit('cancel')" />
           <UButton
             label="Revoke Worker"
             color="red"

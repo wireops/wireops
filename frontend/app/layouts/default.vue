@@ -186,7 +186,7 @@ watch(mobileMenuOpen, (isOpen) => {
                 <UIcon name="i-lucide-keyboard" class="w-5 h-5 text-yellow-400" />
                 <h2 id="keyboard-shortcuts-title" class="font-semibold">Keyboard Shortcuts</h2>
               </div>
-              <UButton icon="i-lucide-x" variant="ghost" color="neutral" size="xs" aria-label="Close keyboard shortcuts" @click="isShowingHelp = false" />
+              <CloseButton size="xs" aria-label="Close keyboard shortcuts" @click="isShowingHelp = false" />
             </div>
           </template>
           <div class="space-y-2">
@@ -224,7 +224,7 @@ watch(mobileMenuOpen, (isOpen) => {
                 <UIcon name="i-lucide-accessibility" class="w-5 h-5 text-yellow-400" />
                 <h2 id="accessibility-features-title" class="font-semibold">Accessibility Features</h2>
               </div>
-              <UButton icon="i-lucide-x" variant="ghost" color="neutral" size="xs" aria-label="Close accessibility features" @click="isShowingAccessibility = false" />
+              <CloseButton size="xs" aria-label="Close accessibility features" @click="isShowingAccessibility = false" />
             </div>
           </template>
           <div class="space-y-4 text-sm text-gray-600 dark:text-wire-200/70">

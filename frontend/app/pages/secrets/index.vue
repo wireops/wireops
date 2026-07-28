@@ -347,11 +347,11 @@ onMounted(() => {
               @click="form.secret = !form.secret"
             />
             <UButton type="submit" icon="i-lucide-check" variant="ghost" color="success" size="xs" class="h-8 w-full justify-center !bg-green-500/10 p-0 !text-green-600 hover:!bg-green-500/15 sm:w-8 sm:!bg-transparent sm:!text-inherit sm:hover:!bg-transparent dark:!text-green-400" :loading="saving" :disabled="!form.key.trim()" aria-label="Create variable" />
-            <UButton type="button" icon="i-lucide-x" variant="ghost" color="neutral" size="xs" class="h-8 w-full justify-center !bg-gray-100 p-0 !text-gray-600 hover:!bg-gray-200 sm:w-8 sm:!bg-transparent sm:!text-inherit sm:hover:!bg-transparent dark:!bg-carbon-800 dark:!text-gray-400 dark:hover:!bg-carbon-700 sm:dark:!bg-transparent sm:dark:hover:!bg-transparent" aria-label="Cancel" @click="cancelCreate" />
+            <CloseButton size="xs" class="h-8 w-full justify-center !bg-gray-100 p-0 !text-gray-600 hover:!bg-gray-200 sm:w-8 sm:!bg-transparent sm:!text-inherit sm:hover:!bg-transparent dark:!bg-carbon-800 dark:!text-gray-400 dark:hover:!bg-carbon-700 sm:dark:!bg-transparent sm:dark:hover:!bg-transparent" aria-label="Cancel" @click="cancelCreate" />
           </div>
         </form>
 
-        <div v-for="variable in filteredGlobals" :key="variable.id" class="py-2">
+        <div v-for="variable in filteredGlobals" :key="variable.id" class="py-4 sm:py-2">
           <div v-if="editingId === variable.id" class="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2rem_2rem_2rem] sm:items-center">
             <AppTextInput v-model="editForm.key" placeholder="KEY" class="font-mono" />
             <div class="flex items-center gap-1">
@@ -390,7 +390,7 @@ onMounted(() => {
               @click="editForm.secret = !editForm.secret"
             />
             <UButton icon="i-lucide-check" variant="ghost" color="success" size="xs" class="h-8 w-8 justify-center p-0" :loading="saving" aria-label="Save variable" @click="saveEdit(variable)" />
-            <UButton icon="i-lucide-x" variant="ghost" color="neutral" size="xs" class="h-8 w-8 justify-center p-0" aria-label="Cancel" @click="cancelEdit" />
+            <CloseButton size="xs" class="h-8 w-8 justify-center p-0" aria-label="Cancel" @click="cancelEdit" />
           </div>
 
           <div v-else class="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2rem_2rem_2rem] sm:items-center">
@@ -428,7 +428,7 @@ onMounted(() => {
               <div v-else class="h-8 w-full sm:w-8" />
               <UTooltip v-if="canOperate" :text="usageTotal(variable) > 0 ? 'Detach this variable from stacks and jobs before deleting it' : 'Delete variable'" class="w-full sm:w-8">
                 <UButton
-                  icon="i-lucide-trash-2"
+                  :icon="usageTotal(variable) > 0 ? 'i-lucide-link' : 'i-lucide-trash-2'"
                   variant="ghost"
                   color="error"
                   size="xs"
@@ -505,7 +505,7 @@ onMounted(() => {
             </UButton>
 
             <div class="grid grid-cols-2 gap-2 pt-2">
-              <UButton type="button" label="Cancel" variant="outline" color="neutral" block @click="cancelCreate" />
+              <CancelButton block @click="cancelCreate" />
               <UButton type="submit" label="Create" icon="i-lucide-check" color="success" block :loading="saving" :disabled="!form.key.trim()" />
             </div>
           </form>
@@ -532,7 +532,7 @@ onMounted(() => {
 
           <template #footer>
             <div class="flex justify-end gap-2">
-              <UButton label="Cancel" variant="outline" color="neutral" @click="cancelDeleteVariable" />
+              <CancelButton @click="cancelDeleteVariable" />
               <UButton
                 label="Delete"
                 icon="i-lucide-trash-2"

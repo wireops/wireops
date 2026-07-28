@@ -216,7 +216,7 @@ async function handlePurge(dirName: string) {
         </div>
       </div>
       <div v-if="!isViewer" class="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
-        <UButton icon="i-lucide-plus" label="Add Stack" class="w-full justify-center shadow-[0_0_16px_rgba(255,198,0,0.35)] transition-shadow hover:shadow-[0_0_24px_rgba(255,198,0,0.55)] sm:w-auto" @click="openCreate()" />
+        <ActionButton icon="i-lucide-plus" label="Add Stack" class="w-full justify-center sm:w-auto" @click="openCreate()" />
         <UButton icon="i-lucide-package-plus" label="Import" variant="outline" class="w-full justify-center sm:w-auto" @click="showImport = true" />
         <UButton icon="i-lucide-wrench" label="Stack Builder" variant="outline" class="w-full justify-center sm:w-auto" @click="showBuilder = true" />
       </div>

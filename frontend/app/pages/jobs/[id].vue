@@ -342,7 +342,7 @@ async function toggleEnabled() {
               <div class="flex items-center gap-1">
                 <UButton icon="i-lucide-copy" variant="ghost" size="xs" title="Copy" @click="copy(yamlContent, 'YAML file')" />
                 <UButton icon="i-lucide-download" variant="ghost" size="xs" title="Download" @click="downloadYamlFile" />
-                <UButton icon="i-lucide-x" variant="ghost" size="xs" @click="showYamlModal = false" />
+                <CloseButton size="xs" @click="showYamlModal = false" />
               </div>
             </div>
           </template>

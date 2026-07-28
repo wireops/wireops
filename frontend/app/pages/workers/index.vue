@@ -282,7 +282,7 @@ onUnmounted(() => {
 
           <template #footer>
             <div class="flex justify-end gap-2">
-              <UButton label="Close" variant="outline" @click="showTokenModal = false" />
+              <CancelButton label="Close" @click="showTokenModal = false" />
             </div>
           </template>
         </UCard>

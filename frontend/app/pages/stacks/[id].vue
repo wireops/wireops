@@ -824,7 +824,7 @@ onMounted(() => {
             Compose path/file are managed by <code>{{ stack?.wireops_file_path }}</code> and can't be edited here.
           </div>
           <div class="col-span-2 flex justify-end gap-2">
-            <UButton label="Cancel" variant="outline" @click="editing = false" />
+            <CancelButton @click="editing = false" />
             <UButton type="submit" label="Save" />
           </div>
         </form>
@@ -1061,7 +1061,7 @@ onMounted(() => {
             </div>
           </div>
           <div class="flex justify-end gap-2 pt-1">
-            <UButton label="Cancel" variant="outline" color="neutral" @click="showPauseModal = false" />
+            <CancelButton @click="showPauseModal = false" />
             <UButton label="Pause" icon="i-lucide-pause" color="primary" @click="confirmPause" />
           </div>
         </div>
@@ -1077,7 +1077,7 @@ onMounted(() => {
             <div class="flex items-center gap-1">
               <UButton icon="i-lucide-copy" variant="ghost" size="xs" title="Copy" @click="copy(composeContent, 'Compose file')" />
               <UButton icon="i-lucide-download" variant="ghost" size="xs" title="Download" @click="downloadComposeFile" />
-              <UButton icon="i-lucide-x" variant="ghost" size="xs" @click="showComposeModal = false" />
+              <CloseButton size="xs" @click="showComposeModal = false" />
             </div>
           </div>
           <div class="overflow-auto max-h-[70vh]">
@@ -1103,7 +1103,7 @@ onMounted(() => {
                   @click="logsWordWrap = !logsWordWrap"
                 />
               </UTooltip>
-              <UButton icon="i-lucide-x" variant="ghost" size="sm" @click="showLogsModal = false" />
+              <CloseButton size="sm" @click="showLogsModal = false" />
             </div>
           </div>
           <div class="flex-1 overflow-hidden bg-gray-900 rounded-lg">
@@ -1119,7 +1119,7 @@ onMounted(() => {
         <div class="p-4 space-y-4">
           <div class="flex items-center justify-between">
             <h3 class="font-semibold">Force Redeploy</h3>
-            <UButton icon="i-lucide-x" variant="ghost" size="xs" @click="showForceRedeploy = false" />
+            <CloseButton size="xs" @click="showForceRedeploy = false" />
           </div>
           <p class="text-sm text-gray-500">Redeploy the current stack with the selected options. This will force Docker Compose to recreate the selected resources.</p>
           <div class="space-y-3">
@@ -1156,7 +1156,7 @@ onMounted(() => {
         <div class="p-4 space-y-4">
           <div class="flex items-center justify-between">
             <h3 class="font-semibold">Render Overrides</h3>
-            <UButton icon="i-lucide-x" variant="ghost" size="xs" @click="showOverridesModal = false" />
+            <CloseButton size="xs" @click="showOverridesModal = false" />
           </div>
           <p class="text-sm text-gray-500">
             Override image, ports, or networks per service at deploy time without touching Git. Blank field keeps Git value. Stays active on every deploy until cleared.
@@ -1216,7 +1216,7 @@ onMounted(() => {
         <div class="p-4 space-y-4">
           <div class="flex items-center justify-between">
             <h3 class="font-semibold">Rollback</h3>
-            <UButton icon="i-lucide-x" variant="ghost" size="xs" @click="showRollbackModal = false" />
+            <CloseButton size="xs" @click="showRollbackModal = false" />
           </div>
           <UAlert
             color="warning"
@@ -1351,10 +1351,7 @@ onMounted(() => {
 
           <!-- Actions -->
           <div class="flex justify-end gap-2 pt-1">
-            <UButton
-              label="Cancel"
-              variant="outline"
-              color="neutral"
+            <CancelButton
               :disabled="bulkActionLoading"
               @click="showBulkActionModal = false"
             />

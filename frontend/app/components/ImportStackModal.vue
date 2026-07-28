@@ -260,7 +260,7 @@ async function confirmImport() {
         <span v-else />
 
         <div class="flex gap-2">
-          <UButton label="Cancel" variant="outline" :disabled="importing" @click="emit('cancel')" />
+          <CancelButton :disabled="importing" @click="emit('cancel')" />
           <UButton
             v-if="step === 1"
             label="Continue"

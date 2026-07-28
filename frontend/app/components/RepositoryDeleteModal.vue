@@ -82,7 +82,7 @@ watch(isOpen, (val) => {
 
         <template #footer>
           <div class="flex justify-end gap-2">
-            <UButton label="Cancel" variant="outline" @click="cancel" />
+            <CancelButton @click="cancel" />
             <UButton 
               color="error" 
               label="Delete" 

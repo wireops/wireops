@@ -646,7 +646,7 @@ onUnmounted(() => {
           </div>
           <template #footer>
             <div class="flex justify-end gap-2">
-              <UButton label="Cancel" variant="outline" color="neutral" @click="showRevokeModal = false" />
+              <CancelButton @click="showRevokeModal = false" />
               <UButton
                 label="Revoke Worker"
                 color="error"
