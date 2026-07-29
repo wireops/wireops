@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { ref } from 'vue'
+import { h, ref } from 'vue'
 
 describe('default layout accessibility', () => {
   beforeEach(() => {
@@ -31,6 +31,7 @@ describe('default layout accessibility', () => {
       const val = opts?.default ? opts.default() : undefined
       return { value: val }
     }
+    ;(globalThis as any).useState = (_key: string, init: () => any) => ref(init())
     ;(globalThis as unknown as Record<string, unknown>).useHead = vi.fn()
   })
 
@@ -44,6 +45,7 @@ describe('default layout accessibility', () => {
         stubs: {
           AppSidebar: { template: '<aside />' },
           AppCommandPalette: { template: '<div />' },
+          AppOnboardingTour: { setup: () => () => h('div') },
           UButton: {
             props: ['label', 'icon'],
             template: '<button v-bind="$attrs">{{ label }}<slot /></button>',

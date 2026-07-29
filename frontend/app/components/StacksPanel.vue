@@ -16,13 +16,43 @@ const { data: stacks, refresh } = useAsyncData('stacks_list', () =>
 const { data: workers, refresh: refreshWorkers } = useAsyncData('stack_card_workers', () =>
   getWorkers().catch(() => [])
 )
+const { data: repos, refresh: refreshRepos } = useAsyncData('repos_for_stacks_empty', () =>
+  $pb.collection('repositories').getFullList({ fields: 'id', requestKey: null })
+)
+const hasRepos = computed(() => (repos.value?.length ?? 0) > 0)
+const hasWorkers = computed(() =>
+  (workers.value || []).some((w: any) => w.status !== WORKER_STATUS.PENDING && w.status !== WORKER_STATUS.REVOKED)
+)
+const showCreateRepoFromEmpty = ref(false)
+
+const emptyStateStep = computed(() => {
+  if (!hasRepos.value) {
+    return {
+      description: 'Create a repository first, then add a stack linked to it.',
+      ctaLabel: 'Add Repository',
+      action: () => { showCreateRepoFromEmpty.value = true },
+    }
+  }
+  if (!hasWorkers.value) {
+    return {
+      description: 'Register a worker first, then add a stack for it to run.',
+      ctaLabel: 'Add Worker',
+      action: () => navigateTo('/workers'),
+    }
+  }
+  return {
+    description: 'Add a stack linked to one of your repositories.',
+    ctaLabel: 'Add Stack',
+    action: () => openCreate(),
+  }
+})
 
 const isUpdating = ref(false)
 
 let updateTimer: ReturnType<typeof setTimeout> | undefined
 
 async function refreshList() {
-  await Promise.all([refresh(), refreshWorkers()])
+  await Promise.all([refresh(), refreshWorkers(), refreshRepos()])
 }
 
 onMounted(() => {
@@ -40,6 +70,10 @@ onMounted(() => {
   })
   subscribe('workers', () => {
     refreshWorkers()
+  })
+  subscribe('repositories', () => {
+    refreshRepos()
+    refresh()
   })
 })
 
@@ -299,17 +333,19 @@ async function handlePurge(dirName: string) {
         </div>
       </div>
 
-      <div v-else class="text-center py-12">
-        <div class="w-14 h-14 rounded-full bg-wire-400/10 border border-wire-400/20 flex items-center justify-center mx-auto mb-3">
-          <UIcon name="i-lucide-inbox" class="w-7 h-7 text-wire-400" />
-        </div>
-        <h3 class="text-lg font-medium text-gray-900 dark:text-wire-200 mb-1">No stacks configured yet</h3>
-        <p class="text-gray-500 dark:text-wire-200/50 text-sm">Create a repository first, then add a stack linked to it.</p>
-      </div>
+      <EmptyState
+        v-else
+        icon="i-lucide-inbox"
+        title="No stacks configured yet"
+        :description="emptyStateStep.description"
+        :cta-label="isViewer ? undefined : emptyStateStep.ctaLabel"
+        @cta="emptyStateStep.action"
+      />
     </UCard>
 
     <CreateStackModal v-model:open="showCreate" @created="onCreated" />
     <StackBuilderModal v-model:open="showBuilder" :workers="workers || []" />
+    <RepositoryCreateModal v-model:open="showCreateRepoFromEmpty" @created="refreshRepos" />
 
     <UModal v-model:open="showOrphans" title="Orphan Directories" description="Directories in the repos workspace not linked to any repository.">
       <template #body>

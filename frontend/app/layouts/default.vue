@@ -5,7 +5,7 @@ import AppSidebar from './sidebar/AppSidebar.vue'
 const { isAuthenticated, logout } = useAuth()
 const route = useRoute()
 const colorMode = useColorMode()
-const mobileMenuOpen = ref(false)
+const mobileMenuOpen = useState('mobile_menu_open', () => false)
 const sidebarCollapsed = useCookie<boolean>('sidebar_collapsed', { default: () => false })
 const { isShowingHelp, shortcuts } = useKeyboard()
 const { announce } = useA11yAnnouncer()
@@ -255,5 +255,6 @@ watch(mobileMenuOpen, (isOpen) => {
     </UModal>
 
     <AppCommandPalette v-if="isAuthenticated" />
+    <AppOnboardingTour v-if="isAuthenticated" />
   </div>
 </template>

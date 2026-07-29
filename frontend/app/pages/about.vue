@@ -1,5 +1,6 @@
 <script setup lang="ts">
 const { getSystemInfo } = useApi()
+const { startTour } = useOnboardingTour()
 
 const { data: systemInfo, refresh: refreshSystemInfo } = useAsyncData('system_info', () => getSystemInfo())
 
@@ -69,6 +70,14 @@ function truncatePath(path: string): string {
           color="neutral"
           variant="outline"
           size="md"
+        />
+        <UButton
+          icon="i-lucide-compass"
+          label="Tour"
+          color="warning"
+          variant="outline"
+          size="md"
+          @click="startTour()"
         />
       </div>
     </div>
