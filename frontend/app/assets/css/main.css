@@ -61,6 +61,49 @@
   }
 }
 
+.wireops-tour-popover.driver-popover {
+  background: white;
+  color: #111827;
+  border: 1px solid rgba(255, 198, 0, 0.35);
+  border-radius: 0.75rem;
+}
+
+.dark .wireops-tour-popover.driver-popover {
+  background: var(--color-carbon-950);
+  color: var(--color-wire-200);
+}
+
+.wireops-tour-popover .driver-popover-title {
+  color: inherit;
+  font-weight: 700;
+}
+
+.wireops-tour-popover .driver-popover-description {
+  color: inherit;
+  opacity: 0.85;
+}
+
+.wireops-tour-popover .driver-popover-progress-text {
+  color: inherit;
+  opacity: 0.6;
+}
+
+.wireops-tour-popover .driver-popover-next-btn,
+.wireops-tour-popover .driver-popover-prev-btn {
+  background: rgb(250 204 21);
+  color: #111827;
+  border: none;
+  text-shadow: none;
+}
+
+.wireops-tour-popover .driver-popover-close-btn {
+  color: inherit;
+}
+
+.driver-active-element {
+  border-radius: 0.5rem;
+}
+
 @layer utilities {
   .no-scrollbar::-webkit-scrollbar {
     display: none;

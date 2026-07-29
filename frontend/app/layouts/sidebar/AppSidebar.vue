@@ -89,6 +89,18 @@ function submenuId(item: NavItem) {
   return `nav-section-${item.to.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase()}`
 }
 
+const tourIds: Record<string, string> = {
+  '/': 'nav-dashboard',
+  '/workloads': 'nav-workloads',
+  '/repositories': 'nav-repositories',
+  '/secrets': 'nav-secrets',
+  '/workers': 'nav-workers',
+}
+
+function tourId(to: string) {
+  return tourIds[to]
+}
+
 watch(
   () => props.open,
   (isOpen) => {
@@ -146,6 +158,7 @@ watch(
             variant="soft"
             color="neutral"
             size="lg"
+            data-tour="mobile-nav-search"
             class="w-full justify-start mb-4 text-gray-500 dark:text-gray-400"
             @click="isShowingCommandPalette = true; emit('close')"
           >
@@ -155,7 +168,7 @@ watch(
               </div>
             </template>
           </UButton>
-          
+
           <div v-for="item in navItems" :key="item.to" class="space-y-1">
             <UButton
               v-if="item.children?.length"
@@ -163,6 +176,7 @@ watch(
               :variant="isActive(item.to) || hasActiveChild(item) ? 'soft' : 'ghost'"
               :color="isActive(item.to) || hasActiveChild(item) ? 'primary' : 'neutral'"
               size="lg"
+              :data-tour="tourId(item.to) ? `mobile-${tourId(item.to)}` : undefined"
               class="w-full justify-start"
               :aria-label="isExpanded(item) ? `Collapse ${item.label}` : `Expand ${item.label}`"
               :aria-expanded="isExpanded(item)"
@@ -185,6 +199,7 @@ watch(
               :variant="isActive(item.to) || hasActiveChild(item) ? 'soft' : 'ghost'"
               :color="isActive(item.to) || hasActiveChild(item) ? 'primary' : 'neutral'"
               size="lg"
+              :data-tour="tourId(item.to) ? `mobile-${tourId(item.to)}` : undefined"
               class="w-full justify-start"
               :aria-current="isActive(item.to) ? 'page' : undefined"
               @click="emit('close')"
@@ -293,6 +308,7 @@ watch(
             variant="soft"
             color="neutral"
             size="lg"
+            data-tour="nav-search"
             :class="['w-full mb-4 text-gray-500 dark:text-gray-400 transition-all duration-300', collapsed ? 'justify-center px-0' : 'justify-start']"
             @click="isShowingCommandPalette = true; emit('close')"
           >
@@ -312,6 +328,7 @@ watch(
               :variant="isActive(item.to) || hasActiveChild(item) ? 'soft' : 'ghost'"
               :color="isActive(item.to) || hasActiveChild(item) ? 'primary' : 'neutral'"
               size="lg"
+              :data-tour="tourId(item.to)"
               :class="['w-full transition-all duration-300', collapsed ? 'justify-center px-0' : 'justify-start']"
               :aria-label="isExpanded(item) ? `Collapse ${item.label}` : `Expand ${item.label}`"
               :aria-expanded="isExpanded(item)"
@@ -335,6 +352,7 @@ watch(
               :variant="isActive(item.to) || hasActiveChild(item) ? 'soft' : 'ghost'"
               :color="isActive(item.to) || hasActiveChild(item) ? 'primary' : 'neutral'"
               size="lg"
+              :data-tour="tourId(item.to)"
               :class="['w-full transition-all duration-300', collapsed ? 'justify-center px-0' : 'justify-start']"
               :aria-current="isActive(item.to) ? 'page' : undefined"
             />
