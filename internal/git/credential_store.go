@@ -7,6 +7,7 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 
 	"github.com/wireops/wireops/internal/crypto"
+	"github.com/wireops/wireops/internal/gitprovider"
 )
 
 // LoadRepositoryCredential resolves the optional reusable key assigned to a repository.
@@ -63,9 +64,55 @@ func LoadCredentialByID(app core.App, keyID string) (*Credential, error) {
 			return nil, decryptErr
 		}
 		credential.GitPassword = string(password)
+	case AuthTypeOAuthToken:
+		providerSlug := record.GetString("oauth_provider")
+		provider, ok := gitprovider.Get(providerSlug)
+		if !ok {
+			return nil, fmt.Errorf("unknown git provider %q", providerSlug)
+		}
+		token, decryptErr := decrypt("oauth_token")
+		if decryptErr != nil {
+			return nil, decryptErr
+		}
+		// Downgrade to basic auth for go-git's transport: ResolveTransportAuth
+		// already builds gogithttp.BasicAuth generically, so it needs no
+		// changes to understand OAuth tokens.
+		credential.AuthType = AuthTypeBasic
+		credential.GitUsername = provider.BasicAuthUsername()
+		credential.GitPassword = string(token)
 	default:
 		return nil, fmt.Errorf("unsupported repository key auth type %q", credential.AuthType)
 	}
 
 	return credential, nil
+}
+
+// LoadOAuthToken decrypts and returns the raw OAuth access token stored on a
+// repository_keys record, along with the provider slug that issued it. Used
+// by git provider discovery routes (list orgs/repos/branches), which need
+// the token itself rather than a go-git Credential.
+func LoadOAuthToken(app core.App, keyID string) (provider, token string, err error) {
+	record, err := app.FindRecordById("repository_keys", keyID)
+	if err != nil {
+		return "", "", fmt.Errorf("find repository key: %w", err)
+	}
+	if AuthType(record.GetString("auth_type")) != AuthTypeOAuthToken {
+		return "", "", fmt.Errorf("repository key %q is not an oauth_token credential", keyID)
+	}
+
+	secretKey := crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))
+	if len(secretKey) != 32 {
+		return "", "", fmt.Errorf("SECRET_KEY must be exactly 32 bytes")
+	}
+
+	value := record.GetString("oauth_token")
+	if value == "" {
+		return "", "", fmt.Errorf("repository key %q has no oauth_token stored", keyID)
+	}
+	plain, err := crypto.Decrypt(value, secretKey)
+	if err != nil {
+		return "", "", fmt.Errorf("decrypt oauth_token: %w", err)
+	}
+
+	return record.GetString("oauth_provider"), string(plain), nil
 }

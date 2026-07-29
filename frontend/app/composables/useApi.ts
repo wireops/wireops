@@ -125,6 +125,20 @@ export function useApi() {
     customPost<{ id: string; name: string; status: string }>('/api/custom/stacks/from-wireops', body)
   const testCredentials = (body: any) => customPost('/api/custom/credentials/test', body)
   const keyscan = (host: string, port = 22) => customPost('/api/custom/credentials/keyscan', { host, port })
+  const listGitProviders = () =>
+    customGet<{ slug: string; name: string; configured: boolean; connected: boolean; account_login?: string; key_id?: string }[]>('/api/custom/git-providers')
+  const getGitProviderAuthorizeUrl = (slug: string) =>
+    customPost<{ url: string }>(`/api/custom/git-providers/${slug}/authorize-url`, {})
+  const listGitProviderOrgs = (slug: string, keyId: string) =>
+    customGet<{ login: string; avatar_url?: string }[]>(`/api/custom/git-providers/${slug}/orgs?key=${encodeURIComponent(keyId)}`)
+  const listGitProviderRepos = (slug: string, keyId: string, org: string) =>
+    customGet<{ full_name: string; name: string; owner: string; private: boolean; default_branch: string; clone_url: string }[]>(
+      `/api/custom/git-providers/${slug}/repos?key=${encodeURIComponent(keyId)}&org=${encodeURIComponent(org)}`,
+    )
+  const listGitProviderBranches = (slug: string, keyId: string, repo: string) =>
+    customGet<{ name: string }[]>(
+      `/api/custom/git-providers/${slug}/branches?key=${encodeURIComponent(keyId)}&repo=${encodeURIComponent(repo)}`,
+    )
   const listOrphans = () => customGet<{ dir_name: string; compose_file: string; has_compose: boolean }[]>('/api/custom/orphans')
   const purgeOrphan = (dirName: string) => customDelete(`/api/custom/orphans/${dirName}`)
   const getSystemInfo = () => customGet<{
@@ -382,5 +396,5 @@ export function useApi() {
   const getBackupSettings = () => customGet<BackupSettings>('/api/custom/backups/settings')
   const saveBackupSettings = (data: BackupSettings) => customPut<BackupSettings>('/api/custom/backups/settings', data)
 
-  return { triggerSync, triggerRollback, forceRedeploy, setRenderOverrides, clearRenderOverrides, getRenderOverridesDiff, getServices, getStackResources, stopContainer, restartContainer, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, getRepoFiles, getStackFiles, getJobFiles, getJobDefinitionFromFile, getWireopsFiles, getWireopsDefinitionFromFile, createStackFromWireops, testCredentials, keyscan, listOrphans, purgeOrphan, getSystemInfo, customPost, customGet, customPut, customPatch, customDelete, getWorkers, createWorkerToken, revokeWorker, transferStack, discoverProjects, importStack, listJobs, triggerJobRun, cancelJobRun, deleteJobRun, getJobDefinition, getJobRaw, getWorkerPolicy, saveWorkerPolicy, resetWorkerPolicy, getGlobalWorkerPolicy, saveGlobalWorkerPolicy, getAppSettings, saveAppSettings, listAuditLogs, listBackups, createBackup, deleteBackup, restoreBackup, syncLocalBackup, getBackupSettings, saveBackupSettings }
+  return { triggerSync, triggerRollback, forceRedeploy, setRenderOverrides, clearRenderOverrides, getRenderOverridesDiff, getServices, getStackResources, stopContainer, restartContainer, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, getRepoFiles, getStackFiles, getJobFiles, getJobDefinitionFromFile, getWireopsFiles, getWireopsDefinitionFromFile, createStackFromWireops, testCredentials, keyscan, listGitProviders, getGitProviderAuthorizeUrl, listGitProviderOrgs, listGitProviderRepos, listGitProviderBranches, listOrphans, purgeOrphan, getSystemInfo, customPost, customGet, customPut, customPatch, customDelete, getWorkers, createWorkerToken, revokeWorker, transferStack, discoverProjects, importStack, listJobs, triggerJobRun, cancelJobRun, deleteJobRun, getJobDefinition, getJobRaw, getWorkerPolicy, saveWorkerPolicy, resetWorkerPolicy, getGlobalWorkerPolicy, saveGlobalWorkerPolicy, getAppSettings, saveAppSettings, listAuditLogs, listBackups, createBackup, deleteBackup, restoreBackup, syncLocalBackup, getBackupSettings, saveBackupSettings }
 }

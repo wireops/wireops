@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { AUTH_TYPE } from '~/constants/repositoryAuth'
 
 const { $pb } = useNuxtApp()
 const { testCredentials } = useApi()
@@ -9,7 +10,7 @@ const { announce } = useA11yAnnouncer()
 const isOpen = defineModel<boolean>('open', { default: false })
 const props = defineProps<{
   repositoryKey?: Record<string, any>
-  defaultAuthType?: 'ssh_key' | 'basic'
+  defaultAuthType?: typeof AUTH_TYPE.SSH_KEY | typeof AUTH_TYPE.BASIC
   gitUrl?: string
 }>()
 const emit = defineEmits<{
@@ -21,7 +22,7 @@ const saving = ref(false)
 const testing = ref(false)
 const form = ref({
   name: '',
-  auth_type: 'basic' as 'ssh_key' | 'basic',
+  auth_type: AUTH_TYPE.BASIC as typeof AUTH_TYPE.SSH_KEY | typeof AUTH_TYPE.BASIC,
   ssh_private_key: '',
   ssh_passphrase: '',
   ssh_known_host: '',
@@ -34,7 +35,7 @@ watch(isOpen, (open) => {
   const key = props.repositoryKey
   form.value = {
     name: key?.name || '',
-    auth_type: key?.auth_type || props.defaultAuthType || 'basic',
+    auth_type: key?.auth_type || props.defaultAuthType || AUTH_TYPE.BASIC,
     ssh_private_key: '',
     ssh_passphrase: '',
     ssh_known_host: key?.ssh_known_host || '',
@@ -57,11 +58,11 @@ function errorMessage(error: any): string {
 function validationError(): string {
   const needsNewSecret = !isEditMode.value
   if (!form.value.name.trim()) return 'Name is required'
-  if (form.value.auth_type === 'ssh_key' && needsNewSecret && !form.value.ssh_private_key.trim())
+  if (form.value.auth_type === AUTH_TYPE.SSH_KEY && needsNewSecret && !form.value.ssh_private_key.trim())
     return 'SSH private key is required'
-  if (form.value.auth_type === 'basic' && !form.value.git_username.trim())
+  if (form.value.auth_type === AUTH_TYPE.BASIC && !form.value.git_username.trim())
     return 'Username is required'
-  if (form.value.auth_type === 'basic' && needsNewSecret && !form.value.git_password)
+  if (form.value.auth_type === AUTH_TYPE.BASIC && needsNewSecret && !form.value.git_password)
     return 'Password or token is required'
   return ''
 }
@@ -72,7 +73,7 @@ function buildPayload() {
     auth_type: form.value.auth_type,
   }
 
-  if (form.value.auth_type === 'ssh_key') {
+  if (form.value.auth_type === AUTH_TYPE.SSH_KEY) {
     payload.ssh_known_host = form.value.ssh_known_host
     payload.git_username = ''
     payload.git_password = ''
@@ -162,14 +163,14 @@ async function submit() {
             <URadioGroup
               v-model="form.auth_type"
               :items="[
-                { label: 'Username / Password', value: 'basic' },
-                { label: 'SSH Key', value: 'ssh_key' }
+                { label: 'Username / Password', value: AUTH_TYPE.BASIC },
+                { label: 'SSH Key', value: AUTH_TYPE.SSH_KEY }
               ]"
               orientation="horizontal"
             />
           </UFormField>
 
-          <template v-if="form.auth_type === 'basic'">
+          <template v-if="form.auth_type === AUTH_TYPE.BASIC">
             <UFormField label="Username" required>
               <AppTextInput v-model="form.git_username" class="w-full" />
             </UFormField>

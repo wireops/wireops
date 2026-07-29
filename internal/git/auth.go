@@ -17,9 +17,10 @@ import (
 type AuthType string
 
 const (
-	AuthTypeNone  AuthType = "none"
-	AuthTypeSSH   AuthType = "ssh_key"
-	AuthTypeBasic AuthType = "basic"
+	AuthTypeNone       AuthType = "none"
+	AuthTypeSSH        AuthType = "ssh_key"
+	AuthTypeBasic      AuthType = "basic"
+	AuthTypeOAuthToken AuthType = "oauth_token"
 )
 
 type Credential struct {

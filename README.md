@@ -57,6 +57,7 @@ Deeper technical docs (moved to the [Wiki](https://github.com/wireops/wireops/wi
 - 🔄 Rollback to previous commits
 - 🚀 Force redeploy with recreate options
 - 🗓️ Cron-scheduled one-shot Docker jobs (`job.yaml`)
+- 🐙 Native GitHub OAuth connect (Gitea/Forgejo/GitLab ready)
 
 ## Tech Stack
 

@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { AUTH_TYPE } from '~/constants/repositoryAuth'
 
 const { PLATFORM_OPTIONS, platformIconUrl } = useRepositoryPlatform()
 const { $pb } = useNuxtApp()
-const { testCredentials } = useApi()
+const { testCredentials, listGitProviders, listGitProviderOrgs, listGitProviderRepos, listGitProviderBranches } = useApi()
 const toast = useToast()
 const { announce } = useA11yAnnouncer()
 
@@ -24,15 +25,107 @@ const testingConnection = ref(false)
 const showCreateKey = ref(false)
 const initializing = ref(false)
 
+const gitProviders = ref<{ slug: string, name: string, configured: boolean }[]>([])
+const connectedProviderSlug = ref('')
+const orgs = ref<{ login: string, avatar_url?: string }[]>([])
+const selectedOrg = ref('')
+const repos = ref<{ full_name: string, name: string, owner: string, private: boolean, default_branch: string, clone_url: string }[]>([])
+const selectedRepo = ref('')
+const branches = ref<{ name: string }[]>([])
+const loadingRepos = ref(false)
+const loadingBranches = ref(false)
+
+const orgOptions = computed(() => [
+  { label: 'My repositories', value: '' },
+  ...orgs.value.map(org => ({ label: org.login, value: org.login })),
+])
+const repoOptions = computed(() => repos.value.map(repo => ({ label: repo.full_name, value: repo.full_name })))
+const branchOptions = computed(() => branches.value.map(branch => ({ label: branch.name, value: branch.name })))
+
+async function loadGitProviders() {
+  try {
+    gitProviders.value = await listGitProviders()
+  } catch {
+    gitProviders.value = []
+  }
+}
+
+// activateConnection wires up a (possibly already-connected) provider key:
+// the org/repo/branch pickers, isPrivate, and the lock on the manual
+// "Repository Key" picker all key off connectedProviderSlug. Shared by a
+// fresh "Connect" click and by auto-detecting an existing global connection
+// on open, so both paths behave identically.
+async function activateConnection(slug: string, keyId: string) {
+  form.value.repository_key = keyId
+  isPrivate.value = true
+  connectedProviderSlug.value = slug
+  selectedOrg.value = ''
+  selectedRepo.value = ''
+  repos.value = []
+  branches.value = []
+  try {
+    orgs.value = await listGitProviderOrgs(slug, keyId)
+  } catch {
+    orgs.value = []
+  }
+  await loadReposForOrg()
+}
+
+// Every repository_keys row for a given provider is the same global,
+// reusable credential (the backend upserts on connect/reconnect instead of
+// creating a new row per click) — so if one already exists, reuse it
+// instead of forcing another OAuth round trip.
+function findConnectedKey(slug: string) {
+  return keys.value.find(key => key.auth_type === AUTH_TYPE.OAUTH_TOKEN && key.oauth_provider === slug)
+}
+
+async function handleConnected(slug: string, result: { keyId: string, login: string }) {
+  await loadKeys()
+  await activateConnection(slug, result.keyId)
+}
+
+async function loadReposForOrg() {
+  if (!connectedProviderSlug.value || !form.value.repository_key) return
+  loadingRepos.value = true
+  selectedRepo.value = ''
+  branches.value = []
+  try {
+    repos.value = await listGitProviderRepos(connectedProviderSlug.value, form.value.repository_key, selectedOrg.value)
+  } catch (error: any) {
+    repos.value = []
+    toast.add({ title: 'Failed to list repositories', description: describePocketBaseError(error), color: 'error' })
+  } finally {
+    loadingRepos.value = false
+  }
+}
+
+async function selectRepo(fullName: string) {
+  selectedRepo.value = fullName
+  const repo = repos.value.find(r => r.full_name === fullName)
+  if (!repo) return
+  form.value.git_url = repo.clone_url
+  form.value.branch = repo.default_branch
+  if (!form.value.name.trim()) form.value.name = repo.name
+
+  loadingBranches.value = true
+  try {
+    branches.value = await listGitProviderBranches(connectedProviderSlug.value, form.value.repository_key, fullName)
+  } catch {
+    branches.value = []
+  } finally {
+    loadingBranches.value = false
+  }
+}
+
 const urlPlaceholder = computed(() =>
   urlScheme.value === 'ssh' ? 'git@github.com:user/repo.git' : 'https://github.com/user/repo.git'
 )
-const requiredKeyType = computed(() => urlScheme.value === 'ssh' ? 'ssh_key' : 'basic')
+const requiredKeyType = computed(() => urlScheme.value === 'ssh' ? AUTH_TYPE.SSH_KEY : AUTH_TYPE.BASIC)
 const compatibleKeys = computed(() => keys.value.filter(key => key.auth_type === requiredKeyType.value))
 const keyOptions = computed(() => compatibleKeys.value.map(key => ({
   label: key.name,
   value: key.id,
-  description: key.auth_type === 'ssh_key' ? 'SSH key' : key.git_username || 'Username / password',
+  description: key.auth_type === AUTH_TYPE.SSH_KEY ? 'SSH key' : key.git_username || 'Username / password',
 })))
 
 function inferUrlScheme(url: string): 'http' | 'ssh' | '' {
@@ -60,6 +153,13 @@ watch(isOpen, async (open) => {
   if (!open) return
   initializing.value = true
   gitUrlError.value = ''
+  connectedProviderSlug.value = ''
+  orgs.value = []
+  repos.value = []
+  branches.value = []
+  selectedOrg.value = ''
+  selectedRepo.value = ''
+  await loadGitProviders()
   await loadKeys()
   const repository = props.repository
   if (repository) {
@@ -76,6 +176,15 @@ watch(isOpen, async (open) => {
     form.value = { name: '', git_url: '', branch: 'main', platform: 'github', repository_key: '' }
     urlScheme.value = 'http'
     isPrivate.value = false
+
+    // New repository: if a provider is already globally connected, jump
+    // straight to its org/repo picker instead of making the user click
+    // "Connect" again for every repo they add.
+    const configuredProvider = gitProviders.value.find(p => p.configured)
+    const existingKey = configuredProvider ? findConnectedKey(configuredProvider.slug) : undefined
+    if (configuredProvider && existingKey) {
+      await activateConnection(configuredProvider.slug, existingKey.id)
+    }
   }
   await nextTick()
   initializing.value = false
@@ -85,10 +194,14 @@ watch(urlScheme, (scheme) => {
   if (initializing.value) return
   gitUrlError.value = ''
   form.value.repository_key = ''
+  connectedProviderSlug.value = ''
   isPrivate.value = scheme === 'ssh'
 })
 watch(isPrivate, (enabled) => {
-  if (!enabled && urlScheme.value === 'http') form.value.repository_key = ''
+  if (!enabled && urlScheme.value === 'http') {
+    form.value.repository_key = ''
+    connectedProviderSlug.value = ''
+  }
 })
 watch(() => form.value.git_url, () => {
   gitUrlError.value = ''
@@ -138,7 +251,7 @@ async function testConnection() {
     const result = await testCredentials({
       git_url: form.value.git_url,
       repository_key_id: form.value.repository_key || '',
-      auth_type: form.value.repository_key ? requiredKeyType.value : 'none',
+      auth_type: form.value.repository_key ? requiredKeyType.value : AUTH_TYPE.NONE,
     })
     if (result.success === 'true') {
       toast.add({ title: 'Connection successful!', color: 'success' })
@@ -232,12 +345,54 @@ async function handleKeySaved(key: Record<string, any>) {
             </UFormField>
           </div>
 
+          <div v-if="urlScheme === 'http' && gitProviders.some(p => p.configured)" class="flex flex-wrap items-center gap-2">
+            <template v-for="provider in gitProviders.filter(p => p.configured)" :key="provider.slug">
+              <UBadge v-if="connectedProviderSlug === provider.slug" color="success" variant="soft" class="py-1.5">
+                Connected to {{ provider.name }}
+              </UBadge>
+              <ConnectGithubButton v-else-if="provider.slug === 'github'" @connected="result => handleConnected(provider.slug, result)" />
+            </template>
+          </div>
+
+          <template v-if="connectedProviderSlug">
+            <div class="flex items-end gap-3">
+              <UFormField label="Organization" class="flex-1">
+                <USelectMenu
+                  v-model="selectedOrg"
+                  :items="orgOptions"
+                  value-key="value"
+                  class="w-full"
+                  @update:model-value="loadReposForOrg"
+                />
+              </UFormField>
+              <UFormField label="Repository" required class="flex-1">
+                <USelectMenu
+                  v-model="selectedRepo"
+                  :items="repoOptions"
+                  value-key="value"
+                  placeholder="Select a repository"
+                  :loading="loadingRepos"
+                  class="w-full"
+                  @update:model-value="selectRepo"
+                />
+              </UFormField>
+            </div>
+          </template>
+
           <UFormField label="Git URL" required :error="gitUrlError">
             <AppTextInput v-model="form.git_url" :placeholder="urlPlaceholder" />
           </UFormField>
 
           <UFormField label="Branch">
-            <AppTextInput v-model="form.branch" placeholder="main" />
+            <USelectMenu
+              v-if="connectedProviderSlug && branchOptions.length > 0"
+              v-model="form.branch"
+              :items="branchOptions"
+              value-key="value"
+              :loading="loadingBranches"
+              class="w-full"
+            />
+            <AppTextInput v-else v-model="form.branch" placeholder="main" />
           </UFormField>
 
           <div v-if="urlScheme === 'http'" class="flex items-center gap-2">
@@ -245,7 +400,7 @@ async function handleKeySaved(key: Record<string, any>) {
             <span class="text-xs text-gray-500">Public repositories do not need a key.</span>
           </div>
 
-          <div v-if="urlScheme === 'ssh' || isPrivate" class="flex items-end gap-2">
+          <div v-if="(urlScheme === 'ssh' || isPrivate) && !connectedProviderSlug" class="flex items-end gap-2">
             <UFormField label="Repository Key" required class="flex-1">
               <USelectMenu
                 v-model="form.repository_key"
@@ -263,7 +418,7 @@ async function handleKeySaved(key: Record<string, any>) {
               @click="showCreateKey = true"
             />
           </div>
-          <p v-if="(urlScheme === 'ssh' || isPrivate) && compatibleKeys.length === 0" class="text-xs text-amber-600 dark:text-amber-400">
+          <p v-if="(urlScheme === 'ssh' || isPrivate) && !connectedProviderSlug && compatibleKeys.length === 0" class="text-xs text-amber-600 dark:text-amber-400">
             No compatible keys yet. Create one to continue.
           </p>
 
