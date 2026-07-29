@@ -10,11 +10,39 @@ const { isViewer } = usePermissions()
 const { data: repos, refresh: refreshRepos } = useAsyncData('repos_for_jobs', () =>
   $pb.collection('repositories').getFullList({ sort: 'name' })
 )
-const { data: jobWorkers } = useAsyncData('job_builder_workers', () =>
+const { data: jobWorkers, refresh: refreshJobWorkers } = useAsyncData('job_builder_workers', () =>
   getWorkers().catch(() => [])
 )
 
 const { data: jobs, refresh, pending } = useAsyncData('jobs_list', () => listJobs())
+
+const hasRepos = computed(() => (repos.value?.length ?? 0) > 0)
+const hasWorkers = computed(() =>
+  (jobWorkers.value || []).some((w: any) => w.status !== WORKER_STATUS.PENDING && w.status !== WORKER_STATUS.REVOKED)
+)
+const showCreateRepoFromEmpty = ref(false)
+
+const emptyStateStep = computed(() => {
+  if (!hasRepos.value) {
+    return {
+      description: 'Create a repository first, then add a job linked to it.',
+      ctaLabel: 'Add Repository',
+      action: () => { showCreateRepoFromEmpty.value = true },
+    }
+  }
+  if (!hasWorkers.value) {
+    return {
+      description: 'Register a worker first, then add a job for it to run.',
+      ctaLabel: 'Add Worker',
+      action: () => navigateTo('/workers'),
+    }
+  }
+  return {
+    description: 'Create a new job to get started.',
+    ctaLabel: 'New Job',
+    action: () => { refreshRepos().then(() => { showCreate.value = true }) },
+  }
+})
 
 const searchQuery = ref('')
 const statusFilter = ref('all')
@@ -55,6 +83,8 @@ onMounted(() => {
       refresh()
     }
   })
+  subscribe('repositories', () => refreshRepos())
+  subscribe('workers', () => refreshJobWorkers())
 })
 
 const showCreate = ref(false)
@@ -161,13 +191,14 @@ function formatRelative(dateStr: string) {
         <USkeleton v-for="i in 3" :key="i" class="h-20 w-full" />
       </div>
 
-      <div v-else-if="!jobs || jobs.length === 0" class="text-center py-12">
-        <div class="w-14 h-14 rounded-full bg-wire-400/10 border border-wire-400/20 flex items-center justify-center mx-auto mb-3">
-          <UIcon name="i-lucide-calendar-clock" class="w-7 h-7 text-wire-400" />
-        </div>
-        <h3 class="text-lg font-medium text-gray-900 dark:text-wire-200 mb-1">No jobs yet</h3>
-        <p class="text-gray-500 dark:text-wire-200/50 text-sm">Create a new job to get started.</p>
-      </div>
+      <EmptyState
+        v-else-if="!jobs || jobs.length === 0"
+        icon="i-lucide-calendar-clock"
+        title="No jobs yet"
+        :description="emptyStateStep.description"
+        :cta-label="isViewer ? undefined : emptyStateStep.ctaLabel"
+        @cta="emptyStateStep.action"
+      />
 
       <div v-else class="space-y-4">
         <div class="flex flex-row flex-wrap items-center gap-2 sm:gap-3" role="search" aria-label="Filter jobs">
@@ -360,4 +391,6 @@ function formatRelative(dateStr: string) {
       v-model:open="showBuilder"
       :workers="jobWorkers || []"
     />
+
+    <RepositoryCreateModal v-model:open="showCreateRepoFromEmpty" @created="refreshRepos" />
   </template>

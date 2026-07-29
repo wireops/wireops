@@ -278,13 +278,14 @@ const statusColor = (s: string) => {
         </div>
       </div>
 
-      <div v-else class="text-center py-12">
-        <div class="w-14 h-14 rounded-full bg-wire-400/10 border border-wire-400/20 flex items-center justify-center mx-auto mb-3">
-          <UIcon name="i-lucide-inbox" class="w-7 h-7 text-wire-400" />
-        </div>
-        <h3 class="text-lg font-medium text-gray-900 dark:text-wire-200 mb-1">No repositories configured yet</h3>
-        <p class="text-gray-500 dark:text-wire-200/50 text-sm">Add a repository to start tracking your compose stacks.</p>
-      </div>
+      <EmptyState
+        v-else
+        icon="i-lucide-inbox"
+        title="No repositories configured yet"
+        :description="canManageRepos ? 'Add a repository to start tracking your compose stacks.' : 'Ask an admin to add a repository to get started.'"
+        :cta-label="canManageRepos ? 'Add Repository' : undefined"
+        @cta="showCreate = true"
+      />
     </UCard>
 
     <RepositoryCreateModal v-model:open="showCreate" @created="refreshRepositories" />

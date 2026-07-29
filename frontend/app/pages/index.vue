@@ -15,10 +15,14 @@ const { data: workers, refresh: refreshWorkers } = useAsyncData('dashboard_worke
   getWorkers().catch(() => [])
 )
 
+const { data: repos, refresh: refreshRepos } = useAsyncData('dashboard_repos', () =>
+  $pb.collection('repositories').getFullList({ fields: 'id', requestKey: null }).catch(() => [])
+)
+
 const showCreateRepo = ref(false)
 
 async function refreshAll() {
-  await Promise.all([refresh(), refreshJobs(), refreshWorkers()])
+  await Promise.all([refresh(), refreshJobs(), refreshWorkers(), refreshRepos()])
 }
 
 const stats = computed(() => {
@@ -28,6 +32,7 @@ const stats = computed(() => {
   return {
     stacks: s.length,
     jobs: j.length,
+    repos: (repos.value || []).length,
     active: s.filter((r: any) => r.status === 'active').length + j.filter((r: any) => r.status === 'active').length,
     error: s.filter((r: any) => r.status === 'error').length + j.filter((r: any) => r.status === 'error').length,
     paused: s.filter((r: any) => r.status === 'paused').length,
@@ -36,6 +41,52 @@ const stats = computed(() => {
     workersTotal: w.length,
   }
 })
+
+const dataReady = computed(() =>
+  stacks.value !== null && jobs.value !== null && workers.value !== null && repos.value !== null
+)
+
+const gettingStartedSteps = computed(() => [
+  {
+    key: 'repo',
+    icon: 'i-lucide-git-branch',
+    title: 'Connect a repository',
+    description: 'Point wireops at your Compose repo.',
+    done: stats.value.repos > 0,
+    ctaLabel: 'Add Repository',
+    action: () => { showCreateRepo.value = true },
+    viewAction: () => navigateTo('/repositories'),
+  },
+  {
+    key: 'worker',
+    icon: 'i-lucide-network',
+    title: 'Add a worker',
+    description: 'Register a host to run your deploys.',
+    done: stats.value.workersTotal > 0,
+    ctaLabel: 'Add Worker',
+    action: () => navigateTo('/workers'),
+    viewAction: () => navigateTo('/workers'),
+  },
+  {
+    key: 'stack',
+    icon: 'i-lucide-layers',
+    title: 'Create a stack',
+    description: 'Deploy a Compose stack from your repository.',
+    done: stats.value.stacks > 0,
+    ctaLabel: 'Create Stack',
+    action: () => navigateTo('/stacks'),
+    viewAction: () => navigateTo('/stacks'),
+  },
+])
+
+const gettingStartedDoneCount = computed(() => gettingStartedSteps.value.filter(s => s.done).length)
+
+const showGettingStarted = computed(() => dataReady.value && gettingStartedDoneCount.value < gettingStartedSteps.value.length)
+
+const isPristine = computed(() =>
+  dataReady.value
+  && stats.value.stacks === 0 && stats.value.jobs === 0 && stats.value.workersTotal === 0 && stats.value.repos === 0
+)
 
 
 const statusColor = (status: string) => {
@@ -58,6 +109,7 @@ onMounted(() => {
   })
   subscribe('scheduled_jobs', () => refreshJobs())
   subscribe('workers', () => refreshWorkers())
+  subscribe('repositories', () => refreshRepos())
 })
 </script>
 
@@ -82,7 +134,55 @@ onMounted(() => {
       </div>
     </div>
 
-    <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+    <UCard v-if="showGettingStarted">
+      <template #header>
+        <div class="flex items-center justify-between">
+          <h2 class="font-semibold">Getting Started</h2>
+          <span class="text-sm text-wire-200/50">{{ gettingStartedDoneCount }}/{{ gettingStartedSteps.length }} done</span>
+        </div>
+      </template>
+      <div class="flex flex-col sm:flex-row sm:items-stretch gap-3">
+        <template v-for="(step, index) in gettingStartedSteps" :key="step.key">
+          <div v-if="index > 0" class="hidden sm:flex items-center justify-center shrink-0 w-6">
+            <div
+              class="flex items-center justify-center w-6 h-6 rounded-full border shrink-0"
+              :class="gettingStartedSteps[index - 1].done ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400' : 'border-carbon-700 bg-carbon-900 text-wire-200/30'"
+            >
+              <UIcon name="i-lucide-chevron-right" class="w-3.5 h-3.5" />
+            </div>
+          </div>
+          <button
+            type="button"
+            class="flex-1 w-full text-left rounded-xl border p-4 transition-all duration-200 flex flex-col gap-2 cursor-pointer"
+            :class="step.done
+              ? 'border-emerald-500/25 bg-emerald-500/[0.03] hover:border-emerald-500/50 hover:bg-emerald-500/[0.06]'
+              : 'border-carbon-800 bg-carbon-900/40 hover:border-yellow-400/50 hover:bg-carbon-800/60 hover:shadow-[0_0_16px_rgba(255,198,0,0.12)]'"
+            @click="step.done ? step.viewAction() : step.action()"
+          >
+            <div class="flex items-center gap-2">
+              <div
+                class="flex items-center justify-center w-7 h-7 rounded-full shrink-0"
+                :class="step.done ? 'bg-emerald-500/15 text-emerald-400' : 'bg-yellow-400/10 text-yellow-400'"
+              >
+                <UIcon :name="step.done ? 'i-lucide-check' : step.icon" class="w-4 h-4" />
+              </div>
+              <p class="font-medium text-wire-200">{{ step.title }}</p>
+            </div>
+            <p class="text-sm text-wire-200/50 flex-1">{{ step.description }}</p>
+            <span v-if="step.done" class="inline-flex items-center gap-1 text-xs font-medium text-emerald-400 mt-auto">
+              <UIcon name="i-lucide-check-circle-2" class="w-3.5 h-3.5" />
+              Completed
+            </span>
+            <span v-else class="inline-flex items-center gap-1 text-xs font-medium text-yellow-400 mt-auto">
+              {{ step.ctaLabel }}
+              <UIcon name="i-lucide-arrow-right" class="w-3.5 h-3.5" />
+            </span>
+          </button>
+        </template>
+      </div>
+    </UCard>
+
+    <div v-if="!isPristine" class="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
       <UCard>
         <div class="flex items-center gap-3">
           <div class="p-2 rounded-lg bg-wire-400/10">
@@ -129,7 +229,7 @@ onMounted(() => {
       </UCard>
     </div>
 
-    <div class="grid grid-cols-3 gap-3 sm:gap-4">
+    <div v-if="!isPristine" class="grid grid-cols-3 gap-3 sm:gap-4">
       <UCard>
         <div class="flex items-center gap-3">
           <div class="p-2 rounded-lg bg-emerald-500/10">
@@ -165,7 +265,7 @@ onMounted(() => {
       </UCard>
     </div>
 
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <div v-if="!isPristine" class="grid grid-cols-1 lg:grid-cols-2 gap-6">
       <!-- Left Column: Recent Activity -->
       <RecentSyncActivity />
 
@@ -265,6 +365,6 @@ onMounted(() => {
       </div>
     </div>
     
-    <RepositoryCreateModal v-model:open="showCreateRepo" />
+    <RepositoryCreateModal v-model:open="showCreateRepo" @created="refreshRepos" />
   </div>
 </template>
