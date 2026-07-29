@@ -69,13 +69,22 @@ func validateRepositoryKeyAssignment(app core.App, repository *core.Record) erro
 			"repository_key": validation.NewError("validation_repository_key_missing", "Repository key was not found."),
 		}
 	}
-	expectedType := string(git.AuthTypeBasic)
+	keyAuthType := key.GetString("auth_type")
 	if isSSHGitURL(repository.GetString("git_url")) {
-		expectedType = string(git.AuthTypeSSH)
+		if keyAuthType != string(git.AuthTypeSSH) {
+			return validation.Errors{
+				"repository_key": validation.NewError("validation_repository_key_type", fmt.Sprintf("This repository requires a %s key.", git.AuthTypeSSH)),
+			}
+		}
+		return nil
 	}
-	if key.GetString("auth_type") != expectedType {
+	// HTTP(S) repositories accept either a manually-created basic auth key
+	// or an OAuth token key created via the "Connect GitHub" flow — both
+	// resolve to the same go-git basic-auth transport (see
+	// internal/git/credential_store.go's oauth_token case).
+	if keyAuthType != string(git.AuthTypeBasic) && keyAuthType != string(git.AuthTypeOAuthToken) {
 		return validation.Errors{
-			"repository_key": validation.NewError("validation_repository_key_type", fmt.Sprintf("This repository requires a %s key.", expectedType)),
+			"repository_key": validation.NewError("validation_repository_key_type", fmt.Sprintf("This repository requires a %s key.", git.AuthTypeBasic)),
 		}
 	}
 	return nil

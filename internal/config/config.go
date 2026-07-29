@@ -129,3 +129,23 @@ func GetWebhookURL(stackID string) string {
 	appURL := GetAppURL()
 	return appURL + "/api/custom/webhook/" + stackID
 }
+
+// GetGitHubOAuthClientID returns the GitHub OAuth App client ID, configured
+// via GITHUB_OAUTH_CLIENT_ID. Empty means the GitHub provider is unconfigured.
+func GetGitHubOAuthClientID() string {
+	return strings.TrimSpace(os.Getenv("GITHUB_OAUTH_CLIENT_ID"))
+}
+
+// GetGitHubOAuthClientSecret returns the GitHub OAuth App client secret,
+// configured via GITHUB_OAUTH_CLIENT_SECRET.
+func GetGitHubOAuthClientSecret() string {
+	return strings.TrimSpace(os.Getenv("GITHUB_OAUTH_CLIENT_SECRET"))
+}
+
+// GetGitProviderCallbackURL returns the server-computed OAuth callback URL
+// for a given provider slug. Never accept a client-supplied redirect_uri —
+// OAuth Apps register exactly one callback URL anyway, and this removes an
+// open-redirect-shaped parameter entirely.
+func GetGitProviderCallbackURL(slug string) string {
+	return GetAppURL() + "/api/custom/git-providers/" + slug + "/callback"
+}

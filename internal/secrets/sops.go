@@ -91,7 +91,7 @@ func DecryptSecretsFile(ctx context.Context, content []byte, ageKeyPlaintext str
 	cipher := sopswrapper.NewCipher()
 	plaintext, err := cipher.Decrypt(ctx, content, sopswrapper.FormatYAML)
 	if err != nil {
-		return nil, fmt.Errorf("sops: failed to decrypt secrets file: %w", err)
+		return nil, fmt.Errorf("sops: failed to decrypt secrets file: %w (repo's configured age key does not match any recipient the secrets.yaml was encrypted for — regenerate/rotate the repo's age keypair or re-encrypt secrets.yaml with `sops -e --age <public key>` using the repo's current public key)", err)
 	}
 
 	return flattenSecretsYAML(plaintext)

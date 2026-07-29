@@ -68,6 +68,8 @@ func VerifyOrSeedSecretKeyCanary(app core.App, secretKey []byte) error {
 var secretBearingFields = [][2]string{
 	{"repository_keys", "ssh_private_key"},
 	{"repository_keys", "git_password"},
+	{"repository_keys", "oauth_token"},
+	{"repository_keys", "oauth_refresh_token"},
 	{"repositories", "sops_age_key"},
 	{"stack_env_vars", "value"},
 	{"job_env_vars", "value"},

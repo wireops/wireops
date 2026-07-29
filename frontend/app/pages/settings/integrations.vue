@@ -10,6 +10,7 @@ import discordIcon from '~/assets/img/icons/integrations/discord.svg'
 import slackIcon from '~/assets/img/icons/integrations/slack.svg'
 import vaultIcon from '~/assets/img/icons/integrations/hashicorp-vault.svg'
 import infisicalIcon from '~/assets/img/icons/integrations/infisical.svg'
+import githubIcon from '~/assets/img/icons/integrations/github.svg'
 
 const toast = useToast()
 const { getIntegrations, saveIntegration } = useIntegrations()
@@ -48,6 +49,9 @@ const infisicalIntegration = ref<any>(null)
 
 const showS3Modal = ref(false)
 const s3Integration = ref<any>(null)
+
+const showGithubModal = ref(false)
+const githubIntegration = ref<any>(null)
 
 interface IntegrationMeta {
   icon: string
@@ -122,6 +126,12 @@ const integrationMeta: Record<string, IntegrationMeta> = {
     description: 'Mirror backups to S3-compatible storage (AWS S3, R2, MinIO, B2, ...).',
     docLink: 'https://github.com/wireops/wireops/blob/main/docs/DISASTER_RECOVERY.md',
     open: integration => { s3Integration.value = integration; showS3Modal.value = true }
+  },
+  github: {
+    icon: githubIcon,
+    description: 'Native GitHub OAuth connection — browse and pick repositories when adding one.',
+    docLink: 'https://github.com/wireops/wireops/wiki/Environment-Variables#github-oauth-optional',
+    open: integration => { githubIntegration.value = integration; showGithubModal.value = true }
   },
   sops: {
     icon: '',
@@ -276,7 +286,8 @@ onMounted(() => {
                 <div class="flex flex-col items-center justify-center p-6 space-y-4">
                   <!-- Large Icon -->
                   <div class="w-20 h-20 rounded-2xl bg-gray-50 dark:bg-carbon-800 flex items-center justify-center p-4 shadow-inner">
-                    <img v-if="getIntegrationIcon(integration.slug)" :src="getIntegrationIcon(integration.slug)" class="w-12 h-12 object-contain" alt="">
+                    <GithubIcon v-if="integration.slug === 'github'" icon-class="w-12 h-12" />
+                    <img v-else-if="getIntegrationIcon(integration.slug)" :src="getIntegrationIcon(integration.slug)" class="w-12 h-12 object-contain" alt="">
                     <UIcon v-else :name="getIntegrationFallbackIcon(integration.slug)" class="w-10 h-10 text-primary-500" />
                   </div>
                   
@@ -355,6 +366,12 @@ onMounted(() => {
     <IntegrationsS3ConfigModal
       v-model:open="showS3Modal"
       :integration="s3Integration"
+      @saved="loadIntegrations"
+    />
+
+    <IntegrationsGithubConfigModal
+      v-model:open="showGithubModal"
+      :integration="githubIntegration"
       @saved="loadIntegrations"
     />
   </div>

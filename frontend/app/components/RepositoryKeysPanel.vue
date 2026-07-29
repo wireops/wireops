@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { AUTH_TYPE, GIT_PROVIDER } from '~/constants/repositoryAuth'
+
 const { $pb } = useNuxtApp()
 const { canManageRepos } = usePermissions()
 const { subscribe } = useRealtime()
@@ -44,6 +46,31 @@ const filteredKeys = computed(() => {
     key.git_username?.toLowerCase().includes(query)
   )
 })
+
+function isGithubKey(key: Record<string, any>): boolean {
+  return key.auth_type === AUTH_TYPE.OAUTH_TOKEN && key.oauth_provider === GIT_PROVIDER.GITHUB
+}
+
+type KeyMeta = { icon: string, label: string, wrapperClass: string, iconClass: string }
+
+const GITHUB_META: KeyMeta = { icon: 'github', label: 'GitHub', wrapperClass: 'bg-gray-500/10', iconClass: 'text-gray-700 dark:text-white' }
+const DEFAULT_META: KeyMeta = { icon: 'i-lucide-user-key', label: 'Username / Password', wrapperClass: 'bg-yellow-400/10', iconClass: 'text-yellow-400' }
+const AUTH_TYPE_META: Record<string, KeyMeta> = {
+  [AUTH_TYPE.SSH_KEY]: { icon: 'i-lucide-key-round', label: 'SSH', wrapperClass: 'bg-yellow-400/10', iconClass: 'text-yellow-400' },
+  [AUTH_TYPE.OAUTH_TOKEN]: { icon: 'i-lucide-user-key', label: 'OAuth', wrapperClass: 'bg-yellow-400/10', iconClass: 'text-yellow-400' },
+  [AUTH_TYPE.BASIC]: DEFAULT_META,
+}
+
+function keyMeta(key: Record<string, any>): KeyMeta {
+  if (isGithubKey(key)) return GITHUB_META
+  return AUTH_TYPE_META[key.auth_type] ?? DEFAULT_META
+}
+
+function keySubtitle(key: Record<string, any>): string {
+  if (isGithubKey(key)) return `Connected as @${key.oauth_account_login}`
+  if (key.auth_type === AUTH_TYPE.BASIC) return key.git_username
+  return 'Private key'
+}
 
 function addKey() {
   selectedKey.value = undefined
@@ -119,24 +146,28 @@ defineExpose({
           :key="key.id"
           class="flex items-center gap-4 p-4 rounded-xl border border-gray-200 dark:border-carbon-700 bg-gray-50 dark:bg-carbon-800/40"
         >
-          <div class="w-10 h-10 rounded-lg bg-yellow-400/10 flex items-center justify-center shrink-0">
-            <UIcon :name="key.auth_type === 'ssh_key' ? 'i-lucide-key-round' : 'i-lucide-user-key'" class="w-5 h-5 text-yellow-400" />
+          <div class="w-10 h-10 rounded-lg flex items-center justify-center shrink-0" :class="keyMeta(key).wrapperClass">
+            <GithubIcon v-if="isGithubKey(key)" :icon-class="`w-5 h-5 ${keyMeta(key).iconClass}`" />
+            <UIcon v-else :name="keyMeta(key).icon" class="w-5 h-5" :class="keyMeta(key).iconClass" />
           </div>
           <div class="flex-1 min-w-0">
             <div class="flex items-center gap-2">
               <h4 class="font-semibold truncate">{{ key.name }}</h4>
-              <UBadge color="neutral" variant="soft">
-                {{ key.auth_type === 'ssh_key' ? 'SSH' : 'Username / Password' }}
-              </UBadge>
+              <UBadge color="neutral" variant="soft">{{ keyMeta(key).label }}</UBadge>
             </div>
             <p class="text-sm text-gray-500 truncate">
-              <template v-if="key.auth_type === 'basic'">{{ key.git_username }}</template>
-              <template v-else>Private key</template>
-              · {{ usage[key.id] || 0 }} repositories
+              {{ keySubtitle(key) }} · {{ usage[key.id] || 0 }} repositories
             </p>
           </div>
           <div v-if="canManageRepos" class="flex items-center gap-1">
-            <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" aria-label="Edit key" @click="editKey(key)" />
+            <UButton
+              v-if="key.auth_type !== AUTH_TYPE.OAUTH_TOKEN"
+              icon="i-lucide-pencil"
+              variant="ghost"
+              color="neutral"
+              aria-label="Edit key"
+              @click="editKey(key)"
+            />
             <UTooltip :text="usage[key.id] ? 'Remove this key from its repositories before deleting it' : 'Delete key'">
               <UButton
                 :icon="usage[key.id] ? 'i-lucide-link' : 'i-lucide-trash-2'"

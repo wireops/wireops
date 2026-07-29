@@ -25,6 +25,7 @@ import (
 	"github.com/wireops/wireops/internal/config"
 	"github.com/wireops/wireops/internal/crypto"
 	"github.com/wireops/wireops/internal/git"
+	"github.com/wireops/wireops/internal/gitprovider"
 	"github.com/wireops/wireops/internal/integrations"
 	"github.com/wireops/wireops/internal/job"
 	"github.com/wireops/wireops/internal/logstream"
@@ -140,7 +141,7 @@ func validateRequiredIntegrationConfig(slug string, cfg map[string]interface{}) 
 // DB row — e.g. "sops", which is always active and has no connection to
 // configure (see migration 53). Keeping this independent of the DB row means
 // the guarantee holds even if the seed row is missing or gets deleted.
-var alwaysLockedIntegrationSlugs = map[string]bool{"sops": true}
+var alwaysLockedIntegrationSlugs = map[string]bool{"sops": true, "github": true}
 
 // isIntegrationLocked reports whether slug can't be enabled/disabled/
 // reconfigured from the API — either because it's in
@@ -854,7 +855,13 @@ func (rr routeRegistrar) registerIntegrationRoutes(secretKey []byte) {
 				Locked:   isIntegrationLocked(rr.app, slug),
 				Config:   map[string]interface{}{},
 			}
-			if rec, exists := saved[slug]; exists {
+			if provider, ok := gitprovider.Get(slug); ok {
+				// Git provider integrations (e.g. github) have no DB-stored
+				// enabled flag to read — "enabled" is derived from whether
+				// the provider's OAuth client id/secret env vars are set,
+				// recomputed on every request rather than toggled manually.
+				item.Enabled = provider.Configured()
+			} else if rec, exists := saved[slug]; exists {
 				item.Enabled = rec.GetBool("enabled")
 				var cfg map[string]interface{}
 				if err := rec.UnmarshalJSONField("config", &cfg); err == nil && cfg != nil {
@@ -1032,6 +1039,9 @@ func (rr routeRegistrar) registerIntegrationRoutes(secretKey []byte) {
 
 	rr.r.POST("/api/custom/integrations/{slug}/test", func(e *core.RequestEvent) error {
 		slug := e.Request.PathValue("slug")
+		if provider, ok := gitprovider.Get(slug); ok {
+			return rr.testGitProviderConnection(e, provider)
+		}
 		if !isNotificationIntegration(slug) {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "only notification integrations can be tested"})
 		}
@@ -1072,4 +1082,30 @@ func (rr routeRegistrar) registerIntegrationRoutes(secretKey []byte) {
 
 		return e.JSON(http.StatusOK, map[string]string{"status": "dispatched"})
 	}).BindFunc(rbac.Require(rbac.CapManageSettings))
+}
+
+// testGitProviderConnection is the "Test connection" action for a git
+// provider integration card (e.g. github): it doesn't dispatch anything,
+// it just confirms the globally-connected repository_keys token (if any)
+// still authenticates against the provider's API.
+func (rr routeRegistrar) testGitProviderConnection(e *core.RequestEvent, provider gitprovider.Provider) error {
+	if !provider.Configured() {
+		return e.JSON(http.StatusOK, map[string]string{"success": "false", "error": "provider not configured"})
+	}
+
+	key, err := findOAuthRepositoryKey(rr.app, provider.Slug())
+	if err != nil {
+		return e.JSON(http.StatusOK, map[string]string{"success": "false", "error": "not connected yet — connect from a repository first"})
+	}
+
+	_, token, err := git.LoadOAuthToken(rr.app, key.Id)
+	if err != nil {
+		return e.JSON(http.StatusOK, map[string]string{"success": "false", "error": err.Error()})
+	}
+
+	if _, err := provider.ListOrganizations(e.Request.Context(), token); err != nil {
+		return e.JSON(http.StatusOK, map[string]string{"success": "false", "error": err.Error()})
+	}
+
+	return e.JSON(http.StatusOK, map[string]string{"success": "true"})
 }

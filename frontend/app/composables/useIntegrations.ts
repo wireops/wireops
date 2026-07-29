@@ -48,6 +48,10 @@ export function useIntegrations() {
         return customPost<{ success: string; error?: string }>('/api/custom/integrations/infisical/test', config)
     }
 
+    async function testGithubIntegration() {
+        return customPost<{ success: string; error?: string }>('/api/custom/integrations/github/test', {})
+    }
+
     async function getStackIntegrationActions(stackId: string) {
         return customGet<Record<string, IntegrationAction[]>>(
             `/api/custom/stacks/${stackId}/integration-actions`
@@ -61,6 +65,7 @@ export function useIntegrations() {
         testIntegration,
         testVaultIntegration,
         testInfisicalIntegration,
+        testGithubIntegration,
         getStackIntegrationActions,
     }
 }
