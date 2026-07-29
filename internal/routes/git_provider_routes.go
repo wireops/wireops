@@ -206,36 +206,48 @@ func (rr routeRegistrar) upsertOAuthRepositoryKey(provider gitprovider.Provider,
 		return "", fmt.Errorf("failed to encrypt oauth token: %w", err)
 	}
 
-	var rec *core.Record
-	if existing, err := findOAuthRepositoryKey(rr.app, provider.Slug()); err == nil {
-		rec = existing
-	} else {
-		col, err := rr.app.FindCollectionByNameOrId("repository_keys")
-		if err != nil {
-			return "", err
-		}
-		rec = core.NewRecord(col)
-	}
-	rec.Set("name", fmt.Sprintf("%s (@%s)", provider.Name(), token.AccountLogin))
-	rec.Set("auth_type", "oauth_token")
-	rec.Set("oauth_provider", provider.Slug())
-	rec.Set("oauth_token", encryptedToken)
-	rec.Set("oauth_account_login", token.AccountLogin)
+	var encryptedRefresh string
 	if token.RefreshToken != "" {
-		encryptedRefresh, err := crypto.Encrypt([]byte(token.RefreshToken), secretKey)
+		encryptedRefresh, err = crypto.Encrypt([]byte(token.RefreshToken), secretKey)
 		if err != nil {
 			return "", fmt.Errorf("failed to encrypt oauth refresh token: %w", err)
 		}
-		rec.Set("oauth_refresh_token", encryptedRefresh)
-	}
-	if !token.ExpiresAt.IsZero() {
-		rec.Set("oauth_token_expires_at", token.ExpiresAt)
 	}
 
-	if err := rr.app.Save(rec); err != nil {
-		return "", fmt.Errorf("failed to save repository key: %w", err)
+	var recID string
+	txErr := rr.app.RunInTransaction(func(txApp core.App) error {
+		var rec *core.Record
+		if existing, err := findOAuthRepositoryKey(txApp, provider.Slug()); err == nil {
+			rec = existing
+		} else {
+			col, err := txApp.FindCollectionByNameOrId("repository_keys")
+			if err != nil {
+				return err
+			}
+			rec = core.NewRecord(col)
+		}
+		rec.Set("name", fmt.Sprintf("%s (@%s)", provider.Name(), token.AccountLogin))
+		rec.Set("auth_type", "oauth_token")
+		rec.Set("oauth_provider", provider.Slug())
+		rec.Set("oauth_token", encryptedToken)
+		rec.Set("oauth_account_login", token.AccountLogin)
+		if encryptedRefresh != "" {
+			rec.Set("oauth_refresh_token", encryptedRefresh)
+		}
+		if !token.ExpiresAt.IsZero() {
+			rec.Set("oauth_token_expires_at", token.ExpiresAt)
+		}
+
+		if err := txApp.Save(rec); err != nil {
+			return fmt.Errorf("failed to save repository key: %w", err)
+		}
+		recID = rec.Id
+		return nil
+	})
+	if txErr != nil {
+		return "", txErr
 	}
-	return rec.Id, nil
+	return recID, nil
 }
 
 // oauthCallbackResult renders the tiny HTML page the OAuth popup loads at

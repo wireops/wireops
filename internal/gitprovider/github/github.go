@@ -12,10 +12,16 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/wireops/wireops/internal/config"
 	"github.com/wireops/wireops/internal/gitprovider"
 )
+
+// httpClient bounds all outbound requests to GitHub (token exchange + REST
+// API) so a hung connection doesn't stall an OAuth callback or a repo/branch
+// listing indefinitely.
+var httpClient = &http.Client{Timeout: 15 * time.Second}
 
 func init() {
 	gitprovider.Register(&Provider{})
@@ -77,7 +83,7 @@ func (p *Provider) ExchangeCode(ctx context.Context, code, redirectURI string) (
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("github: exchange code: %w", err)
 	}
@@ -216,7 +222,7 @@ func (p *Provider) get(ctx context.Context, accessToken, path string, out any) e
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return err
 	}

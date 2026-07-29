@@ -74,6 +74,9 @@ func LoadCredentialByID(app core.App, keyID string) (*Credential, error) {
 		if decryptErr != nil {
 			return nil, decryptErr
 		}
+		if len(token) == 0 {
+			return nil, fmt.Errorf("repository key %q has no oauth_token stored", keyID)
+		}
 		// Downgrade to basic auth for go-git's transport: ResolveTransportAuth
 		// already builds gogithttp.BasicAuth generically, so it needs no
 		// changes to understand OAuth tokens.

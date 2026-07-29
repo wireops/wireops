@@ -160,7 +160,14 @@ defineExpose({
             </p>
           </div>
           <div v-if="canManageRepos" class="flex items-center gap-1">
-            <UButton icon="i-lucide-pencil" variant="ghost" color="neutral" aria-label="Edit key" @click="editKey(key)" />
+            <UButton
+              v-if="key.auth_type !== AUTH_TYPE.OAUTH_TOKEN"
+              icon="i-lucide-pencil"
+              variant="ghost"
+              color="neutral"
+              aria-label="Edit key"
+              @click="editKey(key)"
+            />
             <UTooltip :text="usage[key.id] ? 'Remove this key from its repositories before deleting it' : 'Delete key'">
               <UButton
                 :icon="usage[key.id] ? 'i-lucide-link' : 'i-lucide-trash-2'"
