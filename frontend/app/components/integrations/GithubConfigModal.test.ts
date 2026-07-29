@@ -8,7 +8,7 @@ function setupGlobals(overrides: {
   testGithubIntegration?: ReturnType<typeof vi.fn>
 } = {}) {
   for (const key of ['ref', 'computed', 'watch', 'watchEffect', 'onMounted', 'onUnmounted', 'onBeforeUnmount', 'nextTick', 'reactive']) {
-    (globalThis as any)[key] = (vue as any)[key]
+    vi.stubGlobal(key, (vue as any)[key])
   }
 
   const addToast = vi.fn()
@@ -17,9 +17,9 @@ function setupGlobals(overrides: {
   const testGithubIntegration = overrides.testGithubIntegration
     ?? vi.fn().mockResolvedValue({ success: 'true' })
 
-  ;(globalThis as any).useToast = () => ({ add: addToast })
-  ;(globalThis as any).useApi = () => ({ listGitProviders })
-  ;(globalThis as any).useIntegrations = () => ({ testGithubIntegration })
+  vi.stubGlobal('useToast', () => ({ add: addToast }))
+  vi.stubGlobal('useApi', () => ({ listGitProviders }))
+  vi.stubGlobal('useIntegrations', () => ({ testGithubIntegration }))
 
   return { addToast, listGitProviders, testGithubIntegration }
 }
@@ -75,6 +75,24 @@ describe('GithubConfigModal', () => {
 
     expect(testGithubIntegration).toHaveBeenCalled()
     expect(addToast).toHaveBeenCalledWith(expect.objectContaining({ title: 'Connection successful', color: 'success' }))
+  })
+
+  it('testConnection shows a failure toast when testGithubIntegration resolves an unsuccessful result', async () => {
+    const { addToast } = setupGlobals({
+      testGithubIntegration: vi.fn().mockResolvedValue({ success: 'false', error: 'bad credentials' }),
+    })
+
+    const wrapper = mount(GithubConfigModal, {
+      props: { integration: { enabled: true }, open: true },
+      shallow: true,
+    })
+    await flushPromises()
+
+    await (wrapper.vm as any).testConnection()
+    await flushPromises()
+
+    expect(addToast).toHaveBeenCalledWith(expect.objectContaining({ title: 'Connection failed', description: 'bad credentials', color: 'error' }))
+    expect((wrapper.vm as any).testing).toBe(false)
   })
 
   it('testConnection shows an error toast when testGithubIntegration rejects', async () => {
