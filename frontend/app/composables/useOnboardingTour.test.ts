@@ -18,9 +18,12 @@ function setViewportWidth(width: number) {
 }
 
 function mountTourTargets(prefix: 'nav' | 'mobile-nav') {
-  document.body.innerHTML = ['dashboard', 'workloads', 'repositories', 'secrets', 'workers', 'search']
-    .map(key => `<div data-tour="${prefix}-${key}"></div>`)
-    .join('')
+  document.body.replaceChildren()
+  for (const key of ['dashboard', 'workloads', 'repositories', 'secrets', 'workers', 'search']) {
+    const el = document.createElement('div')
+    el.setAttribute('data-tour', `${prefix}-${key}`)
+    document.body.appendChild(el)
+  }
 }
 
 describe('useOnboardingTour', () => {
@@ -32,7 +35,7 @@ describe('useOnboardingTour', () => {
     driveMock.mockClear()
     destroyMock.mockClear()
     lastDriverConfig = null
-    document.body.innerHTML = ''
+    document.body.replaceChildren()
     setViewportWidth(1280)
 
     userRef = ref({ id: 'user-1', tour_completed: false })
