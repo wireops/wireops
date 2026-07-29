@@ -5,7 +5,12 @@ import EmptyState from '../EmptyState.vue'
 
 describe('EmptyState', () => {
   const stubs = {
-    UIcon: { props: ['name'], template: '<span :data-icon="name" />' },
+    UIcon: {
+      props: ['name'],
+      setup(props: any) {
+        return () => h('span', { 'data-icon': props.name })
+      },
+    },
     ActionButton: {
       props: ['label', 'icon'],
       emits: ['click'],

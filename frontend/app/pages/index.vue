@@ -4,7 +4,7 @@ const { subscribe } = useRealtime()
 const { listJobs, getWorkers } = useApi()
 
 const { data: stacks, refresh } = useAsyncData('stacks', () =>
-  $pb.collection('stacks').getFullList({ sort: '-updated', expand: 'repository' })
+  $pb.collection('stacks').getFullList({ sort: '-updated', expand: 'repository' }).catch(() => [])
 )
 
 const { data: jobs, refresh: refreshJobs } = useAsyncData('dashboard_jobs', () =>

@@ -71,7 +71,10 @@ onMounted(() => {
   subscribe('workers', () => {
     refreshWorkers()
   })
-  subscribe('repositories', () => refreshRepos())
+  subscribe('repositories', () => {
+    refreshRepos()
+    refresh()
+  })
 })
 
 onBeforeUnmount(() => {

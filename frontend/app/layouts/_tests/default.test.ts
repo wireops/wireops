@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { ref } from 'vue'
+import { h, ref } from 'vue'
 
 describe('default layout accessibility', () => {
   beforeEach(() => {
@@ -45,7 +45,7 @@ describe('default layout accessibility', () => {
         stubs: {
           AppSidebar: { template: '<aside />' },
           AppCommandPalette: { template: '<div />' },
-          AppOnboardingTour: { template: '<div />' },
+          AppOnboardingTour: { setup: () => () => h('div') },
           UButton: {
             props: ['label', 'icon'],
             template: '<button v-bind="$attrs">{{ label }}<slot /></button>',

@@ -83,7 +83,10 @@ onMounted(() => {
       refresh()
     }
   })
-  subscribe('repositories', () => refreshRepos())
+  subscribe('repositories', () => {
+    refreshRepos()
+    refresh()
+  })
   subscribe('workers', () => refreshJobWorkers())
 })
 
