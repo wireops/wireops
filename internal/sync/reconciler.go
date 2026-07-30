@@ -280,10 +280,11 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		return fmt.Errorf("%s", errMsg)
 	}
 
+	sopsStart := time.Now()
 	sopsValues, sopsErr := r.loadSopsEnv(ctx, repo, workDir)
 	if sopsErr != nil {
 		errMsg := fmt.Sprintf("failed to decrypt SOPS secrets file: %v", sopsErr)
-		r.logFailureWithPhase(stackID, trigger, remoteSHA, errMsg, constants.PhaseRender, renderStart)
+		r.logFailureWithPhase(stackID, trigger, remoteSHA, errMsg, constants.PhaseSecretsFetch, sopsStart)
 		r.markError(stack, "stacks")
 		return fmt.Errorf("%s", errMsg)
 	}
@@ -589,10 +590,11 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 		return fmt.Errorf("%s", errMsg)
 	}
 
+	sopsStart := time.Now()
 	sopsValues, sopsErr := r.loadSopsEnv(ctx, repo, workDir)
 	if sopsErr != nil {
 		errMsg := fmt.Sprintf("failed to decrypt SOPS secrets file: %v", sopsErr)
-		r.logFailureWithPhase(stackID, "manual", commitSHA, errMsg, constants.PhaseRender, renderStart)
+		r.logFailureWithPhase(stackID, "manual", commitSHA, errMsg, constants.PhaseSecretsFetch, sopsStart)
 		r.markError(stack, "stacks")
 		return fmt.Errorf("%s", errMsg)
 	}
@@ -874,6 +876,7 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 		return failRedeploy(errMsg, time.Since(start).Milliseconds())
 	}
 
+	_ = pt.start(constants.PhaseSecretsFetch)
 	sopsValues, sopsErr := r.loadSopsEnv(ctx, repo, workDir)
 	if sopsErr != nil {
 		errMsg := fmt.Sprintf("failed to decrypt SOPS secrets file: %v", sopsErr)

@@ -8,14 +8,15 @@ package constants
 // the canonical, fixed ordering used to sort a deploy's phases in the UI
 // (see DeployPhaseOrder), independent of the order phases were recorded in.
 const (
-	PhaseGitFetch    = "git_fetch"
-	PhaseRender      = "render"
-	PhasePolicyCheck = "policy_check"
-	PhaseDispatch    = "dispatch"
-	PhaseWorkerAck   = "worker_ack"
-	PhaseComposeUp   = "compose_up"
-	PhasePostCheck   = "post_check"
-	PhaseNotify      = "notify"
+	PhaseGitFetch     = "git_fetch"
+	PhaseRender       = "render"
+	PhaseSecretsFetch = "secrets_fetch"
+	PhasePolicyCheck  = "policy_check"
+	PhaseDispatch     = "dispatch"
+	PhaseWorkerAck    = "worker_ack"
+	PhaseComposeUp    = "compose_up"
+	PhasePostCheck    = "post_check"
+	PhaseNotify       = "notify"
 )
 
 // DeployPhaseOrder is the canonical, fixed-order set of phases every
@@ -23,7 +24,7 @@ const (
 // same shape regardless of which flow produced it or which order individual
 // phases were actually recorded in.
 var DeployPhaseOrder = []string{
-	PhaseGitFetch, PhaseRender, PhasePolicyCheck, PhaseDispatch,
+	PhaseGitFetch, PhaseRender, PhaseSecretsFetch, PhasePolicyCheck, PhaseDispatch,
 	PhaseWorkerAck, PhaseComposeUp, PhasePostCheck, PhaseNotify,
 }
 

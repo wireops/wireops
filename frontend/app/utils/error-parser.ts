@@ -3,7 +3,7 @@ export interface ParsedError {
   message: string
   suggestion?: string
   docLink?: string
-  type: 'docker' | 'compose' | 'git' | 'network' | 'generic'
+  type: 'docker' | 'compose' | 'git' | 'network' | 'secrets' | 'generic'
 }
 
 export function parseError(error: string): ParsedError {
@@ -16,6 +16,19 @@ export function parseError(error: string): ParsedError {
   }
 
   const errorLower = error.toLowerCase()
+
+  // SOPS secrets decryption errors — must run before the generic YAML check
+  // below, since the SOPS error text itself mentions "secrets.yaml" and would
+  // otherwise be misclassified as a compose-file YAML syntax error (issue #80)
+  if (errorLower.includes('sops') || errorLower.includes('age key') || errorLower.includes('decrypt secrets file')) {
+    return {
+      original: error,
+      message: 'Failed to decrypt SOPS secrets file',
+      suggestion: 'The repository\'s configured age key does not match any recipient the secrets.yaml was encrypted for. Rotate/regenerate the repo\'s age keypair, or re-encrypt secrets.yaml with `sops -e --age <public key>` using the repo\'s current public key',
+      docLink: 'https://github.com/getsops/sops',
+      type: 'secrets'
+    }
+  }
 
   // Docker Compose errors
   if (errorLower.includes('no such file or directory') && errorLower.includes('docker-compose')) {
@@ -148,6 +161,8 @@ export function getErrorIcon(type: ParsedError['type']): string {
       return 'i-lucide-git-branch'
     case 'network':
       return 'i-lucide-wifi-off'
+    case 'secrets':
+      return 'i-lucide-key-round'
     default:
       return 'i-lucide-alert-circle'
   }
@@ -156,6 +171,8 @@ export function getErrorIcon(type: ParsedError['type']): string {
 export function getErrorColor(type: ParsedError['type']): string {
   switch (type) {
     case 'network':
+      return 'warning'
+    case 'secrets':
       return 'warning'
     default:
       return 'error'

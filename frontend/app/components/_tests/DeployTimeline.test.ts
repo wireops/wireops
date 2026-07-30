@@ -35,16 +35,17 @@ function stubGlobals(items: PhaseItem[]) {
 }
 
 describe('DeployTimeline', () => {
-  it('renders all 8 canonical phases in order when data is present', () => {
+  it('renders all 9 canonical phases in order when data is present', () => {
     stubGlobals([
       { phase: 'git_fetch', status: 'success', duration_ms: 120, seq: 0 },
       { phase: 'render', status: 'success', duration_ms: 45, seq: 1 },
-      { phase: 'policy_check', status: 'skipped', duration_ms: 0, seq: 2 },
-      { phase: 'dispatch', status: 'success', duration_ms: 900, seq: 3 },
-      { phase: 'worker_ack', status: 'success', duration_ms: 30, seq: 4 },
-      { phase: 'compose_up', status: 'success', duration_ms: 850, seq: 5 },
-      { phase: 'post_check', status: 'success', duration_ms: 200, seq: 6 },
-      { phase: 'notify', status: 'success', duration_ms: 5, seq: 7 },
+      { phase: 'secrets_fetch', status: 'success', duration_ms: 20, seq: 2 },
+      { phase: 'policy_check', status: 'skipped', duration_ms: 0, seq: 3 },
+      { phase: 'dispatch', status: 'success', duration_ms: 900, seq: 4 },
+      { phase: 'worker_ack', status: 'success', duration_ms: 30, seq: 5 },
+      { phase: 'compose_up', status: 'success', duration_ms: 850, seq: 6 },
+      { phase: 'post_check', status: 'success', duration_ms: 200, seq: 7 },
+      { phase: 'notify', status: 'success', duration_ms: 5, seq: 8 },
     ])
 
     const wrapper = mount(DeployTimeline, {
@@ -55,6 +56,7 @@ describe('DeployTimeline', () => {
     const text = wrapper.text()
     expect(text).toContain('Git Fetch')
     expect(text).toContain('Render')
+    expect(text).toContain('Fetch Secrets')
     expect(text).toContain('Policy Check')
     expect(text).toContain('Dispatch')
     expect(text).toContain('Worker Received')
@@ -65,7 +67,7 @@ describe('DeployTimeline', () => {
     // Order in the DOM should follow the canonical order, not insertion order.
     const rows = wrapper.findAll('tbody > tr').map((r) => r.find('td').text())
     expect(rows).toEqual([
-      'Git Fetch', 'Render', 'Policy Check', 'Dispatch',
+      'Git Fetch', 'Render', 'Fetch Secrets', 'Policy Check', 'Dispatch',
       'Worker Received', 'Compose Up', 'Post-Check', 'Notify',
     ])
   })
