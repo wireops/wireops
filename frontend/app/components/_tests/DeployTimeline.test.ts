@@ -67,7 +67,7 @@ describe('DeployTimeline', () => {
     // Order in the DOM should follow the canonical order, not insertion order.
     const rows = wrapper.findAll('tbody > tr').map((r) => r.find('td').text())
     expect(rows).toEqual([
-      'Git Fetch', 'Render', 'Fetch Secrets', 'Policy Check', 'Dispatch',
+      'Git Fetch', 'Lint', 'Render', 'Fetch Secrets', 'Policy Check', 'Dispatch',
       'Worker Received', 'Compose Up', 'Post-Check', 'Notify',
     ])
   })

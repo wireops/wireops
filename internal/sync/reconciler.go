@@ -300,6 +300,16 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		log.Printf("[reconciler] warning: failed to update .gitignore for stack %s: %v", stackID, giErr)
 	}
 
+	// --- lint ---
+	// Advisory only: the report is recorded on the deploy timeline but never
+	// aborts the reconcile. See lintCompose.
+	lintRes := r.lintCompose(ctx, workDir, composeFile, workerID, envVars)
+	if lintRes.err != nil {
+		log.Printf("[reconciler] lint skipped for stack %s: %v", stackID, lintRes.err)
+	} else if len(lintRes.report.Findings) > 0 {
+		log.Printf("[reconciler] lint for stack %s: %s", stackID, lintRes.report.Summary())
+	}
+
 	// Reload stack after possible checksum/version update by renderer setup.
 	// (stack record may have been modified above by markError etc.)
 	stack, err = r.app.FindRecordById("stacks", stackID)
@@ -338,7 +348,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 				renderRes.Checksum,
 				renderRes.Version,
 			)
-			return r.logNoopSyncWithPhases(ctx, stack, stackID, trigger, remoteSHA, commitMsg, output, reusedSyncLog, gitFetchStart, gitFetchDuration, renderStart, renderDuration)
+			return r.logNoopSyncWithPhases(ctx, stack, stackID, trigger, remoteSHA, commitMsg, output, reusedSyncLog, gitFetchStart, gitFetchDuration, lintRes, renderStart, renderDuration)
 		}
 		return nil
 	}
@@ -356,6 +366,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	pt := newPhaseTracker(r.app, syncLog.Id)
 	defer pt.finishCurrentAsError("deploy aborted")
 	_ = pt.recordCompleted(constants.PhaseGitFetch, constants.PhaseStatusSuccess, gitFetchStart, gitFetchDuration, "")
+	recordLintPhase(pt, lintRes)
 	if reusedSyncLog == nil {
 		_ = pt.recordSkipped(constants.PhasePolicyCheck, "no wait needed")
 	}
@@ -635,6 +646,7 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 	pt := newPhaseTracker(r.app, syncLog.Id)
 	defer pt.finishCurrentAsError("rollback aborted")
 	_ = pt.recordCompleted(constants.PhaseGitFetch, constants.PhaseStatusSuccess, gitFetchStart, gitFetchDuration, "")
+	_ = pt.recordSkipped(constants.PhaseLint, "n/a: rollback deploys an already-linted revision")
 	_ = pt.recordSkipped(constants.PhasePolicyCheck, "n/a: rollback")
 	_ = pt.recordCompleted(constants.PhaseRender, constants.PhaseStatusSuccess, renderStart, renderDuration, fmt.Sprintf("checksum=%s version=%d", renderRes.Checksum, renderRes.Version))
 
@@ -831,6 +843,7 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 	// Force redeploy reuses the repository's already-known last_commit_sha —
 	// there's no git fetch or wait_running_jobs step in this flow.
 	_ = pt.recordSkipped(constants.PhaseGitFetch, "n/a: force redeploy uses last known commit")
+	_ = pt.recordSkipped(constants.PhaseLint, "n/a: force redeploy")
 	_ = pt.recordSkipped(constants.PhasePolicyCheck, "n/a: force redeploy")
 	_ = pt.start(constants.PhaseRender)
 
@@ -1182,6 +1195,7 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 	pt := newPhaseTracker(r.app, syncLog.Id)
 	defer pt.finishCurrentAsError("local sync aborted")
 	_ = pt.recordCompleted(constants.PhaseGitFetch, constants.PhaseStatusSuccess, fetchStart, fetchDuration, "")
+	_ = pt.recordSkipped(constants.PhaseLint, "n/a: local stack compose comes from the worker, not git")
 	_ = pt.recordSkipped(constants.PhasePolicyCheck, "n/a: local stack sync")
 	_ = pt.recordCompleted(constants.PhaseRender, constants.PhaseStatusSuccess, renderStart, renderDuration, fmt.Sprintf("checksum=%s version=%d", renderRes.Checksum, renderRes.Version))
 
@@ -1636,6 +1650,7 @@ func (r *Reconciler) logNoopSyncWithPhases(
 	ctx context.Context, stack *core.Record, stackID, trigger, commitSHA, commitMsg, output string,
 	reused *core.Record,
 	gitFetchStart time.Time, gitFetchDuration int64,
+	lintRes lintResult,
 	renderStart time.Time, renderDuration int64,
 ) error {
 	syncLog := reused
@@ -1649,6 +1664,7 @@ func (r *Reconciler) logNoopSyncWithPhases(
 
 	pt := newPhaseTracker(r.app, syncLog.Id)
 	_ = pt.recordCompleted(constants.PhaseGitFetch, constants.PhaseStatusSuccess, gitFetchStart, gitFetchDuration, "")
+	recordLintPhase(pt, lintRes)
 	if reused == nil {
 		_ = pt.recordSkipped(constants.PhasePolicyCheck, "no wait needed")
 	}
@@ -1969,6 +1985,7 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 	// A transfer reuses the stack's already-rendered compose file — there's
 	// no git fetch, render, or wait_running_jobs step in this flow.
 	_ = pt.recordSkipped(constants.PhaseGitFetch, "n/a: transfer reuses last rendered compose")
+	_ = pt.recordSkipped(constants.PhaseLint, "n/a: transfer reuses last rendered compose")
 	_ = pt.recordSkipped(constants.PhaseRender, "n/a: transfer reuses last rendered compose")
 	_ = pt.recordSkipped(constants.PhasePolicyCheck, "n/a: transfer")
 	_ = pt.start(constants.PhaseDispatch)

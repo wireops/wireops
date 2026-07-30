@@ -9,6 +9,7 @@ package constants
 // (see DeployPhaseOrder), independent of the order phases were recorded in.
 const (
 	PhaseGitFetch     = "git_fetch"
+	PhaseLint         = "lint"
 	PhaseRender       = "render"
 	PhaseSecretsFetch = "secrets_fetch"
 	PhasePolicyCheck  = "policy_check"
@@ -24,7 +25,7 @@ const (
 // same shape regardless of which flow produced it or which order individual
 // phases were actually recorded in.
 var DeployPhaseOrder = []string{
-	PhaseGitFetch, PhaseRender, PhaseSecretsFetch, PhasePolicyCheck, PhaseDispatch,
+	PhaseGitFetch, PhaseLint, PhaseRender, PhaseSecretsFetch, PhasePolicyCheck, PhaseDispatch,
 	PhaseWorkerAck, PhaseComposeUp, PhasePostCheck, PhaseNotify,
 }
 

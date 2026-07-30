@@ -11,7 +11,7 @@ const emit = defineEmits<{
 }>()
 
 const { $pb } = useNuxtApp()
-const { getStackFiles, getWireopsFiles, getWireopsDefinitionFromFile, getWorkers, createStackFromWireops } = useApi()
+const { getStackFiles, getWireopsFiles, getWireopsDefinitionFromFile, getWorkers, createStackFromWireops, lintCompose } = useApi()
 const { validateComposePath, validateComposeFile } = useValidation()
 const toast = useToast()
 
@@ -52,6 +52,14 @@ const selectedWireopsFile = ref('')
 const wireopsDefinition = ref<WireopsDefinition | null>(null)
 const loadingDefinition = ref(false)
 const definitionErrors = ref<string[]>([])
+
+type LintResponse = Awaited<ReturnType<typeof lintCompose>>
+const lintReport = ref<LintResponse['report'] | null>(null)
+const lintConfigError = ref('')
+const lintLoading = ref(false)
+// Bumped on every lint request so a slow earlier response cannot overwrite a
+// newer one when the user changes the file or worker mid-flight.
+let lintRequestId = 0
 
 const modeOptions: { label: string; value: 'manual' | 'wireops_file' }[] = [
   { label: 'Manual', value: 'manual' },
@@ -113,6 +121,10 @@ watch(() => props.open, async (val) => {
     wireopsDefinition.value = null
     definitionErrors.value = []
     createErrors.value = {}
+    lintReport.value = null
+    lintConfigError.value = ''
+    lintLoading.value = false
+    lintRequestId++
     const q = { ...route.query }
     delete q.stack_step
     router.replace({ query: q })
@@ -209,11 +221,35 @@ watch(selectedWireopsFile, async (file) => {
 
 const currentStep = computed(() => Number(route.query.stack_step) || 1)
 
+// The compose file the stack will deploy, in the {path, file} split the API
+// expects. Derived here rather than only inside handleSubmit so the lint step
+// can point at exactly the file that is about to be created.
+const composeTarget = computed<{ compose_path: string; compose_file: string } | null>(() => {
+  if (creationMode.value === 'wireops_file') {
+    const def = wireopsDefinition.value
+    if (!def || def.resolution_error || !def.resolved_compose_file) return null
+    return {
+      compose_path: def.resolved_compose_path || '.',
+      compose_file: def.resolved_compose_file,
+    }
+  }
+  const selected = form.value.selected_file
+  if (!selected) return null
+  const parts = selected.split('/')
+  if (parts.length === 1) return { compose_path: '.', compose_file: selected }
+  const file = parts.pop() || ''
+  return { compose_path: parts.join('/'), compose_file: file }
+})
+
 const canProceedToStep2 = computed(() => {
   if (!form.value.repository) return false
   if (creationMode.value === 'manual') return !!form.value.name
   return !!wireopsDefinition.value && !wireopsDefinition.value.resolution_error && definitionErrors.value.length === 0
 })
+
+const canProceedToStep3 = computed(() =>
+  canProceedToStep2.value && !!form.value.worker && !!composeTarget.value
+)
 
 const stepperItems = computed(() => [
   {
@@ -226,28 +262,45 @@ const stepperItems = computed(() => [
     description: 'Worker & Compose File',
     icon: 'i-lucide-settings',
     disabled: !canProceedToStep2.value,
-  }
+  },
+  {
+    title: 'Review',
+    description: 'Compose checks',
+    icon: 'i-lucide-shield-check',
+    disabled: !canProceedToStep3.value,
+  },
 ])
+
+function canReachStep(step: number) {
+  if (step >= 3) return canProceedToStep3.value
+  if (step === 2) return canProceedToStep2.value
+  return true
+}
+
+function goToStep(step: number) {
+  if (!canReachStep(step)) return
+  router.push({ query: { ...route.query, stack_step: String(step) } })
+}
 
 const activeStep = computed({
   get() {
     return currentStep.value - 1
   },
   set(val) {
-    if (val === 1) {
-      if (!canProceedToStep2.value) return
-      router.push({ query: { ...route.query, stack_step: '2' } })
-    } else if (val === 0) {
-      router.push({ query: { ...route.query, stack_step: '1' } })
-    }
+    goToStep(val + 1)
   }
 })
 
 function nextStep() {
-  if (currentStep.value === 1) {
-    if (!canProceedToStep2.value) return
-    router.push({ query: { ...route.query, stack_step: '2' } })
+  const target = currentStep.value + 1
+  if (target > stepperItems.value.length) return
+  // Surface the reason the Review step is out of reach instead of having the
+  // button silently do nothing.
+  if (target === 3 && !form.value.worker) {
+    createErrors.value.worker = 'Please select a worker'
+    return
   }
+  goToStep(target)
 }
 
 function prevStep() {
@@ -256,12 +309,50 @@ function prevStep() {
   }
 }
 
+async function runLint() {
+  const target = composeTarget.value
+  if (!form.value.repository || !target) return
+
+  const requestId = ++lintRequestId
+  lintLoading.value = true
+  lintReport.value = null
+  lintConfigError.value = ''
+  try {
+    const res = await lintCompose({
+      repository: form.value.repository,
+      compose_path: target.compose_path,
+      compose_file: target.compose_file,
+      worker: form.value.worker,
+    })
+    if (requestId !== lintRequestId) return
+    lintReport.value = res.report
+    lintConfigError.value = res.config_error || ''
+  } catch (e: any) {
+    if (requestId !== lintRequestId) return
+    lintConfigError.value = e?.message || 'Failed to check the compose file'
+  } finally {
+    if (requestId === lintRequestId) lintLoading.value = false
+  }
+}
+
+// Lint on entering the Review step, and re-lint if the user goes back and
+// changes the file or worker before returning.
+watch([currentStep, () => form.value.worker, composeTarget], ([step]) => {
+  if (step === 3) runLint()
+})
+
+// Clear the "pick a worker" error as soon as one is picked, rather than
+// leaving it on screen until the next submit.
+watch(() => form.value.worker, (worker) => {
+  if (worker) createErrors.value.worker = undefined
+})
+
 function close() {
   emit('update:open', false)
 }
 
 async function handleSubmit() {
-  if (currentStep.value === 1) {
+  if (currentStep.value < stepperItems.value.length) {
     nextStep()
     return
   }
@@ -292,20 +383,14 @@ async function handleSubmit() {
         wireops_file: selectedWireopsFile.value,
       })
     } else {
-      const selected = form.value.selected_file
-      if (!selected) {
+      const target = composeTarget.value
+      if (!target) {
         createErrors.value.selected_file = 'Please select a compose file'
         return
       }
 
-      const parts = selected.split('/')
-      if (parts.length === 1) {
-        form.value.compose_path = '.'
-        form.value.compose_file = selected
-      } else {
-        form.value.compose_file = parts.pop() || ''
-        form.value.compose_path = parts.join('/')
-      }
+      form.value.compose_path = target.compose_path
+      form.value.compose_file = target.compose_file
 
       const pathErr = validateComposePath(form.value.compose_path)
       const fileErr = validateComposeFile(form.value.compose_file)
@@ -502,6 +587,37 @@ async function handleSubmit() {
                 :description="createErrors.wireops_file"
               />
             </div>
+
+            <div v-show="currentStep === 3" class="space-y-4">
+              <div class="flex items-start justify-between gap-2">
+                <div class="space-y-1">
+                  <p class="text-sm text-gray-700 dark:text-wire-200">
+                    Static checks on
+                    <span class="font-mono text-xs">{{ composeTarget?.compose_path }}/{{ composeTarget?.compose_file }}</span>
+                  </p>
+                  <p class="text-xs text-gray-500">
+                    Advisory only — findings never block creating the stack or deploying it.
+                  </p>
+                </div>
+                <UButton
+                  type="button"
+                  icon="i-lucide-refresh-cw"
+                  variant="ghost"
+                  color="neutral"
+                  size="xs"
+                  aria-label="Re-run checks"
+                  :disabled="lintLoading"
+                  :ui="{ leadingIcon: lintLoading ? 'animate-spin' : '' }"
+                  @click="runLint"
+                />
+              </div>
+
+              <LintFindings
+                :report="lintReport"
+                :loading="lintLoading"
+                :config-error="lintConfigError"
+              />
+            </div>
           </div>
 
           <template #footer>
@@ -512,6 +628,7 @@ async function handleSubmit() {
               <div class="flex gap-2">
                 <CancelButton @click="close" />
                 <UButton v-if="currentStep === 1" type="button" label="Next" icon="i-lucide-arrow-right" trailing :disabled="!canProceedToStep2" @click="nextStep" />
+                <UButton v-else-if="currentStep === 2" type="button" label="Next" icon="i-lucide-arrow-right" trailing :disabled="!canProceedToStep3" @click="nextStep" />
                 <UButton v-else type="submit" label="Create" icon="i-lucide-check" :loading="saving" />
               </div>
             </div>

@@ -130,7 +130,8 @@ func TestLogNoopSyncWithPhasesBackfillsGitFetchAndRender(t *testing.T) {
 
 	gitFetchStart := time.Now().Add(-3 * time.Second)
 	renderStart := time.Now().Add(-1 * time.Second)
-	err := r.logNoopSyncWithPhases(context.Background(), stack, stack.Id, "manual", "abc123", "no changes", "No changes detected.", nil, gitFetchStart, 1500, renderStart, 500)
+	lintStart := time.Now().Add(-2 * time.Second)
+	err := r.logNoopSyncWithPhases(context.Background(), stack, stack.Id, "manual", "abc123", "no changes", "No changes detected.", nil, gitFetchStart, 1500, lintResult{started: lintStart, duration: 40}, renderStart, 500)
 	if err != nil {
 		t.Fatalf("logNoopSyncWithPhases failed: %v", err)
 	}
@@ -148,11 +149,18 @@ func TestLogNoopSyncWithPhasesBackfillsGitFetchAndRender(t *testing.T) {
 	for _, p := range phases {
 		byPhase[p.GetString("phase")] = p
 	}
-	if len(byPhase) != 3 {
-		t.Fatalf("phase rows = %d, want 3 (git_fetch, policy_check, render), got %+v", len(byPhase), byPhase)
+	if len(byPhase) != 4 {
+		t.Fatalf("phase rows = %d, want 4 (git_fetch, lint, policy_check, render), got %+v", len(byPhase), byPhase)
 	}
 	if got := byPhase[constants.PhaseGitFetch].GetInt("duration_ms"); got != 1500 {
 		t.Fatalf("git_fetch duration_ms = %d, want 1500", got)
+	}
+	if got := byPhase[constants.PhaseLint].GetInt("duration_ms"); got != 40 {
+		t.Fatalf("lint duration_ms = %d, want 40", got)
+	}
+	// Lint never fails a deploy, so its row is success even on a no-op sync.
+	if got := byPhase[constants.PhaseLint].GetString("status"); got != constants.PhaseStatusSuccess {
+		t.Fatalf("lint status = %q, want success", got)
 	}
 	if got := byPhase[constants.PhasePolicyCheck].GetString("status"); got != constants.PhaseStatusSkipped {
 		t.Fatalf("policy_check status = %q, want skipped", got)

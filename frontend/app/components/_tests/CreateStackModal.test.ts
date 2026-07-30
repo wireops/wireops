@@ -32,12 +32,16 @@ function setupGlobals() {
     { id: 'worker-1', hostname: 'worker-a', status: 'ACTIVE', tags: ['prod', 'amd64'] },
     { id: 'worker-2', hostname: 'worker-b', status: 'ACTIVE', tags: [] },
   ])
+  const lintCompose = vi.fn().mockResolvedValue({
+    report: { findings: [], errors: 0, warnings: 0, infos: 0 },
+  })
   ;(globalThis as any).useApi = () => ({
     getStackFiles,
     getWireopsFiles,
     getWireopsDefinitionFromFile,
     createStackFromWireops,
     getWorkers,
+    lintCompose,
   })
   ;(globalThis as any).useValidation = () => ({
     validateComposePath: vi.fn().mockReturnValue(''),
@@ -50,7 +54,7 @@ function setupGlobals() {
     return { data, refresh }
   }
 
-  return { createStack, getWireopsFiles, getWireopsDefinitionFromFile, getStackFiles, getWorkers, createStackFromWireops }
+  return { createStack, getWireopsFiles, getWireopsDefinitionFromFile, getStackFiles, getWorkers, createStackFromWireops, lintCompose }
 }
 
 const stubs = {
@@ -82,6 +86,26 @@ const stubs = {
   UAlert: { props: ['title', 'description', 'color'], template: '<div class="alert"><div>{{ title }}</div><div><slot name="description">{{ description }}</slot></div></div>' },
   UBadge: { props: ['label'], template: '<span class="badge">{{ label }}</span>' },
   UIcon: { template: '<span />' },
+  // Rendered via h() rather than a template string — Codacy flags inline
+  // HTML-string stubs as XSS even in tests.
+  LintFindings: {
+    props: ['report', 'loading', 'configError'],
+    setup(props: { report?: { findings: { message: string }[] } | null; loading?: boolean; configError?: string }) {
+      return () => h('div', { class: 'lint-findings' }, [
+        props.loading ? h('span', { class: 'lint-loading' }, 'loading') : null,
+        props.configError ? h('span', { class: 'lint-config-error' }, props.configError) : null,
+        ...(props.report?.findings || []).map(f => h('li', { class: 'lint-finding' }, f.message)),
+      ])
+    },
+  },
+}
+
+// Advances from the Configuration step to the Review step, where the lint
+// runs.
+async function goToReviewStep(wrapper: any) {
+  const nextButton = wrapper.findAll('button').find((b: any) => b.text() === 'Next')
+  await nextButton!.trigger('click')
+  await flushPromises()
 }
 
 async function openInWireopsMode() {
@@ -197,6 +221,7 @@ describe('CreateStackModal', () => {
     expect(workerSelect!.findAll('option').some(o => o.text() === 'worker-b')).toBe(false)
     await workerSelect!.setValue('worker-1')
 
+    await goToReviewStep(wrapper)
     await wrapper.find('form').trigger('submit.prevent')
     await flushPromises()
 
@@ -246,6 +271,7 @@ describe('CreateStackModal', () => {
     expect(workerSelect!.findAll('option').some(o => o.text() === 'worker-b')).toBe(true)
     await workerSelect!.setValue('worker-1')
 
+    await goToReviewStep(wrapper)
     await wrapper.find('form').trigger('submit.prevent')
     await flushPromises()
 
@@ -281,6 +307,7 @@ describe('CreateStackModal', () => {
     const workerSelect = wrapper.findAll('select').find(s => s.findAll('option').some(o => o.text() === 'worker-a'))
     await workerSelect!.setValue('worker-1')
 
+    await goToReviewStep(wrapper)
     await wrapper.find('form').trigger('submit.prevent')
     await flushPromises()
 
@@ -292,5 +319,135 @@ describe('CreateStackModal', () => {
       compose_file: 'docker-compose.yml',
       config_source: 'manual',
     }))
+  })
+
+  it('lints the selected compose file on reaching the Review step', async () => {
+    const { lintCompose } = setupGlobals()
+    lintCompose.mockResolvedValue({
+      report: {
+        findings: [
+          { rule: 'compose/latest-tag', severity: 'warning', service: 'web', message: 'service "web" uses image "nginx", which is not pinned' },
+        ],
+        errors: 0,
+        warnings: 1,
+        infos: 0,
+      },
+    })
+
+    const wrapper = await openInWireopsMode()
+
+    const manualButton = wrapper.findAll('button').find(b => b.text() === 'Manual')
+    await manualButton!.trigger('click')
+    await flushPromises()
+
+    await wrapper.find('input').setValue('my-stack')
+    await wrapper.findAll('select')[0]!.setValue('repo-1')
+    await flushPromises()
+
+    await goToReviewStep(wrapper)
+
+    const fileSelect = wrapper.findAll('select').find(s => s.findAll('option').some(o => o.text() === 'docker-compose.yml'))
+    await fileSelect!.setValue('docker-compose.yml')
+    const workerSelect = wrapper.findAll('select').find(s => s.findAll('option').some(o => o.text() === 'worker-a'))
+    await workerSelect!.setValue('worker-1')
+
+    await goToReviewStep(wrapper)
+
+    expect(lintCompose).toHaveBeenCalledWith({
+      repository: 'repo-1',
+      compose_path: '.',
+      compose_file: 'docker-compose.yml',
+      worker: 'worker-1',
+    })
+    expect(wrapper.find('.lint-finding').text()).toContain('not pinned')
+  })
+
+  it('still allows creating the stack when the lint reports errors', async () => {
+    const { lintCompose, createStack } = setupGlobals()
+    lintCompose.mockResolvedValue({
+      report: {
+        findings: [
+          { rule: 'policy/images', severity: 'error', service: 'web', message: 'image policy violation' },
+        ],
+        errors: 1,
+        warnings: 0,
+        infos: 0,
+      },
+    })
+
+    const wrapper = await openInWireopsMode()
+
+    const manualButton = wrapper.findAll('button').find(b => b.text() === 'Manual')
+    await manualButton!.trigger('click')
+    await flushPromises()
+
+    await wrapper.find('input').setValue('my-stack')
+    await wrapper.findAll('select')[0]!.setValue('repo-1')
+    await flushPromises()
+
+    await goToReviewStep(wrapper)
+
+    const fileSelect = wrapper.findAll('select').find(s => s.findAll('option').some(o => o.text() === 'docker-compose.yml'))
+    await fileSelect!.setValue('docker-compose.yml')
+    const workerSelect = wrapper.findAll('select').find(s => s.findAll('option').some(o => o.text() === 'worker-a'))
+    await workerSelect!.setValue('worker-1')
+
+    await goToReviewStep(wrapper)
+    await wrapper.find('form').trigger('submit.prevent')
+    await flushPromises()
+
+    // Lint is advisory: an error-severity finding must not gate creation.
+    expect(createStack).toHaveBeenCalled()
+  })
+
+  it('surfaces a compose config failure instead of failing the request', async () => {
+    const { lintCompose } = setupGlobals()
+    lintCompose.mockResolvedValue({
+      report: { findings: [], errors: 0, warnings: 0, infos: 0 },
+      config_error: 'failed to resolve compose config: yaml: line 3: mapping values are not allowed',
+    })
+
+    const wrapper = await openInWireopsMode()
+
+    const manualButton = wrapper.findAll('button').find(b => b.text() === 'Manual')
+    await manualButton!.trigger('click')
+    await flushPromises()
+
+    await wrapper.find('input').setValue('my-stack')
+    await wrapper.findAll('select')[0]!.setValue('repo-1')
+    await flushPromises()
+
+    await goToReviewStep(wrapper)
+
+    const fileSelect = wrapper.findAll('select').find(s => s.findAll('option').some(o => o.text() === 'docker-compose.yml'))
+    await fileSelect!.setValue('docker-compose.yml')
+    const workerSelect = wrapper.findAll('select').find(s => s.findAll('option').some(o => o.text() === 'worker-a'))
+    await workerSelect!.setValue('worker-1')
+
+    await goToReviewStep(wrapper)
+
+    expect(wrapper.find('.lint-config-error').text()).toContain('mapping values are not allowed')
+  })
+
+  it('blocks Next into Review until a worker is picked', async () => {
+    setupGlobals()
+    const wrapper = await openInWireopsMode()
+
+    const manualButton = wrapper.findAll('button').find(b => b.text() === 'Manual')
+    await manualButton!.trigger('click')
+    await flushPromises()
+
+    await wrapper.find('input').setValue('my-stack')
+    await wrapper.findAll('select')[0]!.setValue('repo-1')
+    await flushPromises()
+
+    await goToReviewStep(wrapper)
+
+    const fileSelect = wrapper.findAll('select').find(s => s.findAll('option').some(o => o.text() === 'docker-compose.yml'))
+    await fileSelect!.setValue('docker-compose.yml')
+    await flushPromises()
+
+    const nextButton = wrapper.findAll('button').find(b => b.text() === 'Next')
+    expect(nextButton?.attributes('disabled')).toBeDefined()
   })
 })

@@ -1,0 +1,146 @@
+import { describe, expect, it } from 'vitest'
+import { mount } from '@vue/test-utils'
+import { h } from 'vue'
+import LintFindings from '../LintFindings.vue'
+
+// Stubs are built with setup() + h() rather than template HTML strings —
+// Codacy flags inline HTML-string stubs as XSS even in test-only code.
+const stubs = {
+  UAlert: {
+    props: ['title', 'description', 'color', 'icon'],
+    setup(props: { title?: string; description?: string; color?: string }) {
+      return () => h('div', { class: `alert alert-${props.color}` }, [
+        h('div', { class: 'alert-title' }, props.title),
+        h('div', { class: 'alert-description' }, props.description),
+      ])
+    },
+  },
+  UBadge: {
+    props: ['label', 'color', 'variant', 'size'],
+    setup(props: { label?: string }) {
+      return () => h('span', { class: 'badge' }, props.label)
+    },
+  },
+  UIcon: {
+    props: ['name'],
+    setup(props: { name?: string }) {
+      return () => h('span', { class: 'icon', 'data-name': props.name })
+    },
+  },
+}
+
+function mountFindings(props: Record<string, unknown>) {
+  return mount(LintFindings, { props, global: { stubs } })
+}
+
+const emptyReport = { findings: [], errors: 0, warnings: 0, infos: 0 }
+
+describe('LintFindings', () => {
+  it('shows a loading state and nothing else while checking', () => {
+    const wrapper = mountFindings({ report: null, loading: true })
+
+    expect(wrapper.text()).toContain('Checking compose file')
+    expect(wrapper.find('.alert').exists()).toBe(false)
+  })
+
+  it('reports a clean file when the report has no findings', () => {
+    const wrapper = mountFindings({ report: emptyReport })
+
+    expect(wrapper.find('.alert-title').text()).toBe('No issues found')
+    expect(wrapper.findAll('li')).toHaveLength(0)
+  })
+
+  it('shows the config error instead of a report when compose could not be read', () => {
+    const wrapper = mountFindings({
+      report: emptyReport,
+      configError: 'failed to resolve compose config: yaml: line 3: bad indent',
+    })
+
+    expect(wrapper.find('.alert-title').text()).toBe('Could not read the compose file')
+    expect(wrapper.find('.alert-description').text()).toContain('line 3')
+    // The empty report must not also render its "no issues" success alert.
+    expect(wrapper.text()).not.toContain('No issues found')
+  })
+
+  it('renders each finding with its message, hint, rule and path', () => {
+    const wrapper = mountFindings({
+      report: {
+        findings: [
+          {
+            rule: 'policy/images',
+            severity: 'error',
+            service: 'web',
+            path: 'services.web.image',
+            message: 'image policy violation: image "nginx:latest" uses :latest',
+            hint: 'blocked by this worker\'s deploy policy',
+          },
+          {
+            rule: 'compose/no-restart-policy',
+            severity: 'warning',
+            service: 'db',
+            path: 'services.db.restart',
+            message: 'service "db" has no restart policy',
+          },
+        ],
+        errors: 1,
+        warnings: 1,
+        infos: 0,
+      },
+    })
+
+    const items = wrapper.findAll('li')
+    expect(items).toHaveLength(2)
+    expect(items[0]!.text()).toContain('uses :latest')
+    expect(items[0]!.text()).toContain('deploy policy')
+    expect(items[0]!.text()).toContain('policy/images')
+    expect(items[0]!.text()).toContain('services.web.image')
+    expect(items[1]!.text()).toContain('no restart policy')
+  })
+
+  it('summarises counts as badges, omitting severities with none', () => {
+    const wrapper = mountFindings({
+      report: {
+        findings: [
+          { rule: 'compose/latest-tag', severity: 'warning', message: 'a' },
+          { rule: 'compose/latest-tag', severity: 'warning', message: 'b' },
+          { rule: 'compose/no-healthcheck', severity: 'info', message: 'c' },
+        ],
+        errors: 0,
+        warnings: 2,
+        infos: 1,
+      },
+    })
+
+    const badges = wrapper.findAll('.badge').map(b => b.text())
+    expect(badges).toContain('2 warnings')
+    expect(badges).toContain('1 info')
+    expect(badges.some(b => b.includes('error'))).toBe(false)
+  })
+
+  it('preserves the server ordering rather than re-sorting', () => {
+    const wrapper = mountFindings({
+      report: {
+        findings: [
+          { rule: 'policy/images', severity: 'error', message: 'first' },
+          { rule: 'compose/latest-tag', severity: 'warning', message: 'second' },
+          { rule: 'compose/no-healthcheck', severity: 'info', message: 'third' },
+        ],
+        errors: 1,
+        warnings: 1,
+        infos: 1,
+      },
+    })
+
+    const texts = wrapper.findAll('li').map(li => li.text())
+    expect(texts[0]).toContain('first')
+    expect(texts[1]).toContain('second')
+    expect(texts[2]).toContain('third')
+  })
+
+  it('renders nothing when there is no report and no error yet', () => {
+    const wrapper = mountFindings({ report: null })
+
+    expect(wrapper.findAll('li')).toHaveLength(0)
+    expect(wrapper.find('.alert').exists()).toBe(false)
+  })
+})

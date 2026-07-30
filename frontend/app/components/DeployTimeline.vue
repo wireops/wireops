@@ -9,15 +9,16 @@ const { $pb } = useNuxtApp()
 const { subscribe } = useRealtime()
 
 // Canonical, fixed phase order — mirrors internal/constants.DeployPhaseOrder
-// (Go) so the timeline always renders the same 8 steps regardless of which
+// (Go) so the timeline always renders the same 10 steps regardless of which
 // deploy flow produced them or the order rows were actually written in.
 const PHASE_ORDER = [
-  'git_fetch', 'render', 'secrets_fetch', 'policy_check', 'dispatch',
+  'git_fetch', 'lint', 'render', 'secrets_fetch', 'policy_check', 'dispatch',
   'worker_ack', 'compose_up', 'post_check', 'notify',
 ] as const
 
 const PHASE_LABELS: Record<string, string> = {
   git_fetch: 'Git Fetch',
+  lint: 'Lint',
   render: 'Render',
   secrets_fetch: 'Fetch Secrets',
   policy_check: 'Policy Check',
