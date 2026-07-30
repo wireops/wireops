@@ -5,14 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/wireops/wireops/internal/config"
-	"github.com/wireops/wireops/internal/safepath"
 )
 
 // ConfigOptions represents options for `docker compose config`
@@ -55,11 +56,11 @@ func containmentRoot(root, workDir string) string {
 // ResolveFile returns the compose filename Config would actually use inside
 // workDir, applying the same "docker-compose.yml, else compose.yml" fallback.
 //
-// The candidate is resolved through safepath.ResolveContained before being
-// stat'd, so a repository whose docker-compose.yml is a symlink pointing
-// outside root is rejected rather than followed. Repository content is
-// attacker-influenced — git preserves symlinks on checkout — and the ".yml"
-// extension check constrains the link's name, never its target.
+// Candidates are opened through os.Root (see openContained), so a repository
+// whose docker-compose.yml is a symlink pointing outside root is rejected
+// rather than followed. Repository content is attacker-influenced — git
+// preserves symlinks on checkout — and safepath's ".yml" extension check
+// constrains the link's *name*, never its target.
 //
 // Exported so that callers wanting to show the source alongside the resolved
 // config — the create-stack lint preview — read the very file that was linted,
@@ -68,29 +69,75 @@ func ResolveFile(root, workDir, composeFile string) (string, error) {
 	if composeFile == "" {
 		composeFile = "docker-compose.yml"
 	}
-	root = containmentRoot(root, workDir)
 
 	for _, candidate := range []string{composeFile, "compose.yml"} {
-		full, err := safepath.ResolveContained(root, filepath.Join(workDir, candidate))
+		f, _, err := openContained(root, workDir, candidate)
 		if err != nil {
-			// Either it escapes the root or it cannot be resolved; in both
-			// cases this candidate is unusable. Try the fallback name.
+			// Either it escapes the root, is not a regular file, or does not
+			// exist. Try the fallback name.
 			continue
 		}
-		if _, err := os.Stat(full); err == nil {
-			return candidate, nil
-		}
+		_ = f.Close()
+		return candidate, nil
 	}
 	return "", fmt.Errorf("compose file not found in %s", workDir)
+}
+
+// openContained opens workDir/name for reading, refusing to leave root.
+//
+// It goes through os.Root rather than resolving a path and re-opening it:
+// os.Root performs the traversal itself and refuses symlinks that escape,
+// which closes the gap between checking a path and opening it. A check
+// followed by a separate open is a race — the repository checkout is shared
+// between concurrent requests and rewritten by every git fetch, so a path
+// validated a moment ago can be a symlink by the time it is read.
+//
+// The caller gets the open file, so the size check and the read both act on
+// the descriptor rather than re-consulting the path.
+func openContained(root, workDir, name string) (*os.File, os.FileInfo, error) {
+	rootDir := containmentRoot(root, workDir)
+
+	rel, err := filepath.Rel(rootDir, filepath.Join(workDir, name))
+	if err != nil {
+		return nil, nil, fmt.Errorf("compose file %q is not reachable from the repository: %w", name, err)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return nil, nil, fmt.Errorf("compose file %q resolves outside the repository", name)
+	}
+
+	r, err := os.OpenRoot(rootDir)
+	if err != nil {
+		return nil, nil, fmt.Errorf("cannot open repository directory: %w", err)
+	}
+	defer r.Close()
+
+	f, err := r.Open(rel)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	info, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return nil, nil, err
+	}
+	// A directory, fifo or device node would make the read below misbehave
+	// (block forever, or never terminate).
+	if !info.Mode().IsRegular() {
+		_ = f.Close()
+		return nil, nil, fmt.Errorf("compose file %q is not a regular file", name)
+	}
+	return f, info, nil
 }
 
 // ReadFile returns the raw bytes of the compose file Config would use, bounded
 // by the same limit that applies to a resolved config so a large file cannot
 // be read into memory just because it is being previewed.
 //
-// The path is symlink-resolved and containment-checked before being opened —
-// this content is returned to API callers, so following a symlink out of the
-// repository would be an arbitrary file read.
+// The file is opened through os.Root and then stat'd and read from that one
+// descriptor — this content is returned to API callers, so following a symlink
+// out of the repository would be an arbitrary file read, and re-opening a
+// path that was checked a moment earlier would leave a race in its place.
 func ReadFile(root, workDir, composeFile string, maxBytes int64) ([]byte, string, error) {
 	resolved, err := ResolveFile(root, workDir, composeFile)
 	if err != nil {
@@ -100,29 +147,24 @@ func ReadFile(root, workDir, composeFile string, maxBytes int64) ([]byte, string
 		maxBytes = config.GetComposeMaxBytes()
 	}
 
-	path, err := safepath.ResolveContained(containmentRoot(root, workDir), filepath.Join(workDir, resolved))
-	if err != nil {
-		return nil, "", fmt.Errorf("compose file is not readable from this repository: %w", err)
-	}
-
-	info, err := os.Stat(path)
+	f, info, err := openContained(root, workDir, resolved)
 	if err != nil {
 		return nil, "", fmt.Errorf("compose file not readable: %w", err)
 	}
-	if !info.Mode().IsRegular() {
-		return nil, "", fmt.Errorf("compose file %s is not a regular file", resolved)
-	}
+	defer f.Close()
+
 	if info.Size() > maxBytes {
 		return nil, "", fmt.Errorf("compose file %s is %d bytes, over the %d byte limit (raise COMPOSE_MAX_KB if this is legitimate): %w",
 			resolved, info.Size(), maxBytes, ErrOutputTooLarge)
 	}
 
-	data, err := os.ReadFile(path)
+	// Read from the descriptor with its own ceiling rather than trusting the
+	// size reported above: the file can grow between the stat and the read,
+	// and on some filesystems the reported size is a hint.
+	data, err := io.ReadAll(io.LimitReader(f, maxBytes+1))
 	if err != nil {
 		return nil, "", fmt.Errorf("compose file not readable: %w", err)
 	}
-	// Re-check after reading: the stat above is advisory, the file could have
-	// grown between the two calls.
 	if int64(len(data)) > maxBytes {
 		return nil, "", fmt.Errorf("compose file %s exceeds the %d byte limit: %w", resolved, maxBytes, ErrOutputTooLarge)
 	}

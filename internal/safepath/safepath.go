@@ -2,7 +2,6 @@ package safepath
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 )
@@ -81,89 +80,6 @@ func ValidateHostPath(p string) error {
 		return fmt.Errorf("host path must be absolute: %q", p)
 	}
 	return nil
-}
-
-// ResolveContained resolves candidate and verifies it stays inside root,
-// following symlinks on the way.
-//
-// The Validate* functions above only inspect the path *string*: they reject
-// "..", absolute paths and separators, which is everything an attacker can
-// express through a request parameter. They cannot see what the filesystem
-// does with that string. A git repository can carry symlinks (mode 120000,
-// preserved on checkout), so a repo containing
-//
-//	docker-compose.yml -> /etc/passwd
-//
-// passes every string check — the name really is a plain ".yml" filename —
-// and then reads /etc/passwd. The extension check constrains the link's name,
-// never its target. This function closes that gap, and must be used before
-// any read whose path is influenced by repository content or request input.
-//
-// A candidate that does not exist yet is still checked: the deepest existing
-// ancestor is resolved and the remaining segments appended, so a symlinked
-// parent directory cannot smuggle the path out either.
-//
-// The returned path is the fully resolved one, safe to hand to the filesystem.
-func ResolveContained(root, candidate string) (string, error) {
-	if root == "" {
-		return "", fmt.Errorf("containment root cannot be empty")
-	}
-
-	resolvedRoot, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		return "", fmt.Errorf("cannot resolve root %q: %w", root, err)
-	}
-	resolvedRoot, err = filepath.Abs(resolvedRoot)
-	if err != nil {
-		return "", fmt.Errorf("cannot resolve root %q: %w", root, err)
-	}
-
-	absCandidate, err := filepath.Abs(candidate)
-	if err != nil {
-		return "", fmt.Errorf("cannot resolve path %q: %w", candidate, err)
-	}
-
-	resolved, err := resolveDeepest(absCandidate)
-	if err != nil {
-		return "", err
-	}
-
-	if resolved != resolvedRoot && !strings.HasPrefix(resolved, resolvedRoot+string(filepath.Separator)) {
-		return "", fmt.Errorf("path %q resolves outside the permitted directory", candidate)
-	}
-	return resolved, nil
-}
-
-// resolveDeepest resolves symlinks in path, tolerating a path whose trailing
-// segments do not exist yet by resolving the deepest existing ancestor and
-// re-appending the rest.
-func resolveDeepest(path string) (string, error) {
-	remainder := ""
-	current := filepath.Clean(path)
-
-	for {
-		resolved, err := filepath.EvalSymlinks(current)
-		if err == nil {
-			if remainder == "" {
-				return resolved, nil
-			}
-			// Clean the join so a ".." smuggled in through a non-existent
-			// segment cannot survive re-appending.
-			return filepath.Clean(filepath.Join(resolved, remainder)), nil
-		}
-		if !os.IsNotExist(err) {
-			return "", fmt.Errorf("cannot resolve path %q: %w", path, err)
-		}
-
-		parent := filepath.Dir(current)
-		if parent == current {
-			// Reached the filesystem root without finding anything that
-			// exists — nothing to resolve against.
-			return filepath.Clean(path), nil
-		}
-		remainder = filepath.Join(filepath.Base(current), remainder)
-		current = parent
-	}
 }
 
 // CleanRelativePath validates that a path is relative and does not contain traversal,
