@@ -326,7 +326,12 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	}
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to generate label revision: %v", err)
-		r.logFailureWithPhase(stackID, trigger, remoteSHA, errMsg, constants.PhaseRender, renderStart)
+		// Backfill the phases that already succeeded, so a render failure
+		// still shows what the lint found rather than dropping it.
+		r.logFailureWithPhaseAnd(stackID, trigger, remoteSHA, errMsg, constants.PhaseRender, renderStart, func(pt *phaseTracker) {
+			_ = pt.recordCompleted(constants.PhaseGitFetch, constants.PhaseStatusSuccess, gitFetchStart, gitFetchDuration, "")
+			recordLintPhase(pt, lintRes)
+		})
 		r.markError(stack, "stacks")
 		return fmt.Errorf("%s", errMsg)
 	}
@@ -1738,6 +1743,17 @@ func (r *Reconciler) logFailure(stackID, trigger, commitSHA, errMsg string) erro
 // failures that happen before the normal deploy sync log exists), so the
 // deploy timeline has a concrete failing step for pre-dispatch failures too.
 func (r *Reconciler) logFailureWithPhase(stackID, trigger, commitSHA, errMsg, phase string, phaseStart time.Time) error {
+	return r.logFailureWithPhaseAnd(stackID, trigger, commitSHA, errMsg, phase, phaseStart, nil)
+}
+
+// logFailureWithPhaseAnd is logFailureWithPhase with a hook for phases that
+// already finished before the failure.
+//
+// Without it, a failure creates a sync log carrying only the failing phase, so
+// everything that succeeded first vanishes from the deploy timeline — the
+// reader cannot tell whether the lint ran and what it said, only that the
+// render blew up afterwards.
+func (r *Reconciler) logFailureWithPhaseAnd(stackID, trigger, commitSHA, errMsg, phase string, phaseStart time.Time, backfill func(*phaseTracker)) error {
 	log.Printf("[reconciler] stack %s failure: %s", stackID, errMsg)
 	syncLog, err := r.createSyncLog(stackID, trigger, commitSHA, "")
 	if err != nil {
@@ -1745,6 +1761,9 @@ func (r *Reconciler) logFailureWithPhase(stackID, trigger, commitSHA, errMsg, ph
 		return err
 	}
 	pt := newPhaseTracker(r.app, syncLog.Id)
+	if backfill != nil {
+		backfill(pt)
+	}
 	if perr := pt.recordCompleted(phase, "error", phaseStart, time.Since(phaseStart).Milliseconds(), errMsg); perr != nil {
 		log.Printf("[reconciler] failed to record failing phase %s for stack %s: %v", phase, stackID, perr)
 	}

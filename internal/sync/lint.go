@@ -95,8 +95,9 @@ func (r *Reconciler) lintCompose(ctx context.Context, root, workDir, composeFile
 	// (loadEnvVars + SOPS overlay), so this is the full set the worker will
 	// have when it resolves the rendered compose file.
 	res.report = lint.Run(configMap, lint.Context{
-		Policy:  wp,
-		EnvKeys: lint.EnvKeysFromPairs(envVars),
+		Policy:   wp,
+		EnvKeys:  lint.EnvKeysFromPairs(envVars),
+		RepoRoot: root,
 	})
 	return res
 }

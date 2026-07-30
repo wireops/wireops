@@ -431,3 +431,58 @@ func TestRunFlagsRelativeBindMounts(t *testing.T) {
 		t.Errorf("relative-bind-mount findings = %v, want exactly one naming ./config", msgs)
 	}
 }
+
+// TestRunFlagsBindMountsInsideTheRepoCheckout covers what `docker compose
+// config` actually emits: a relative bind source like "./config" arrives
+// already rewritten to an absolute server path. Flagging only sources that do
+// not start with "/" would therefore never fire.
+func TestRunFlagsBindMountsInsideTheRepoCheckout(t *testing.T) {
+	cfg := mustConfig(t, `{
+		"services": {
+			"web": {
+				"image": "nginx:1.25",
+				"restart": "always",
+				"volumes": [
+					{"type": "bind", "source": "/data/repos/abc123/config", "target": "/etc/nginx"},
+					{"type": "bind", "source": "/opt/host-data", "target": "/data"}
+				]
+			}
+		}
+	}`)
+
+	// Without RepoRoot the check cannot tell the two apart, so it stays quiet.
+	if got := findingsFor(lint.Run(cfg, lint.Context{}), "compose/relative-bind-mount"); len(got) != 0 {
+		t.Fatalf("expected no findings without RepoRoot, got %v", got)
+	}
+
+	msgs := findingsFor(lint.Run(cfg, lint.Context{RepoRoot: "/data/repos/abc123"}), "compose/relative-bind-mount")
+	if len(msgs) != 1 {
+		t.Fatalf("relative-bind-mount findings = %d, want exactly 1 (the in-repo mount): %v", len(msgs), msgs)
+	}
+	// The repo-relative form is what the author wrote, and it keeps the
+	// server's directory layout out of the response.
+	if !strings.Contains(msgs[0], "./config") {
+		t.Errorf("finding = %q, want it to name the path in repo-relative form", msgs[0])
+	}
+	if strings.Contains(msgs[0], "/data/repos") {
+		t.Errorf("finding = %q, must not leak the server workspace path", msgs[0])
+	}
+}
+
+func TestRunDoesNotFlagHealthcheckOptOut(t *testing.T) {
+	cfg := mustConfig(t, `{
+		"services": {
+			"opted-out": {"image": "a:1", "restart": "always", "healthcheck": {"disable": true}},
+			"defined":   {"image": "b:1", "restart": "always", "healthcheck": {"test": ["CMD", "true"]}},
+			"missing":   {"image": "c:1", "restart": "always"}
+		}
+	}`)
+
+	msgs := findingsFor(lint.Run(cfg, lint.Context{}), "compose/no-healthcheck")
+	if len(msgs) != 1 {
+		t.Fatalf("no-healthcheck findings = %d, want 1 (only the service with no healthcheck key): %v", len(msgs), msgs)
+	}
+	if !strings.Contains(msgs[0], "missing") {
+		t.Errorf("finding = %q, want it to name the service with no healthcheck at all", msgs[0])
+	}
+}

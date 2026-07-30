@@ -1,17 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-
-type LintSeverity = 'error' | 'warning' | 'info'
-
-type LintFinding = {
-  rule: string
-  severity: LintSeverity
-  service?: string
-  path?: string
-  line?: number
-  message: string
-  hint?: string
-}
+import type { LintFinding, LintSeverity } from '~/types/lint'
 
 const props = defineProps<{
   content: string
@@ -139,7 +128,11 @@ defineExpose({ focusOn })
             <td
               class="w-10 select-none text-right pr-2 align-top text-gray-400 dark:text-wire-500 tabular-nums"
               :class="severityFor(i + 1) ? 'cursor-pointer' : ''"
+              :role="severityFor(i + 1) ? 'button' : undefined"
+              :tabindex="severityFor(i + 1) ? 0 : undefined"
               @click="severityFor(i + 1) && emit('select-line', i + 1)"
+              @keydown.enter="severityFor(i + 1) && emit('select-line', i + 1)"
+              @keydown.space.prevent="severityFor(i + 1) && emit('select-line', i + 1)"
             >{{ i + 1 }}</td>
 
             <td class="w-5 align-top">

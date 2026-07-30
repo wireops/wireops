@@ -2,6 +2,7 @@ package lint
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -85,15 +86,9 @@ func ruleNoRestartPolicy(cfg *Config, _ Context) []Finding {
 func ruleNoHealthcheck(cfg *Config, _ Context) []Finding {
 	var out []Finding
 	for _, svc := range cfg.Services {
-		hc, ok := svc.Raw["healthcheck"].(map[string]interface{})
-		if ok {
-			// `disable: true` is an explicit opt-out; take the author at
-			// their word rather than nagging.
-			if disabled, _ := hc["disable"].(bool); !disabled {
-				continue
-			}
-			continue
-		}
+		// Any healthcheck key at all means the author considered it —
+		// including `disable: true`, which is an explicit opt-out. Take them
+		// at their word rather than nagging.
 		if _, present := svc.Raw["healthcheck"]; present {
 			continue
 		}
@@ -191,27 +186,71 @@ func rulePlaintextSecret(cfg *Config, _ Context) []Finding {
 	return out
 }
 
-// ruleRelativeBindMount flags bind mounts with relative paths. They resolve
-// against the compose file's directory, which on a worker is the rendered
-// revision directory, not the repo — so they rarely point where the author
-// expects.
-func ruleRelativeBindMount(cfg *Config, _ Context) []Finding {
+// ruleRelativeBindMount flags bind mounts that point into the server's own
+// repository checkout, which is what a relative path in the compose file
+// becomes.
+//
+// The naive version of this rule — "flag sources that do not start with /" —
+// never fires in practice. `docker compose config` resolves relative bind
+// sources against the compose file's directory and emits them as absolute
+// paths, so by the time the rules run, "./config" has already become
+// "/data/repos/<repo-id>/config". That path exists on the *server* and almost
+// never on the worker, so the deploy silently creates an empty directory
+// there instead of mounting what the author meant.
+//
+// Detecting it therefore means recognising a source that lands inside the
+// checkout, which needs ctx.RepoRoot. Without it the check is skipped rather
+// than guessed at. The relative form is still handled for callers that lint a
+// raw compose file without going through `docker compose config`.
+func ruleRelativeBindMount(cfg *Config, ctx Context) []Finding {
 	var out []Finding
 	for _, svc := range cfg.Services {
 		for _, m := range serviceMounts(svc.Raw) {
-			if !m.isBind || m.source == "" || strings.HasPrefix(m.source, "/") {
+			if !m.isBind || m.source == "" {
 				continue
 			}
+
+			shown := m.source
+			if strings.HasPrefix(m.source, "/") {
+				rel, inside := underRoot(ctx.RepoRoot, m.source)
+				if !inside {
+					continue
+				}
+				// Report the repo-relative form: it is what the author wrote,
+				// and it keeps the server's directory layout out of the
+				// response.
+				shown = "./" + rel
+			}
+
 			out = append(out, Finding{
 				Severity: SeverityWarning,
 				Service:  svc.Name,
 				Path:     fmt.Sprintf("services.%s.volumes", svc.Name),
-				Message:  fmt.Sprintf("service %q bind-mounts relative path %q", svc.Name, m.source),
-				Hint:     "use an absolute host path or a named volume — relative paths resolve against the rendered compose directory on the worker, not your repo",
+				Message:  fmt.Sprintf("service %q bind-mounts %q, a path inside the repository", svc.Name, shown),
+				Hint:     "the worker deploys from a rendered revision directory, not a clone of the repo, so this path will not exist there — use an absolute host path or a named volume",
 			})
 		}
 	}
 	return out
+}
+
+// underRoot reports whether path is inside root, returning the relative
+// remainder when it is. An empty root matches nothing, so the caller's check
+// is disabled rather than applied against "".
+func underRoot(root, path string) (string, bool) {
+	if root == "" {
+		return "", false
+	}
+	cleanRoot := filepath.Clean(root)
+	cleanPath := filepath.Clean(path)
+	if cleanPath == cleanRoot {
+		return "", true
+	}
+	prefix := cleanRoot + string(filepath.Separator)
+	if !strings.HasPrefix(cleanPath, prefix) {
+		return "", false
+	}
+	return strings.TrimPrefix(cleanPath, prefix), true
 }
 
 // rulePrivileged flags privileged containers when the worker policy does not

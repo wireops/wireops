@@ -27,6 +27,12 @@ type limitedBuffer struct {
 	limit int64
 	// what names the stream in the error message ("stdout"/"stderr").
 	what string
+	// overflowed records that this buffer is the one that hit its limit, so
+	// the caller can tell which stream failed. exec.Cmd surfaces only the
+	// resulting error, and stdout and stderr have different limits with
+	// different remedies — one is raisable via COMPOSE_MAX_KB, the other is
+	// a fixed internal cap.
+	overflowed bool
 }
 
 func newLimitedBuffer(what string, limit int64) *limitedBuffer {
@@ -35,10 +41,14 @@ func newLimitedBuffer(what string, limit int64) *limitedBuffer {
 
 func (w *limitedBuffer) Write(p []byte) (int, error) {
 	if int64(w.buf.Len())+int64(len(p)) > w.limit {
+		w.overflowed = true
 		return 0, fmt.Errorf("%w: %s reached %d bytes", ErrOutputTooLarge, w.what, w.limit)
 	}
 	return w.buf.Write(p)
 }
+
+// Overflowed reports whether this buffer is the one that hit its limit.
+func (w *limitedBuffer) Overflowed() bool { return w.overflowed }
 
 func (w *limitedBuffer) String() string { return w.buf.String() }
 

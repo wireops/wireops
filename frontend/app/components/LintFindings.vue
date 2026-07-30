@@ -1,24 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-
-type LintSeverity = 'error' | 'warning' | 'info'
-
-type LintFinding = {
-  rule: string
-  severity: LintSeverity
-  service?: string
-  path?: string
-  line?: number
-  message: string
-  hint?: string
-}
-
-type LintReport = {
-  findings: LintFinding[]
-  errors: number
-  warnings: number
-  infos: number
-}
+import type { LintReport, LintSeverity } from '~/types/lint'
 
 const props = defineProps<{
   report: LintReport | null
@@ -102,7 +84,11 @@ const counts = computed(() => {
             :key="`${finding.rule}-${finding.service || ''}-${i}`"
             class="rounded-lg border border-gray-200 dark:border-wire-700 p-3 space-y-1"
             :class="finding.line ? 'cursor-pointer hover:border-primary-400 dark:hover:border-primary-500' : ''"
+            :role="finding.line ? 'button' : undefined"
+            :tabindex="finding.line ? 0 : undefined"
             @click="finding.line && emit('select-line', finding.line)"
+            @keydown.enter="finding.line && emit('select-line', finding.line)"
+            @keydown.space.prevent="finding.line && emit('select-line', finding.line)"
           >
             <div class="flex items-start gap-2">
               <UIcon

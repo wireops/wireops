@@ -354,6 +354,14 @@ func (rr routeRegistrar) repoFilesSetup(e *core.RequestEvent) (string, bool) {
 // repoFilesSetupByID is the repoFilesSetup logic for callers that already
 // have a repository ID (e.g. from a JSON body) instead of a URL path param.
 func (rr routeRegistrar) repoFilesSetupByID(e *core.RequestEvent, repoID string) (string, bool) {
+	return rr.repoFilesSetupByIDContext(e, e.Request.Context(), repoID)
+}
+
+// repoFilesSetupByIDContext is repoFilesSetupByID with an explicit context for
+// the clone/fetch. Callers that bound their own work with a timeout need the
+// git operation inside that bound too — otherwise a hung remote holds the
+// handler open regardless of the caller's deadline.
+func (rr routeRegistrar) repoFilesSetupByIDContext(e *core.RequestEvent, ctx context.Context, repoID string) (string, bool) {
 	repo, err := rr.app.FindRecordById("repositories", repoID)
 	if err != nil {
 		_ = e.JSON(http.StatusNotFound, map[string]string{"error": "repository not found"})
@@ -373,7 +381,7 @@ func (rr routeRegistrar) repoFilesSetupByID(e *core.RequestEvent, repoID string)
 	if branch == "" {
 		branch = "main"
 	}
-	if _, err := git.CloneOrFetch(repoID, repo.GetString("git_url"), branch, auth, workspace); err != nil {
+	if _, err := git.CloneOrFetchContext(ctx, repoID, repo.GetString("git_url"), branch, auth, workspace); err != nil {
 		_ = e.JSON(http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("failed to sync repository: %v", err)})
 		return "", false
 	}

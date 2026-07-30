@@ -1,3 +1,5 @@
+import type { LintComposeBody, LintComposeResponse } from '~/types/lint'
+
 export function useApi() {
   const { $pb } = useNuxtApp()
 
@@ -165,34 +167,12 @@ export function useApi() {
     resolution_error?: string
   }
 
-  type LintSeverity = 'error' | 'warning' | 'info'
-  type LintFinding = {
-    rule: string
-    severity: LintSeverity
-    service?: string
-    path?: string
-    /** 1-based line in the source compose file, or absent when unlocatable. */
-    line?: number
-    message: string
-    hint?: string
-  }
-  type LintReport = {
-    findings: LintFinding[]
-    errors: number
-    warnings: number
-    infos: number
-  }
-  type LintComposeBody = {
-    repository: string
-    compose_path: string
-    compose_file: string
-    worker?: string
-    stack?: string
-  }
   // Static analysis only — runs server-side off `docker compose config`, so
   // it needs no worker to be online and never reaches a Docker daemon.
+  // Types live in ~/types/lint so the components rendering the report share
+  // one definition with this caller.
   const lintCompose = (body: LintComposeBody) =>
-    customPost<{ report: LintReport; content?: string; filename?: string; config_error?: string }>('/api/custom/lint/compose', body)
+    customPost<LintComposeResponse>('/api/custom/lint/compose', body)
 
   type DiscoveredProject = { project_name: string; compose_path: string; services: string[] }
   const discoverProjects = (workerId: string) =>

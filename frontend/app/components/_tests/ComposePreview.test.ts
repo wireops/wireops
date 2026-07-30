@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { h } from 'vue'
 import ComposePreview from '../ComposePreview.vue'
@@ -36,6 +36,12 @@ function mountPreview(props: Record<string, unknown> = {}) {
 }
 
 describe('ComposePreview', () => {
+  // Unconditional, so a failing assertion inside a fake-timer test cannot
+  // leak them into the tests that follow.
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   it('renders every line with a 1-based line number', () => {
     const wrapper = mountPreview()
 
@@ -167,7 +173,5 @@ describe('ComposePreview', () => {
     ;(wrapper.vm as any).focusOn(3)
     await wrapper.vm.$nextTick()
     expect(wrapper.findAll('tbody tr')[2]!.classes().join(' ')).toContain('ring')
-
-    vi.useRealTimers()
   })
 })

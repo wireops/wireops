@@ -116,7 +116,7 @@ func TestLintPhaseSortsBetweenGitFetchAndRender(t *testing.T) {
 	lintSeq := phaseSeq(constants.PhaseLint)
 	render := phaseSeq(constants.PhaseRender)
 
-	if !(gitFetch < lintSeq && lintSeq < render) {
+	if gitFetch >= lintSeq || lintSeq >= render {
 		t.Errorf("phase seq order = git_fetch:%d lint:%d render:%d, want lint strictly between the other two", gitFetch, lintSeq, render)
 	}
 }

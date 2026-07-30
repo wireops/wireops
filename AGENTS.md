@@ -234,6 +234,7 @@ All custom routes are prefixed `/api/custom/`. PocketBase also auto-exposes CRUD
 | `POST` | `/stacks/import` | Import a local Compose stack |
 
 ### Lint
+
 | Method | Path | Description |
 |---|---|---|
 | `POST` | `/lint/compose` | Static checks on a repo's compose file (`repository`, `compose_path`, `compose_file`, optional `worker` for policy findings and `stack` for env-var resolution). Needs no stack to exist and no worker to be online — used by the create-stack modal's Review step. Returns `{report, content?, filename?, config_error?}` — `content` is the source file, so the UI can preview it and mark each finding's line; a compose file that won't parse comes back as `config_error` with HTTP 200, not a request failure. Requires `CapManageRepos`; see the lint bullet under Access Control for the constraints this route has to keep. |

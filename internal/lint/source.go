@@ -161,8 +161,6 @@ func descendIndices(node *yaml.Node, path string) (next *yaml.Node, rest string,
 		remaining = remaining[end+1:]
 	}
 
-	if strings.HasPrefix(remaining, ".") {
-		remaining = remaining[1:]
-	}
+	remaining = strings.TrimPrefix(remaining, ".")
 	return current, remaining, matchedLine, true
 }

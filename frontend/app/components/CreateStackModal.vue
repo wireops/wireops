@@ -320,9 +320,10 @@ async function runLint() {
 
   const requestId = ++lintRequestId
   lintLoading.value = true
-  lintReport.value = null
-  lintContent.value = ''
-  lintFilename.value = ''
+  // The previous result is deliberately left in place while the new one is
+  // fetched: clearing it here would unmount the preview and lose the reader's
+  // scroll position on every "Re-run checks". It is replaced below, or
+  // cleared only when the new run has nothing to show.
   lintConfigError.value = ''
   try {
     const res = await lintCompose({
@@ -338,6 +339,10 @@ async function runLint() {
     lintConfigError.value = res.config_error || ''
   } catch (e: any) {
     if (requestId !== lintRequestId) return
+    // A failed run must not leave the previous file on screen looking current.
+    lintReport.value = null
+    lintContent.value = ''
+    lintFilename.value = ''
     lintConfigError.value = e?.message || 'Failed to check the compose file'
   } finally {
     if (requestId === lintRequestId) lintLoading.value = false
@@ -350,9 +355,21 @@ function focusOnLine(line: number) {
 
 // Lint on entering the Review step, and re-lint if the user goes back and
 // changes the file or worker before returning.
-watch([currentStep, () => form.value.worker, composeTarget], ([step]) => {
-  if (step === 3) runLint()
-})
+//
+// composeTarget is keyed by value, not identity: it returns a fresh object on
+// every recompute, so watching the ref itself would re-lint whenever an
+// unrelated dependency changed — and each lint costs a server-side clone/fetch
+// plus a `docker compose config` subprocess.
+watch(
+  [
+    currentStep,
+    () => form.value.worker,
+    () => composeTarget.value && `${composeTarget.value.compose_path}/${composeTarget.value.compose_file}`,
+  ],
+  ([step]) => {
+    if (step === 3) runLint()
+  },
+)
 
 // Clear the "pick a worker" error as soon as one is picked, rather than
 // leaving it on screen until the next submit.
@@ -625,9 +642,12 @@ async function handleSubmit() {
                 />
               </div>
 
+              <!-- Kept mounted while re-linting and dimmed instead, so the
+                   rendered file and its scroll position survive a refresh. -->
               <ComposePreview
-                v-if="lintContent && !lintLoading"
+                v-if="lintContent"
                 ref="composePreview"
+                :class="lintLoading ? 'opacity-50 transition-opacity' : 'transition-opacity'"
                 :content="lintContent"
                 :filename="lintFilename"
                 :findings="lintReport?.findings || []"

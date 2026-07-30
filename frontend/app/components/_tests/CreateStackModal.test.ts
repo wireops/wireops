@@ -512,6 +512,64 @@ describe('CreateStackModal', () => {
     expect(wrapper.find('.lint-findings').exists()).toBe(true)
   })
 
+  it('ignores a stale lint response that resolves after a newer one', async () => {
+    const { lintCompose } = setupGlobals()
+
+    // Two in-flight lints, resolved out of order: the first (stale) settles
+    // last, and must not overwrite the second.
+    let resolveFirst: (v: any) => void = () => {}
+    let resolveSecond: (v: any) => void = () => {}
+    lintCompose
+      .mockImplementationOnce(() => new Promise((r) => { resolveFirst = r }))
+      .mockImplementationOnce(() => new Promise((r) => { resolveSecond = r }))
+
+    const wrapper = await openInWireopsMode()
+
+    const manualButton = wrapper.findAll('button').find(b => b.text() === 'Manual')
+    await manualButton!.trigger('click')
+    await flushPromises()
+
+    await wrapper.find('input').setValue('my-stack')
+    await wrapper.findAll('select')[0]!.setValue('repo-1')
+    await flushPromises()
+
+    await goToReviewStep(wrapper)
+
+    const fileSelect = wrapper.findAll('select').find(s => s.findAll('option').some(o => o.text() === 'docker-compose.yml'))
+    await fileSelect!.setValue('docker-compose.yml')
+    const workerSelect = wrapper.findAll('select').find(s => s.findAll('option').some(o => o.text() === 'worker-a'))
+    await workerSelect!.setValue('worker-1')
+
+    // First lint fires on entering Review. The re-run button is disabled
+    // while a lint is in flight, so the way two requests actually overlap is
+    // leaving and re-entering the step before the first one settles.
+    await goToReviewStep(wrapper)
+    const back = wrapper.findAll('button').find(b => b.text() === 'Back')
+    await back!.trigger('click')
+    await flushPromises()
+    await goToReviewStep(wrapper)
+
+    expect(lintCompose).toHaveBeenCalledTimes(2)
+
+    resolveSecond({
+      report: { findings: [{ rule: 'compose/latest-tag', severity: 'warning', line: 3, message: 'NEWER result' }], errors: 0, warnings: 1, infos: 0 },
+      content: 'services:\n  web:\n    image: nginx\n',
+      filename: 'docker-compose.yml',
+    })
+    await flushPromises()
+
+    resolveFirst({
+      report: { findings: [{ rule: 'compose/latest-tag', severity: 'warning', line: 1, message: 'STALE result' }], errors: 0, warnings: 1, infos: 0 },
+      content: 'stale content\n',
+      filename: 'stale.yml',
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('NEWER result')
+    expect(wrapper.text()).not.toContain('STALE result')
+    expect(wrapper.find('.compose-preview').attributes('data-filename')).toBe('docker-compose.yml')
+  })
+
   it('blocks Next into Review until a worker is picked', async () => {
     setupGlobals()
     const wrapper = await openInWireopsMode()

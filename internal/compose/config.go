@@ -208,6 +208,14 @@ func Config(ctx context.Context, opts ConfigOptions, formatJSON bool) (string, e
 		// it as itself so callers can tell the two apart and the user gets an
 		// actionable message instead of a broken-pipe error.
 		if errors.Is(err, ErrOutputTooLarge) {
+			// Which stream overflowed decides the remedy, so report the right
+			// one: stdout's ceiling is COMPOSE_MAX_KB and raisable, stderr's
+			// is a fixed internal cap and raising COMPOSE_MAX_KB would do
+			// nothing.
+			if stderr.Overflowed() {
+				return "", fmt.Errorf("docker compose config produced more than %d bytes of error output for %s: %w",
+					maxStderrBytes, composeFile, ErrOutputTooLarge)
+			}
 			return "", fmt.Errorf("compose config for %s is larger than the %d byte limit (raise COMPOSE_MAX_KB if this is legitimate): %w",
 				composeFile, maxOutput, ErrOutputTooLarge)
 		}

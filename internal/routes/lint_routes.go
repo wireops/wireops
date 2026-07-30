@@ -51,6 +51,22 @@ func composeErrorForClient(e *core.RequestEvent, stage, repoID string, err error
 	return "failed to " + stage + " compose config: " + redactWorkspacePaths(err.Error())
 }
 
+// redactFindings strips server-side paths from a report before it leaves the
+// process.
+//
+// Findings are not purely author-written text: `docker compose config`
+// rewrites relative bind-mount sources into absolute server paths, so a
+// volume-policy violation can carry "/data/repos/<id>/config" in its message
+// and subject. That is the same disclosure config_error is redacted for, and
+// it has to be handled on this path too. Modifies in place — the slice is the
+// response's own.
+func redactFindings(findings []lint.Finding) {
+	for i := range findings {
+		findings[i].Message = redactWorkspacePaths(findings[i].Message)
+		findings[i].Hint = redactWorkspacePaths(findings[i].Hint)
+	}
+}
+
 // redactWorkspacePaths rewrites absolute paths under the repository workspace
 // to a repo-relative form, so an error can be shown to the caller without
 // describing where the server keeps its data.
@@ -172,8 +188,9 @@ func (rr routeRegistrar) registerLintRoutes() {
 		}
 
 		// Clones or fetches the repo, so the lint reflects the branch's
-		// current head rather than whatever was last synced.
-		repoDir, ok := rr.repoFilesSetupByID(e, body.Repository)
+		// current head rather than whatever was last synced. Bounded by
+		// reqCtx: a hung remote must not outlive the request's own deadline.
+		repoDir, ok := rr.repoFilesSetupByIDContext(e, reqCtx, body.Repository)
 		if !ok {
 			return nil
 		}
@@ -211,7 +228,9 @@ func (rr routeRegistrar) registerLintRoutes() {
 			})
 		}
 
+		ctx.RepoRoot = repoDir
 		report := lint.Run(configMap, ctx)
+		redactFindings(report.Findings)
 
 		// The source is read for the preview and, more importantly, to give
 		// each finding a line number: the rules run against the resolved

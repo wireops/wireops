@@ -171,6 +171,14 @@ type Context struct {
 	// than reporting every ${VAR} in the file as missing — wireops renders
 	// with --no-interpolate, so surviving references are expected.
 	EnvKeys map[string]bool
+
+	// RepoRoot is the server-side path of the repository checkout the config
+	// was resolved from. `docker compose config` rewrites relative bind-mount
+	// sources into absolute server paths, so this is what lets a rule tell a
+	// path that was written relative (and therefore will not exist on the
+	// worker) apart from one the author really did write as an absolute host
+	// path. Empty disables that check.
+	RepoRoot string
 }
 
 // policyBlocks reports whether the context has a policy that is both active
