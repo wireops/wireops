@@ -421,3 +421,46 @@ func TestGetWebhookURL(t *testing.T) {
 		})
 	}
 }
+
+func TestGetComposeMaxBytes(t *testing.T) {
+	const defaultBytes = int64(512) * 1024
+
+	t.Run("default", func(t *testing.T) {
+		t.Setenv("COMPOSE_MAX_KB", "")
+		os.Unsetenv("COMPOSE_MAX_KB")
+		if got := GetComposeMaxBytes(); got != defaultBytes {
+			t.Errorf("GetComposeMaxBytes() = %d, want %d (512 KB)", got, defaultBytes)
+		}
+	})
+
+	t.Run("configured", func(t *testing.T) {
+		t.Setenv("COMPOSE_MAX_KB", "2048")
+		want := int64(2048) * 1024
+		if got := GetComposeMaxBytes(); got != want {
+			t.Errorf("GetComposeMaxBytes() = %d, want %d", got, want)
+		}
+	})
+
+	t.Run("invalid falls back to default", func(t *testing.T) {
+		t.Setenv("COMPOSE_MAX_KB", "not-a-number")
+		if got := GetComposeMaxBytes(); got != defaultBytes {
+			t.Errorf("GetComposeMaxBytes() = %d, want the default %d", got, defaultBytes)
+		}
+	})
+
+	t.Run("zero and negative fall back to default", func(t *testing.T) {
+		for _, raw := range []string{"0", "-1"} {
+			t.Setenv("COMPOSE_MAX_KB", raw)
+			if got := GetComposeMaxBytes(); got != defaultBytes {
+				t.Errorf("GetComposeMaxBytes() with %q = %d, want the default %d", raw, got, defaultBytes)
+			}
+		}
+	})
+
+	t.Run("overflowing value falls back to default", func(t *testing.T) {
+		t.Setenv("COMPOSE_MAX_KB", "9223372036854775807")
+		if got := GetComposeMaxBytes(); got != defaultBytes {
+			t.Errorf("GetComposeMaxBytes() = %d, want the default %d rather than an overflowed limit", got, defaultBytes)
+		}
+	})
+}

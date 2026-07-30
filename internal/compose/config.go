@@ -1,15 +1,17 @@
 package compose
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/wireops/wireops/internal/config"
 )
 
 // ConfigOptions represents options for `docker compose config`
@@ -17,7 +19,17 @@ type ConfigOptions struct {
 	WorkDir     string
 	ComposeFile string
 	EnvVars     []string
+	// MaxOutputBytes caps the resolved config the server will buffer and
+	// parse. Zero means "use config.GetComposeMaxBytes()", which is what
+	// every caller wants — set it explicitly only in tests.
+	MaxOutputBytes int64
 }
+
+// maxStderrBytes caps the diagnostic output kept from a failed run. It is
+// small on purpose: stderr only ever ends up inside an error message, so
+// there is no reason to let a chatty or hostile subprocess push megabytes
+// through it.
+const maxStderrBytes = 64 << 10
 
 // Config runs `docker compose config` and returns the output, optionally formatted as JSON.
 func Config(ctx context.Context, opts ConfigOptions, formatJSON bool) (string, error) {
@@ -50,11 +62,25 @@ func Config(ctx context.Context, opts ConfigOptions, formatJSON bool) (string, e
 	}
 	cmd.Env = env
 
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	maxOutput := opts.MaxOutputBytes
+	if maxOutput <= 0 {
+		maxOutput = config.GetComposeMaxBytes()
+	}
+
+	stdout := newLimitedBuffer("stdout", maxOutput)
+	stderr := newLimitedBuffer("stderr", maxStderrBytes)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 
 	if err := cmd.Run(); err != nil {
+		// A limit breach surfaces as the copy error from cmd.Run, but it is a
+		// property of the compose file rather than a docker failure — report
+		// it as itself so callers can tell the two apart and the user gets an
+		// actionable message instead of a broken-pipe error.
+		if errors.Is(err, ErrOutputTooLarge) {
+			return "", fmt.Errorf("compose config for %s is larger than the %d byte limit (raise COMPOSE_MAX_KB if this is legitimate): %w",
+				composeFile, maxOutput, ErrOutputTooLarge)
+		}
 		return "", fmt.Errorf("docker compose config failed: %w\nstderr: %s", err, stderr.String())
 	}
 
