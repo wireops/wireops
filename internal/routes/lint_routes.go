@@ -56,10 +56,17 @@ func composeErrorForClient(e *core.RequestEvent, stage, repoID string, err error
 //
 // Findings are not purely author-written text: `docker compose config`
 // rewrites relative bind-mount sources into absolute server paths, so a
-// volume-policy violation can carry "/data/repos/<id>/config" in its message
-// and subject. That is the same disclosure config_error is redacted for, and
-// it has to be handled on this path too. Modifies in place — the slice is the
-// response's own.
+// volume-policy violation can carry "/data/repos/<id>/config" in its message.
+// That is the same disclosure config_error is redacted for, and it has to be
+// handled on this path too.
+//
+// Message and Hint are the only free-text fields. Finding.Path is a dotted
+// config location ("services.web.volumes"), not a filesystem path, and there
+// is no Subject on a Finding — that field lives on policy.Violation and is
+// folded into Message before it reaches here.
+//
+// Modifies in place; runs before either response so the early
+// source-unreadable return is covered too.
 func redactFindings(findings []lint.Finding) {
 	for i := range findings {
 		findings[i].Message = redactWorkspacePaths(findings[i].Message)
@@ -71,16 +78,27 @@ func redactFindings(findings []lint.Finding) {
 // to a repo-relative form, so an error can be shown to the caller without
 // describing where the server keeps its data.
 func redactWorkspacePaths(msg string) string {
-	workspace := config.GetReposWorkspace()
-	if workspace == "" {
-		return msg
-	}
+	// Most specific first: the repo workspace usually lives under DATA_DIR, so
+	// redacting DATA_DIR first would swallow the more informative "<repos>"
+	// label. Each root is replaced in its trailing-separator form first so the
+	// bare replacement cannot leave a doubled slash.
+	//
 	// "<workspace>/<repo-id>/svc/x.yml" becomes "<repos>/<repo-id>/svc/x.yml":
 	// the repo id is the caller's own input, so only the server-side root is
-	// worth hiding. Handles the trailing-separator form first so the bare
-	// replacement below cannot leave a doubled slash.
-	msg = strings.ReplaceAll(msg, strings.TrimSuffix(workspace, string(filepath.Separator))+string(filepath.Separator), "<repos>/")
-	return strings.ReplaceAll(msg, workspace, "<repos>")
+	// worth hiding.
+	for _, root := range []struct{ path, label string }{
+		{config.GetReposWorkspace(), "<repos>"},
+		{config.GetStacksStoragePath(), "<stacks>"},
+		{config.GetDataDir(), "<data>"},
+	} {
+		if root.path == "" {
+			continue
+		}
+		trimmed := strings.TrimSuffix(root.path, string(filepath.Separator))
+		msg = strings.ReplaceAll(msg, trimmed+string(filepath.Separator), root.label+"/")
+		msg = strings.ReplaceAll(msg, trimmed, root.label)
+	}
+	return msg
 }
 
 // lintComposeRequest points the linter at a compose file in a repository.

@@ -117,6 +117,34 @@ describe('LintFindings', () => {
     expect(badges.some(b => b.includes('error'))).toBe(false)
   })
 
+  it('makes findings with a line keyboard-operable, and leaves the rest inert', async () => {
+    const wrapper = mountFindings({
+      report: {
+        findings: [
+          { rule: 'policy/images', severity: 'error', line: 7, message: 'has a line' },
+          { rule: 'compose/no-services', severity: 'error', message: 'no line' },
+        ],
+        errors: 2,
+        warnings: 0,
+        infos: 0,
+      },
+    })
+
+    const items = wrapper.findAll('li')
+    expect(items[0]!.attributes('role')).toBe('button')
+    expect(items[0]!.attributes('tabindex')).toBe('0')
+    await items[0]!.trigger('keydown.enter')
+    await items[0]!.trigger('keydown.space')
+    expect(wrapper.emitted('select-line')).toEqual([[7], [7]])
+
+    // A finding with no line has nothing to jump to, so it must not advertise
+    // itself as actionable.
+    expect(items[1]!.attributes('role')).toBeUndefined()
+    expect(items[1]!.attributes('tabindex')).toBeUndefined()
+    await items[1]!.trigger('keydown.enter')
+    expect(wrapper.emitted('select-line')).toEqual([[7], [7]])
+  })
+
   it('preserves the server ordering rather than re-sorting', () => {
     const wrapper = mountFindings({
       report: {

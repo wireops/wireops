@@ -13,6 +13,7 @@ import (
 
 	_ "github.com/wireops/wireops/pb_migrations"
 
+	"github.com/wireops/wireops/internal/lint"
 	wiresync "github.com/wireops/wireops/internal/sync"
 )
 
@@ -241,5 +242,53 @@ func TestRedactWorkspacePaths(t *testing.T) {
 				t.Errorf("redactWorkspacePaths()\n got: %s\nwant: %s", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestRedactFindingsStripsWorkspacePaths pins the disclosure boundary for the
+// lint report. `docker compose config` rewrites relative bind-mount sources
+// into absolute server paths, so a finding's text can carry the repo workspace
+// layout even though the author never wrote it.
+func TestRedactFindingsStripsWorkspacePaths(t *testing.T) {
+	t.Setenv("DATA_DIR", "/srv/wireops-data")
+
+	findings := []lint.Finding{
+		{
+			Rule:    "policy/volumes",
+			Path:    "services.web.volumes",
+			Message: `volume policy violation: volume mount path "/srv/wireops-data/repos/abc123/config" is not in the worker's allowed volume list`,
+			Hint:    "blocked by this worker's deploy policy",
+		},
+		{
+			Rule:    "compose/relative-bind-mount",
+			Path:    "services.db.volumes",
+			Message: `service "db" bind-mounts "./data", a path inside the repository`,
+			Hint:    "the worker deploys from a rendered revision directory under /srv/wireops-data",
+		},
+	}
+
+	redactFindings(findings)
+
+	for _, f := range findings {
+		if strings.Contains(f.Message, "/srv/wireops-data") {
+			t.Errorf("message still leaks the workspace path: %q", f.Message)
+		}
+		if strings.Contains(f.Hint, "/srv/wireops-data") {
+			t.Errorf("hint still leaks the workspace path: %q", f.Hint)
+		}
+	}
+
+	// The diagnostic itself must survive — redaction replaces the server root,
+	// it does not blank the finding.
+	if !strings.Contains(findings[0].Message, "abc123/config") {
+		t.Errorf("message lost the offending path entirely: %q", findings[0].Message)
+	}
+	if !strings.Contains(findings[1].Message, "./data") {
+		t.Errorf("author-written path was altered: %q", findings[1].Message)
+	}
+	// Path is a dotted config location, not a filesystem path, so it is left
+	// alone by design.
+	if findings[0].Path != "services.web.volumes" {
+		t.Errorf("Path = %q, want the dotted config location untouched", findings[0].Path)
 	}
 }

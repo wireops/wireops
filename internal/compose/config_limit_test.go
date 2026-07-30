@@ -37,7 +37,28 @@ func writeComposeWithServices(t *testing.T, dir string, count int) {
 	}
 }
 
-func TestConfigRejectsOversizeComposeOutput(t *testing.T) {
+// writeExpandingCompose produces a *small* compose file whose resolved config
+// is far larger, using a YAML anchor aliased into many services. It is what
+// makes the output limit testable independently of the source limit — and why
+// that limit is load-bearing rather than redundant: a compact file can expand
+// by more than an order of magnitude.
+func writeExpandingCompose(t *testing.T, dir string) {
+	t.Helper()
+	var b strings.Builder
+	b.WriteString("x-env: &env\n")
+	for i := 0; i < 60; i++ {
+		fmt.Fprintf(&b, "  KEY%d: %q\n", i, strings.Repeat("v", 80))
+	}
+	b.WriteString("services:\n")
+	for i := 0; i < 30; i++ {
+		fmt.Fprintf(&b, "  svc%d:\n    image: nginx:1.25\n    environment: *env\n", i)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "docker-compose.yml"), []byte(b.String()), 0600); err != nil {
+		t.Fatalf("write compose file: %v", err)
+	}
+}
+
+func TestConfigRejectsOversizeComposeSource(t *testing.T) {
 	requireDocker(t)
 
 	dir := t.TempDir()
@@ -45,11 +66,11 @@ func TestConfigRejectsOversizeComposeOutput(t *testing.T) {
 
 	_, err := Config(context.Background(), ConfigOptions{
 		WorkDir:        dir,
-		MaxOutputBytes: 1024, // far below what 40 padded services resolve to
+		MaxOutputBytes: 1024, // far below what 40 padded services occupy on disk
 	}, true)
 
 	if err == nil {
-		t.Fatal("Config returned nil error for output past the limit")
+		t.Fatal("Config returned nil error for a source past the limit")
 	}
 	if !errors.Is(err, ErrOutputTooLarge) {
 		t.Fatalf("error = %v, want it to wrap ErrOutputTooLarge", err)
@@ -58,6 +79,33 @@ func TestConfigRejectsOversizeComposeOutput(t *testing.T) {
 	// legitimately large stack is the plausible cause.
 	if !strings.Contains(err.Error(), "COMPOSE_MAX_KB") {
 		t.Errorf("error = %q, want it to name the env var that raises the limit", err)
+	}
+}
+
+// TestConfigRejectsOversizeComposeOutput covers the limit on what docker
+// *emits*, which the source check above cannot stand in for: the file here is
+// a few KB and resolves to well over a hundred.
+func TestConfigRejectsOversizeComposeOutput(t *testing.T) {
+	requireDocker(t)
+
+	dir := t.TempDir()
+	writeExpandingCompose(t, dir)
+
+	info, err := os.Stat(filepath.Join(dir, "docker-compose.yml"))
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	// Above the source, below the expansion — so only the output limit can
+	// trip, proving the two ceilings are enforced independently.
+	limit := info.Size() + 4096
+
+	_, err = Config(context.Background(), ConfigOptions{
+		WorkDir:        dir,
+		MaxOutputBytes: limit,
+	}, true)
+
+	if !errors.Is(err, ErrOutputTooLarge) {
+		t.Fatalf("error = %v, want ErrOutputTooLarge from the resolved output", err)
 	}
 }
 

@@ -112,6 +112,36 @@ describe('ComposePreview', () => {
     expect(wrapper.emitted('select-line')).toEqual([[3]])
   })
 
+  it('emits select-line on Enter and Space for a marked line', async () => {
+    const wrapper = mountPreview({
+      findings: [{ rule: 'a', severity: 'error', line: 3, message: 'problem' }],
+    })
+
+    const gutter = wrapper.findAll('tbody tr')[2]!.find('td')
+    // Exposed as a button so it is reachable and operable by keyboard, not
+    // just by pointer.
+    expect(gutter.attributes('role')).toBe('button')
+    expect(gutter.attributes('tabindex')).toBe('0')
+
+    await gutter.trigger('keydown.enter')
+    await gutter.trigger('keydown.space')
+    expect(wrapper.emitted('select-line')).toEqual([[3], [3]])
+  })
+
+  it('leaves unmarked lines out of the keyboard tab order', async () => {
+    const wrapper = mountPreview({
+      findings: [{ rule: 'a', severity: 'error', line: 3, message: 'problem' }],
+    })
+
+    const gutter = wrapper.findAll('tbody tr')[0]!.find('td')
+    expect(gutter.attributes('role')).toBeUndefined()
+    expect(gutter.attributes('tabindex')).toBeUndefined()
+
+    await gutter.trigger('keydown.enter')
+    await gutter.trigger('keydown.space')
+    expect(wrapper.emitted('select-line')).toBeUndefined()
+  })
+
   it('does not emit select-line for an unmarked line', async () => {
     const wrapper = mountPreview({
       findings: [{ rule: 'a', severity: 'error', line: 3, message: 'problem' }],
