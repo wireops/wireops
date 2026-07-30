@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { stackHasRenderOverrides, stackRepositorySubtitle, stackSourceStatus, stackStatusBadge, stackVisibleDeployStatus, stackWorkerName, stackWorkerStatus } from '../utils/stack-status'
+import { stackEffectiveStatus, stackHasRenderOverrides, stackIsSyncing, stackRepositorySubtitle, stackSourceStatus, stackStatusBadge, stackSyncStatus, stackVisibleDeployStatus, stackWorkerName, stackWorkerStatus } from '../utils/stack-status'
 
 const props = defineProps<{
   stack: any
@@ -8,6 +8,8 @@ const props = defineProps<{
 }>()
 
 const statusBadge = computed(() => stackStatusBadge(props.stack))
+const effectiveStatus = computed(() => stackEffectiveStatus(props.stack))
+const isSyncing = computed(() => stackIsSyncing(props.stack))
 
 function relativeTime(dateStr?: string): string {
   if (!dateStr) return ''
@@ -28,14 +30,23 @@ const lastSyncedLabel = computed(() => relativeTime(props.stack?.last_synced_at)
     :class="statusBadge.borderClass"
   >
     <div class="relative">
-      <BadgeStatus :status="stack.status" class="absolute right-0 top-0 z-10 shrink-0" />
+      <div class="absolute right-0 top-0 z-10 flex shrink-0 items-center gap-1">
+        <UIcon
+          v-if="isSyncing"
+          name="i-lucide-loader-2"
+          class="h-3.5 w-3.5 animate-spin text-gray-400 dark:text-wire-200/40"
+          title="Sync in progress"
+          aria-label="Sync in progress"
+        />
+        <BadgeStatus :status="effectiveStatus" />
+      </div>
 
       <NuxtLink
         :to="`/stacks/${stack.id}`"
-        class="group block rounded-md pr-20 focus:outline-none"
+        class="group block rounded-md focus:outline-none"
         :aria-label="`Open stack ${stack.name}`"
       >
-        <div class="mb-2 sm:mb-3 min-w-0">
+        <div class="mb-2 sm:mb-3 min-w-0 pr-20">
           <div class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
             <UIcon name="i-lucide-layers" class="h-4 w-4 shrink-0 text-gray-400 dark:text-wire-200/40" />
             <h3 class="truncate text-base font-bold tracking-tight text-gray-950 transition-colors group-hover:text-yellow-500 group-focus-visible:text-yellow-500 dark:text-white">
@@ -74,7 +85,28 @@ const lastSyncedLabel = computed(() => relativeTime(props.stack?.last_synced_at)
         </div>
         <div class="space-y-1 sm:space-y-1.5 rounded-lg bg-gray-50/90 px-2.5 py-2 sm:px-3 sm:py-2.5 transition-colors group-hover:bg-yellow-50/80 group-focus-visible:bg-yellow-50/80 dark:bg-transparent dark:group-hover:bg-transparent dark:group-focus-visible:bg-transparent">
           <div class="grid grid-cols-[78px_1fr] items-start gap-2 text-sm">
-            <span class="text-gray-500 dark:text-wire-200/45">Deploy</span>
+            <span class="inline-flex items-center gap-1.5 text-gray-500 dark:text-wire-200/45">
+              <UIcon name="i-lucide-refresh-cw" class="h-3.5 w-3.5 shrink-0" />
+              Sync
+            </span>
+            <div class="flex min-w-0 items-center gap-2">
+              <UIcon
+                :name="stackSyncStatus(stack).icon"
+                class="h-3.5 w-3.5 shrink-0"
+                :class="stackSyncStatus(stack).iconClass"
+              />
+              <span
+                class="truncate font-medium text-gray-900 dark:text-wire-200"
+                :title="stack.last_error_category === 'sync' ? stack.last_error_message : undefined"
+              >{{ stackSyncStatus(stack).label }}</span>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-[78px_1fr] items-start gap-2 text-sm">
+            <span class="inline-flex items-center gap-1.5 text-gray-500 dark:text-wire-200/45">
+              <UIcon name="i-lucide-rocket" class="h-3.5 w-3.5 shrink-0" />
+              Deploy
+            </span>
             <div class="flex min-w-0 items-center gap-2">
               <UIcon
                 :name="stackVisibleDeployStatus(stack, workersById).icon"
@@ -86,7 +118,10 @@ const lastSyncedLabel = computed(() => relativeTime(props.stack?.last_synced_at)
           </div>
 
           <div class="grid grid-cols-[78px_1fr] items-start gap-2 text-sm">
-            <span class="text-gray-500 dark:text-wire-200/45">Worker</span>
+            <span class="inline-flex items-center gap-1.5 text-gray-500 dark:text-wire-200/45">
+              <UIcon name="i-lucide-server" class="h-3.5 w-3.5 shrink-0" />
+              Worker
+            </span>
             <div class="flex min-w-0 items-center gap-2">
               <UTooltip :text="stackWorkerName(stack)">
                 <UIcon
@@ -102,7 +137,10 @@ const lastSyncedLabel = computed(() => relativeTime(props.stack?.last_synced_at)
           </div>
 
           <div v-if="stack.containers_list?.length" class="grid grid-cols-[78px_1fr] items-start gap-2 text-sm">
-            <span class="text-gray-500 dark:text-wire-200/45">Services</span>
+            <span class="inline-flex items-center gap-1.5 text-gray-500 dark:text-wire-200/45">
+              <UIcon name="i-lucide-boxes" class="h-3.5 w-3.5 shrink-0" />
+              Services
+            </span>
             <div class="min-w-0">
               <StackContainersList :containers="stack.containers_list" />
             </div>

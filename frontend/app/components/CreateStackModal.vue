@@ -560,7 +560,6 @@ async function handleSubmit() {
                       :disabled="!form.repository || loadingWireopsFiles"
                       class="flex-1"
                     />
-                    <UIcon v-if="loadingWireopsFiles" name="i-lucide-loader-2" class="w-5 h-5 animate-spin text-gray-400" />
                   </div>
                 </UFormField>
 
@@ -719,6 +718,14 @@ async function handleSubmit() {
           <template #footer>
             <div class="flex justify-between items-center w-full gap-2">
               <UButton v-if="currentStep > 1" label="Back" variant="outline" icon="i-lucide-arrow-left" @click="prevStep" />
+              <UButton
+                v-else-if="creationMode === 'wireops_file' && form.repository"
+                label="Sync Repository"
+                variant="outline"
+                icon="i-lucide-refresh-cw"
+                :loading="loadingWireopsFiles"
+                @click="loadWireopsFiles(form.repository)"
+              />
               <div v-else/>
 
               <p v-if="currentStep === 3 && createErrors.lint" class="text-xs text-red-500 text-right">

@@ -116,7 +116,7 @@ describe('StacksPanel', () => {
     expect(wrapper.text()).toContain('Offline')
     expect(wrapper.text()).not.toContain('Deployed')
     expect(wrapper.text()).not.toContain('Synced')
-    expect(wrapper.find('[aria-label="Git: Connected"]').classes()).toContain('text-cyan-500')
+    expect(wrapper.find('[aria-label="Git: Up to date"]').classes()).toContain('text-cyan-500')
     expect(wrapper.find('.badge-status').text()).toBe('active')
   })
 })

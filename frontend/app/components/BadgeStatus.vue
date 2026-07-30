@@ -26,8 +26,16 @@ const statusColor = computed(() => {
       return 'neutral'
   }
 })
+
+// "connected" on a repository record only means the last fetch succeeded,
+// not that a live connection is held open - relabel it so the badge doesn't
+// imply a persistent connection that doesn't exist.
+const statusLabel = computed(() => {
+  if (props.status?.toLowerCase() === 'connected') return 'Up to date'
+  return props.status
+})
 </script>
 
 <template>
-  <UBadge :color="statusColor" :label="status" size="sm" variant="outline" class="uppercase" />
+  <UBadge :color="statusColor" :label="statusLabel" size="sm" variant="outline" class="uppercase" />
 </template>

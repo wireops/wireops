@@ -10,6 +10,10 @@ wireops is a self-hosted GitOps controller for Docker Compose stacks (Flux/ArgoC
 
 Two deployables from one Go module: the **server** (`main.go` → `cmd/serve.go`, embeds PocketBase + a Nuxt SPA) and the **worker** (`worker/main.go`, a lightweight agent that connects out to the server over WebSocket and runs `docker compose` / `docker run` on its host).
 
+## Git Workflow
+
+**Never commit directly to `main`.** Always create a feature branch and open a PR, even for small fixes. Push to `main` only if the user explicitly says so in that exact request.
+
 ## Commands
 
 ```bash

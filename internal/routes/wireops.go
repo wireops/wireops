@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -12,6 +13,12 @@ import (
 	"github.com/wireops/wireops/internal/safepath"
 	"github.com/wireops/wireops/internal/manifest"
 )
+
+// composeFilenamePattern matches conventional compose filenames (compose.yml,
+// docker-compose.yaml, etc) so a file with a YAML syntax error or no services
+// can be reported as "found but invalid" instead of silently being treated as
+// just another non-compose file in the directory.
+var composeFilenamePattern = regexp.MustCompile(`(?i)^(docker-)?compose\.ya?ml$`)
 
 func wireopsValidationErrors(err error) []string {
 	var valErr *manifest.ValidationError
@@ -43,6 +50,7 @@ func resolveWireopsComposeFile(repoDir, wireopsFile string, def *manifest.Defini
 	}
 
 	var matches []string
+	var invalidCandidates []string
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -53,13 +61,23 @@ func resolveWireopsComposeFile(repoDir, wireopsFile string, def *manifest.Defini
 		}
 		if compose.IsComposeFile(data) {
 			matches = append(matches, entry.Name())
+			continue
+		}
+		if composeFilenamePattern.MatchString(entry.Name()) {
+			if candErr := compose.ComposeCandidateError(data); candErr != nil {
+				invalidCandidates = append(invalidCandidates, fmt.Sprintf("%s: %v", entry.Name(), candErr))
+			}
 		}
 	}
 	sort.Strings(matches)
 
 	switch len(matches) {
 	case 0:
-		def.ResolutionError = fmt.Sprintf("no compose file found in %q", dir)
+		if len(invalidCandidates) > 0 {
+			def.ResolutionError = fmt.Sprintf("found compose file in %q but it's invalid - %s", dir, strings.Join(invalidCandidates, "; "))
+		} else {
+			def.ResolutionError = fmt.Sprintf("no compose file found in %q", dir)
+		}
 	case 1:
 		def.ResolvedComposePath = dir
 		def.ResolvedComposeFile = matches[0]

@@ -84,7 +84,7 @@ describe('DeployTimeline', () => {
     expect(wrapper.find('table').exists()).toBe(false)
   })
 
-  it('shows error detail for a failed phase', () => {
+  it('marks a failed phase red but leaves its error detail for the alert, not the row', () => {
     stubGlobals([
       { phase: 'git_fetch', status: 'error', duration_ms: 300, detail: 'connection refused', seq: 0 },
     ])
@@ -94,8 +94,23 @@ describe('DeployTimeline', () => {
       global: { stubs },
     })
 
-    expect(wrapper.text()).toContain('connection refused')
+    expect(wrapper.text()).not.toContain('connection refused')
     expect(wrapper.find('.text-red-500').exists()).toBe(true)
+  })
+
+  it('collapses every phase after the failure into a single Skipped placeholder', () => {
+    stubGlobals([
+      { phase: 'git_fetch', status: 'success', duration_ms: 120, seq: 0 },
+      { phase: 'render', status: 'error', duration_ms: 45, detail: 'boom', seq: 1 },
+    ])
+
+    const wrapper = mount(DeployTimeline, {
+      props: { syncLogId: 'log-4' },
+      global: { stubs },
+    })
+
+    expect(wrapper.text()).toContain('Skipped (7)')
+    expect(wrapper.text()).not.toContain('Fetch Secrets')
   })
 
   it('formats duration in seconds when over 1000ms', () => {

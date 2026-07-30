@@ -205,7 +205,7 @@ const statusColor = (s: string) => {
             v-model="statusFilter"
             :items="[
               { label: 'All', value: 'all' },
-              { label: 'Connected', value: 'connected' },
+              { label: 'Up to date', value: 'connected' },
               { label: 'Error', value: 'error' }
             ]"
             placeholder="Filter by status"

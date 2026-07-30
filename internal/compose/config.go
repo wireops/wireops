@@ -258,13 +258,37 @@ func ParseConfigJSON(output string) (map[string]interface{}, error) {
 // IsComposeFile reports whether data looks like a Docker Compose file
 // by requiring a non-empty "services" map at the top level.
 func IsComposeFile(data []byte) bool {
+	err, hasServices := composeYAMLCheck(data)
+	return err == nil && hasServices
+}
+
+// composeYAMLCheck distinguishes a YAML syntax error from a validly-parsed
+// file with no (or empty) "services" map, so callers can tell "not a compose
+// file" apart from "looks like it should be one but fails to parse" -
+// see ComposeCandidateError.
+func composeYAMLCheck(data []byte) (err error, hasServices bool) {
 	var doc struct {
 		Services map[string]any `yaml:"services"`
 	}
 	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return false
+		return err, false
 	}
-	return len(doc.Services) > 0
+	return nil, len(doc.Services) > 0
+}
+
+// ComposeCandidateError reports why data - from a file whose name looks like
+// a compose file (see the caller's filename check) - was rejected by
+// IsComposeFile: a YAML syntax error, or valid YAML with no services defined.
+// Returns nil if data actually is a valid compose file.
+func ComposeCandidateError(data []byte) error {
+	err, hasServices := composeYAMLCheck(data)
+	if err != nil {
+		return fmt.Errorf("invalid YAML: %w", err)
+	}
+	if !hasServices {
+		return fmt.Errorf("no services defined")
+	}
+	return nil
 }
 
 // ExpectedServiceNames extracts the top-level service names from a rendered

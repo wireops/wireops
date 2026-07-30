@@ -12,7 +12,7 @@ const props = defineProps<{
   containers: ContainerInfo[]
 }>()
 
-const maxDisplay = 3
+const maxDisplay = 5
 
 const visibleContainers = computed(() => {
   if (!props.containers) return []

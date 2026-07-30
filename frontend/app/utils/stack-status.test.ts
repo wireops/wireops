@@ -19,9 +19,9 @@ describe('stack status helpers', () => {
       source_type: 'git',
       expand: { repository: { status: 'connected' } },
     })).toMatchObject({
-      label: 'Connected',
+      label: 'Up to date',
       dotClass: 'bg-cyan-400',
-      title: 'Git: Connected',
+      title: 'Git: Up to date',
     })
 
     expect(stackSourceStatus({
@@ -57,14 +57,17 @@ describe('stack status helpers', () => {
       expand: { worker: { id: 'worker-1', status: 'ACTIVE' } },
     }
 
-    expect(stackDeployStatus(stack.status).label).toBe('Deployed')
+    expect(stackDeployStatus(stack.status).label).toBe('Verified')
     expect(stackVisibleDeployStatus(stack, {
       'worker-1': { id: 'worker-1', status: 'OFFLINE' },
     })).toMatchObject({
       label: 'Unknown',
       icon: 'i-lucide-circle-help',
     })
-    expect(stackVisibleDeployStatus({ ...stack, status: 'syncing' }, {
+    // a stack re-syncing after a previous successful deploy resolves to the
+    // "active" effective status (see stackEffectiveStatus) - same Unknown
+    // override applies if the worker looks offline.
+    expect(stackVisibleDeployStatus({ ...stack, status: 'syncing', deployed_at: '2026-01-01T00:00:00Z' }, {
       'worker-1': { id: 'worker-1', status: 'OFFLINE' },
     })).toMatchObject({
       label: 'Unknown',
