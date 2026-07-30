@@ -56,7 +56,12 @@ type Finding struct {
 	Service string `json:"service,omitempty"`
 	// Path locates the finding inside the config, in dotted form
 	// (e.g. "services.web.ports[0]"). Best-effort; may be empty.
-	Path    string `json:"path,omitempty"`
+	Path string `json:"path,omitempty"`
+	// Line is the 1-based line in the *source* compose file this finding
+	// points at, or 0 when it could not be located. Set by ResolveLines, not
+	// by the rules — Run alone leaves it zero, since the resolved config the
+	// rules see carries no position information.
+	Line    int    `json:"line,omitempty"`
 	Message string `json:"message"`
 	// Hint is an optional suggested fix.
 	Hint string `json:"hint,omitempty"`

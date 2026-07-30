@@ -55,8 +55,11 @@ const definitionErrors = ref<string[]>([])
 
 type LintResponse = Awaited<ReturnType<typeof lintCompose>>
 const lintReport = ref<LintResponse['report'] | null>(null)
+const lintContent = ref('')
+const lintFilename = ref('')
 const lintConfigError = ref('')
 const lintLoading = ref(false)
+const composePreview = ref<{ focusOn: (line: number) => void } | null>(null)
 // Bumped on every lint request so a slow earlier response cannot overwrite a
 // newer one when the user changes the file or worker mid-flight.
 let lintRequestId = 0
@@ -122,6 +125,8 @@ watch(() => props.open, async (val) => {
     definitionErrors.value = []
     createErrors.value = {}
     lintReport.value = null
+    lintContent.value = ''
+    lintFilename.value = ''
     lintConfigError.value = ''
     lintLoading.value = false
     lintRequestId++
@@ -316,6 +321,8 @@ async function runLint() {
   const requestId = ++lintRequestId
   lintLoading.value = true
   lintReport.value = null
+  lintContent.value = ''
+  lintFilename.value = ''
   lintConfigError.value = ''
   try {
     const res = await lintCompose({
@@ -326,6 +333,8 @@ async function runLint() {
     })
     if (requestId !== lintRequestId) return
     lintReport.value = res.report
+    lintContent.value = res.content || ''
+    lintFilename.value = res.filename || target.compose_file
     lintConfigError.value = res.config_error || ''
   } catch (e: any) {
     if (requestId !== lintRequestId) return
@@ -333,6 +342,10 @@ async function runLint() {
   } finally {
     if (requestId === lintRequestId) lintLoading.value = false
   }
+}
+
+function focusOnLine(line: number) {
+  composePreview.value?.focusOn(line)
 }
 
 // Lint on entering the Review step, and re-lint if the user goes back and
@@ -612,10 +625,20 @@ async function handleSubmit() {
                 />
               </div>
 
+              <ComposePreview
+                v-if="lintContent && !lintLoading"
+                ref="composePreview"
+                :content="lintContent"
+                :filename="lintFilename"
+                :findings="lintReport?.findings || []"
+                @select-line="focusOnLine"
+              />
+
               <LintFindings
                 :report="lintReport"
                 :loading="lintLoading"
                 :config-error="lintConfigError"
+                @select-line="focusOnLine"
               />
             </div>
           </div>

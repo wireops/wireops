@@ -171,6 +171,8 @@ export function useApi() {
     severity: LintSeverity
     service?: string
     path?: string
+    /** 1-based line in the source compose file, or absent when unlocatable. */
+    line?: number
     message: string
     hint?: string
   }
@@ -190,7 +192,7 @@ export function useApi() {
   // Static analysis only — runs server-side off `docker compose config`, so
   // it needs no worker to be online and never reaches a Docker daemon.
   const lintCompose = (body: LintComposeBody) =>
-    customPost<{ report: LintReport; config_error?: string }>('/api/custom/lint/compose', body)
+    customPost<{ report: LintReport; content?: string; filename?: string; config_error?: string }>('/api/custom/lint/compose', body)
 
   type DiscoveredProject = { project_name: string; compose_path: string; services: string[] }
   const discoverProjects = (workerId: string) =>

@@ -98,6 +98,16 @@ const stubs = {
       ])
     },
   },
+  ComposePreview: {
+    props: ['content', 'filename', 'findings'],
+    setup(props: { content?: string; filename?: string; findings?: { line?: number }[] }) {
+      return () => h('div', { class: 'compose-preview', 'data-filename': props.filename }, [
+        h('pre', { class: 'preview-content' }, props.content),
+        h('span', { class: 'preview-marked-lines' },
+          (props.findings || []).map(f => f.line).filter(Boolean).join(',')),
+      ])
+    },
+  },
 }
 
 // Advances from the Configuration step to the Review step, where the lint
@@ -427,6 +437,79 @@ describe('CreateStackModal', () => {
     await goToReviewStep(wrapper)
 
     expect(wrapper.find('.lint-config-error').text()).toContain('mapping values are not allowed')
+  })
+
+  it('previews the compose file with its findings on the Review step', async () => {
+    const { lintCompose } = setupGlobals()
+    lintCompose.mockResolvedValue({
+      report: {
+        findings: [
+          { rule: 'compose/latest-tag', severity: 'warning', line: 3, message: 'unpinned image' },
+          { rule: 'policy/privileged', severity: 'error', line: 5, message: 'privileged blocked' },
+        ],
+        errors: 1,
+        warnings: 1,
+        infos: 0,
+      },
+      content: 'services:\n  web:\n    image: nginx\n    privileged: true\n',
+      filename: 'docker-compose.yml',
+    })
+
+    const wrapper = await openInWireopsMode()
+
+    const manualButton = wrapper.findAll('button').find(b => b.text() === 'Manual')
+    await manualButton!.trigger('click')
+    await flushPromises()
+
+    await wrapper.find('input').setValue('my-stack')
+    await wrapper.findAll('select')[0]!.setValue('repo-1')
+    await flushPromises()
+
+    await goToReviewStep(wrapper)
+
+    const fileSelect = wrapper.findAll('select').find(s => s.findAll('option').some(o => o.text() === 'docker-compose.yml'))
+    await fileSelect!.setValue('docker-compose.yml')
+    const workerSelect = wrapper.findAll('select').find(s => s.findAll('option').some(o => o.text() === 'worker-a'))
+    await workerSelect!.setValue('worker-1')
+
+    await goToReviewStep(wrapper)
+
+    const preview = wrapper.find('.compose-preview')
+    expect(preview.exists()).toBe(true)
+    expect(preview.attributes('data-filename')).toBe('docker-compose.yml')
+    expect(wrapper.find('.preview-content').text()).toContain('image: nginx')
+    // The findings reach the preview so it can mark their lines.
+    expect(wrapper.find('.preview-marked-lines').text()).toBe('3,5')
+  })
+
+  it('omits the preview when the server returned no file content', async () => {
+    const { lintCompose } = setupGlobals()
+    lintCompose.mockResolvedValue({
+      report: { findings: [], errors: 0, warnings: 0, infos: 0 },
+    })
+
+    const wrapper = await openInWireopsMode()
+
+    const manualButton = wrapper.findAll('button').find(b => b.text() === 'Manual')
+    await manualButton!.trigger('click')
+    await flushPromises()
+
+    await wrapper.find('input').setValue('my-stack')
+    await wrapper.findAll('select')[0]!.setValue('repo-1')
+    await flushPromises()
+
+    await goToReviewStep(wrapper)
+
+    const fileSelect = wrapper.findAll('select').find(s => s.findAll('option').some(o => o.text() === 'docker-compose.yml'))
+    await fileSelect!.setValue('docker-compose.yml')
+    const workerSelect = wrapper.findAll('select').find(s => s.findAll('option').some(o => o.text() === 'worker-a'))
+    await workerSelect!.setValue('worker-1')
+
+    await goToReviewStep(wrapper)
+
+    expect(wrapper.find('.compose-preview').exists()).toBe(false)
+    // The report itself must still render — a missing preview is not a failure.
+    expect(wrapper.find('.lint-findings').exists()).toBe(true)
   })
 
   it('blocks Next into Review until a worker is picked', async () => {

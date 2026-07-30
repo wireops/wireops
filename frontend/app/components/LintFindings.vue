@@ -8,6 +8,7 @@ type LintFinding = {
   severity: LintSeverity
   service?: string
   path?: string
+  line?: number
   message: string
   hint?: string
 }
@@ -28,6 +29,8 @@ const props = defineProps<{
    */
   configError?: string
 }>()
+
+const emit = defineEmits<{ (e: 'select-line', line: number): void }>()
 
 const SEVERITY_META: Record<LintSeverity, { color: 'error' | 'warning' | 'info'; icon: string; label: string }> = {
   error: { color: 'error', icon: 'i-lucide-octagon-alert', label: 'Error' },
@@ -98,6 +101,8 @@ const counts = computed(() => {
             v-for="(finding, i) in findings"
             :key="`${finding.rule}-${finding.service || ''}-${i}`"
             class="rounded-lg border border-gray-200 dark:border-wire-700 p-3 space-y-1"
+            :class="finding.line ? 'cursor-pointer hover:border-primary-400 dark:hover:border-primary-500' : ''"
+            @click="finding.line && emit('select-line', finding.line)"
           >
             <div class="flex items-start gap-2">
               <UIcon
@@ -114,6 +119,13 @@ const counts = computed(() => {
                 <p v-if="finding.hint" class="text-xs text-gray-500 dark:text-wire-400">{{ finding.hint }}</p>
                 <div class="flex flex-wrap items-center gap-1.5">
                   <UBadge :label="finding.rule" variant="outline" color="neutral" size="xs" />
+                  <UBadge
+                    v-if="finding.line"
+                    :label="`line ${finding.line}`"
+                    variant="subtle"
+                    color="neutral"
+                    size="xs"
+                  />
                   <span v-if="finding.path" class="text-xs font-mono text-gray-400 truncate">{{ finding.path }}</span>
                 </div>
               </div>

@@ -31,21 +31,68 @@ type ConfigOptions struct {
 // through it.
 const maxStderrBytes = 64 << 10
 
-// Config runs `docker compose config` and returns the output, optionally formatted as JSON.
-func Config(ctx context.Context, opts ConfigOptions, formatJSON bool) (string, error) {
-	composeFile := opts.ComposeFile
+// ResolveFile returns the compose filename Config would actually use inside
+// workDir, applying the same "docker-compose.yml, else compose.yml" fallback.
+//
+// Exported so that callers wanting to show the source alongside the resolved
+// config — the create-stack lint preview — read the very file that was linted,
+// rather than guessing and risking showing one file while reporting on another.
+func ResolveFile(workDir, composeFile string) (string, error) {
 	if composeFile == "" {
 		composeFile = "docker-compose.yml"
 	}
 
-	fullPath := filepath.Join(opts.WorkDir, composeFile)
+	fullPath := filepath.Join(workDir, composeFile)
 	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
 		altFile := "compose.yml"
-		altPath := filepath.Join(opts.WorkDir, altFile)
+		altPath := filepath.Join(workDir, altFile)
 		if _, err2 := os.Stat(altPath); os.IsNotExist(err2) {
-			return "", fmt.Errorf("compose file not found in %s", opts.WorkDir)
+			return "", fmt.Errorf("compose file not found in %s", workDir)
 		}
 		composeFile = altFile
+	}
+	return composeFile, nil
+}
+
+// ReadFile returns the raw bytes of the compose file Config would use, bounded
+// by the same limit that applies to a resolved config so a large file cannot
+// be read into memory just because it is being previewed.
+func ReadFile(workDir, composeFile string, maxBytes int64) ([]byte, string, error) {
+	resolved, err := ResolveFile(workDir, composeFile)
+	if err != nil {
+		return nil, "", err
+	}
+	if maxBytes <= 0 {
+		maxBytes = config.GetComposeMaxBytes()
+	}
+
+	path := filepath.Join(workDir, resolved)
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, "", fmt.Errorf("compose file not readable: %w", err)
+	}
+	if info.Size() > maxBytes {
+		return nil, "", fmt.Errorf("compose file %s is %d bytes, over the %d byte limit (raise COMPOSE_MAX_KB if this is legitimate): %w",
+			resolved, info.Size(), maxBytes, ErrOutputTooLarge)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, "", fmt.Errorf("compose file not readable: %w", err)
+	}
+	// Re-check after reading: the stat above is advisory, the file could have
+	// grown between the two calls.
+	if int64(len(data)) > maxBytes {
+		return nil, "", fmt.Errorf("compose file %s exceeds the %d byte limit: %w", resolved, maxBytes, ErrOutputTooLarge)
+	}
+	return data, resolved, nil
+}
+
+// Config runs `docker compose config` and returns the output, optionally formatted as JSON.
+func Config(ctx context.Context, opts ConfigOptions, formatJSON bool) (string, error) {
+	composeFile, err := ResolveFile(opts.WorkDir, opts.ComposeFile)
+	if err != nil {
+		return "", err
 	}
 
 	args := []string{"compose", "-f", composeFile, "config", "--no-interpolate"}

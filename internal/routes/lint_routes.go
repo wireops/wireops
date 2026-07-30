@@ -207,6 +207,26 @@ func (rr routeRegistrar) registerLintRoutes() {
 			})
 		}
 
-		return e.JSON(http.StatusOK, map[string]any{"report": lint.Run(configMap, ctx)})
+		report := lint.Run(configMap, ctx)
+
+		// The source is read for the preview and, more importantly, to give
+		// each finding a line number: the rules run against the resolved
+		// config, which carries no positions, so the mapping back to the file
+		// has to happen against the file itself.
+		source, filename, readErr := compose.ReadFile(workDir, composeFile, 0)
+		if readErr != nil {
+			// The lint itself succeeded, so return it without the preview
+			// rather than discarding a perfectly good report.
+			log.Printf("[lint] report ready but source unreadable for repo %s: %v", body.Repository, readErr)
+			return e.JSON(http.StatusOK, map[string]any{"report": report})
+		}
+
+		report.Findings = lint.ResolveLines(source, report.Findings)
+
+		return e.JSON(http.StatusOK, map[string]any{
+			"report":   report,
+			"content":  string(source),
+			"filename": filename,
+		})
 	}).Bind(apis.BodyLimit(lintRequestMaxBytes)).BindFunc(rbac.Require(rbac.CapManageRepos))
 }
