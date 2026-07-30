@@ -303,7 +303,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	// --- lint ---
 	// Advisory only: the report is recorded on the deploy timeline but never
 	// aborts the reconcile. See lintCompose.
-	lintRes := r.lintCompose(ctx, workDir, composeFile, workerID, envVars)
+	lintRes := r.lintCompose(ctx, containmentRootFor(repo, workDir), workDir, composeFile, workerID, envVars)
 	if lintRes.err != nil {
 		log.Printf("[reconciler] lint skipped for stack %s: %v", stackID, lintRes.err)
 	} else if len(lintRes.report.Findings) > 0 {

@@ -63,6 +63,28 @@ func NewRenderer(app core.App) *Renderer {
 	}
 }
 
+// containmentRootFor returns the directory the compose file must resolve
+// inside once symlinks are followed.
+//
+// The repository checkout is the right boundary when workDir is under it: the
+// stack's compose_path is user-supplied, so the directory has to be contained
+// as well as the file. But workDir does not always live there — a local-source
+// stack renders from a temporary directory, and tests render from a fixture
+// dir — so fall back to workDir itself rather than rejecting those outright.
+// Either way the compose file cannot be a symlink pointing out of the tree it
+// was found in, which is the vector that matters.
+func containmentRootFor(repo *core.Record, workDir string) string {
+	if repo == nil {
+		return workDir
+	}
+	repoDir := filepath.Join(config.GetReposWorkspace(), repo.Id)
+	cleanWork := filepath.Clean(workDir)
+	if cleanWork == repoDir || strings.HasPrefix(cleanWork, repoDir+string(filepath.Separator)) {
+		return repoDir
+	}
+	return workDir
+}
+
 // GenerateRevision runs docker compose config, injects labels, computes the checksum, and saves v<N>.yml
 func (r *Renderer) GenerateRevision(
 	ctx context.Context,
@@ -91,11 +113,12 @@ func (r *Renderer) GenerateRevision(
 		branch = "main"
 	}
 
-	// 1. Get current compose config as JSON
+	// 1. Get current compose config as JSON.
 	configOut, err := compose.Config(ctx, compose.ConfigOptions{
 		WorkDir:     workDir,
 		ComposeFile: composeFile,
 		EnvVars:     envVars,
+		Root:        containmentRootFor(repo, workDir),
 	}, true)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get compose config: %w", err)

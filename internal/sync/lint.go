@@ -58,7 +58,7 @@ func recordLintPhase(pt *phaseTracker, res lintResult) {
 // config` output costs one extra CLI invocation (a client-side parse, no
 // daemon) and buys a report of the file as committed, before wireops injects
 // its own labels into it.
-func (r *Reconciler) lintCompose(ctx context.Context, workDir, composeFile, workerID string, envVars []string) lintResult {
+func (r *Reconciler) lintCompose(ctx context.Context, root, workDir, composeFile, workerID string, envVars []string) lintResult {
 	res := lintResult{started: time.Now()}
 	defer func() { res.duration = time.Since(res.started).Milliseconds() }()
 
@@ -66,6 +66,7 @@ func (r *Reconciler) lintCompose(ctx context.Context, workDir, composeFile, work
 		WorkDir:     workDir,
 		ComposeFile: composeFile,
 		EnvVars:     envVars,
+		Root:        root,
 	}, true)
 	if err != nil {
 		res.err = err

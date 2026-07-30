@@ -99,3 +99,97 @@ func TestConfigDefaultsToTheConfiguredLimit(t *testing.T) {
 		t.Fatalf("error = %v, want ErrOutputTooLarge from the configured default", err)
 	}
 }
+
+// TestReadFileRefusesASymlinkedComposeFile is the vector that the string-level
+// path validation cannot see. A repository can ship a compose file that is a
+// symlink — git preserves mode 120000 on checkout — and its name still passes
+// every extension and traversal check, because the check constrains the link's
+// name and not its target. Since ReadFile's bytes are returned to API callers,
+// following it would be an arbitrary file read.
+func TestReadFileRefusesASymlinkedComposeFile(t *testing.T) {
+	base := t.TempDir()
+	repo := filepath.Join(base, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	secret := filepath.Join(base, "outside-secret.yml")
+	if err := os.WriteFile(secret, []byte("SECRET=leaked"), 0o600); err != nil {
+		t.Fatalf("write secret: %v", err)
+	}
+	if err := os.Symlink(secret, filepath.Join(repo, "docker-compose.yml")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	data, _, err := ReadFile(repo, repo, "docker-compose.yml", 0)
+	if err == nil {
+		t.Fatalf("ReadFile followed the symlink and returned %q, want it rejected", data)
+	}
+	if strings.Contains(string(data), "leaked") {
+		t.Fatal("ReadFile leaked the contents of a file outside the repository")
+	}
+}
+
+// TestReadFileRefusesAComposePathSymlinkedOutOfTheRoot covers the directory
+// form: compose_path names a directory inside the repo that is itself a link.
+func TestReadFileRefusesAComposePathSymlinkedOutOfTheRoot(t *testing.T) {
+	base := t.TempDir()
+	repo := filepath.Join(base, "repo")
+	outside := filepath.Join(base, "outside")
+	for _, dir := range []string{repo, outside} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(outside, "docker-compose.yml"), []byte("SECRET=leaked"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(repo, "escape")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	// Root is the repo checkout; workDir is repo/escape, which is what a
+	// compose_path of "escape" resolves to in the lint route.
+	data, _, err := ReadFile(repo, filepath.Join(repo, "escape"), "docker-compose.yml", 0)
+	if err == nil {
+		t.Fatalf("ReadFile followed a symlinked directory and returned %q, want it rejected", data)
+	}
+}
+
+// TestReadFileReadsARegularFileInsideTheRepo is the positive counterpart —
+// containment must not break the ordinary case.
+func TestReadFileReadsARegularFileInsideTheRepo(t *testing.T) {
+	repo := t.TempDir()
+	want := "services:\n  web:\n    image: nginx:1.25\n"
+	if err := os.WriteFile(filepath.Join(repo, "docker-compose.yml"), []byte(want), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	data, name, err := ReadFile(repo, repo, "docker-compose.yml", 0)
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+	if string(data) != want {
+		t.Errorf("content = %q, want %q", data, want)
+	}
+	if name != "docker-compose.yml" {
+		t.Errorf("filename = %q, want docker-compose.yml", name)
+	}
+}
+
+// TestResolveFileFallsBackToComposeYml keeps the documented fallback working
+// now that resolution goes through the containment check.
+func TestResolveFileFallsBackToComposeYml(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, "compose.yml"), []byte("services: {}"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	got, err := ResolveFile(repo, repo, "docker-compose.yml")
+	if err != nil {
+		t.Fatalf("ResolveFile failed: %v", err)
+	}
+	if got != "compose.yml" {
+		t.Errorf("ResolveFile = %q, want compose.yml", got)
+	}
+}

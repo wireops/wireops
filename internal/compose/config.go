@@ -12,6 +12,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/wireops/wireops/internal/config"
+	"github.com/wireops/wireops/internal/safepath"
 )
 
 // ConfigOptions represents options for `docker compose config`
@@ -23,6 +24,12 @@ type ConfigOptions struct {
 	// parse. Zero means "use config.GetComposeMaxBytes()", which is what
 	// every caller wants — set it explicitly only in tests.
 	MaxOutputBytes int64
+	// Root is the directory the compose file must resolve inside once
+	// symlinks are followed. Empty means WorkDir, so a compose file can
+	// never escape its own directory even when a caller forgets to set it.
+	// Callers whose WorkDir is itself built from request input should set
+	// this to the repository workspace.
+	Root string
 }
 
 // maxStderrBytes caps the diagnostic output kept from a failed run. It is
@@ -31,34 +38,61 @@ type ConfigOptions struct {
 // through it.
 const maxStderrBytes = 64 << 10
 
+// containmentRoot returns the directory a compose file must resolve inside.
+//
+// Defaulting to workDir rather than to "unchecked" is deliberate: a caller
+// that forgets to set Root still gets a file that cannot escape its own
+// working directory via a symlink. Callers whose workDir is itself derived
+// from request input (the lint route's compose_path) pass the repository
+// workspace instead, so the directory cannot escape either.
+func containmentRoot(root, workDir string) string {
+	if root == "" {
+		return workDir
+	}
+	return root
+}
+
 // ResolveFile returns the compose filename Config would actually use inside
 // workDir, applying the same "docker-compose.yml, else compose.yml" fallback.
+//
+// The candidate is resolved through safepath.ResolveContained before being
+// stat'd, so a repository whose docker-compose.yml is a symlink pointing
+// outside root is rejected rather than followed. Repository content is
+// attacker-influenced — git preserves symlinks on checkout — and the ".yml"
+// extension check constrains the link's name, never its target.
 //
 // Exported so that callers wanting to show the source alongside the resolved
 // config — the create-stack lint preview — read the very file that was linted,
 // rather than guessing and risking showing one file while reporting on another.
-func ResolveFile(workDir, composeFile string) (string, error) {
+func ResolveFile(root, workDir, composeFile string) (string, error) {
 	if composeFile == "" {
 		composeFile = "docker-compose.yml"
 	}
+	root = containmentRoot(root, workDir)
 
-	fullPath := filepath.Join(workDir, composeFile)
-	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
-		altFile := "compose.yml"
-		altPath := filepath.Join(workDir, altFile)
-		if _, err2 := os.Stat(altPath); os.IsNotExist(err2) {
-			return "", fmt.Errorf("compose file not found in %s", workDir)
+	for _, candidate := range []string{composeFile, "compose.yml"} {
+		full, err := safepath.ResolveContained(root, filepath.Join(workDir, candidate))
+		if err != nil {
+			// Either it escapes the root or it cannot be resolved; in both
+			// cases this candidate is unusable. Try the fallback name.
+			continue
 		}
-		composeFile = altFile
+		if _, err := os.Stat(full); err == nil {
+			return candidate, nil
+		}
 	}
-	return composeFile, nil
+	return "", fmt.Errorf("compose file not found in %s", workDir)
 }
 
 // ReadFile returns the raw bytes of the compose file Config would use, bounded
 // by the same limit that applies to a resolved config so a large file cannot
 // be read into memory just because it is being previewed.
-func ReadFile(workDir, composeFile string, maxBytes int64) ([]byte, string, error) {
-	resolved, err := ResolveFile(workDir, composeFile)
+//
+// The path is symlink-resolved and containment-checked before being opened —
+// this content is returned to API callers, so following a symlink out of the
+// repository would be an arbitrary file read.
+func ReadFile(root, workDir, composeFile string, maxBytes int64) ([]byte, string, error) {
+	resolved, err := ResolveFile(root, workDir, composeFile)
 	if err != nil {
 		return nil, "", err
 	}
@@ -66,10 +100,17 @@ func ReadFile(workDir, composeFile string, maxBytes int64) ([]byte, string, erro
 		maxBytes = config.GetComposeMaxBytes()
 	}
 
-	path := filepath.Join(workDir, resolved)
+	path, err := safepath.ResolveContained(containmentRoot(root, workDir), filepath.Join(workDir, resolved))
+	if err != nil {
+		return nil, "", fmt.Errorf("compose file is not readable from this repository: %w", err)
+	}
+
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, "", fmt.Errorf("compose file not readable: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, "", fmt.Errorf("compose file %s is not a regular file", resolved)
 	}
 	if info.Size() > maxBytes {
 		return nil, "", fmt.Errorf("compose file %s is %d bytes, over the %d byte limit (raise COMPOSE_MAX_KB if this is legitimate): %w",
@@ -90,7 +131,7 @@ func ReadFile(workDir, composeFile string, maxBytes int64) ([]byte, string, erro
 
 // Config runs `docker compose config` and returns the output, optionally formatted as JSON.
 func Config(ctx context.Context, opts ConfigOptions, formatJSON bool) (string, error) {
-	composeFile, err := ResolveFile(opts.WorkDir, opts.ComposeFile)
+	composeFile, err := ResolveFile(opts.Root, opts.WorkDir, opts.ComposeFile)
 	if err != nil {
 		return "", err
 	}

@@ -182,9 +182,13 @@ func (rr routeRegistrar) registerLintRoutes() {
 			workDir = filepath.Join(repoDir, filepath.Clean(body.ComposePath))
 		}
 
+		// Root is the repo checkout, not workDir: compose_path is request
+		// input, so the directory has to be contained too, not just the file
+		// inside it.
 		configOut, err := compose.Config(reqCtx, compose.ConfigOptions{
 			WorkDir:     workDir,
 			ComposeFile: composeFile,
+			Root:        repoDir,
 		}, true)
 		if err != nil {
 			// A compose file that will not even parse is the most useful
@@ -213,7 +217,7 @@ func (rr routeRegistrar) registerLintRoutes() {
 		// each finding a line number: the rules run against the resolved
 		// config, which carries no positions, so the mapping back to the file
 		// has to happen against the file itself.
-		source, filename, readErr := compose.ReadFile(workDir, composeFile, 0)
+		source, filename, readErr := compose.ReadFile(repoDir, workDir, composeFile, 0)
 		if readErr != nil {
 			// The lint itself succeeded, so return it without the preview
 			// rather than discarding a perfectly good report.
