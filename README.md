@@ -214,12 +214,6 @@ npm run dev
 
 ## Backlog / Future Enhancements
 
-### 🎓 Onboarding Experience
-- Interactive tour for first-time users
-- Step-by-step wizard for stack creation
-- Better empty states with actionable CTAs
-- Preview compose file before creating stack
-
 ### 📋 Logs & Debugging
 - Advanced log viewer with syntax highlighting
 - Search/filter within logs
