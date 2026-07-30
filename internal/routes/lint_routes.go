@@ -1,18 +1,71 @@
 package routes
 
 import (
+	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"path/filepath"
+	"strings"
+	"time"
 
+	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
 
 	"github.com/wireops/wireops/internal/compose"
+	"github.com/wireops/wireops/internal/config"
 	"github.com/wireops/wireops/internal/lint"
 	"github.com/wireops/wireops/internal/policy"
 	"github.com/wireops/wireops/internal/rbac"
 	"github.com/wireops/wireops/internal/safepath"
 )
+
+const (
+	// lintTimeout bounds one lint request end to end: the repository
+	// clone/fetch plus the `docker compose config` subprocess.
+	lintTimeout = 2 * time.Minute
+
+	// lintRequestMaxBytes caps the request body. The payload is four short
+	// identifiers, so anything larger is either a mistake or an attempt to
+	// make the server buffer a large body.
+	lintRequestMaxBytes = 16 << 10
+)
+
+// composeErrorForClient turns a `docker compose config` failure into a message
+// safe to hand back over the API.
+//
+// The diagnostic itself is what makes this endpoint useful — "yaml: line 4,
+// column 12: mapping values are not allowed" tells the author exactly what to
+// fix — so it is preserved rather than replaced with something generic. What
+// is stripped is the server's own filesystem layout: these errors embed the
+// absolute repo workspace path, both directly ("compose file not found in
+// /data/repos/<id>/svc") and inside the CLI's stderr ("open /data/repos/...").
+// The unredacted detail is logged so an operator can still debug server-side.
+func composeErrorForClient(e *core.RequestEvent, stage, repoID string, err error) string {
+	actor := ""
+	if e != nil && e.Auth != nil {
+		actor = e.Auth.Id
+	}
+	log.Printf("[lint] failed to %s compose config for repo %s (actor=%s): %v", stage, repoID, actor, err)
+
+	return "failed to " + stage + " compose config: " + redactWorkspacePaths(err.Error())
+}
+
+// redactWorkspacePaths rewrites absolute paths under the repository workspace
+// to a repo-relative form, so an error can be shown to the caller without
+// describing where the server keeps its data.
+func redactWorkspacePaths(msg string) string {
+	workspace := config.GetReposWorkspace()
+	if workspace == "" {
+		return msg
+	}
+	// "<workspace>/<repo-id>/svc/x.yml" becomes "<repos>/<repo-id>/svc/x.yml":
+	// the repo id is the caller's own input, so only the server-side root is
+	// worth hiding. Handles the trailing-separator form first so the bare
+	// replacement below cannot leave a doubled slash.
+	msg = strings.ReplaceAll(msg, strings.TrimSuffix(workspace, string(filepath.Separator))+string(filepath.Separator), "<repos>/")
+	return strings.ReplaceAll(msg, workspace, "<repos>")
+}
 
 // lintComposeRequest points the linter at a compose file in a repository.
 //
@@ -61,6 +114,63 @@ func (rr routeRegistrar) registerLintRoutes() {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 		}
 
+		// Every request here does real work — a git clone/fetch plus a
+		// `docker compose config` subprocess — so bound it rather than
+		// letting a slow remote or a pathological repo hold a handler (and
+		// its child process) open for as long as the client keeps the
+		// connection.
+		reqCtx, cancel := context.WithTimeout(e.Request.Context(), lintTimeout)
+		defer cancel()
+
+		// Everything that can reject the request is resolved before the git
+		// clone/fetch below. A request that is going to be refused must not
+		// first cost the server a network round trip to a remote it was never
+		// entitled to reach on that caller's behalf.
+		if _, err := rr.app.FindRecordById("repositories", body.Repository); err != nil {
+			return e.JSON(http.StatusNotFound, map[string]string{"error": "repository not found"})
+		}
+
+		ctx := lint.Context{}
+
+		// An unknown worker must be rejected rather than silently falling back
+		// to the global policy: policy.Load returns the global policy for a
+		// worker it cannot find, which would report "no policy violations" for
+		// a worker whose policy was never actually consulted.
+		if body.Worker != "" {
+			if _, err := rr.app.FindRecordById("workers", body.Worker); err != nil {
+				return e.JSON(http.StatusBadRequest, map[string]string{"error": "worker not found"})
+			}
+			wp, err := policy.Load(rr.app, body.Worker)
+			if err != nil {
+				return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to load worker policy"})
+			}
+			ctx.Policy = wp
+		}
+
+		// The stack must belong to the repository being linted. Without that
+		// check any caller could point this at an unrelated stack and use the
+		// undefined-variable rule as an oracle — a compose file referencing
+		// ${FOO} reports a finding only when the stack does not define FOO,
+		// which enumerates another stack's variable names one at a time. It
+		// would also make this route resolve that stack's secrets (Vault /
+		// Infisical fetches) as a side effect.
+		if body.Stack != "" {
+			stack, err := rr.app.FindRecordById("stacks", body.Stack)
+			if err != nil {
+				return e.JSON(http.StatusNotFound, map[string]string{"error": "stack not found"})
+			}
+			if stack.GetString("repository") != body.Repository {
+				return e.JSON(http.StatusBadRequest, map[string]string{"error": "stack does not belong to the given repository"})
+			}
+			if rr.scheduler != nil {
+				envVars, err := rr.scheduler.LoadStackEnvVars(reqCtx, body.Stack)
+				if err != nil {
+					return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to resolve stack environment variables"})
+				}
+				ctx.EnvKeys = lint.EnvKeysFromPairs(envVars)
+			}
+		}
+
 		// Clones or fetches the repo, so the lint reflects the branch's
 		// current head rather than whatever was last synced.
 		repoDir, ok := rr.repoFilesSetupByID(e, body.Repository)
@@ -72,24 +182,7 @@ func (rr routeRegistrar) registerLintRoutes() {
 			workDir = filepath.Join(repoDir, filepath.Clean(body.ComposePath))
 		}
 
-		ctx := lint.Context{}
-
-		// A worker whose policy cannot be loaded still gets an advisory
-		// report — better than failing the whole request over it.
-		if body.Worker != "" {
-			wp, err := policy.Load(rr.app, body.Worker)
-			if err == nil {
-				ctx.Policy = wp
-			}
-		}
-
-		if body.Stack != "" && rr.scheduler != nil {
-			if envVars, err := rr.scheduler.LoadStackEnvVars(e.Request.Context(), body.Stack); err == nil {
-				ctx.EnvKeys = lint.EnvKeysFromPairs(envVars)
-			}
-		}
-
-		configOut, err := compose.Config(e.Request.Context(), compose.ConfigOptions{
+		configOut, err := compose.Config(reqCtx, compose.ConfigOptions{
 			WorkDir:     workDir,
 			ComposeFile: composeFile,
 		}, true)
@@ -102,7 +195,7 @@ func (rr routeRegistrar) registerLintRoutes() {
 			// failure regardless of status.
 			return e.JSON(http.StatusOK, map[string]any{
 				"report":       lint.Report{Findings: []lint.Finding{}},
-				"config_error": "failed to resolve compose config: " + err.Error(),
+				"config_error": composeErrorForClient(e, "resolve", body.Repository, err),
 			})
 		}
 
@@ -110,10 +203,10 @@ func (rr routeRegistrar) registerLintRoutes() {
 		if err != nil {
 			return e.JSON(http.StatusOK, map[string]any{
 				"report":       lint.Report{Findings: []lint.Finding{}},
-				"config_error": "failed to parse compose config: " + err.Error(),
+				"config_error": composeErrorForClient(e, "parse", body.Repository, err),
 			})
 		}
 
 		return e.JSON(http.StatusOK, map[string]any{"report": lint.Run(configMap, ctx)})
-	}).BindFunc(rbac.Require(rbac.CapManageRepos))
+	}).Bind(apis.BodyLimit(lintRequestMaxBytes)).BindFunc(rbac.Require(rbac.CapManageRepos))
 }
