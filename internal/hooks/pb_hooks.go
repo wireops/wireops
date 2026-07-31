@@ -24,13 +24,16 @@ import (
 
 	"github.com/wireops/wireops/internal/audit"
 	"github.com/wireops/wireops/internal/backup"
+	"github.com/wireops/wireops/internal/compose"
 	"github.com/wireops/wireops/internal/config"
 	"github.com/wireops/wireops/internal/crypto"
 	"github.com/wireops/wireops/internal/git"
 	"github.com/wireops/wireops/internal/jobscheduler"
+	"github.com/wireops/wireops/internal/lint"
 	"github.com/wireops/wireops/internal/logstream"
 	"github.com/wireops/wireops/internal/notify"
 	"github.com/wireops/wireops/internal/oidc"
+	"github.com/wireops/wireops/internal/policy"
 	"github.com/wireops/wireops/internal/rbac"
 	"github.com/wireops/wireops/internal/safepath"
 	"github.com/wireops/wireops/internal/secrets"
@@ -354,8 +357,77 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 		return nil
 	}
 
+	// rejectStackOnLintErrors mirrors the deploy-time check in
+	// internal/sync/renderer.go's GenerateRevision: a stack whose compose file
+	// already has error-severity lint findings must not be created at all, not
+	// just fail its first deploy. It only checks what is already on disk —
+	// creation does not itself clone the repository, and by this point in the
+	// create-stack wizard (both the wireops.yaml and manual paths resolve the
+	// file list first) it normally already is. When it is not (repo never
+	// fetched, compose file unresolvable), this stays silent and lets the
+	// first sync's own render-time check catch it instead of blocking creation
+	// on an infrastructure concern unrelated to the compose file's content.
+	rejectStackOnLintErrors := func(app core.App, rec *core.Record) error {
+		repoID := rec.GetString("repository")
+		composeFileName := rec.GetString("compose_file")
+		if repoID == "" || composeFileName == "" {
+			return nil
+		}
+		if err := safepath.ValidateComposeFile(composeFileName); err != nil {
+			return nil
+		}
+		composePath := rec.GetString("compose_path")
+		if err := safepath.ValidateComposePath(composePath); err != nil {
+			return nil
+		}
+
+		repoDir := filepath.Join(config.GetReposWorkspace(), repoID)
+		if info, err := os.Stat(repoDir); err != nil || !info.IsDir() {
+			return nil
+		}
+		workDir := repoDir
+		if composePath != "" && composePath != "." {
+			workDir = filepath.Join(repoDir, filepath.Clean(composePath))
+		}
+
+		configOut, err := compose.Config(context.Background(), compose.ConfigOptions{
+			WorkDir:     workDir,
+			ComposeFile: composeFileName,
+			Root:        repoDir,
+		}, true)
+		if err != nil {
+			return nil
+		}
+		configMap, err := compose.ParseConfigJSON(configOut)
+		if err != nil {
+			return nil
+		}
+
+		lintCtx := lint.Context{RepoRoot: repoDir}
+		if workerID := rec.GetString("worker"); workerID != "" {
+			if wp, err := policy.Load(app, workerID); err == nil {
+				lintCtx.Policy = wp
+			}
+		}
+
+		report := lint.Run(configMap, lintCtx)
+		if !report.HasErrors() {
+			return nil
+		}
+		var msgs []string
+		for _, f := range report.Findings {
+			if f.Severity == lint.SeverityError {
+				msgs = append(msgs, f.Message)
+			}
+		}
+		return fmt.Errorf("compose file failed static checks: %s", strings.Join(msgs, "; "))
+	}
+
 	app.OnRecordCreate("stacks").BindFunc(func(e *core.RecordEvent) error {
 		if err := validateAssignedWorker(e.Record); err != nil {
+			return err
+		}
+		if err := rejectStackOnLintErrors(e.App, e.Record); err != nil {
 			return err
 		}
 		if err := encryptField(e.Record, "webhook_secret", secretKey); err != nil {

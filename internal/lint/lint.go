@@ -21,8 +21,12 @@
 // and reported at error severity, so a lint report is a superset of what the
 // deploy-time policy check would reject.
 //
-// Lint is advisory: nothing in this package decides whether a deploy proceeds.
-// Enforcement stays where it already lives, in the renderer's policy check.
+// This package itself makes no enforcement decision — Run always returns
+// every finding regardless of severity. Callers decide what to do with the
+// result: the deploy-time renderer (internal/sync/renderer.go) and stack
+// creation (internal/routes) both refuse to proceed when the report has any
+// error-severity finding; other callers, such as the compose lint preview
+// route, surface the same report purely as advice.
 package lint
 
 import (
@@ -44,12 +48,41 @@ const (
 	SeverityInfo    Severity = "info"
 )
 
+// Rule IDs, one constant per Register call across the rules_*.go files.
+// Using the constant at both the Register call site and in ruleTitles keeps
+// the two from drifting apart — a typo in a raw string literal on either side
+// would otherwise silently produce an untitled or duplicate rule.
+const (
+	RuleLatestTag                  = "compose/latest-tag"
+	RuleNoRestartPolicy            = "compose/no-restart-policy"
+	RuleNoHealthcheck              = "compose/no-healthcheck"
+	RuleNoResourceLimits           = "compose/no-resource-limits"
+	RulePublishedPortAllInterfaces = "compose/published-port-all-interfaces"
+	RulePlaintextSecret            = "compose/plaintext-secret"
+	RuleRelativeBindMount          = "compose/relative-bind-mount"
+	RulePrivileged                 = "compose/privileged"
+	RuleHostNamespace              = "compose/host-namespace"
+	RuleDockerSocket               = "compose/docker-socket"
+	RuleNoServices                 = "compose/no-services"
+	RuleMissingImage               = "compose/missing-image"
+	RuleUndeclaredNetwork          = "compose/undeclared-network"
+	RuleUndeclaredVolume           = "compose/undeclared-volume"
+	RuleUnresolvedVariable         = "compose/unresolved-variable"
+	RuleObsoleteVersionKey         = "compose/obsolete-version-key"
+	RulePolicyWorkerPolicy         = "policy/worker-policy"
+)
+
 // Finding is a single problem found in a compose config.
 type Finding struct {
 	// Rule is the stable identifier of the check that produced this finding,
 	// namespaced by source: "compose/..." for built-in checks, "policy/..."
 	// for worker-policy breaches.
-	Rule     string   `json:"rule"`
+	Rule string `json:"rule"`
+	// Title is a short, human-readable label for the rule (e.g. "Undeclared
+	// network"), for surfaces that show findings as cards rather than a flat
+	// list. Rules leave it unset; Run fills it in from ruleTitles so there is
+	// one place to update when a rule's wording changes.
+	Title    string   `json:"title"`
 	Severity Severity `json:"severity"`
 	// Service is the compose service the finding belongs to, empty for
 	// findings about the file as a whole.
@@ -239,6 +272,64 @@ func EnvKeysFromPairs(pairs []string) map[string]bool {
 	return keys
 }
 
+// ruleTitles maps a rule ID to the short label shown on its finding cards.
+// This is the single place to update when a rule's wording changes — add an
+// entry here alongside the Register call in the rule's file. Anything left
+// unmapped (a rule someone forgets to add, or a future one) falls back to
+// humanizeRule instead of rendering blank.
+var ruleTitles = map[string]string{
+	RuleLatestTag:                       "Unpinned image tag",
+	RuleNoRestartPolicy:                 "No restart policy",
+	RuleNoHealthcheck:                   "No healthcheck",
+	RuleNoResourceLimits:                "No resource limits",
+	RulePublishedPortAllInterfaces:      "Port published on all interfaces",
+	RulePlaintextSecret:                 "Plaintext secret",
+	RuleRelativeBindMount:               "Relative bind mount",
+	RulePrivileged:                      "Privileged container",
+	RuleHostNamespace:                   "Host namespace shared",
+	RuleDockerSocket:                    "Docker socket mounted",
+	RuleNoServices:                      "No services defined",
+	RuleMissingImage:                    "Missing image",
+	RuleUndeclaredNetwork:               "Undeclared network",
+	RuleUndeclaredVolume:                "Undeclared volume",
+	RuleUnresolvedVariable:              "Unresolved variable",
+	RuleObsoleteVersionKey:              "Obsolete version key",
+	"policy/" + policyCheckImages:       "Image blocked by policy",
+	"policy/" + policyCheckVolumes:      "Volume blocked by policy",
+	"policy/" + policyCheckNetworks:     "Network blocked by policy",
+	"policy/" + policyCheckPrivileged:   "Privileged blocked by policy",
+	"policy/" + policyCheckHostNetwork:  "Host network blocked by policy",
+	"policy/" + policyCheckHostPID:      "Host PID blocked by policy",
+	"policy/" + policyCheckHostIPC:      "Host IPC blocked by policy",
+	"policy/" + policyCheckDockerSocket: "Docker socket blocked by policy",
+	"policy/" + policyCheckCapAdd:       "Capability addition blocked by policy",
+	"policy/" + policyCheckDevices:      "Device mount blocked by policy",
+	"policy/" + policyCheckSecurityOpt:  "Security option blocked by policy",
+}
+
+// titleForRule looks up a rule's card title, humanizing the rule ID itself
+// when it is not in ruleTitles.
+func titleForRule(rule string) string {
+	if title, ok := ruleTitles[rule]; ok {
+		return title
+	}
+	return humanizeRule(rule)
+}
+
+// humanizeRule turns a rule ID's suffix (the part after the last "/") into a
+// sentence-cased label, e.g. "compose/some-new-rule" -> "Some new rule".
+func humanizeRule(rule string) string {
+	slug := rule
+	if idx := strings.LastIndex(rule, "/"); idx != -1 {
+		slug = rule[idx+1:]
+	}
+	words := strings.NewReplacer("-", " ", "_", " ").Replace(slug)
+	if words == "" {
+		return words
+	}
+	return strings.ToUpper(words[:1]) + words[1:]
+}
+
 // severityRank orders severities most-serious-first for report sorting.
 func severityRank(s Severity) int {
 	switch s {
@@ -268,6 +359,9 @@ func Run(raw map[string]interface{}, ctx Context) Report {
 		for _, f := range rule.Check(cfg, ctx) {
 			if f.Rule == "" {
 				f.Rule = rule.ID()
+			}
+			if f.Title == "" {
+				f.Title = titleForRule(f.Rule)
 			}
 			report.Findings = append(report.Findings, f)
 			switch f.Severity {

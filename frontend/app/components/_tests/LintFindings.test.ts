@@ -27,6 +27,23 @@ const stubs = {
       return () => h('span', { class: 'icon', 'data-name': props.name })
     },
   },
+  // Renders every item's header + body unconditionally, standing in for
+  // reka-ui's real collapsible state so groups are inspectable without
+  // simulating expand/collapse.
+  UAccordion: {
+    props: ['items'],
+    setup(props: { items?: { label?: string }[] }, { slots }: { slots: Record<string, (arg: unknown) => unknown> }) {
+      return () => h('div', { class: 'accordion' }, (props.items || []).map((item, index) =>
+        h('div', { class: 'accordion-item', key: index }, [
+          h('div', { class: 'accordion-trigger' }, [
+            slots.leading?.({ item }),
+            item.label,
+          ]),
+          h('div', { class: 'accordion-body' }, slots.body?.({ item })),
+        ]),
+      ))
+    },
+  },
 }
 
 function mountFindings(props: Record<string, unknown>) {
@@ -68,6 +85,7 @@ describe('LintFindings', () => {
         findings: [
           {
             rule: 'policy/images',
+            title: 'Image blocked by policy',
             severity: 'error',
             service: 'web',
             path: 'services.web.image',
@@ -76,6 +94,7 @@ describe('LintFindings', () => {
           },
           {
             rule: 'compose/no-restart-policy',
+            title: 'No restart policy',
             severity: 'warning',
             service: 'db',
             path: 'services.db.restart',
@@ -90,14 +109,15 @@ describe('LintFindings', () => {
 
     const items = wrapper.findAll('li')
     expect(items).toHaveLength(2)
+    expect(items[0]!.text()).toContain('Image blocked by policy')
     expect(items[0]!.text()).toContain('uses :latest')
     expect(items[0]!.text()).toContain('deploy policy')
-    expect(items[0]!.text()).toContain('policy/images')
-    expect(items[0]!.text()).toContain('services.web.image')
-    expect(items[1]!.text()).toContain('no restart policy')
+    expect(items[0]!.text()).not.toContain('policy/images')
+    expect(items[0]!.text()).not.toContain('services.web.image')
+    expect(items[1]!.text()).toContain('No restart policy')
   })
 
-  it('summarises counts as badges, omitting severities with none', () => {
+  it('groups findings into one accordion section per severity, omitting severities with none', () => {
     const wrapper = mountFindings({
       report: {
         findings: [
@@ -111,10 +131,16 @@ describe('LintFindings', () => {
       },
     })
 
-    const badges = wrapper.findAll('.badge').map(b => b.text())
-    expect(badges).toContain('2 warnings')
-    expect(badges).toContain('1 info')
-    expect(badges.some(b => b.includes('error'))).toBe(false)
+    const groups = wrapper.findAll('.accordion-item')
+    expect(groups).toHaveLength(2)
+
+    const triggers = wrapper.findAll('.accordion-trigger').map(t => t.text())
+    expect(triggers).toContain('2 warnings')
+    expect(triggers).toContain('1 info')
+    expect(triggers.some(t => t.includes('error'))).toBe(false)
+
+    const warningGroup = groups.find(g => g.text().startsWith('2 warnings'))!
+    expect(warningGroup.findAll('li')).toHaveLength(2)
   })
 
   it('makes findings with a line keyboard-operable, and leaves the rest inert', async () => {

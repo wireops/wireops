@@ -34,10 +34,13 @@ func (l lintResult) detail() string {
 
 // recordLintPhase writes the lint phase's sync_log_phases row.
 //
-// The status is always success or skipped, never error: lint findings —
-// including the error-severity ones mirrored from the worker policy — do not
-// fail a deploy, and a red step on the timeline would say they did. The
-// counts live in the detail line instead.
+// The status here is always success or skipped, never error: this run is
+// only for the timeline's phase detail and does not itself decide whether
+// the deploy proceeds — a red *lint* step would say it did. When there are
+// error-severity findings the deploy is still blocked, just by the *render*
+// phase instead: GenerateRevision runs its own lint.Run over the
+// fully-resolved config (after overrides) and fails if that one has errors.
+// The counts here live in the detail line rather than the status.
 func recordLintPhase(pt *phaseTracker, res lintResult) {
 	if res.err != nil {
 		_ = pt.recordSkipped(constants.PhaseLint, res.detail())
@@ -47,12 +50,13 @@ func recordLintPhase(pt *phaseTracker, res lintResult) {
 }
 
 // lintCompose runs the static compose checks for a stack about to be
-// reconciled, between the git fetch and the render.
+// reconciled, between the git fetch and the render, purely to populate the
+// deploy timeline's lint phase early.
 //
-// It is advisory and never decides whether the deploy proceeds. Policy
-// enforcement stays in the renderer, which validates the config after applying
-// render overrides — lint runs before that and would otherwise reject a stack
-// whose override fixes the very violation it flagged.
+// This run itself never decides whether the deploy proceeds — it runs before
+// render overrides are applied and would otherwise reject a stack whose
+// override fixes the very violation it flagged. GenerateRevision runs the
+// check that actually gates the deploy, over the post-override config.
 //
 // Running it here rather than reusing the renderer's own `docker compose
 // config` output costs one extra CLI invocation (a client-side parse, no

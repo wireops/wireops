@@ -11,16 +11,16 @@ import (
 )
 
 func init() {
-	Register("compose/latest-tag", ruleLatestTag)
-	Register("compose/no-restart-policy", ruleNoRestartPolicy)
-	Register("compose/no-healthcheck", ruleNoHealthcheck)
-	Register("compose/no-resource-limits", ruleNoResourceLimits)
-	Register("compose/published-port-all-interfaces", rulePublishedPortAllInterfaces)
-	Register("compose/plaintext-secret", rulePlaintextSecret)
-	Register("compose/relative-bind-mount", ruleRelativeBindMount)
-	Register("compose/privileged", rulePrivileged)
-	Register("compose/host-namespace", ruleHostNamespace)
-	Register("compose/docker-socket", ruleDockerSocket)
+	Register(RuleLatestTag, ruleLatestTag)
+	Register(RuleNoRestartPolicy, ruleNoRestartPolicy)
+	Register(RuleNoHealthcheck, ruleNoHealthcheck)
+	Register(RuleNoResourceLimits, ruleNoResourceLimits)
+	Register(RulePublishedPortAllInterfaces, rulePublishedPortAllInterfaces)
+	Register(RulePlaintextSecret, rulePlaintextSecret)
+	Register(RuleRelativeBindMount, ruleRelativeBindMount)
+	Register(RulePrivileged, rulePrivileged)
+	Register(RuleHostNamespace, ruleHostNamespace)
+	Register(RuleDockerSocket, ruleDockerSocket)
 }
 
 // ruleLatestTag flags images that are unpinned, which makes a deploy

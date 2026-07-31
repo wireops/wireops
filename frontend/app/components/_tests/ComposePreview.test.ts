@@ -1,7 +1,11 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { h } from 'vue'
 import ComposePreview from '../ComposePreview.vue'
+
+beforeEach(() => {
+  ;(globalThis as any).useColorMode = () => ({ value: 'light', preference: 'light' })
+})
 
 // Stubs use setup() + h() rather than template HTML strings — Codacy flags
 // inline HTML-string stubs as XSS even in test-only code.

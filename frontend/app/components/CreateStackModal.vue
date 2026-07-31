@@ -44,7 +44,7 @@ const form = ref(defaultForm())
 const repoFiles = ref<string[]>([])
 const loadingFiles = ref(false)
 const saving = ref(false)
-const createErrors = ref<{ worker?: string; compose_path?: string; compose_file?: string; selected_file?: string; wireops_file?: string }>({})
+const createErrors = ref<{ worker?: string; compose_path?: string; compose_file?: string; selected_file?: string; wireops_file?: string; lint?: string }>({})
 
 const wireopsFiles = ref<string[]>([])
 const loadingWireopsFiles = ref(false)
@@ -112,7 +112,12 @@ const wireopsFileOptions = computed(() =>
 watch(() => props.open, async (val) => {
   if (val) {
     await Promise.all([refreshRepos(), refreshWorkers()])
-    if (!route.query.stack_step) {
+    // Always land on step 1 on a fresh open, even if the URL still carries a
+    // stack_step from a previous session that never made it through close()
+    // (e.g. a hard navigation away mid-wizard) — a stale step would otherwise
+    // reopen the modal past steps whose state (form, lint report) was just
+    // reset below.
+    if (route.query.stack_step !== '1') {
       router.replace({ query: { ...route.query, stack_step: '1' } })
     }
   } else {
@@ -246,6 +251,12 @@ const composeTarget = computed<{ compose_path: string; compose_file: string } | 
   return { compose_path: parts.join('/'), compose_file: file }
 })
 
+// Error-severity findings block creation the same way they block a deploy
+// (see internal/sync/renderer.go and the stacks OnRecordCreate hook) — the
+// server rejects the create either way, so the button reflects that instead
+// of letting the user hit an opaque save failure.
+const lintHasErrors = computed(() => (lintReport.value?.errors ?? 0) > 0)
+
 const canProceedToStep2 = computed(() => {
   if (!form.value.repository) return false
   if (creationMode.value === 'manual') return !!form.value.name
@@ -256,16 +267,39 @@ const canProceedToStep3 = computed(() =>
   canProceedToStep2.value && !!form.value.worker && !!composeTarget.value
 )
 
+// Steps before the current one get a green check instead of their own icon —
+// data-[state=completed] already exists on the trigger/separator (reka-ui
+// derives it from the step index vs the active one), this just overrides its
+// color from the default primary/yellow so "done" reads differently from
+// "active". A separator between two completed steps is solid green; one
+// leading into the active step fades from green to yellow, since that leg
+// itself isn't done yet.
+const greenTrigger = 'group-data-[state=completed]:bg-green-500 dark:group-data-[state=completed]:bg-green-600'
+const greenSeparator = 'group-data-[state=completed]:bg-green-500 dark:group-data-[state=completed]:bg-green-600'
+const greenToYellowSeparator = 'group-data-[state=completed]:bg-gradient-to-r group-data-[state=completed]:from-green-500 group-data-[state=completed]:to-yellow-500 dark:group-data-[state=completed]:from-green-600'
+
+function stepUi(stepNumber: number) {
+  const completed = stepNumber < currentStep.value
+  if (!completed) return undefined
+  const nextAlsoCompleted = stepNumber + 1 < currentStep.value
+  return {
+    trigger: greenTrigger,
+    separator: nextAlsoCompleted ? greenSeparator : greenToYellowSeparator,
+  }
+}
+
 const stepperItems = computed(() => [
   {
     title: 'Basic Info',
     description: creationMode.value === 'manual' ? 'Name & Repository' : 'Repository & wireops.yaml',
-    icon: 'i-lucide-info',
+    icon: currentStep.value > 1 ? 'i-lucide-check' : 'i-lucide-info',
+    ui: stepUi(1),
   },
   {
     title: 'Configuration',
     description: 'Worker & Compose File',
-    icon: 'i-lucide-settings',
+    icon: currentStep.value > 2 ? 'i-lucide-check' : 'i-lucide-settings',
+    ui: stepUi(2),
     disabled: !canProceedToStep2.value,
   },
   {
@@ -377,6 +411,12 @@ watch(() => form.value.worker, (worker) => {
   if (worker) createErrors.value.worker = undefined
 })
 
+// Clear the stale "fix the errors" message as soon as a re-lint comes back
+// clean, rather than leaving it up alongside a now-enabled Create button.
+watch(lintHasErrors, (hasErrors) => {
+  if (!hasErrors) createErrors.value.lint = undefined
+})
+
 function close() {
   emit('update:open', false)
 }
@@ -391,6 +431,11 @@ async function handleSubmit() {
 
   if (!form.value.worker) {
     createErrors.value.worker = 'Please select a worker'
+    return
+  }
+
+  if (lintHasErrors.value) {
+    createErrors.value.lint = 'Fix the errors reported by the static checks before creating this stack'
     return
   }
 
@@ -452,7 +497,7 @@ async function handleSubmit() {
 <template>
   <UModal
     :open="open"
-    :ui="{ content: 'sm:max-w-2xl w-full' }"
+    :ui="{ content: currentStep === 3 ? 'sm:max-w-5xl w-full' : 'sm:max-w-2xl w-full' }"
     @update:open="emit('update:open', $event)"
   >
     <template #content>
@@ -554,7 +599,7 @@ async function handleSubmit() {
                     :description="wireopsDefinition.resolution_error"
                   />
                   <div v-else class="rounded-lg border border-gray-200 dark:border-wire-700 p-3 space-y-2 text-sm">
-                    <div class="flex items-center gap-2 text-gray-900 dark:text-wire-100 font-medium">
+                    <div class="flex items-center gap-2 text-gray-900 dark:text-wire-200 font-medium">
                       <UIcon name="i-lucide-tag" class="w-4 h-4" />
                       <span>{{ wireopsDefinition.name }}</span>
                       <span class="text-xs font-normal text-gray-500">(name is set by wireops.yaml, not editable here)</span>
@@ -618,61 +663,73 @@ async function handleSubmit() {
               />
             </div>
 
-            <div v-show="currentStep === 3" class="space-y-4">
-              <div class="flex items-start justify-between gap-2">
-                <div class="space-y-1">
-                  <p class="text-sm text-gray-700 dark:text-wire-200">
-                    Static checks on
-                    <span class="font-mono text-xs">{{ composeTarget?.compose_path }}/{{ composeTarget?.compose_file }}</span>
-                  </p>
-                  <p class="text-xs text-gray-500">
-                    Advisory only — findings never block creating the stack or deploying it.
-                  </p>
-                </div>
-                <UButton
-                  type="button"
-                  icon="i-lucide-refresh-cw"
-                  variant="ghost"
-                  color="neutral"
-                  size="xs"
-                  aria-label="Re-run checks"
-                  :disabled="lintLoading"
-                  :ui="{ leadingIcon: lintLoading ? 'animate-spin' : '' }"
-                  @click="runLint"
+            <div v-show="currentStep === 3" class="space-y-4 md:space-y-0 md:grid md:grid-cols-2 md:gap-4 md:items-start">
+              <div class="space-y-2">
+                <p class="text-sm text-gray-700 dark:text-wire-200">
+                  Compose file
+                  <span class="font-mono text-xs">{{ composeTarget?.compose_path }}/{{ composeTarget?.compose_file }}</span>
+                </p>
+
+                <!-- Kept mounted while re-linting and dimmed instead, so the
+                     rendered file and its scroll position survive a refresh. -->
+                <ComposePreview
+                  v-if="lintContent"
+                  ref="composePreview"
+                  :class="lintLoading ? 'opacity-50 transition-opacity' : 'transition-opacity'"
+                  content-class="max-h-[28rem]"
+                  :content="lintContent"
+                  :filename="lintFilename"
+                  :findings="lintReport?.findings || []"
+                  @select-line="focusOnLine"
                 />
               </div>
 
-              <!-- Kept mounted while re-linting and dimmed instead, so the
-                   rendered file and its scroll position survive a refresh. -->
-              <ComposePreview
-                v-if="lintContent"
-                ref="composePreview"
-                :class="lintLoading ? 'opacity-50 transition-opacity' : 'transition-opacity'"
-                :content="lintContent"
-                :filename="lintFilename"
-                :findings="lintReport?.findings || []"
-                @select-line="focusOnLine"
-              />
+              <div class="space-y-2">
+                <div class="flex items-start justify-between gap-2">
+                  <div class="space-y-1">
+                    <p class="text-sm text-gray-700 dark:text-wire-200">Static checks</p>
+                    <p class="text-xs text-gray-500 dark:text-wire-400">
+                      Warnings and infos are advisory; errors block creating and deploying this stack.
+                    </p>
+                  </div>
+                  <UButton
+                    type="button"
+                    icon="i-lucide-refresh-cw"
+                    variant="ghost"
+                    color="neutral"
+                    size="xs"
+                    aria-label="Re-run checks"
+                    :disabled="lintLoading"
+                    :ui="{ leadingIcon: lintLoading ? 'animate-spin' : '' }"
+                    @click="runLint"
+                  />
+                </div>
 
-              <LintFindings
-                :report="lintReport"
-                :loading="lintLoading"
-                :config-error="lintConfigError"
-                @select-line="focusOnLine"
-              />
+                <LintFindings
+                  :report="lintReport"
+                  :loading="lintLoading"
+                  :config-error="lintConfigError"
+                  list-class="max-h-[28rem]"
+                  @select-line="focusOnLine"
+                />
+              </div>
             </div>
           </div>
 
           <template #footer>
-            <div class="flex justify-between items-center w-full">
+            <div class="flex justify-between items-center w-full gap-2">
               <UButton v-if="currentStep > 1" label="Back" variant="outline" icon="i-lucide-arrow-left" @click="prevStep" />
               <div v-else/>
+
+              <p v-if="currentStep === 3 && createErrors.lint" class="text-xs text-red-500 text-right">
+                {{ createErrors.lint }}
+              </p>
 
               <div class="flex gap-2">
                 <CancelButton @click="close" />
                 <UButton v-if="currentStep === 1" type="button" label="Next" icon="i-lucide-arrow-right" trailing :disabled="!canProceedToStep2" @click="nextStep" />
                 <UButton v-else-if="currentStep === 2" type="button" label="Next" icon="i-lucide-arrow-right" trailing :disabled="!canProceedToStep3" @click="nextStep" />
-                <UButton v-else type="submit" label="Create" icon="i-lucide-check" :loading="saving" />
+                <UButton v-else type="submit" label="Create" icon="i-lucide-check" :loading="saving" :disabled="lintLoading || lintHasErrors" />
               </div>
             </div>
           </template>

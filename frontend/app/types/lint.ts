@@ -10,6 +10,8 @@ export type LintSeverity = 'error' | 'warning' | 'info'
 
 export type LintFinding = {
   rule: string
+  /** Short, human-readable label for the rule, e.g. "Undeclared network". */
+  title: string
   severity: LintSeverity
   service?: string
   path?: string

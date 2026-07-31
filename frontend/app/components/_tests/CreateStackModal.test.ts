@@ -372,7 +372,7 @@ describe('CreateStackModal', () => {
     expect(wrapper.find('.lint-finding').text()).toContain('not pinned')
   })
 
-  it('still allows creating the stack when the lint reports errors', async () => {
+  it('blocks creating the stack when the lint reports errors', async () => {
     const { lintCompose, createStack } = setupGlobals()
     lintCompose.mockResolvedValue({
       report: {
@@ -406,8 +406,11 @@ describe('CreateStackModal', () => {
     await wrapper.find('form').trigger('submit.prevent')
     await flushPromises()
 
-    // Lint is advisory: an error-severity finding must not gate creation.
-    expect(createStack).toHaveBeenCalled()
+    // Error-severity findings block creation the same way they block a
+    // deploy — the server would reject it anyway (see the stacks
+    // OnRecordCreate hook and renderer.GenerateRevision).
+    expect(createStack).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('Fix the errors reported by the static checks')
   })
 
   it('surfaces a compose config failure instead of failing the request', async () => {

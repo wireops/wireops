@@ -94,7 +94,24 @@ func redactWorkspacePaths(msg string) string {
 		if root.path == "" {
 			continue
 		}
-		trimmed := strings.TrimSuffix(root.path, string(filepath.Separator))
+		// These roots are configured relatively by default (DATA_DIR defaults
+		// to "./data", and PB_DATA_DIR=./pb_data resolves DATA_DIR to "."),
+		// while `docker compose config` rewrites bind-mount sources to
+		// absolute paths — so matching has to happen in absolute form too, or
+		// a root like "." never matches the real path it is meant to hide.
+		// Resolving "." to an absolute path also closes the actual bug this
+		// guards against: as a bare relative root, "." matched (and mangled)
+		// every literal "." in a finding's message, e.g. an IP in a hint.
+		abs, err := filepath.Abs(root.path)
+		if err != nil {
+			continue
+		}
+		trimmed := strings.TrimSuffix(abs, string(filepath.Separator))
+		// A root that resolves to the filesystem root has nothing specific to
+		// redact and would otherwise match the start of every absolute path.
+		if trimmed == "" {
+			continue
+		}
 		msg = strings.ReplaceAll(msg, trimmed+string(filepath.Separator), root.label+"/")
 		msg = strings.ReplaceAll(msg, trimmed, root.label)
 	}

@@ -20,6 +20,7 @@ import (
 	"github.com/wireops/wireops/internal/compose"
 	"github.com/wireops/wireops/internal/config"
 	"github.com/wireops/wireops/internal/crypto"
+	"github.com/wireops/wireops/internal/lint"
 	"github.com/wireops/wireops/internal/policy"
 )
 
@@ -113,12 +114,14 @@ func (r *Renderer) GenerateRevision(
 		branch = "main"
 	}
 
+	root := containmentRootFor(repo, workDir)
+
 	// 1. Get current compose config as JSON.
 	configOut, err := compose.Config(ctx, compose.ConfigOptions{
 		WorkDir:     workDir,
 		ComposeFile: composeFile,
 		EnvVars:     envVars,
-		Root:        containmentRootFor(repo, workDir),
+		Root:        root,
 	}, true)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get compose config: %w", err)
@@ -169,6 +172,26 @@ func (r *Renderer) GenerateRevision(
 	// checked against the worker's allowlists and boolean-flag restrictions.
 	if err := wp.ValidateComposeConfig(configMap); err != nil {
 		return nil, err
+	}
+
+	// Error-severity lint findings (structural problems the checks above don't
+	// catch, plus the same policy breaches ValidateComposeConfig already
+	// rejects) block the deploy too — a lint report that says "error" and a
+	// deploy that proceeds anyway would make the Review step's checks
+	// meaningless. Warnings and infos stay advisory.
+	lintReport := lint.Run(configMap, lint.Context{
+		Policy:   wp,
+		EnvKeys:  lint.EnvKeysFromPairs(envVars),
+		RepoRoot: root,
+	})
+	if lintReport.HasErrors() {
+		var msgs []string
+		for _, f := range lintReport.Findings {
+			if f.Severity == lint.SeverityError {
+				msgs = append(msgs, f.Message)
+			}
+		}
+		return nil, fmt.Errorf("compose file failed static checks: %s", strings.Join(msgs, "; "))
 	}
 
 	// Determine version number

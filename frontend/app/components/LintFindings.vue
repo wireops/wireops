@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import type { LintReport, LintSeverity } from '~/types/lint'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   report: LintReport | null
   loading?: boolean
   /**
@@ -10,14 +10,52 @@ const props = defineProps<{
    * show — the file could not be resolved at all.
    */
   configError?: string
-}>()
+  /** Tailwind class for the scrollable findings list's max height. */
+  listClass?: string
+}>(), {
+  loading: false,
+  configError: undefined,
+  listClass: 'max-h-72',
+})
 
 const emit = defineEmits<{ (e: 'select-line', line: number): void }>()
 
-const SEVERITY_META: Record<LintSeverity, { color: 'error' | 'warning' | 'info'; icon: string; label: string }> = {
-  error: { color: 'error', icon: 'i-lucide-octagon-alert', label: 'Error' },
-  warning: { color: 'warning', icon: 'i-lucide-triangle-alert', label: 'Warning' },
-  info: { color: 'info', icon: 'i-lucide-info', label: 'Info' },
+const SEVERITY_META: Record<LintSeverity, {
+  color: 'error' | 'warning' | 'info'
+  icon: string
+  label: string
+  iconClass: string
+  borderClass: string
+  titleBgClass: string
+  bodyBgClass: string
+}> = {
+  error: {
+    color: 'error',
+    icon: 'i-lucide-octagon-alert',
+    label: 'Error',
+    iconClass: 'text-red-500',
+    borderClass: 'border-red-300 dark:border-red-800/60',
+    titleBgClass: 'bg-red-50 dark:bg-red-500/10',
+    bodyBgClass: 'bg-red-50/40 dark:bg-red-500/5',
+  },
+  warning: {
+    color: 'warning',
+    icon: 'i-lucide-triangle-alert',
+    label: 'Warning',
+    iconClass: 'text-amber-500',
+    borderClass: 'border-amber-300 dark:border-amber-800/60',
+    titleBgClass: 'bg-amber-50 dark:bg-amber-500/10',
+    bodyBgClass: 'bg-amber-50/40 dark:bg-amber-500/5',
+  },
+  info: {
+    color: 'info',
+    icon: 'i-lucide-info',
+    label: 'Info',
+    iconClass: 'text-blue-500',
+    borderClass: 'border-blue-300 dark:border-blue-800/60',
+    titleBgClass: 'bg-blue-50 dark:bg-blue-500/10',
+    bodyBgClass: 'bg-blue-50/40 dark:bg-blue-500/5',
+  },
 }
 
 function meta(severity: LintSeverity) {
@@ -28,8 +66,8 @@ const findings = computed(() => props.report?.findings || [])
 const hasFindings = computed(() => findings.value.length > 0)
 
 // The server already sorts findings by severity, then rule, then service —
-// keep that order rather than re-sorting, so the list matches what the deploy
-// timeline and the API report.
+// keep that order rather than re-sorting, so each group's list matches what
+// the deploy timeline and the API report.
 const counts = computed(() => {
   const r = props.report
   if (!r) return []
@@ -40,11 +78,24 @@ const counts = computed(() => {
   ] as [LintSeverity, number][])
     .filter(([, n]) => n > 0)
 })
+
+/** One accordion item per severity present, findings kept in report order. */
+const groups = computed(() => counts.value.map(([severity, count]) => ({
+  severity,
+  value: severity,
+  label: `${count} ${meta(severity).label.toLowerCase()}${count === 1 ? '' : 's'}`,
+  icon: meta(severity).icon,
+  findings: findings.value.filter(f => f.severity === severity),
+})))
+
+// Errors need immediate attention and start expanded; warnings/infos are
+// lower priority and start collapsed to keep the panel scannable.
+const openGroups = computed(() => groups.value.filter(g => g.severity === 'error').map(g => g.value))
 </script>
 
 <template>
   <div class="space-y-3">
-    <div v-if="loading" class="flex items-center gap-2 text-sm text-gray-500">
+    <div v-if="loading" class="flex items-center gap-2 text-sm text-gray-500 dark:text-wire-400">
       <UIcon name="i-lucide-loader-2" class="w-4 h-4 animate-spin" />
       Checking compose file...
     </div>
@@ -67,57 +118,60 @@ const counts = computed(() => {
       />
 
       <template v-else>
-        <div class="flex flex-wrap items-center gap-1.5">
-          <UBadge
-            v-for="[severity, count] in counts"
-            :key="severity"
-            :color="meta(severity).color"
-            :label="`${count} ${meta(severity).label.toLowerCase()}${count === 1 ? '' : 's'}`"
-            variant="subtle"
-            size="xs"
-          />
-        </div>
+        <UAccordion
+          :items="groups"
+          type="multiple"
+          :default-value="openGroups"
+          class="overflow-y-auto"
+          :class="listClass"
+        >
+          <template #leading="{ item }">
+            <UIcon :name="item.icon" :class="['w-4 h-4 shrink-0', meta(item.severity).iconClass]" />
+          </template>
 
-        <ul class="space-y-2 max-h-72 overflow-y-auto">
-          <li
-            v-for="(finding, i) in findings"
-            :key="`${finding.rule}-${finding.service || ''}-${i}`"
-            class="rounded-lg border border-gray-200 dark:border-wire-700 p-3 space-y-1"
-            :class="finding.line ? 'cursor-pointer hover:border-primary-400 dark:hover:border-primary-500' : ''"
-            :role="finding.line ? 'button' : undefined"
-            :tabindex="finding.line ? 0 : undefined"
-            @click="finding.line && emit('select-line', finding.line)"
-            @keydown.enter="finding.line && emit('select-line', finding.line)"
-            @keydown.space.prevent="finding.line && emit('select-line', finding.line)"
-          >
-            <div class="flex items-start gap-2">
-              <UIcon
-                :name="meta(finding.severity).icon"
+          <template #body="{ item }">
+            <ul class="space-y-3">
+              <li
+                v-for="(finding, i) in item.findings"
+                :key="`${finding.rule}-${finding.service || ''}-${i}`"
+                class="rounded-md border overflow-hidden"
                 :class="[
-                  'w-4 h-4 shrink-0 mt-0.5',
-                  finding.severity === 'error' ? 'text-red-500'
-                  : finding.severity === 'warning' ? 'text-amber-500'
-                    : 'text-blue-500',
+                  meta(finding.severity).borderClass,
+                  finding.line ? 'cursor-pointer' : '',
                 ]"
-              />
-              <div class="min-w-0 flex-1 space-y-1">
-                <p class="text-sm text-gray-900 dark:text-wire-100">{{ finding.message }}</p>
-                <p v-if="finding.hint" class="text-xs text-gray-500 dark:text-wire-400">{{ finding.hint }}</p>
-                <div class="flex flex-wrap items-center gap-1.5">
-                  <UBadge :label="finding.rule" variant="outline" color="neutral" size="xs" />
+                :role="finding.line ? 'button' : undefined"
+                :tabindex="finding.line ? 0 : undefined"
+                @click="finding.line && emit('select-line', finding.line)"
+                @keydown.enter="finding.line && emit('select-line', finding.line)"
+                @keydown.space.prevent="finding.line && emit('select-line', finding.line)"
+              >
+                <div
+                  class="flex items-start justify-between gap-2 px-2 py-1"
+                  :class="meta(finding.severity).titleBgClass"
+                >
+                  <p class="text-xs font-medium text-gray-900 dark:text-wire-200">
+                    <span class="opacity-50">#{{ i + 1 }}</span> {{ finding.title }}
+                  </p>
                   <UBadge
                     v-if="finding.line"
                     :label="`line ${finding.line}`"
                     variant="subtle"
                     color="neutral"
                     size="xs"
+                    class="shrink-0"
                   />
-                  <span v-if="finding.path" class="text-xs font-mono text-gray-400 truncate">{{ finding.path }}</span>
                 </div>
-              </div>
-            </div>
-          </li>
-        </ul>
+                <div
+                  class="px-2 py-1 space-y-0.5"
+                  :class="meta(finding.severity).bodyBgClass"
+                >
+                  <p class="text-xs text-gray-500 dark:text-gray-400">{{ finding.message }}</p>
+                  <p v-if="finding.hint" class="text-xs text-gray-500 dark:text-gray-400">{{ finding.hint }}</p>
+                </div>
+              </li>
+            </ul>
+          </template>
+        </UAccordion>
       </template>
     </template>
   </div>

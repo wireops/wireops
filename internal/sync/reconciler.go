@@ -301,8 +301,11 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	}
 
 	// --- lint ---
-	// Advisory only: the report is recorded on the deploy timeline but never
-	// aborts the reconcile. See lintCompose.
+	// This run is only for the deploy timeline's phase detail — it never aborts
+	// the reconcile itself. GenerateRevision below runs its own lint.Run over
+	// the fully-resolved config and does abort on error-severity findings; this
+	// earlier one exists so the timeline shows *why* before the render phase
+	// fails, and so a render success still has a lint summary attached.
 	lintRes := r.lintCompose(ctx, containmentRootFor(repo, workDir), workDir, composeFile, workerID, envVars)
 	if lintRes.err != nil {
 		log.Printf("[reconciler] lint skipped for stack %s: %v", stackID, lintRes.err)

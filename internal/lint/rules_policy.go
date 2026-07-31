@@ -3,24 +3,41 @@ package lint
 import "fmt"
 
 func init() {
-	Register("policy/worker-policy", rulePolicyViolations)
+	Register(RulePolicyWorkerPolicy, rulePolicyViolations)
 }
+
+// Values policy.Violation.Check can carry — see the field's doc comment on
+// [policy.Violation] for the authoritative list. Named here (rather than left
+// as raw strings) so policyCheckPaths and ruleTitles can't drift apart.
+const (
+	policyCheckImages       = "images"
+	policyCheckVolumes      = "volumes"
+	policyCheckNetworks     = "networks"
+	policyCheckPrivileged   = "privileged"
+	policyCheckHostNetwork  = "host_network"
+	policyCheckHostPID      = "host_pid"
+	policyCheckHostIPC      = "host_ipc"
+	policyCheckDockerSocket = "docker_socket"
+	policyCheckCapAdd       = "cap_add"
+	policyCheckDevices      = "devices"
+	policyCheckSecurityOpt  = "security_opt"
+)
 
 // policyCheckPaths maps a policy.Violation.Check to the compose key it came
 // from, so a policy finding points at the same place in the file as the
 // built-in rules do.
 var policyCheckPaths = map[string]string{
-	"images":        "image",
-	"volumes":       "volumes",
-	"networks":      "networks",
-	"privileged":    "privileged",
-	"host_network":  "network_mode",
-	"host_pid":      "pid",
-	"host_ipc":      "ipc",
-	"docker_socket": "volumes",
-	"cap_add":       "cap_add",
-	"devices":       "devices",
-	"security_opt":  "security_opt",
+	policyCheckImages:       "image",
+	policyCheckVolumes:      "volumes",
+	policyCheckNetworks:     "networks",
+	policyCheckPrivileged:   "privileged",
+	policyCheckHostNetwork:  "network_mode",
+	policyCheckHostPID:      "pid",
+	policyCheckHostIPC:      "ipc",
+	policyCheckDockerSocket: "volumes",
+	policyCheckCapAdd:       "cap_add",
+	policyCheckDevices:      "devices",
+	policyCheckSecurityOpt:  "security_opt",
 }
 
 // rulePolicyViolations folds the worker deploy policy into the lint report, so

@@ -57,12 +57,12 @@ func parseInterpolations(s string) []interpolation {
 }
 
 func init() {
-	Register("compose/no-services", ruleNoServices)
-	Register("compose/missing-image", ruleMissingImage)
-	Register("compose/undeclared-network", ruleUndeclaredNetwork)
-	Register("compose/undeclared-volume", ruleUndeclaredVolume)
-	Register("compose/unresolved-variable", ruleUnresolvedVariable)
-	Register("compose/obsolete-version-key", ruleObsoleteVersionKey)
+	Register(RuleNoServices, ruleNoServices)
+	Register(RuleMissingImage, ruleMissingImage)
+	Register(RuleUndeclaredNetwork, ruleUndeclaredNetwork)
+	Register(RuleUndeclaredVolume, ruleUndeclaredVolume)
+	Register(RuleUnresolvedVariable, ruleUnresolvedVariable)
+	Register(RuleObsoleteVersionKey, ruleObsoleteVersionKey)
 }
 
 // ruleNoServices catches a compose file that parses but deploys nothing.
