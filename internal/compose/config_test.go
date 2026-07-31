@@ -66,3 +66,61 @@ command: echo hello
 		})
 	}
 }
+
+func TestComposeCandidateError(t *testing.T) {
+	cases := []struct {
+		name      string
+		input     string
+		wantError bool
+	}{
+		{
+			name: "ValidComposeFile",
+			input: `
+services:
+  web:
+    image: nginx
+`,
+			wantError: false,
+		},
+		{
+			name:      "MalformedYAML",
+			input:     `{not: valid: yaml:`,
+			wantError: true,
+		},
+		{
+			name: "MissingServicesKey",
+			input: `
+version: "3"
+volumes:
+  data: {}
+`,
+			wantError: true,
+		},
+		{
+			name: "EmptyServicesMap",
+			input: `
+services: {}
+`,
+			wantError: true,
+		},
+		{
+			name: "ServicesTypeMismatch",
+			input: `
+services: []
+`,
+			wantError: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ComposeCandidateError([]byte(tc.input))
+			if tc.wantError && err == nil {
+				t.Errorf("ComposeCandidateError(%q) = nil, want error", tc.name)
+			}
+			if !tc.wantError && err != nil {
+				t.Errorf("ComposeCandidateError(%q) = %v, want nil", tc.name, err)
+			}
+		})
+	}
+}

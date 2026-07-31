@@ -22,6 +22,7 @@ import (
 	"github.com/robfig/cron/v3"
 
 	"github.com/wireops/wireops/internal/audit"
+	"github.com/wireops/wireops/internal/constants"
 	"github.com/wireops/wireops/internal/contextutil"
 	"github.com/wireops/wireops/internal/crypto"
 	"github.com/wireops/wireops/internal/envvars"
@@ -845,7 +846,7 @@ func (s *Scheduler) updateJobRun(runID, status, output string, durationMs int64,
 	rec.Set("status", status)
 
 	// Truncate output to prevent database bloat
-	const maxOutputLength = 1000000
+	const maxOutputLength = constants.MaxOutputLength
 	if len(output) > maxOutputLength {
 		marker := "\n\n... [OUTPUT TRUNCATED FOR SIZE] ...\n\n"
 		available := maxOutputLength - len(marker)

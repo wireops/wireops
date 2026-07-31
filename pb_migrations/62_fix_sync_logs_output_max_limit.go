@@ -5,10 +5,11 @@ import (
 
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
+
+	"github.com/wireops/wireops/internal/constants"
 )
 
-// keep in sync with maxOutputLength in internal/sync/reconciler.go and internal/jobscheduler/scheduler.go
-const syncLogOutputMax = 1000000
+const syncLogOutputMax = constants.MaxOutputLength
 
 func init() {
 	m.Register(func(app core.App) error {

@@ -1630,23 +1630,31 @@ func (r *Reconciler) createSyncLog(stackID, trigger, commitSHA, commitMsg string
 	return record, nil
 }
 
+// truncateOutput caps output at constants.MaxOutputLength, keeping a prefix
+// and suffix around a marker rather than just cutting the tail — the start of
+// a compose/job run and its final error are both more useful than whatever
+// happens to be in the middle. Shared by updateSyncLog and markStackError so
+// every write into a sync_logs.output/job_runs.output/stacks.last_error_message
+// TextField (all capped at the same Max, see pb_migrations) stays under the
+// limit instead of failing PocketBase validation silently.
+func truncateOutput(output string) string {
+	const maxOutputLength = constants.MaxOutputLength
+	if len(output) <= maxOutputLength {
+		return output
+	}
+	marker := "\n\n... [OUTPUT TRUNCATED FOR SIZE] ...\n\n"
+	prefixLen := (maxOutputLength - len(marker)) / 2
+	suffixLen := maxOutputLength - len(marker) - prefixLen
+	return output[:prefixLen] + marker + output[len(output)-suffixLen:]
+}
+
 func (r *Reconciler) updateSyncLog(id, status, output string, durationMs int64) error {
 	record, err := r.app.FindRecordById("sync_logs", id)
 	if err != nil {
 		return fmt.Errorf("update sync log id=%s status=%s: %w", id, status, err)
 	}
 	record.Set("status", status)
-
-	// Truncate output to prevent database bloat
-	const maxOutputLength = 1000000
-	if len(output) > maxOutputLength {
-		marker := "\n\n... [OUTPUT TRUNCATED FOR SIZE] ...\n\n"
-		prefixLen := (maxOutputLength - len(marker)) / 2
-		suffixLen := maxOutputLength - len(marker) - prefixLen
-		output = output[:prefixLen] + marker + output[len(output)-suffixLen:]
-	}
-
-	record.Set("output", output)
+	record.Set("output", truncateOutput(output))
 	record.Set("duration_ms", durationMs)
 	if err := r.app.Save(record); err != nil {
 		return fmt.Errorf("update sync log id=%s status=%s: %w", id, status, err)
@@ -1772,7 +1780,7 @@ func (r *Reconciler) markError(rec *core.Record, collection string) error {
 // the user wants told apart on the stack page.
 func (r *Reconciler) markStackError(stack *core.Record, category, errMsg string) error {
 	stack.Set("last_error_category", category)
-	stack.Set("last_error_message", errMsg)
+	stack.Set("last_error_message", truncateOutput(errMsg))
 	stack.Set("last_error_at", time.Now().UTC().Format(time.RFC3339))
 	return r.markError(stack, "stacks")
 }
