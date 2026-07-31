@@ -60,12 +60,12 @@ export function stackSourceStatus(stack: any): StackSourceDisplay {
   if (repoStatus === 'connected') {
     return {
       key: 'connected',
-      label: 'Connected',
+      label: 'Up to date',
       color: 'info',
       icon: 'i-lucide-git-branch',
       iconClass: 'text-cyan-500',
       dotClass: 'bg-cyan-400',
-      title: 'Git: Connected',
+      title: 'Git: Up to date',
     }
   }
 
@@ -92,23 +92,109 @@ export function stackSourceStatus(stack: any): StackSourceDisplay {
   }
 }
 
+// stackSyncStatus is stackSourceStatus's sibling for the stack detail page's
+// "Sync" status card: same git-connectivity signal, but takes priority from
+// last_error_category (set by the backend's markSyncError/markDeployError,
+// see internal/sync/reconciler.go) so a sync-phase failure (git fetch,
+// render, secrets/env resolve, policy check) shows up here even when the
+// underlying repository record itself still reports "connected".
+export function stackSyncStatus(stack: any): StackSourceDisplay {
+  if (stack?.last_error_category === 'sync') {
+    return {
+      key: 'error',
+      label: 'Error',
+      color: 'error',
+      icon: 'i-lucide-refresh-cw',
+      iconClass: 'text-red-500',
+      dotClass: 'bg-red-500',
+      title: 'Sync: Error',
+    }
+  }
+
+  if (stack?.source_type === 'local') {
+    return {
+      key: 'local',
+      label: 'Local',
+      color: 'warning',
+      icon: 'i-lucide-hard-drive',
+      iconClass: 'text-amber-500',
+      dotClass: 'bg-amber-400',
+      title: 'Sync: Local',
+    }
+  }
+
+  const repoStatus = stack?.expand?.repository?.status
+  if (repoStatus === 'connected') {
+    return {
+      key: 'connected',
+      label: 'Up to date',
+      color: 'info',
+      icon: 'i-lucide-git-branch',
+      iconClass: 'text-cyan-500',
+      dotClass: 'bg-cyan-400',
+      title: 'Sync: Up to date',
+    }
+  }
+
+  if (repoStatus === 'error') {
+    return {
+      key: 'error',
+      label: 'Git Error',
+      color: 'error',
+      icon: 'i-lucide-git-branch',
+      iconClass: 'text-red-500',
+      dotClass: 'bg-red-500',
+      title: 'Sync: Git Error',
+    }
+  }
+
+  return {
+    key: 'unknown',
+    label: 'Unknown',
+    color: 'neutral',
+    icon: 'i-lucide-refresh-cw',
+    iconClass: 'text-gray-400',
+    dotClass: 'bg-gray-400',
+    title: 'Sync: Unknown',
+  }
+}
+
+// stackIsSyncing tells the caller whether a sync is currently in flight for
+// the stack, so the UI can show a small in-progress indicator alongside the
+// stable status instead of a distinct "Syncing" state (see stackEffectiveStatus).
+export function stackIsSyncing(stack: any): boolean {
+  return stack?.status === 'syncing'
+}
+
+// stackEffectiveStatus resolves which stable status to render. stack.status
+// is transiently "syncing" for the duration of every reconcile, which used to
+// render as its own blue badge/border - with several stacks syncing at once
+// (routine, since cron intervals overlap) this made badges flip color across
+// the whole screen. "syncing" is not a state distinct from the others: it's
+// folded back into the stack's last known stable status (deployed if it has
+// completed at least one deploy, otherwise pending) so the badge stays put;
+// pair with stackIsSyncing() for the in-progress indicator.
+export function stackEffectiveStatus(stack: any): string | undefined {
+  if (stack?.status !== 'syncing') return stack?.status
+  return stack?.deployed_at ? 'active' : 'pending'
+}
+
+// "active" reflects the post-deploy check's live docker-inspect result at
+// the moment of the last deploy (internal/sync/postcheck.go) - not a
+// continuously monitored live state. Nothing re-checks container health
+// between reconciles, so a container that crashes hours later with no new
+// git commit still reads "active" until the next deploy or the detail page
+// triggers a fresh check. "Verified" instead of "Deployed" avoids implying
+// it's confirmed running right now.
 export function stackDeployStatus(status?: string): StackStatusDisplay {
   switch (status) {
     case 'active':
       return {
         key: 'deployed',
-        label: 'Deployed',
+        label: 'Verified',
         color: 'success',
         icon: 'i-lucide-badge-check',
         iconClass: 'text-emerald-500',
-      }
-    case 'syncing':
-      return {
-        key: 'syncing',
-        label: 'Syncing',
-        color: 'primary',
-        icon: 'i-lucide-refresh-cw',
-        iconClass: 'text-sky-500',
       }
     case 'pending':
       return {
@@ -147,11 +233,9 @@ export type StackStatusBadge = {
 }
 
 export function stackStatusBadge(stack: any): StackStatusBadge {
-  switch (stack?.status) {
+  switch (stackEffectiveStatus(stack)) {
     case 'active':
       return { label: 'Active', color: 'success', dotClass: 'bg-emerald-400', borderClass: 'border-l-emerald-400 dark:border-l-emerald-400' }
-    case 'syncing':
-      return { label: 'Syncing', color: 'primary', dotClass: 'bg-sky-400', borderClass: 'border-l-sky-400 dark:border-l-sky-400' }
     case 'paused':
       return { label: 'Paused', color: 'warning', dotClass: 'bg-amber-400', borderClass: 'border-l-amber-400 dark:border-l-amber-400' }
     case 'pending':
@@ -164,14 +248,46 @@ export function stackStatusBadge(stack: any): StackStatusBadge {
 }
 
 export function stackVisibleDeployStatus(stack: any, workersById?: WorkerLookup): StackStatusDisplay {
-  const deploy = stackDeployStatus(stack?.status)
+  const deploy = stackDeployStatus(stackEffectiveStatus(stack))
   const worker = stackWorkerStatus(stack, workersById)
 
-  if ((deploy.key === 'deployed' || deploy.key === 'syncing') && worker.key !== 'online') {
+  if (deploy.key === 'deployed' && worker.key !== 'online') {
     return { ...UNKNOWN_STATUS }
   }
 
   return deploy
+}
+
+export type StackLastErrorInfo = {
+  category: 'sync' | 'deploy'
+  message: string
+  at: string
+  label: string
+  color: StackStatusColor
+  icon: string
+  iconClass: string
+}
+
+// stackLastError surfaces the denormalized last_error_category/message/at
+// fields set by the backend reconciler (internal/sync/reconciler.go
+// markSyncError/markDeployError), so the stack page can show a dedicated
+// sync-status card distinct from the deploy-status card without joining
+// sync_logs/sync_log_phases.
+export function stackLastError(stack: any): StackLastErrorInfo | null {
+  const category = stack?.last_error_category
+  if (category !== 'sync' && category !== 'deploy') return null
+  const message = stack?.last_error_message || ''
+  if (!message) return null
+
+  return {
+    category,
+    message,
+    at: stack?.last_error_at || '',
+    label: 'Error Summary',
+    color: 'error',
+    icon: 'i-lucide-triangle-alert',
+    iconClass: 'text-rose-500',
+  }
 }
 
 export function stackWorkerName(stack: any): string {

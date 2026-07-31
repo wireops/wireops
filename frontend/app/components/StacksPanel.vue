@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { stackRepositorySubtitle } from '../utils/stack-status'
+import { stackEffectiveStatus, stackRepositorySubtitle } from '../utils/stack-status'
 import type { AvailabilitySegment } from './StatusAvailabilityBar.vue'
 
 const { $pb } = useNuxtApp()
@@ -111,12 +111,21 @@ const workersById = computed(() =>
   Object.fromEntries((workers.value || []).map((worker: any) => [worker.id, worker]))
 )
 
+// "syncing" is not its own bucket here: it's a transient state every stack
+// passes through on every reconcile, and with several stacks syncing at once
+// (routine, since cron intervals overlap) a dedicated segment made this bar
+// flicker constantly. stacksForAvailability below resolves each stack to its
+// stable status (stackEffectiveStatus) before counting, so a syncing stack
+// counts under Active/Paused same as it does everywhere else in the UI.
 const stackStatusSegments: AvailabilitySegment[] = [
   { key: 'active', label: 'Active', barClass: 'bg-emerald-400', dotClass: 'bg-emerald-400', statuses: ['active'] },
-  { key: 'syncing', label: 'Syncing', barClass: 'bg-sky-400', dotClass: 'bg-sky-400', statuses: ['syncing'] },
   { key: 'paused', label: 'Paused', barClass: 'bg-amber-400', dotClass: 'bg-amber-400', statuses: ['paused', 'pending'], filterValue: 'paused' },
   { key: 'error', label: 'Error', barClass: 'bg-rose-400', dotClass: 'bg-rose-400', statuses: ['error'] },
 ]
+
+const stacksForAvailability = computed(() =>
+  (stacks.value || []).map((s: any) => ({ ...s, status: stackEffectiveStatus(s) }))
+)
 
 const searchQuery = ref('')
 const searchInputRef = ref<{ $el?: HTMLElement } | HTMLElement | null>(null)
@@ -172,9 +181,12 @@ const filteredStacks = computed(() => {
 
   if (statusFilter.value !== 'all') {
     if (statusFilter.value === 'paused') {
-      filtered = filtered.filter((s: any) => s.status === 'paused' || s.status === 'pending')
+      filtered = filtered.filter((s: any) => {
+        const status = stackEffectiveStatus(s)
+        return status === 'paused' || status === 'pending'
+      })
     } else {
-      filtered = filtered.filter((s: any) => s.status === statusFilter.value)
+      filtered = filtered.filter((s: any) => stackEffectiveStatus(s) === statusFilter.value)
     }
   }
 
@@ -189,7 +201,7 @@ const filteredStacks = computed(() => {
         if (!b.last_synced_at) return -1
         return new Date(b.last_synced_at).getTime() - new Date(a.last_synced_at).getTime()
       case 'status':
-        return a.status.localeCompare(b.status)
+        return stackEffectiveStatus(a).localeCompare(stackEffectiveStatus(b))
       default:
         return 0
     }
@@ -287,7 +299,6 @@ async function handlePurge(dirName: string) {
               { label: 'Active', value: 'active' },
               { label: 'Paused', value: 'paused' },
               { label: 'Error', value: 'error' },
-              { label: 'Syncing', value: 'syncing' },
               { label: 'Pending', value: 'pending' }
             ]"
             placeholder="Filter by status"
@@ -312,7 +323,7 @@ async function handlePurge(dirName: string) {
 
         <StatusAvailabilityBar
           v-model="statusFilter"
-          :items="stacks"
+          :items="stacksForAvailability"
           :segments="stackStatusSegments"
           aria-label="Stack status availability breakdown"
         />

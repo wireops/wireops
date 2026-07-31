@@ -118,6 +118,11 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		return nil
 	}
 
+	if trigger == "cron" && stack.GetBool("secret_error") {
+		log.Printf("[reconciler] stack %s previously failed on secret fetch, skipping cron reconcile until fixed and manually triggered", stackID)
+		return nil
+	}
+
 	if stack.GetString("source_type") == "local" {
 		return r.reconcileLocalStack(ctx, stackID, stack, trigger)
 	}
@@ -139,7 +144,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	if err != nil {
 		errMsg := fmt.Sprintf("repository %s not found for stack %s", repoID, stackID)
 		r.logFailureWithPhase(stackID, trigger, "", errMsg, constants.PhaseGitFetch, gitFetchStart)
-		r.markError(stack, "stacks")
+		r.markSyncError(stack, errMsg)
 		return fmt.Errorf("%s: %w", errMsg, err)
 	}
 
@@ -166,7 +171,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		errMsg := fmt.Sprintf("git operation failed for repo %s (%s): %v", repo.GetString("name"), gitURL, err)
 		r.logFailureWithPhase(stackID, trigger, "", errMsg, constants.PhaseGitFetch, gitFetchStart)
 		r.markError(repo, "repositories")
-		r.markError(stack, "stacks")
+		r.markSyncError(stack, errMsg)
 		return fmt.Errorf("git operation failed: %w", err)
 	}
 
@@ -187,7 +192,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	repo.Set("status", "connected")
 	if err := r.saveRecord(repo, "repositories", "persist fetched repository state"); err != nil {
 		_ = r.logFailureWithPhase(stackID, trigger, remoteSHA, err.Error(), constants.PhaseGitFetch, gitFetchStart)
-		_ = r.markError(stack, "stacks")
+		_ = r.markSyncError(stack, err.Error())
 		return err
 	}
 
@@ -195,7 +200,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	if err != nil {
 		errMsg := fmt.Sprintf("worker resolution failed: %v", err)
 		r.logFailureWithPhase(stackID, trigger, "", errMsg, constants.PhaseGitFetch, gitFetchStart)
-		r.markError(stack, "stacks")
+		r.markSyncError(stack, errMsg)
 		return fmt.Errorf("%s", errMsg)
 	}
 	// git_fetch phase (repo lookup, clone/fetch, local SHA, persist repo,
@@ -214,7 +219,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 			log.Printf("[reconciler] worker %s is offline, queueing pending reconcile for stack %s", workerID, stackID)
 			if err := r.queuePendingReconcile(stackID, trigger, remoteSHA); err != nil {
 				_ = r.logFailure(stackID, trigger, remoteSHA, err.Error())
-				_ = r.markError(stack, "stacks")
+				_ = r.markSyncError(stack, err.Error())
 				return err
 			}
 			if err := r.saveRecordStatus(stack, "stacks", "pending", "mark stack pending after offline queue"); err != nil {
@@ -262,8 +267,9 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	workDir, err := r.stackWorkDir(stack, repoID)
 	if err != nil {
 		errMsg := fmt.Sprintf("invalid compose_path: %v", err)
-		r.logFailureWithPhase(stackID, trigger, remoteSHA, errMsg, constants.PhaseRender, renderStart)
-		r.markError(stack, "stacks")
+		r.logFailureWithPhase(stackID, trigger, remoteSHA, errMsg, constants.PhaseRender, renderStart,
+			completedPhase{constants.PhaseGitFetch, gitFetchStart, gitFetchDuration, ""})
+		r.markSyncError(stack, errMsg)
 		return fmt.Errorf("%s", errMsg)
 	}
 
@@ -275,8 +281,9 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	envVars, envErr := r.loadEnvVars(ctx, stackID)
 	if envErr != nil {
 		errMsg := fmt.Sprintf("failed to load env vars: %v", envErr)
-		r.logFailureWithPhase(stackID, trigger, remoteSHA, errMsg, constants.PhaseRender, renderStart)
-		r.markError(stack, "stacks")
+		r.logFailureWithPhase(stackID, trigger, remoteSHA, errMsg, constants.PhaseRender, renderStart,
+			completedPhase{constants.PhaseGitFetch, gitFetchStart, gitFetchDuration, ""})
+		r.markSecretError(stack, errMsg)
 		return fmt.Errorf("%s", errMsg)
 	}
 
@@ -284,11 +291,14 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	sopsValues, sopsErr := r.loadSopsEnv(ctx, repo, workDir)
 	if sopsErr != nil {
 		errMsg := fmt.Sprintf("failed to decrypt SOPS secrets file: %v", sopsErr)
-		r.logFailureWithPhase(stackID, trigger, remoteSHA, errMsg, constants.PhaseSecretsFetch, sopsStart)
-		r.markError(stack, "stacks")
+		r.logFailureWithPhase(stackID, trigger, remoteSHA, errMsg, constants.PhaseSecretsFetch, sopsStart,
+			completedPhase{constants.PhaseGitFetch, gitFetchStart, gitFetchDuration, ""},
+			completedPhase{constants.PhaseRender, renderStart, time.Since(renderStart).Milliseconds(), ""})
+		r.markSecretError(stack, errMsg)
 		return fmt.Errorf("%s", errMsg)
 	}
 	envVars = overlaySopsEnv(envVars, sopsValues)
+	r.clearSecretError(stack, "stacks")
 
 	// Write .env to the repo workDir NOW so that compose config (called by
 	// GenerateRevision below via compose.Config) can resolve ${VAR} interpolations.
@@ -335,7 +345,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 			_ = pt.recordCompleted(constants.PhaseGitFetch, constants.PhaseStatusSuccess, gitFetchStart, gitFetchDuration, "")
 			recordLintPhase(pt, lintRes)
 		})
-		r.markError(stack, "stacks")
+		r.markSyncError(stack, errMsg)
 		return fmt.Errorf("%s", errMsg)
 	}
 	renderDuration := time.Since(renderStart).Milliseconds()
@@ -441,7 +451,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 			log.Printf("[reconciler] deploy attempt %d of %d failed for stack %s: %v, retrying in 3s...", attempt, maxRetries, stackID, runErr)
 			if syncLog != nil {
 				if err := r.updateSyncLog(syncLog.Id, "running", fmt.Sprintf("%s\n\n[Attempt %d failed: %v. Retrying in 3s...]\n", output, attempt, runErr), duration); err != nil {
-					_ = r.markError(stack, "stacks")
+					_ = r.markDeployError(stack, err.Error())
 					return err
 				}
 			}
@@ -457,10 +467,10 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		_ = pt.finish(constants.PhaseDispatch, constants.PhaseStatusError, runErr.Error())
 		errOutput := buildErrorOutput(output, runErr)
 		if err := r.updateSyncLog(syncLog.Id, "error", errOutput, duration); err != nil {
-			_ = r.markError(stack, "stacks")
+			_ = r.markDeployError(stack, err.Error())
 			return err
 		}
-		if err := r.markError(stack, "stacks"); err != nil {
+		if err := r.markDeployError(stack, errOutput); err != nil {
 			return err
 		}
 		_ = pt.start(constants.PhaseNotify)
@@ -495,6 +505,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	stack.Set("deployed_commit", remoteSHA)
 	stack.Set("deployed_checksum", renderRes.Checksum)
 	stack.Set("deployed_at", time.Now().UTC().Format(time.RFC3339))
+	r.clearLastError(stack)
 	if err := r.saveRecord(stack, "stacks", "complete reconcile"); err != nil {
 		_ = r.updateSyncLog(syncLog.Id, "error", "worker deploy succeeded but failed to persist stack success: "+err.Error(), duration)
 		return err
@@ -504,7 +515,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		logStatus = check.Status
 	}
 	if err := r.updateSyncLog(syncLog.Id, logStatus, output, duration); err != nil {
-		_ = r.markError(stack, "stacks")
+		_ = r.markDeployError(stack, err.Error())
 		return err
 	}
 	notifyEvent := notify.SyncDone
@@ -557,7 +568,7 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 	if err != nil {
 		errMsg := fmt.Sprintf("repository %s not found for stack %s", repoID, stackID)
 		r.logFailureWithPhase(stackID, "manual", commitSHA, errMsg, constants.PhaseGitFetch, gitFetchStart)
-		r.markError(stack, "stacks")
+		r.markSyncError(stack, errMsg)
 		return fmt.Errorf("%s: %w", errMsg, err)
 	}
 
@@ -568,7 +579,7 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to open local repo directory: %s", repoDir)
 		r.logFailureWithPhase(stackID, "manual", commitSHA, errMsg, constants.PhaseGitFetch, gitFetchStart)
-		r.markError(stack, "stacks")
+		r.markSyncError(stack, errMsg)
 		return fmt.Errorf("failed to open repo: %w", err)
 	}
 
@@ -583,7 +594,7 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 	}); err != nil {
 		errMsg := fmt.Sprintf("git reset to %s failed: %v", commitSHA, err)
 		r.logFailureWithPhase(stackID, "manual", commitSHA, errMsg, constants.PhaseGitFetch, gitFetchStart)
-		r.markError(stack, "stacks")
+		r.markSyncError(stack, errMsg)
 		return fmt.Errorf("git reset failed: %w", err)
 	}
 	gitFetchDuration := time.Since(gitFetchStart).Milliseconds()
@@ -592,8 +603,9 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 	workDir, err := r.stackWorkDir(stack, repoID)
 	if err != nil {
 		errMsg := fmt.Sprintf("invalid compose_path: %v", err)
-		r.logFailureWithPhase(stackID, "manual", commitSHA, errMsg, constants.PhaseRender, renderStart)
-		r.markError(stack, "stacks")
+		r.logFailureWithPhase(stackID, "manual", commitSHA, errMsg, constants.PhaseRender, renderStart,
+			completedPhase{constants.PhaseGitFetch, gitFetchStart, gitFetchDuration, ""})
+		r.markSyncError(stack, errMsg)
 		return fmt.Errorf("%s", errMsg)
 	}
 	composeFile, err := r.resolveComposeFile(stack, workDir, stackID, "manual", commitSHA)
@@ -604,8 +616,9 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 	envVars, envErr := r.loadEnvVars(ctx, stackID)
 	if envErr != nil {
 		errMsg := fmt.Sprintf("failed to load env vars: %v", envErr)
-		r.logFailureWithPhase(stackID, "manual", commitSHA, errMsg, constants.PhaseRender, renderStart)
-		r.markError(stack, "stacks")
+		r.logFailureWithPhase(stackID, "manual", commitSHA, errMsg, constants.PhaseRender, renderStart,
+			completedPhase{constants.PhaseGitFetch, gitFetchStart, gitFetchDuration, ""})
+		r.markSecretError(stack, errMsg)
 		return fmt.Errorf("%s", errMsg)
 	}
 
@@ -613,17 +626,20 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 	sopsValues, sopsErr := r.loadSopsEnv(ctx, repo, workDir)
 	if sopsErr != nil {
 		errMsg := fmt.Sprintf("failed to decrypt SOPS secrets file: %v", sopsErr)
-		r.logFailureWithPhase(stackID, "manual", commitSHA, errMsg, constants.PhaseSecretsFetch, sopsStart)
-		r.markError(stack, "stacks")
+		r.logFailureWithPhase(stackID, "manual", commitSHA, errMsg, constants.PhaseSecretsFetch, sopsStart,
+			completedPhase{constants.PhaseGitFetch, gitFetchStart, gitFetchDuration, ""},
+			completedPhase{constants.PhaseRender, renderStart, time.Since(renderStart).Milliseconds(), ""})
+		r.markSecretError(stack, errMsg)
 		return fmt.Errorf("%s", errMsg)
 	}
 	envVars = overlaySopsEnv(envVars, sopsValues)
+	r.clearSecretError(stack, "stacks")
 
 	workerID, workerFingerprint, err := r.resolveWorker(stack)
 	if err != nil {
 		errMsg := fmt.Sprintf("worker resolution failed: %v", err)
 		r.logFailureWithPhase(stackID, "manual", commitSHA, errMsg, constants.PhaseGitFetch, gitFetchStart)
-		r.markError(stack, "stacks")
+		r.markSyncError(stack, errMsg)
 		return fmt.Errorf("%s", errMsg)
 	}
 
@@ -639,15 +655,16 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 	renderRes, err := r.renderer.GenerateRevision(ctx, stack, repo, workDir, composeFile, envVars, commitSHA, true, workerID, workerFingerprint, LoadRenderOverrides(stack))
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to generate label revision on rollback: %v", err)
-		r.logFailureWithPhase(stackID, "manual", commitSHA, errMsg, constants.PhaseRender, renderStart)
-		r.markError(stack, "stacks")
+		r.logFailureWithPhase(stackID, "manual", commitSHA, errMsg, constants.PhaseRender, renderStart,
+			completedPhase{constants.PhaseGitFetch, gitFetchStart, gitFetchDuration, ""})
+		r.markSyncError(stack, errMsg)
 		return fmt.Errorf("%s", errMsg)
 	}
 	renderDuration := time.Since(renderStart).Milliseconds()
 
 	syncLog, err := r.createSyncLog(stackID, "manual", commitSHA, "rollback to "+commitSHA)
 	if err != nil {
-		_ = r.markError(stack, "stacks")
+		_ = r.markSyncError(stack, err.Error())
 		return err
 	}
 
@@ -710,7 +727,7 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 		_ = pt.finish(constants.PhaseDispatch, constants.PhaseStatusError, runErr.Error())
 		errOutput := buildErrorOutput(output, runErr)
 		if err := r.updateSyncLog(syncLog.Id, "error", errOutput, duration); err != nil {
-			_ = r.markError(stack, "stacks")
+			_ = r.markDeployError(stack, err.Error())
 			return err
 		}
 		_ = pt.start(constants.PhaseNotify)
@@ -725,7 +742,7 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 			Error:      runErr.Error(),
 		})
 		_ = pt.finish(constants.PhaseNotify, constants.PhaseStatusSuccess, "")
-		if err := r.markError(stack, "stacks"); err != nil {
+		if err := r.markDeployError(stack, errOutput); err != nil {
 			return err
 		}
 		return runErr
@@ -763,6 +780,7 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 	stack.Set("deployed_commit", commitSHA)
 	stack.Set("deployed_checksum", renderRes.Checksum)
 	stack.Set("deployed_at", time.Now().UTC().Format(time.RFC3339))
+	r.clearLastError(stack)
 	if err := r.saveRecord(stack, "stacks", "complete rollback"); err != nil {
 		_ = r.updateSyncLog(syncLog.Id, "error", "rollback succeeded but failed to persist stack state: "+err.Error(), duration)
 		return err
@@ -772,7 +790,7 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 		logStatus = check.Status
 	}
 	if err := r.updateSyncLog(syncLog.Id, logStatus, output, duration); err != nil {
-		_ = r.markError(stack, "stacks")
+		_ = r.markDeployError(stack, err.Error())
 		return err
 	}
 	notifyEvent := notify.SyncDone
@@ -825,14 +843,14 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 	if err != nil {
 		errMsg := fmt.Sprintf("repository %s not found for stack %s", repoID, stackID)
 		r.logFailure(stackID, "redeploy", "", errMsg)
-		r.markError(stack, "stacks")
+		r.markSyncError(stack, errMsg)
 		return fmt.Errorf("%s: %w", errMsg, err)
 	}
 
 	lastSHA := repo.GetString("last_commit_sha")
 	syncLog, err := r.createSyncLog(stackID, "redeploy", lastSHA, "force redeploy")
 	if err != nil {
-		_ = r.markError(stack, "stacks")
+		_ = r.markSyncError(stack, err.Error())
 		return err
 	}
 	if r.notifier != nil {
@@ -855,10 +873,10 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 	_ = pt.recordSkipped(constants.PhasePolicyCheck, "n/a: force redeploy")
 	_ = pt.start(constants.PhaseRender)
 
-	failRedeploy := func(errMsg string, duration int64) error {
+	failRedeploy := func(errMsg string, duration int64, category string) error {
 		pt.finishCurrentAsError(errMsg)
 		if err := r.updateSyncLog(syncLog.Id, "error", errMsg, duration); err != nil {
-			_ = r.markError(stack, "stacks")
+			_ = r.markStackError(stack, category, err.Error())
 			return err
 		}
 		if r.notifier != nil {
@@ -873,7 +891,7 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 				Error:      errMsg,
 			})
 		}
-		if err := r.markError(stack, "stacks"); err != nil {
+		if err := r.markStackError(stack, category, errMsg); err != nil {
 			return err
 		}
 		return fmt.Errorf("%s", errMsg)
@@ -884,7 +902,7 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 	workDir, err := r.stackWorkDir(stack, repoID)
 	if err != nil {
 		errMsg := fmt.Sprintf("invalid compose_path: %v", err)
-		return failRedeploy(errMsg, time.Since(start).Milliseconds())
+		return failRedeploy(errMsg, time.Since(start).Milliseconds(), "sync")
 	}
 	composeFile := stack.GetString("compose_file")
 	if composeFile == "" {
@@ -894,21 +912,24 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 	envVars, envErr := r.loadEnvVars(ctx, stackID)
 	if envErr != nil {
 		errMsg := fmt.Sprintf("failed to load env vars: %v", envErr)
-		return failRedeploy(errMsg, time.Since(start).Milliseconds())
+		stack.Set("secret_error", true)
+		return failRedeploy(errMsg, time.Since(start).Milliseconds(), "sync")
 	}
 
 	_ = pt.start(constants.PhaseSecretsFetch)
 	sopsValues, sopsErr := r.loadSopsEnv(ctx, repo, workDir)
 	if sopsErr != nil {
 		errMsg := fmt.Sprintf("failed to decrypt SOPS secrets file: %v", sopsErr)
-		return failRedeploy(errMsg, time.Since(start).Milliseconds())
+		stack.Set("secret_error", true)
+		return failRedeploy(errMsg, time.Since(start).Milliseconds(), "sync")
 	}
 	envVars = overlaySopsEnv(envVars, sopsValues)
+	r.clearSecretError(stack, "stacks")
 
 	workerID, workerFingerprint, err := r.resolveWorker(stack)
 	if err != nil {
 		errMsg := fmt.Sprintf("worker resolution failed: %v", err)
-		return failRedeploy(errMsg, time.Since(start).Milliseconds())
+		return failRedeploy(errMsg, time.Since(start).Milliseconds(), "sync")
 	}
 
 	// Write .env to workDir so that compose config (called inside
@@ -923,7 +944,7 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 	renderRes, err := r.renderer.GenerateRevision(ctx, stack, repo, workDir, composeFile, envVars, lastSHA, true, workerID, workerFingerprint, LoadRenderOverrides(stack))
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to generate label revision on redeploy: %v", err)
-		return failRedeploy(errMsg, time.Since(start).Milliseconds())
+		return failRedeploy(errMsg, time.Since(start).Milliseconds(), "sync")
 	}
 
 	renderedFilePath := r.renderer.GetRevisionFilePath(stackID, renderRes.Version)
@@ -932,7 +953,7 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 
 	composeContent, err := r.readRenderedCompose(stack, stackID, "redeploy", lastSHA, renderedFilePath)
 	if err != nil {
-		return failRedeploy(err.Error(), time.Since(start).Milliseconds())
+		return failRedeploy(err.Error(), time.Since(start).Milliseconds(), "sync")
 	}
 	_ = pt.finish(constants.PhaseRender, constants.PhaseStatusSuccess, fmt.Sprintf("checksum=%s version=%d", renderRes.Checksum, renderRes.Version))
 	_ = pt.start(constants.PhaseDispatch)
@@ -972,7 +993,7 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 
 	if runErr != nil {
 		errOutput := buildErrorOutput(output, runErr)
-		return failRedeploy(errOutput, duration)
+		return failRedeploy(errOutput, duration, "deploy")
 	}
 	_ = pt.finish(constants.PhaseDispatch, constants.PhaseStatusSuccess, "")
 	r.recordWorkerAckAndComposeUpPhases(pt, cmdID, dispatchStart, composeUpMs)
@@ -997,6 +1018,7 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 	stack.Set("deployed_commit", lastSHA)
 	stack.Set("deployed_checksum", renderRes.Checksum)
 	stack.Set("deployed_at", time.Now().UTC().Format(time.RFC3339))
+	r.clearLastError(stack)
 	if err := r.saveRecord(stack, "stacks", "complete force redeploy"); err != nil {
 		_ = r.updateSyncLog(syncLog.Id, "error", "redeploy succeeded but failed to persist stack state: "+err.Error(), duration)
 		return err
@@ -1006,7 +1028,7 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 		logStatus = check.Status
 	}
 	if err := r.updateSyncLog(syncLog.Id, logStatus, output, duration); err != nil {
-		_ = r.markError(stack, "stacks")
+		_ = r.markDeployError(stack, err.Error())
 		return err
 	}
 	_ = pt.start(constants.PhaseNotify)
@@ -1064,7 +1086,7 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 	if importPath == "" {
 		errMsg := "import_path is required for local stacks"
 		r.logFailure(stackID, trigger, "", errMsg)
-		r.markError(stack, "stacks")
+		r.markSyncError(stack, errMsg)
 		return fmt.Errorf("%s", errMsg)
 	}
 
@@ -1072,7 +1094,7 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 	if err != nil {
 		errMsg := fmt.Sprintf("worker resolution failed: %v", err)
 		r.logFailure(stackID, trigger, "", errMsg)
-		r.markError(stack, "stacks")
+		r.markSyncError(stack, errMsg)
 		return fmt.Errorf("%s", errMsg)
 	}
 	isOnline := r.dispatcher != nil && r.dispatcher.IsConnected(workerID)
@@ -1080,7 +1102,7 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 		log.Printf("[reconciler] worker %s is offline, queueing pending reconcile for local stack %s", workerID, stackID)
 		if err := r.queuePendingReconcile(stackID, trigger, ""); err != nil {
 			_ = r.logFailure(stackID, trigger, "", err.Error())
-			_ = r.markError(stack, "stacks")
+			_ = r.markSyncError(stack, err.Error())
 			return err
 		}
 		if err := r.saveRecordStatus(stack, "stacks", "pending", "mark local stack pending after offline queue"); err != nil {
@@ -1110,14 +1132,14 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 	if dispatchErr != nil || result.Error != "" {
 		errMsg := fmt.Sprintf("failed to read remote compose file %s: %v %s", importPath, dispatchErr, result.Error)
 		r.logFailureWithPhase(stackID, trigger, "", errMsg, constants.PhaseGitFetch, fetchStart)
-		r.markError(stack, "stacks")
+		r.markSyncError(stack, errMsg)
 		return fmt.Errorf("%s", errMsg)
 	}
 	data, err := base64.StdEncoding.DecodeString(result.Output)
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to decode remote compose file: %v", err)
 		r.logFailureWithPhase(stackID, trigger, "", errMsg, constants.PhaseGitFetch, fetchStart)
-		r.markError(stack, "stacks")
+		r.markSyncError(stack, errMsg)
 		return fmt.Errorf("%s", errMsg)
 	}
 	composeContent = data
@@ -1128,7 +1150,7 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to create temp work dir: %v", err)
 		r.logFailureWithPhase(stackID, trigger, "", errMsg, constants.PhaseGitFetch, fetchStart)
-		r.markError(stack, "stacks")
+		r.markSyncError(stack, errMsg)
 		return fmt.Errorf("%s", errMsg)
 	}
 	defer func() {
@@ -1146,7 +1168,7 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 	if writeErr := os.WriteFile(sourceFile, composeContent, 0644); writeErr != nil {
 		errMsg := fmt.Sprintf("failed to write source file: %v", writeErr)
 		r.logFailureWithPhase(stackID, trigger, "", errMsg, constants.PhaseGitFetch, fetchStart)
-		r.markError(stack, "stacks")
+		r.markSyncError(stack, errMsg)
 		return fmt.Errorf("%s", errMsg)
 	}
 	composeFile = "source.yml"
@@ -1169,10 +1191,12 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 	envVars, envErr := r.loadEnvVars(ctx, stackID)
 	if envErr != nil {
 		errMsg := fmt.Sprintf("failed to load env vars: %v", envErr)
-		r.logFailureWithPhase(stackID, trigger, "", errMsg, constants.PhaseRender, renderStart)
-		r.markError(stack, "stacks")
+		r.logFailureWithPhase(stackID, trigger, "", errMsg, constants.PhaseRender, renderStart,
+			completedPhase{constants.PhaseGitFetch, fetchStart, fetchDuration, ""})
+		r.markSecretError(stack, errMsg)
 		return fmt.Errorf("%s", errMsg)
 	}
+	r.clearSecretError(stack, "stacks")
 
 	// Write .env to workDir so that compose config (called inside
 	// GenerateRevision) can resolve ${VAR} interpolations.
@@ -1189,8 +1213,9 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 	}
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to generate label revision: %v", err)
-		r.logFailureWithPhase(stackID, trigger, "", errMsg, constants.PhaseRender, renderStart)
-		r.markError(stack, "stacks")
+		r.logFailureWithPhase(stackID, trigger, "", errMsg, constants.PhaseRender, renderStart,
+			completedPhase{constants.PhaseGitFetch, fetchStart, fetchDuration, ""})
+		r.markSyncError(stack, errMsg)
 		return fmt.Errorf("%s", errMsg)
 	}
 	renderDuration := time.Since(renderStart).Milliseconds()
@@ -1273,10 +1298,10 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 		_ = pt.finish(constants.PhaseDispatch, constants.PhaseStatusError, runErr.Error())
 		errOutput := buildErrorOutput(output, runErr)
 		if err := r.updateSyncLog(syncLog.Id, "error", errOutput, duration); err != nil {
-			_ = r.markError(stack, "stacks")
+			_ = r.markDeployError(stack, err.Error())
 			return err
 		}
-		if err := r.markError(stack, "stacks"); err != nil {
+		if err := r.markDeployError(stack, errOutput); err != nil {
 			return err
 		}
 		return runErr
@@ -1301,6 +1326,7 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 	stack.Set("deployed_commit", "imported")
 	stack.Set("deployed_checksum", newChecksum)
 	stack.Set("deployed_at", time.Now().UTC().Format(time.RFC3339))
+	r.clearLastError(stack)
 	if err := r.saveRecord(stack, "stacks", "complete local reconcile"); err != nil {
 		_ = r.updateSyncLog(syncLog.Id, "error", "local deploy succeeded but failed to persist stack success: "+err.Error(), duration)
 		return err
@@ -1310,7 +1336,7 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 		logStatus = check.Status
 	}
 	if err := r.updateSyncLog(syncLog.Id, logStatus, output, duration); err != nil {
-		_ = r.markError(stack, "stacks")
+		_ = r.markDeployError(stack, err.Error())
 		return err
 	}
 	// reconcileLocalStack has no notifier calls (local stacks aren't wired
@@ -1402,12 +1428,23 @@ func (r *Reconciler) loadCredential(repoID string) (*gitpkg.Credential, error) {
 	return gitpkg.LoadRepositoryCredential(r.app, repoID)
 }
 
+// gitFetchAttemptTimeout bounds a single clone/fetch attempt. It is deliberately
+// shorter than the overall reconcile deadline so that a stalled TCP/TLS
+// connection to the remote (which go-git only notices between protocol
+// checkpoints, not mid-read) burns one attempt's budget instead of the whole
+// parent context - otherwise a single hang exhausts the shared deadline and
+// the remaining "retries" die instantly on ctx.Done() without ever touching
+// the network again.
+const gitFetchAttemptTimeout = 90 * time.Second
+
 func (r *Reconciler) cloneOrFetchWithRetry(ctx context.Context, repoID, gitURL, branch string, auth transport.AuthMethod, workspace string) (*gogit.Repository, error) {
 	const maxAttempts = 3
 
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		repo, err := gitpkg.CloneOrFetchContext(ctx, repoID, gitURL, branch, auth, workspace)
+		attemptCtx, cancel := context.WithTimeout(ctx, gitFetchAttemptTimeout)
+		repo, err := gitpkg.CloneOrFetchContext(attemptCtx, repoID, gitURL, branch, auth, workspace)
+		cancel()
 		if err == nil {
 			if attempt > 1 {
 				log.Printf("[reconciler] git operation recovered for repo %s on attempt %d", repoID, attempt)
@@ -1593,23 +1630,31 @@ func (r *Reconciler) createSyncLog(stackID, trigger, commitSHA, commitMsg string
 	return record, nil
 }
 
+// truncateOutput caps output at constants.MaxOutputLength, keeping a prefix
+// and suffix around a marker rather than just cutting the tail — the start of
+// a compose/job run and its final error are both more useful than whatever
+// happens to be in the middle. Shared by updateSyncLog and markStackError so
+// every write into a sync_logs.output/job_runs.output/stacks.last_error_message
+// TextField (all capped at the same Max, see pb_migrations) stays under the
+// limit instead of failing PocketBase validation silently.
+func truncateOutput(output string) string {
+	const maxOutputLength = constants.MaxOutputLength
+	if len(output) <= maxOutputLength {
+		return output
+	}
+	marker := "\n\n... [OUTPUT TRUNCATED FOR SIZE] ...\n\n"
+	prefixLen := (maxOutputLength - len(marker)) / 2
+	suffixLen := maxOutputLength - len(marker) - prefixLen
+	return output[:prefixLen] + marker + output[len(output)-suffixLen:]
+}
+
 func (r *Reconciler) updateSyncLog(id, status, output string, durationMs int64) error {
 	record, err := r.app.FindRecordById("sync_logs", id)
 	if err != nil {
 		return fmt.Errorf("update sync log id=%s status=%s: %w", id, status, err)
 	}
 	record.Set("status", status)
-
-	// Truncate output to prevent database bloat
-	const maxOutputLength = 1000000
-	if len(output) > maxOutputLength {
-		marker := "\n\n... [OUTPUT TRUNCATED FOR SIZE] ...\n\n"
-		prefixLen := (maxOutputLength - len(marker)) / 2
-		suffixLen := maxOutputLength - len(marker) - prefixLen
-		output = output[:prefixLen] + marker + output[len(output)-suffixLen:]
-	}
-
-	record.Set("output", output)
+	record.Set("output", truncateOutput(output))
 	record.Set("duration_ms", durationMs)
 	if err := r.app.Save(record); err != nil {
 		return fmt.Errorf("update sync log id=%s status=%s: %w", id, status, err)
@@ -1726,6 +1771,59 @@ func (r *Reconciler) markError(rec *core.Record, collection string) error {
 	return nil
 }
 
+// markStackError is markError for the "stacks" collection plus a denormalized
+// last_error_category/message/at on the stack record, so the UI can show a
+// sync-status card without joining sync_logs/sync_log_phases. category is
+// either "sync" (everything before a compose command is dispatched to a
+// worker: git fetch, render, secrets/env resolve, policy check) or "deploy"
+// (dispatch, worker ack, compose up, post-check) — the two failure classes
+// the user wants told apart on the stack page.
+func (r *Reconciler) markStackError(stack *core.Record, category, errMsg string) error {
+	stack.Set("last_error_category", category)
+	stack.Set("last_error_message", truncateOutput(errMsg))
+	stack.Set("last_error_at", time.Now().UTC().Format(time.RFC3339))
+	return r.markError(stack, "stacks")
+}
+
+func (r *Reconciler) markSyncError(stack *core.Record, errMsg string) error {
+	return r.markStackError(stack, "sync", errMsg)
+}
+
+func (r *Reconciler) markDeployError(stack *core.Record, errMsg string) error {
+	return r.markStackError(stack, "deploy", errMsg)
+}
+
+// clearLastError resets the denormalized last_error_* fields once a
+// reconcile makes it through to a successful deploy.
+func (r *Reconciler) clearLastError(stack *core.Record) {
+	stack.Set("last_error_category", "")
+	stack.Set("last_error_message", "")
+	stack.Set("last_error_at", "")
+}
+
+// markSecretError behaves like markSyncError but additionally flags the stack as
+// failing on secret fetch/decrypt (vault/infisical backend, env var secret
+// resolve, or SOPS decrypt). Cron will not retry a stack flagged this way —
+// the secret failure won't resolve itself on its own, so re-attempting every
+// tick just repeats the same decrypt/fetch failure until a human fixes the
+// underlying secret and manually triggers a sync (which clears the flag).
+func (r *Reconciler) markSecretError(stack *core.Record, errMsg string) error {
+	stack.Set("secret_error", true)
+	return r.markSyncError(stack, errMsg)
+}
+
+// clearSecretError resets the secret_error flag once the stack has made it
+// past all secret fetch/decrypt steps successfully, re-enabling cron retries.
+func (r *Reconciler) clearSecretError(rec *core.Record, collection string) {
+	if !rec.GetBool("secret_error") {
+		return
+	}
+	rec.Set("secret_error", false)
+	if err := r.saveRecord(rec, collection, "clear secret error"); err != nil {
+		log.Printf("[reconciler] failed to clear secret_error collection=%s record=%s: %v", collection, rec.Id, err)
+	}
+}
+
 // logFailure creates a sync log entry for early failures (before the normal sync log is created).
 func (r *Reconciler) logFailure(stackID, trigger, commitSHA, errMsg string) error {
 	log.Printf("[reconciler] stack %s failure: %s", stackID, errMsg)
@@ -1741,12 +1839,31 @@ func (r *Reconciler) logFailure(stackID, trigger, commitSHA, errMsg string) erro
 	return nil
 }
 
+// completedPhase describes a pipeline phase that already finished
+// successfully before a later phase failed, so logFailureWithPhase can
+// backfill it instead of leaving it looking un-run in the deploy timeline.
+type completedPhase struct {
+	phase    string
+	start    time.Time
+	duration int64
+	detail   string
+}
+
 // logFailureWithPhase behaves like logFailure but also records which
 // pipeline phase the failure occurred in (git_fetch or render, for the
 // failures that happen before the normal deploy sync log exists), so the
 // deploy timeline has a concrete failing step for pre-dispatch failures too.
-func (r *Reconciler) logFailureWithPhase(stackID, trigger, commitSHA, errMsg, phase string, phaseStart time.Time) error {
-	return r.logFailureWithPhaseAnd(stackID, trigger, commitSHA, errMsg, phase, phaseStart, nil)
+// priorPhases backfills phases that already succeeded before this one failed
+// (e.g. git_fetch, when the failure happens later in render/secrets_fetch) —
+// without it those phases would render as never-started instead of done.
+func (r *Reconciler) logFailureWithPhase(stackID, trigger, commitSHA, errMsg, phase string, phaseStart time.Time, priorPhases ...completedPhase) error {
+	return r.logFailureWithPhaseAnd(stackID, trigger, commitSHA, errMsg, phase, phaseStart, func(pt *phaseTracker) {
+		for _, p := range priorPhases {
+			if perr := pt.recordCompleted(p.phase, constants.PhaseStatusSuccess, p.start, p.duration, p.detail); perr != nil {
+				log.Printf("[reconciler] failed to record prior phase %s for stack %s: %v", p.phase, stackID, perr)
+			}
+		}
+	})
 }
 
 // logFailureWithPhaseAnd is logFailureWithPhase with a hook for phases that
@@ -1788,7 +1905,7 @@ func (r *Reconciler) checkSecretBackends(stackID, trigger, commitSHA string, sta
 	if err := envvars.CheckStackSecretBackends(r.app, stackID); err != nil {
 		errMsg := fmt.Sprintf("cannot deploy: %v", err)
 		_ = r.logFailureWithPhase(stackID, trigger, commitSHA, errMsg, constants.PhasePolicyCheck, time.Now())
-		r.markError(stack, "stacks")
+		r.markSecretError(stack, errMsg)
 		return fmt.Errorf("%s", errMsg)
 	}
 	return nil
@@ -1869,7 +1986,7 @@ func (r *Reconciler) readRenderedCompose(stack *core.Record, stackID, trigger, s
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to read rendered compose file: %v", err)
 		r.logFailure(stackID, trigger, sha, errMsg)
-		r.markError(stack, "stacks")
+		r.markSyncError(stack, errMsg)
 		return nil, fmt.Errorf("%s", errMsg)
 	}
 	return content, nil
@@ -1886,13 +2003,13 @@ func (r *Reconciler) resolveComposeFile(stack *core.Record, workDir, stackID, tr
 	if err := safepath.ValidateComposeFile(composeFile); err != nil {
 		errMsg := fmt.Sprintf("invalid compose_file: %v", err)
 		r.logFailure(stackID, trigger, sha, errMsg)
-		r.markError(stack, "stacks")
+		r.markSyncError(stack, errMsg)
 		return "", fmt.Errorf("%s", errMsg)
 	}
 	if _, statErr := os.Stat(filepath.Join(workDir, composeFile)); os.IsNotExist(statErr) {
 		errMsg := fmt.Sprintf("compose file not found: %s (workdir: %s)", composeFile, workDir)
 		r.logFailure(stackID, trigger, sha, errMsg)
-		r.markError(stack, "stacks")
+		r.markSyncError(stack, errMsg)
 		return "", fmt.Errorf("%s", errMsg)
 	}
 	return composeFile, nil
@@ -1996,7 +2113,7 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 	syncLog, err := r.createSyncLog(stackID, "transfer", "",
 		fmt.Sprintf("%s → %s", sourceHostname, targetHostname))
 	if err != nil {
-		_ = r.markError(stack, "stacks")
+		_ = r.markSyncError(stack, err.Error())
 		return err
 	}
 
@@ -2032,7 +2149,7 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 		outputBuf.WriteString("error: " + errMsg + "\n")
 
 		if err := r.updateSyncLog(syncLog.Id, "error", outputBuf.String(), time.Since(start).Milliseconds()); err != nil {
-			_ = r.markError(stack, "stacks")
+			_ = r.markDeployError(stack, err.Error())
 			return err
 		}
 		r.notifier.Dispatch(ctx, notify.Payload{
@@ -2084,7 +2201,7 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 		outputBuf.WriteString("error: " + probeErrMsg + "\n")
 
 		if err := r.updateSyncLog(syncLog.Id, "error", outputBuf.String(), time.Since(start).Milliseconds()); err != nil {
-			_ = r.markError(stack, "stacks")
+			_ = r.markDeployError(stack, err.Error())
 			return err
 		}
 		r.notifier.Dispatch(ctx, notify.Payload{
@@ -2161,7 +2278,7 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 		}
 
 		if err := r.updateSyncLog(syncLog.Id, "error", outputBuf.String(), time.Since(start).Milliseconds()); err != nil {
-			_ = r.markError(stack, "stacks")
+			_ = r.markDeployError(stack, err.Error())
 			return err
 		}
 		r.notifier.Dispatch(ctx, notify.Payload{
@@ -2173,7 +2290,7 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 			DurationMs: time.Since(start).Milliseconds(),
 			Error:      deployErrMsg,
 		})
-		if err := r.markError(stack, "stacks"); err != nil {
+		if err := r.markDeployError(stack, deployErrMsg); err != nil {
 			return err
 		}
 		return fmt.Errorf("transfer failed: %s", deployErrMsg)
@@ -2232,6 +2349,7 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 	stack.Set("worker", targetWorkerID)
 	stack.Set("status", checkStatus)
 	stack.Set("last_synced_at", time.Now().UTC().Format(time.RFC3339))
+	r.clearLastError(stack)
 	if err := r.saveRecord(stack, "stacks", "complete transfer"); err != nil {
 		_ = r.updateSyncLog(syncLog.Id, "error", "transfer succeeded but failed to persist stack state: "+err.Error(), duration)
 		return err
@@ -2242,7 +2360,7 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 		logStatus = checkStatus
 	}
 	if err := r.updateSyncLog(syncLog.Id, logStatus, outputBuf.String(), duration); err != nil {
-		_ = r.markError(stack, "stacks")
+		_ = r.markDeployError(stack, err.Error())
 		return err
 	}
 

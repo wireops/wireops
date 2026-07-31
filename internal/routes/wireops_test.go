@@ -3,6 +3,7 @@ package routes
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/wireops/wireops/internal/manifest"
@@ -67,6 +68,44 @@ func TestResolveWireopsComposeFileAmbiguous(t *testing.T) {
 	}
 	if def.ResolvedComposeFile != "" {
 		t.Fatalf("expected no resolved compose file when ambiguous, got: %s", def.ResolvedComposeFile)
+	}
+}
+
+func TestResolveWireopsComposeFileMalformedCandidate(t *testing.T) {
+	repoDir := t.TempDir()
+	writeFile(t, repoDir, "wireops.yaml", "version: wireops.v1\nname: api\n")
+	writeFile(t, repoDir, "docker-compose.yml", "{not: valid: yaml:")
+
+	def := &manifest.Definition{}
+	resolveWireopsComposeFile(repoDir, "wireops.yaml", def)
+
+	if def.ResolutionError == "" {
+		t.Fatal("expected resolution error for malformed compose candidate")
+	}
+	if !strings.Contains(def.ResolutionError, "docker-compose.yml") {
+		t.Fatalf("expected resolution error to name the candidate file, got: %s", def.ResolutionError)
+	}
+	if !strings.Contains(def.ResolutionError, "invalid compose document") {
+		t.Fatalf("expected resolution error to include the validation reason, got: %s", def.ResolutionError)
+	}
+}
+
+func TestResolveWireopsComposeFileServicelessCandidate(t *testing.T) {
+	repoDir := t.TempDir()
+	writeFile(t, repoDir, "wireops.yaml", "version: wireops.v1\nname: api\n")
+	writeFile(t, repoDir, "compose.yml", "version: \"3\"\nvolumes:\n  data: {}\n")
+
+	def := &manifest.Definition{}
+	resolveWireopsComposeFile(repoDir, "wireops.yaml", def)
+
+	if def.ResolutionError == "" {
+		t.Fatal("expected resolution error for a compose candidate with no services")
+	}
+	if !strings.Contains(def.ResolutionError, "compose.yml") {
+		t.Fatalf("expected resolution error to name the candidate file, got: %s", def.ResolutionError)
+	}
+	if !strings.Contains(def.ResolutionError, "no services defined") {
+		t.Fatalf("expected resolution error to include the validation reason, got: %s", def.ResolutionError)
 	}
 }
 

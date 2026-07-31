@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { IntegrationAction } from '~/composables/useIntegrations'
-import { stackHasRenderOverrides, stackSourceStatus, stackVisibleDeployStatus, stackWorkerStatus } from '../../utils/stack-status'
+import { stackHasRenderOverrides, stackLastError, stackSyncStatus, stackVisibleDeployStatus, stackWorkerStatus } from '../../utils/stack-status'
 import { WORKER_STATUS } from '../../utils/worker'
 
 const route = useRoute()
@@ -24,9 +24,16 @@ const { data: workers, refresh: refreshWorkers } = useAsyncData('workers_for_sta
 const workersById = computed(() =>
   Object.fromEntries((workers.value || []).map((worker: any) => [worker.id, worker]))
 )
-const sourceStatus = computed(() => stackSourceStatus(stack.value))
+const sourceStatus = computed(() => stackSyncStatus(stack.value))
 const deployStatus = computed(() => stackVisibleDeployStatus(stack.value, workersById.value))
 const workerStatus = computed(() => stackWorkerStatus(stack.value, workersById.value))
+const lastError = computed(() => stackLastError(stack.value))
+// Card only teases the tail of a (possibly long, multi-service) docker
+// compose error - the full message is already in the Sync Logs tab this card
+// links to, so there's no need to repeat all of it here.
+const lastErrorLines = computed(() => (lastError.value?.message || '').split('\n'))
+const lastErrorTailLines = computed(() => lastErrorLines.value.slice(-5))
+const lastErrorOmittedCount = computed(() => Math.max(0, lastErrorLines.value.length - 5))
 const workerOffline = computed(() => ['offline', 'revoked'].includes(workerStatus.value.key))
 const canSyncDeploy = computed(() => workerStatus.value.key === 'online')
 const syncDisabledReason = computed(() => {
@@ -742,7 +749,7 @@ onMounted(() => {
         </template>
         <div class="grid grid-cols-3 gap-2 sm:gap-3">
           <StackStatusCard
-            title="Git"
+            title="Sync"
             :status="sourceStatus"
           />
           <StackStatusCard
@@ -755,6 +762,44 @@ onMounted(() => {
             :tooltip="stack?.expand?.worker?.hostname || 'Unknown worker'"
           />
         </div>
+      </UCard>
+
+      <UCard
+        v-if="lastError"
+        class="cursor-pointer transition-colors hover:bg-gray-50 dark:hover:bg-carbon-800/40"
+        role="button"
+        tabindex="0"
+        aria-label="View full error in Sync Logs"
+        title="View full error in Sync Logs"
+        @click="activeTab = 'logs'"
+        @keydown.enter="activeTab = 'logs'"
+        @keydown.space.prevent="activeTab = 'logs'"
+      >
+        <template #header>
+          <div class="flex items-center justify-between gap-2">
+            <div class="flex items-center gap-2">
+              <UIcon :name="lastError.icon" :class="lastError.iconClass" class="size-4" />
+              <h3 class="font-semibold">{{ lastError.label }}</h3>
+              <UBadge :color="lastError.color" variant="subtle" size="md" class="uppercase">
+                {{ lastError.category === 'sync' ? 'Sync' : 'Deploy' }}
+              </UBadge>
+            </div>
+            <UButton
+              label="Go to logs"
+              variant="outline"
+              size="lg"
+              trailing-icon="i-lucide-arrow-right"
+              @click.stop="activeTab = 'logs'"
+            />
+          </div>
+        </template>
+        <p v-if="lastErrorOmittedCount > 0" class="text-xs text-gray-500 dark:text-wire-200/50">
+          {{ lastErrorOmittedCount }} earlier line{{ lastErrorOmittedCount === 1 ? '' : 's' }} omitted
+        </p>
+        <TerminalOutput class="mt-1" :lines="lastErrorTailLines" />
+        <p v-if="lastError.at" class="mt-2 text-xs text-gray-500">
+          {{ new Date(lastError.at).toLocaleString() }}
+        </p>
       </UCard>
 
       <UCard>

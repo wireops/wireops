@@ -22,6 +22,7 @@ Self-hosted GitOps platform for managing Docker Compose stacks and scheduled Doc
 - [Access Control, Policy & Audit](#access-control-policy--audit)
 - [Coding Conventions](#coding-conventions)
 - [Testing & Coverage](#testing--coverage)
+- [Git Workflow](#git-workflow)
 
 ---
 
@@ -409,3 +410,8 @@ Events: `sync.started`, `sync.done`, `sync.error`, `sync.test`.
 - These are floors, not aspirational targets — raise them only once coverage comfortably clears them for a few months.
 - **Agent directive**: treat coverage as something to actively grow, not just avoid regressing. When you touch a package, look for nearby untested branches (error paths, edge cases) and add tests even if not strictly required by the floor.
 - **Agent directive — generated code**: whenever you generate new functions, handlers, composables, or components, think about how to make that code testable and write the corresponding test in the same change (table-driven Go tests for backend logic, vitest for frontend composables/utils). Don't ship new non-trivial logic without at least one test exercising its main path and one obvious edge case.
+
+## Git Workflow
+
+- **Never commit directly to `main`.** Always create a feature branch and open a PR, even for one-line fixes.
+- Push straight to `main` only if the user explicitly asks for it in that specific request — a prior approval does not carry over to later work.

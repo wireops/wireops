@@ -36,3 +36,11 @@ const (
 	PhaseStatusError   = "error"
 	PhaseStatusSkipped = "skipped"
 )
+
+// MaxOutputLength caps how many characters of deploy/job output the
+// reconciler and job scheduler will persist into sync_logs.output /
+// job_runs.output, and is also what the pb_migrations schema field's Max
+// must match — PocketBase silently falls back to its own 5000-char default
+// on any TextField whose Max isn't set to a positive value, so a drift here
+// makes writes above that limit fail validation silently.
+const MaxOutputLength = 1000000
