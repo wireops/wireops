@@ -39,77 +39,79 @@ const SEVERITY_META: Record<LintSeverity, { icon: string; iconClass: string; row
   },
 }
 
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
+/** One piece of a highlighted line: plain text, or text tagged with a yaml-* class. */
+type Token = { text: string; cls?: string }
+
+// Splits `text` on every match of `re` (which must have a capturing group
+// around the part to highlight), tagging the captured part with `cls` and
+// leaving the rest as plain tokens. Used for the sub-highlighting that
+// applies within an already-classified segment (quoted strings inside a list
+// item's value).
+function splitHighlight(text: string, re: RegExp, cls: string): Token[] {
+  const tokens: Token[] = []
+  let lastIndex = 0
+  for (const m of text.matchAll(re)) {
+    if (m.index === undefined) continue
+    if (m.index > lastIndex) tokens.push({ text: text.slice(lastIndex, m.index) })
+    tokens.push({ text: m[0], cls })
+    lastIndex = m.index + m[0].length
+  }
+  if (lastIndex < text.length) tokens.push({ text: text.slice(lastIndex) })
+  return tokens
 }
 
 // Same rule set as YamlHighlighter, kept in sync so the two previews of a
 // compose file always match — this one only adds a leading gutter for
 // findings, so it can't reuse that component's <pre> layout directly.
-function highlightYamlLine(line: string): string {
-  let highlighted = escapeHtml(line)
-
+//
+// Returns tokens rather than an HTML string: the file is untrusted repository
+// content, so it goes through Vue's text interpolation (which escapes it)
+// rather than v-html, however tightly scoped the markup being injected would
+// have been.
+function tokenizeYamlLine(line: string): Token[] {
   if (line.trim().startsWith('#')) {
-    return `<span class="yaml-comment">${highlighted}</span>`
+    return [{ text: line, cls: 'yaml-comment' }]
   }
 
-  if (/^\s*[\w-]+\s*:/.test(line)) {
-    highlighted = highlighted.replace(
-      /^(\s*)([\w-]+)(\s*:)/,
-      '$1<span class="yaml-key">$2</span>$3',
-    )
+  const keyMatch = line.match(/^(\s*)([\w-]+)(\s*:)/)
+  if (keyMatch) {
+    const tokens: Token[] = []
+    if (keyMatch[1]) tokens.push({ text: keyMatch[1] })
+    tokens.push({ text: keyMatch[2]!, cls: 'yaml-key' })
+    tokens.push({ text: keyMatch[3]! })
 
-    const colonIndex = line.indexOf(':')
-    const afterColon = colonIndex !== -1 ? line.substring(colonIndex + 1) : undefined
-    if (afterColon) {
-      const trimmed = afterColon.trim()
+    const remainder = line.slice(keyMatch[0].length)
+    const leadingWS = remainder.slice(0, remainder.length - remainder.trimStart().length)
+    const trailingLen = remainder.length - remainder.trimEnd().length
+    const trailingWS = trailingLen > 0 ? remainder.slice(remainder.length - trailingLen) : ''
+    const value = remainder.slice(leadingWS.length, remainder.length - trailingLen)
 
-      if (/^(['"]).*\1$/.test(trimmed)) {
-        highlighted = highlighted.replace(
-          /(&quot;|&#39;)(.*?)(&quot;|&#39;)/,
-          '<span class="yaml-string">$1$2$3</span>',
-        )
-      } else if (/^-?\d+(?:\.\d*)?$/.test(trimmed)) {
-        highlighted = highlighted.replace(
-          /:(\s*)([-0-9.]+)(\s*)$/,
-          ':$1<span class="yaml-number">$2</span>$3',
-        )
-      } else if (/^(true|false|yes|no|on|off)$/i.test(trimmed)) {
-        highlighted = highlighted.replace(
-          /:(\s*)([a-zA-Z]+)(\s*)$/,
-          ':$1<span class="yaml-boolean">$2</span>$3',
-        )
-      } else if (/^(null|~)$/i.test(trimmed)) {
-        highlighted = highlighted.replace(
-          /:(\s*)(null|~)(\s*)$/i,
-          ':$1<span class="yaml-null">$2</span>$3',
-        )
-      }
-    }
-  } else if (/^\s*-\s/.test(line)) {
-    highlighted = highlighted.replace(/^(\s*-\s)/, '<span class="yaml-operator">$1</span>')
+    let valueCls: string | undefined
+    if (/^(['"]).*\1$/.test(value)) valueCls = 'yaml-string'
+    else if (/^-?\d+(?:\.\d*)?$/.test(value)) valueCls = 'yaml-number'
+    else if (/^(true|false|yes|no|on|off)$/i.test(value)) valueCls = 'yaml-boolean'
+    else if (/^(null|~)$/i.test(value)) valueCls = 'yaml-null'
 
-    if (/(['"]).*\1/.test(line)) {
-      highlighted = highlighted.replace(
-        /(&quot;|&#39;)(.*?)(&quot;|&#39;)/g,
-        '<span class="yaml-string">$1$2$3</span>',
-      )
-    }
+    if (leadingWS) tokens.push({ text: leadingWS })
+    if (value) tokens.push({ text: value, cls: valueCls })
+    if (trailingWS) tokens.push({ text: trailingWS })
+    return tokens
   }
 
-  return highlighted
+  const listMatch = line.match(/^(\s*-\s)/)
+  if (listMatch) {
+    const rest = line.slice(listMatch[0].length)
+    return [{ text: listMatch[0], cls: 'yaml-operator' }, ...splitHighlight(rest, /(['"]).*?\1/g, 'yaml-string')]
+  }
+
+  return [{ text: line }]
 }
 
 // Split on \n after normalising \r\n so a CRLF file does not render a stray
 // carriage return at the end of every line.
 const lines = computed(() => props.content.replace(/\r\n/g, '\n').split('\n'))
 
-const highlightedLines = computed(() => lines.value.map(line => highlightYamlLine(line) || '&nbsp;'))
+const highlightedLines = computed(() => lines.value.map(tokenizeYamlLine))
 
 /** line number -> the findings anchored to it, most severe first. */
 const findingsByLine = computed(() => {
@@ -223,11 +225,14 @@ defineExpose({ focusOn })
               </UTooltip>
             </td>
 
-            <!-- Highlighted markup is built from an escaped copy of the line
-                 (see escapeHtml above) — the untrusted file content itself is
-                 never interpreted as markup. -->
-            <!-- eslint-disable-next-line vue/no-v-html -->
-            <td class="pl-1 pr-3 align-top whitespace-pre compose-preview-line" v-html="highlightedLines[i]" />
+            <!-- Each token is plain text through Vue's normal interpolation
+                 (auto-escaped) — the untrusted file content is never
+                 interpreted as markup, unlike a v-html-based highlighter. -->
+            <td class="pl-1 pr-3 align-top whitespace-pre compose-preview-line"><span
+              v-for="(token, ti) in highlightedLines[i]"
+              :key="ti"
+              :class="token.cls"
+            >{{ token.text }}</span></td>
           </tr>
         </tbody>
       </table>

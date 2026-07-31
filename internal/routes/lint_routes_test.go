@@ -238,8 +238,8 @@ func TestRedactWorkspacePaths(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := redactWorkspacePaths(tc.msg); got != tc.want {
-				t.Errorf("redactWorkspacePaths()\n got: %s\nwant: %s", got, tc.want)
+			if got := lint.RedactWorkspacePaths(tc.msg); got != tc.want {
+				t.Errorf("lint.RedactWorkspacePaths()\n got: %s\nwant: %s", got, tc.want)
 			}
 		})
 	}
@@ -267,7 +267,7 @@ func TestRedactFindingsStripsWorkspacePaths(t *testing.T) {
 		},
 	}
 
-	redactFindings(findings)
+	lint.RedactFindings(findings)
 
 	for _, f := range findings {
 		if strings.Contains(f.Message, "/srv/wireops-data") {

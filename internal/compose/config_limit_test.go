@@ -59,8 +59,8 @@ func writeExpandingCompose(t *testing.T, dir string) {
 }
 
 func TestConfigRejectsOversizeComposeSource(t *testing.T) {
-	requireDocker(t)
-
+	// No requireDocker: ReadFile rejects the oversize source before Config
+	// reaches the docker subprocess, so this case never touches Docker.
 	dir := t.TempDir()
 	writeComposeWithServices(t, dir, 40)
 

@@ -390,7 +390,12 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 			workDir = filepath.Join(repoDir, filepath.Clean(composePath))
 		}
 
-		configOut, err := compose.Config(context.Background(), compose.ConfigOptions{
+		// Bounded so a slow or hung `docker compose config` cannot hold the
+		// create-stack request (and this synchronous DB hook) open forever.
+		checkCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		configOut, err := compose.Config(checkCtx, compose.ConfigOptions{
 			WorkDir:     workDir,
 			ComposeFile: composeFileName,
 			Root:        repoDir,
@@ -414,6 +419,12 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 		if !report.HasErrors() {
 			return nil
 		}
+		// The error returned here reaches the API caller as a validation
+		// message, same as the compose lint preview route's response — it
+		// needs the same redaction so a finding never leaks the server's
+		// filesystem layout (docker compose config rewrites relative bind
+		// sources to absolute server paths).
+		lint.RedactFindings(report.Findings)
 		var msgs []string
 		for _, f := range report.Findings {
 			if f.Severity == lint.SeverityError {

@@ -6,14 +6,12 @@ import (
 	"log"
 	"net/http"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
 
 	"github.com/wireops/wireops/internal/compose"
-	"github.com/wireops/wireops/internal/config"
 	"github.com/wireops/wireops/internal/lint"
 	"github.com/wireops/wireops/internal/policy"
 	"github.com/wireops/wireops/internal/rbac"
@@ -48,74 +46,7 @@ func composeErrorForClient(e *core.RequestEvent, stage, repoID string, err error
 	}
 	log.Printf("[lint] failed to %s compose config for repo %s (actor=%s): %v", stage, repoID, actor, err)
 
-	return "failed to " + stage + " compose config: " + redactWorkspacePaths(err.Error())
-}
-
-// redactFindings strips server-side paths from a report before it leaves the
-// process.
-//
-// Findings are not purely author-written text: `docker compose config`
-// rewrites relative bind-mount sources into absolute server paths, so a
-// volume-policy violation can carry "/data/repos/<id>/config" in its message.
-// That is the same disclosure config_error is redacted for, and it has to be
-// handled on this path too.
-//
-// Message and Hint are the only free-text fields. Finding.Path is a dotted
-// config location ("services.web.volumes"), not a filesystem path, and there
-// is no Subject on a Finding — that field lives on policy.Violation and is
-// folded into Message before it reaches here.
-//
-// Modifies in place; runs before either response so the early
-// source-unreadable return is covered too.
-func redactFindings(findings []lint.Finding) {
-	for i := range findings {
-		findings[i].Message = redactWorkspacePaths(findings[i].Message)
-		findings[i].Hint = redactWorkspacePaths(findings[i].Hint)
-	}
-}
-
-// redactWorkspacePaths rewrites absolute paths under the repository workspace
-// to a repo-relative form, so an error can be shown to the caller without
-// describing where the server keeps its data.
-func redactWorkspacePaths(msg string) string {
-	// Most specific first: the repo workspace usually lives under DATA_DIR, so
-	// redacting DATA_DIR first would swallow the more informative "<repos>"
-	// label. Each root is replaced in its trailing-separator form first so the
-	// bare replacement cannot leave a doubled slash.
-	//
-	// "<workspace>/<repo-id>/svc/x.yml" becomes "<repos>/<repo-id>/svc/x.yml":
-	// the repo id is the caller's own input, so only the server-side root is
-	// worth hiding.
-	for _, root := range []struct{ path, label string }{
-		{config.GetReposWorkspace(), "<repos>"},
-		{config.GetStacksStoragePath(), "<stacks>"},
-		{config.GetDataDir(), "<data>"},
-	} {
-		if root.path == "" {
-			continue
-		}
-		// These roots are configured relatively by default (DATA_DIR defaults
-		// to "./data", and PB_DATA_DIR=./pb_data resolves DATA_DIR to "."),
-		// while `docker compose config` rewrites bind-mount sources to
-		// absolute paths — so matching has to happen in absolute form too, or
-		// a root like "." never matches the real path it is meant to hide.
-		// Resolving "." to an absolute path also closes the actual bug this
-		// guards against: as a bare relative root, "." matched (and mangled)
-		// every literal "." in a finding's message, e.g. an IP in a hint.
-		abs, err := filepath.Abs(root.path)
-		if err != nil {
-			continue
-		}
-		trimmed := strings.TrimSuffix(abs, string(filepath.Separator))
-		// A root that resolves to the filesystem root has nothing specific to
-		// redact and would otherwise match the start of every absolute path.
-		if trimmed == "" {
-			continue
-		}
-		msg = strings.ReplaceAll(msg, trimmed+string(filepath.Separator), root.label+"/")
-		msg = strings.ReplaceAll(msg, trimmed, root.label)
-	}
-	return msg
+	return "failed to " + stage + " compose config: " + lint.RedactWorkspacePaths(err.Error())
 }
 
 // lintComposeRequest points the linter at a compose file in a repository.
@@ -265,7 +196,7 @@ func (rr routeRegistrar) registerLintRoutes() {
 
 		ctx.RepoRoot = repoDir
 		report := lint.Run(configMap, ctx)
-		redactFindings(report.Findings)
+		lint.RedactFindings(report.Findings)
 
 		// The source is read for the preview and, more importantly, to give
 		// each finding a line number: the rules run against the resolved
