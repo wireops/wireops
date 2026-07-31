@@ -201,7 +201,7 @@ const filteredStacks = computed(() => {
         if (!b.last_synced_at) return -1
         return new Date(b.last_synced_at).getTime() - new Date(a.last_synced_at).getTime()
       case 'status':
-        return a.status.localeCompare(b.status)
+        return stackEffectiveStatus(a).localeCompare(stackEffectiveStatus(b))
       default:
         return 0
     }

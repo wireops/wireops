@@ -618,7 +618,7 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 		errMsg := fmt.Sprintf("failed to load env vars: %v", envErr)
 		r.logFailureWithPhase(stackID, "manual", commitSHA, errMsg, constants.PhaseRender, renderStart,
 			completedPhase{constants.PhaseGitFetch, gitFetchStart, gitFetchDuration, ""})
-		r.markSyncError(stack, errMsg)
+		r.markSecretError(stack, errMsg)
 		return fmt.Errorf("%s", errMsg)
 	}
 
@@ -629,10 +629,11 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 		r.logFailureWithPhase(stackID, "manual", commitSHA, errMsg, constants.PhaseSecretsFetch, sopsStart,
 			completedPhase{constants.PhaseGitFetch, gitFetchStart, gitFetchDuration, ""},
 			completedPhase{constants.PhaseRender, renderStart, time.Since(renderStart).Milliseconds(), ""})
-		r.markSyncError(stack, errMsg)
+		r.markSecretError(stack, errMsg)
 		return fmt.Errorf("%s", errMsg)
 	}
 	envVars = overlaySopsEnv(envVars, sopsValues)
+	r.clearSecretError(stack, "stacks")
 
 	workerID, workerFingerprint, err := r.resolveWorker(stack)
 	if err != nil {
@@ -911,6 +912,7 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 	envVars, envErr := r.loadEnvVars(ctx, stackID)
 	if envErr != nil {
 		errMsg := fmt.Sprintf("failed to load env vars: %v", envErr)
+		stack.Set("secret_error", true)
 		return failRedeploy(errMsg, time.Since(start).Milliseconds(), "sync")
 	}
 
@@ -918,9 +920,11 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 	sopsValues, sopsErr := r.loadSopsEnv(ctx, repo, workDir)
 	if sopsErr != nil {
 		errMsg := fmt.Sprintf("failed to decrypt SOPS secrets file: %v", sopsErr)
+		stack.Set("secret_error", true)
 		return failRedeploy(errMsg, time.Since(start).Milliseconds(), "sync")
 	}
 	envVars = overlaySopsEnv(envVars, sopsValues)
+	r.clearSecretError(stack, "stacks")
 
 	workerID, workerFingerprint, err := r.resolveWorker(stack)
 	if err != nil {
@@ -1189,9 +1193,10 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 		errMsg := fmt.Sprintf("failed to load env vars: %v", envErr)
 		r.logFailureWithPhase(stackID, trigger, "", errMsg, constants.PhaseRender, renderStart,
 			completedPhase{constants.PhaseGitFetch, fetchStart, fetchDuration, ""})
-		r.markSyncError(stack, errMsg)
+		r.markSecretError(stack, errMsg)
 		return fmt.Errorf("%s", errMsg)
 	}
+	r.clearSecretError(stack, "stacks")
 
 	// Write .env to workDir so that compose config (called inside
 	// GenerateRevision) can resolve ${VAR} interpolations.
@@ -2100,7 +2105,7 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 	syncLog, err := r.createSyncLog(stackID, "transfer", "",
 		fmt.Sprintf("%s → %s", sourceHostname, targetHostname))
 	if err != nil {
-		_ = r.markDeployError(stack, err.Error())
+		_ = r.markSyncError(stack, err.Error())
 		return err
 	}
 

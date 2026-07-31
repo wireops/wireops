@@ -773,6 +773,7 @@ onMounted(() => {
         title="View full error in Sync Logs"
         @click="activeTab = 'logs'"
         @keydown.enter="activeTab = 'logs'"
+        @keydown.space.prevent="activeTab = 'logs'"
       >
         <template #header>
           <div class="flex items-center justify-between gap-2">

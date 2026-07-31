@@ -262,10 +262,11 @@ func IsComposeFile(data []byte) bool {
 	return err == nil && hasServices
 }
 
-// composeYAMLCheck distinguishes a YAML syntax error from a validly-parsed
-// file with no (or empty) "services" map, so callers can tell "not a compose
-// file" apart from "looks like it should be one but fails to parse" -
-// see ComposeCandidateError.
+// composeYAMLCheck distinguishes a YAML syntax/decode error (including valid
+// YAML with a "services" key of the wrong type, e.g. a list instead of a map)
+// from a validly-parsed file with no (or empty) "services" map, so callers can
+// tell "not a compose file" apart from "looks like it should be one but fails
+// to parse" - see ComposeCandidateError.
 func composeYAMLCheck(data []byte) (err error, hasServices bool) {
 	var doc struct {
 		Services map[string]any `yaml:"services"`
@@ -283,7 +284,7 @@ func composeYAMLCheck(data []byte) (err error, hasServices bool) {
 func ComposeCandidateError(data []byte) error {
 	err, hasServices := composeYAMLCheck(data)
 	if err != nil {
-		return fmt.Errorf("invalid YAML: %w", err)
+		return fmt.Errorf("invalid compose document: %w", err)
 	}
 	if !hasServices {
 		return fmt.Errorf("no services defined")

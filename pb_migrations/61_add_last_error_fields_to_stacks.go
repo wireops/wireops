@@ -22,7 +22,7 @@ func init() {
 			})
 		}
 		if col.Fields.GetByName("last_error_message") == nil {
-			col.Fields.Add(&core.TextField{Name: "last_error_message"})
+			col.Fields.Add(&core.TextField{Name: "last_error_message", Max: syncLogOutputMax})
 		}
 		if col.Fields.GetByName("last_error_at") == nil {
 			col.Fields.Add(&core.DateField{Name: "last_error_at"})
