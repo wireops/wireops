@@ -3,7 +3,7 @@ const route = useRoute()
 const { $pb } = useNuxtApp()
 const { getRepoCommits } = useApi()
 const { copy } = useCopy()
-const { platformIconUrl, PLATFORM_OPTIONS } = useRepositoryPlatform()
+const { PLATFORM_OPTIONS } = useRepositoryPlatform()
 const toast = useToast()
 
 function platformLabel(value: string): string {
@@ -52,6 +52,23 @@ async function rotateSopsKey() {
     rotating.value = false
     confirmingRotate.value = false
   }
+}
+
+const showDangerZone = ref(false)
+const showDeleteModal = ref(false)
+
+const dangerZoneActions = computed(() => [
+  {
+    key: 'remove',
+    label: 'Remove Repository',
+    description: 'Permanently deletes this repository. It cannot be removed while stacks or scheduled jobs still reference it.',
+    buttonLabel: 'Remove Repository',
+    onClick: () => { showDeleteModal.value = true },
+  },
+])
+
+function onRepositoryDeleted() {
+  navigateTo('/repositories')
 }
 
 async function syncRepo() {
@@ -103,12 +120,7 @@ async function syncRepo() {
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
         <div class="flex items-center gap-1.5">
           <span class="text-gray-500">Platform:</span>
-          <img
-            v-if="repo?.platform && platformIconUrl(repo.platform)"
-            :src="platformIconUrl(repo.platform)!"
-            class="w-4 h-4 object-contain shrink-0"
-            alt=""
-          >
+          <RepositoryIcon v-if="repo" :repository="repo" icon-class="w-4 h-4 object-contain shrink-0" />
           <span>{{ repo?.platform ? platformLabel(repo.platform) : '-' }}</span>
         </div>
         <div><span class="text-gray-500">Git URL:</span> <span class="font-mono">{{ repo?.git_url }}</span></div>
@@ -193,11 +205,22 @@ async function syncRepo() {
       <p v-else class="text-sm text-gray-500 py-2">No commits available. Repository may not be cloned yet.</p>
     </UCard>
 
+    <!-- Danger Zone -->
+    <DangerZoneCard v-if="repo && canManageRepos" v-model:open="showDangerZone" :actions="dangerZoneActions" />
+
     <!-- Edit Repository Modal -->
     <RepositoryCreateModal
       v-model:open="showEdit"
       :repository="repo ?? undefined"
       @updated="refreshRepo"
+    />
+
+    <RepositoryDeleteModal
+      v-if="repo"
+      v-model:open="showDeleteModal"
+      :repository-id="repo.id"
+      :repository-name="repo.name"
+      @deleted="onRepositoryDeleted"
     />
   </div>
 </template>

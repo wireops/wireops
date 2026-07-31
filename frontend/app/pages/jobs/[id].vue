@@ -149,8 +149,9 @@ async function toggleEnabled() {
             {{ job?.description || definition.description }}
           </p>
           <div class="flex items-center gap-2 mt-1 flex-wrap">
-            <span class="text-xs font-mono text-gray-400 dark:text-wire-200/40">
-              {{ job?.expand?.repository?.name }} / {{ job?.job_file }}
+            <span class="flex items-center gap-1 text-xs font-mono text-gray-400 dark:text-wire-200/40">
+              <RepositoryButton :repository="job?.expand?.repository" icon-class="w-3 h-3 shrink-0" />
+              / {{ job?.job_file }}
             </span>
             <UBadge v-if="definition?.cron" :label="definition.cron" variant="subtle" color="neutral" size="xs" class="font-mono" />
             <UBadge label="EPHEMERAL" variant="subtle" color="primary" size="xs" class="font-mono" />

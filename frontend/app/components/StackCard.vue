@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { stackEffectiveStatus, stackHasRenderOverrides, stackIsSyncing, stackRepositorySubtitle, stackSourceStatus, stackStatusBadge, stackSyncStatus, stackVisibleDeployStatus, stackWorkerName, stackWorkerStatus } from '../utils/stack-status'
+import { stackEffectiveStatus, stackHasRenderOverrides, stackIsSyncing, stackStatusBadge, stackSyncStatus, stackVisibleDeployStatus, stackWorkerName, stackWorkerStatus } from '../utils/stack-status'
 
 const props = defineProps<{
   stack: any
@@ -30,7 +30,7 @@ const lastSyncedLabel = computed(() => relativeTime(props.stack?.last_synced_at)
     :class="statusBadge.borderClass"
   >
     <div class="relative">
-      <div class="absolute right-0 top-0 z-10 flex shrink-0 items-center gap-1">
+      <div class="absolute right-0 top-0 z-10 flex shrink-0 items-center gap-1.5">
         <UIcon
           v-if="isSyncing"
           name="i-lucide-loader-2"
@@ -38,6 +38,7 @@ const lastSyncedLabel = computed(() => relativeTime(props.stack?.last_synced_at)
           title="Sync in progress"
           aria-label="Sync in progress"
         />
+        <OverridedBadge v-if="stackHasRenderOverrides(stack)" />
         <BadgeStatus :status="effectiveStatus" />
       </div>
 
@@ -46,34 +47,15 @@ const lastSyncedLabel = computed(() => relativeTime(props.stack?.last_synced_at)
         class="group block rounded-md focus:outline-none"
         :aria-label="`Open stack ${stack.name}`"
       >
-        <div class="mb-2 sm:mb-3 min-w-0 pr-20">
+        <div class="mb-2 sm:mb-3 min-w-0 pr-28">
           <div class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
             <UIcon name="i-lucide-layers" class="h-4 w-4 shrink-0 text-gray-400 dark:text-wire-200/40" />
             <h3 class="truncate text-base font-bold tracking-tight text-gray-950 transition-colors group-hover:text-yellow-500 group-focus-visible:text-yellow-500 dark:text-white">
               {{ stack.name }}
             </h3>
-            <UBadge
-              v-if="stackHasRenderOverrides(stack)"
-              color="warning"
-              variant="subtle"
-              size="sm"
-              class="shrink-0"
-              title="Running with manual render overrides, not what's in Git"
-            >
-              Customized
-            </UBadge>
           </div>
           <div class="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-gray-500 dark:text-wire-200/50">
-            <span class="inline-flex min-w-0 items-center gap-1.5">
-              <UIcon
-                :name="stackSourceStatus(stack).icon"
-                class="h-3.5 w-3.5 shrink-0"
-                :class="stackSourceStatus(stack).iconClass"
-                :title="stackSourceStatus(stack).title"
-                :aria-label="stackSourceStatus(stack).title"
-              />
-              <span class="truncate">{{ stackRepositorySubtitle(stack) }}</span>
-            </span>
+            <GitProviderBadge :stack="stack" />
             <template v-if="lastSyncedLabel">
               <span class="shrink-0">·</span>
               <span class="inline-flex shrink-0 items-center gap-1">
