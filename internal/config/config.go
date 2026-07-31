@@ -92,6 +92,28 @@ func GetDeployTimeout() time.Duration {
 	return defaultSeconds * time.Second
 }
 
+// GetComposeMaxBytes returns the maximum size of a resolved compose config the
+// server will buffer and parse from `docker compose config`. Configured via
+// COMPOSE_MAX_KB (kilobytes), default 512 KB.
+//
+// The bound matters because the size is driven by repository content: a stack's
+// compose file decides how much the server allocates to hold, JSON-decode, and
+// walk the resolved config. 512 KB is far above any realistic stack (a large
+// one resolves to tens of KB) while keeping a pathological or hostile repo from
+// turning a sync or a lint into unbounded memory use. Operators with a genuinely
+// enormous compose file can raise it.
+func GetComposeMaxBytes() int64 {
+	const defaultKB = 512
+	const maxKB = math.MaxInt64 / 1024 // cap so kb*1024 can't overflow int64
+	kb := int64(defaultKB)
+	if raw := strings.TrimSpace(os.Getenv("COMPOSE_MAX_KB")); raw != "" {
+		if val, err := strconv.ParseInt(raw, 10, 64); err == nil && val > 0 && val <= maxKB {
+			kb = val
+		}
+	}
+	return kb * 1024
+}
+
 // GetBackupUploadMaxBytes returns the maximum size accepted for an uploaded
 // backup archive. Configured via BACKUP_UPLOAD_MAX_MB (megabytes), default
 // 4096 MB (4 GiB) — generous for a DATA_DIR dump while still bounding disk

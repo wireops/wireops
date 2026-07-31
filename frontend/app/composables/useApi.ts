@@ -1,3 +1,5 @@
+import type { LintComposeBody, LintComposeResponse } from '~/types/lint'
+
 export function useApi() {
   const { $pb } = useNuxtApp()
 
@@ -164,6 +166,13 @@ export function useApi() {
     resolved_compose_file?: string
     resolution_error?: string
   }
+
+  // Static analysis only — runs server-side off `docker compose config`, so
+  // it needs no worker to be online and never reaches a Docker daemon.
+  // Types live in ~/types/lint so the components rendering the report share
+  // one definition with this caller.
+  const lintCompose = (body: LintComposeBody) =>
+    customPost<LintComposeResponse>('/api/custom/lint/compose', body)
 
   type DiscoveredProject = { project_name: string; compose_path: string; services: string[] }
   const discoverProjects = (workerId: string) =>
@@ -396,5 +405,5 @@ export function useApi() {
   const getBackupSettings = () => customGet<BackupSettings>('/api/custom/backups/settings')
   const saveBackupSettings = (data: BackupSettings) => customPut<BackupSettings>('/api/custom/backups/settings', data)
 
-  return { triggerSync, triggerRollback, forceRedeploy, setRenderOverrides, clearRenderOverrides, getRenderOverridesDiff, getServices, getStackResources, stopContainer, restartContainer, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, getRepoFiles, getStackFiles, getJobFiles, getJobDefinitionFromFile, getWireopsFiles, getWireopsDefinitionFromFile, createStackFromWireops, testCredentials, keyscan, listGitProviders, getGitProviderAuthorizeUrl, listGitProviderOrgs, listGitProviderRepos, listGitProviderBranches, listOrphans, purgeOrphan, getSystemInfo, customPost, customGet, customPut, customPatch, customDelete, getWorkers, createWorkerToken, revokeWorker, transferStack, discoverProjects, importStack, listJobs, triggerJobRun, cancelJobRun, deleteJobRun, getJobDefinition, getJobRaw, getWorkerPolicy, saveWorkerPolicy, resetWorkerPolicy, getGlobalWorkerPolicy, saveGlobalWorkerPolicy, getAppSettings, saveAppSettings, listAuditLogs, listBackups, createBackup, deleteBackup, restoreBackup, syncLocalBackup, getBackupSettings, saveBackupSettings }
+  return { triggerSync, triggerRollback, forceRedeploy, setRenderOverrides, clearRenderOverrides, getRenderOverridesDiff, getServices, getStackResources, stopContainer, restartContainer, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, getRepoFiles, getStackFiles, getJobFiles, getJobDefinitionFromFile, getWireopsFiles, getWireopsDefinitionFromFile, createStackFromWireops, lintCompose, testCredentials, keyscan, listGitProviders, getGitProviderAuthorizeUrl, listGitProviderOrgs, listGitProviderRepos, listGitProviderBranches, listOrphans, purgeOrphan, getSystemInfo, customPost, customGet, customPut, customPatch, customDelete, getWorkers, createWorkerToken, revokeWorker, transferStack, discoverProjects, importStack, listJobs, triggerJobRun, cancelJobRun, deleteJobRun, getJobDefinition, getJobRaw, getWorkerPolicy, saveWorkerPolicy, resetWorkerPolicy, getGlobalWorkerPolicy, saveGlobalWorkerPolicy, getAppSettings, saveAppSettings, listAuditLogs, listBackups, createBackup, deleteBackup, restoreBackup, syncLocalBackup, getBackupSettings, saveBackupSettings }
 }
