@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -16,6 +17,14 @@ import (
 // back in as "operator didn't change this field, carry the stored value
 // through unchanged" rather than a genuinely new value to (re-)encrypt.
 const maskSentinel = "••••••••"
+
+// ErrMaskUnresolvable is wrapped into the error Save returns when cfg
+// carries the mask sentinel for a field with no existing stored value to
+// resolve it against — the one Save failure mode that is the caller's
+// (client's) fault rather than a server-side condition (SECRET_KEY
+// misconfigured, DB unreachable, etc.), so route handlers can map it to 400
+// while everything else maps to 500.
+var ErrMaskUnresolvable = errors.New("integrations: masked field unresolvable")
 
 // MaskSecret returns secret's masked representation for API responses: the
 // sentinel if secret is non-empty, "" if it's already empty (nothing to
@@ -98,6 +107,12 @@ func (s Store) Load(slug string) (Instance, error) {
 		return Instance{Slug: slug, Enabled: false, Config: map[string]any{}, Locked: d.Locked}, nil
 	}
 
+	return s.decodeRecord(slug, d, rec)
+}
+
+// decodeRecord turns rec (an "integrations" row already known to belong to
+// slug) into its decrypted Instance, per d's EncryptedKeys.
+func (s Store) decodeRecord(slug string, d Descriptor, rec *core.Record) (Instance, error) {
 	var cfg map[string]any
 	if err := rec.UnmarshalJSONField("config", &cfg); err != nil {
 		return Instance{}, fmt.Errorf("integrations: failed to unmarshal %q config: %w", slug, err)
@@ -124,6 +139,52 @@ func (s Store) Load(slug string) (Instance, error) {
 		Config:  cfg,
 		Locked:  d.Locked || rec.GetBool("locked"),
 	}, nil
+}
+
+// LoadAll returns every registered integration's Instance in one query
+// (FindAllRecords, not one FindFirstRecordByFilter per slug), replacing the
+// N+1 pattern a per-slug Load loop would otherwise produce for endpoints
+// like GET /api/custom/integrations that need every integration's state at
+// once.
+//
+// A slug whose stored config fails to decrypt (e.g. a pre-existing plaintext
+// row for a field a descriptor has since marked Encrypted) is logged and
+// downgraded to the same "not configured" zero Instance a missing row would
+// produce, rather than failing the whole batch — one broken integration
+// must not take down the list for every other one.
+func (s Store) LoadAll() map[string]Instance {
+	out := make(map[string]Instance)
+
+	recs, err := s.app.FindAllRecords("integrations")
+	if err != nil {
+		return out
+	}
+
+	byRecordSlug := make(map[string]*core.Record, len(recs))
+	for _, rec := range recs {
+		byRecordSlug[rec.GetString("slug")] = rec
+	}
+
+	for _, entry := range All() {
+		slug := entry.Descriptor.Slug
+		d := entry.Descriptor
+
+		rec, ok := byRecordSlug[slug]
+		if !ok {
+			out[slug] = Instance{Slug: slug, Enabled: false, Config: map[string]any{}, Locked: d.Locked}
+			continue
+		}
+
+		instance, err := s.decodeRecord(slug, d, rec)
+		if err != nil {
+			log.Printf("[integrations] failed to load %q, treating as unconfigured: %v", slug, err)
+			out[slug] = Instance{Slug: slug, Enabled: false, Config: map[string]any{}, Locked: d.Locked}
+			continue
+		}
+		out[slug] = instance
+	}
+
+	return out
 }
 
 // Save resolves cfg's mask sentinel against the currently-stored (still
@@ -164,11 +225,11 @@ func (s Store) Save(slug string, enabled bool, cfg map[string]any) error {
 			continue
 		}
 		if existingCfg == nil {
-			return fmt.Errorf("integrations: cannot resolve masked %s: no existing %s configuration found", key, slug)
+			return fmt.Errorf("%w: cannot resolve masked %s: no existing %s configuration found", ErrMaskUnresolvable, key, slug)
 		}
 		existingVal, ok := existingCfg[key].(string)
 		if !ok || existingVal == "" {
-			return fmt.Errorf("integrations: cannot resolve masked %s: no saved value found in existing %s configuration", key, slug)
+			return fmt.Errorf("%w: cannot resolve masked %s: no saved value found in existing %s configuration", ErrMaskUnresolvable, key, slug)
 		}
 		cfg[key] = existingVal
 		carriedOver[key] = true

@@ -90,18 +90,15 @@ func (n *Notifier) DispatchWithConfig(ctx context.Context, cfg *Config, p Payloa
 	return provider.Send(ctx, cfg, p)
 }
 
-// notificationSlugs are the 4 notify-backed integrations dispatch() checks.
-// Kept as a hardcoded set (rather than derived from CapNotifier) for the
-// same reason routes_register.go's isNotificationIntegration does — that
-// capability has no backing Go interface yet (see
-// internal/integrations/capability.go), so there's nothing to filter All()
-// by beyond this list.
-var notificationSlugs = []string{"webhook", "ntfy", "discord", "slack"}
-
 func (n *Notifier) dispatch(ctx context.Context, p Payload) error {
 	store := integrations.NewStore(n.app, crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY")))
 
-	for _, slug := range notificationSlugs {
+	for _, entry := range integrations.All() {
+		if !entry.Descriptor.HasCapability(integrations.CapNotifier) {
+			continue
+		}
+		slug := entry.Descriptor.Slug
+
 		instance, err := store.Load(slug)
 		if err != nil {
 			log.Printf("[notify] failed to load integration %s config: %v", slug, err)

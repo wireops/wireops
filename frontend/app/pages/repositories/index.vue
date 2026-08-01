@@ -163,7 +163,10 @@ const statusColor = (s: string) => {
         <div class="flex items-center justify-center w-9 h-9 rounded-lg bg-yellow-400/10">
           <UIcon name="i-lucide-git-branch" class="w-5 h-5 text-yellow-400" />
         </div>
-        Repositories
+        <span>
+          <span class="block">Repositories</span>
+          <span class="block text-sm font-normal text-gray-500 dark:text-wire-200/60">Git sources that stacks and jobs sync from.</span>
+        </span>
       </h1>
       <div v-if="canManageRepos" class="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
         <UButton icon="i-lucide-plus" label="Add Repository" class="w-full justify-center shadow-[0_0_16px_rgba(255,198,0,0.35)] transition-shadow hover:shadow-[0_0_24px_rgba(255,198,0,0.55)] sm:w-auto" @click="showCreate = true" />

@@ -1,7 +1,6 @@
 package integrations
 
 import (
-	"reflect"
 	"testing"
 )
 
@@ -58,26 +57,17 @@ func (conformanceTestActionProvider) ResolveActions(cfg Config, scope ActionScop
 	return nil
 }
 
-// checkCapabilityConsistency duplicates Register's capability/interface
-// consistency check (see registry.go) against a throwaway descriptor
-// without mutating the real global registry — it panics under the same
-// conditions Register would, so callers can assert on that panic via
-// recover().
+// checkCapabilityConsistency exercises Register's capability/interface
+// consistency rule (validateCapabilities in registry.go) against a
+// throwaway descriptor without mutating the real global registry — it
+// panics under the same conditions Register would, so callers can assert on
+// that panic via recover(). Calls the same validateCapabilities Register
+// uses rather than a hand-copied version, so a future change to the rule
+// can't drift between production code and this test.
 func checkCapabilityConsistency(t *testing.T, d Descriptor, impl any) {
 	t.Helper()
 
-	declared := make(map[CapabilityID]bool, len(d.Capabilities))
-	for _, capID := range d.Capabilities {
-		declared[capID] = true
-	}
-
-	for capID, ifaceType := range knownCapabilityInterfaces {
-		implementsIface := impl != nil && reflect.TypeOf(impl).Implements(ifaceType)
-		switch {
-		case declared[capID] && !implementsIface:
-			panic("integration " + d.Slug + " declares capability " + string(capID) + " but its implementation does not satisfy the corresponding interface")
-		case !declared[capID] && implementsIface:
-			panic("integration " + d.Slug + " implementation satisfies capability " + string(capID) + " but does not declare it")
-		}
+	if err := validateCapabilities(d, impl); err != nil {
+		panic(err.Error())
 	}
 }

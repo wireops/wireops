@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import dozzleIcon from '~/assets/img/icons/integrations/dozzle.svg'
 import traefikIcon from '~/assets/img/icons/integrations/traefik.svg'
 import caddyIcon from '~/assets/img/icons/integrations/caddy.svg'
@@ -16,6 +16,17 @@ const toast = useToast()
 const { getIntegrations, saveIntegration } = useIntegrations()
 const integrationsList = ref<any[]>([])
 const integrationsLoading = ref(false)
+
+const searchQuery = ref('')
+const selectedCategories = ref<string[]>([])
+const statusFilter = ref<'all' | 'enabled' | 'disabled'>('all')
+const showMobileFilters = ref(false)
+
+const statusOptions = [
+  { label: 'All', value: 'all' },
+  { label: 'Enabled', value: 'enabled' },
+  { label: 'Disabled', value: 'disabled' },
+] as const
 
 const showNtfyModal = ref(false)
 const ntfyIntegration = ref<any>(null)
@@ -143,25 +154,46 @@ const integrationMeta: Record<string, IntegrationMeta> = {
 
 const configurableSlugs = Object.keys(integrationMeta).filter(slug => slug !== 'sops')
 
-
-const groupedIntegrations = computed(() => {
-  const groups: Record<string, any[]> = {}
+const categoriesWithCounts = computed(() => {
+  const counts: Record<string, number> = {}
   for (const item of integrationsList.value) {
     const cat = item.category || 'Other'
-    if (!groups[cat]) groups[cat] = []
-    groups[cat].push(item)
+    counts[cat] = (counts[cat] || 0) + 1
   }
-  if (groups.Notification) {
-    groups.Notification.sort((a, b) => String(a.name || a.slug).localeCompare(String(b.name || b.slug)))
-  }
-  return Object.keys(groups)
+  return Object.keys(counts)
     .sort((a, b) => a.localeCompare(b))
-    .reduce<Record<string, any[]>>((ordered, category) => {
-      ordered[category] = groups[category]
-      return ordered
-    }, {})
+    .map(category => ({ category, count: counts[category] }))
 })
 
+const filteredIntegrations = computed(() => {
+  const query = searchQuery.value.trim().toLowerCase()
+  return integrationsList.value
+    .filter((item) => {
+      const cat = item.category || 'Other'
+      if (selectedCategories.value.length && !selectedCategories.value.includes(cat)) return false
+      if (statusFilter.value === 'enabled' && !item.enabled) return false
+      if (statusFilter.value === 'disabled' && item.enabled) return false
+      if (!query) return true
+      return String(item.name || item.slug).toLowerCase().includes(query)
+        || String(item.slug).toLowerCase().includes(query)
+    })
+    .sort((a, b) => String(a.name || a.slug).localeCompare(String(b.name || b.slug)))
+})
+
+function toggleCategory(category: string) {
+  const idx = selectedCategories.value.indexOf(category)
+  if (idx === -1) {
+    selectedCategories.value = [...selectedCategories.value, category]
+  } else {
+    selectedCategories.value = selectedCategories.value.filter(c => c !== category)
+  }
+}
+
+function clearFilters() {
+  searchQuery.value = ''
+  selectedCategories.value = []
+  statusFilter.value = 'all'
+}
 
 async function loadIntegrations() {
   integrationsLoading.value = true
@@ -224,84 +256,210 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="space-y-6">
+  <div class="space-y-4">
     <div v-if="integrationsLoading" class="text-sm text-gray-500">Loading integrations...</div>
     <template v-else>
-      <div v-for="(items, category) in groupedIntegrations" :key="category" class="mt-6 first:mt-0">
-        <!-- Unified Section Card following settings general pattern -->
-        <UCard class="shadow-none">
-          <template #header>
-            <div class="flex items-center justify-between w-full">
-              <div class="flex items-center gap-3">
-                <UBadge variant="subtle" color="primary" size="md" class="uppercase tracking-wider font-extrabold px-3 py-1">
-                  {{ category }}
-                </UBadge>
-                <span class="text-xs text-gray-400 dark:text-wire-400/50 font-normal">({{ items.length }} integration{{ items.length > 1 ? 's' : '' }})</span>
-              </div>
-            </div>
+      <!-- Search + mobile filter trigger -->
+      <div class="flex items-center gap-2">
+        <AppTextInput
+          v-model="searchQuery"
+          icon="i-lucide-search"
+          placeholder="Search integrations..."
+          aria-label="Search integrations"
+          class="flex-1"
+        />
+        <AppButtonInput
+          icon="i-lucide-filter"
+          label="Filters"
+          aria-label="Open integration filters"
+          class="lg:hidden"
+          @click="showMobileFilters = true"
+        >
+          <template #trailing>
+            <UBadge v-if="selectedCategories.length + (statusFilter !== 'all' ? 1 : 0)" size="xs" color="primary" variant="solid">
+              {{ selectedCategories.length + (statusFilter !== 'all' ? 1 : 0) }}
+            </UBadge>
           </template>
-          
-          <div class="pt-2">
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <UCard 
-                v-for="integration in items" 
-                :key="integration.slug" 
-                class="flex flex-col justify-between h-full bg-gray-50/20 dark:bg-carbon-900/10 border transition-all duration-300"
-                :class="[
-                  integration.enabled
-                    ? 'border-primary-500 dark:border-primary-400 shadow-[0_0_12px_rgba(255,198,0,0.25)]'
-                    : 'border-gray-150 dark:border-carbon-800/40 shadow-none'
-                ]"
-              >
-                <template #header>
-                  <div class="flex items-center justify-between">
-                    <h3 class="font-bold text-base text-gray-950 dark:text-wire-200">{{ integration.name }}</h3>
-                    <div class="flex items-center gap-2">
-                      <UTooltip v-if="integration.locked" text="Always active — nothing to toggle">
-                        <USwitch :model-value="integration.enabled" disabled />
-                      </UTooltip>
-                      <USwitch v-else v-model="integration.enabled" @update:model-value="handleSaveIntegration(integration, true)" />
-                      <UButton
-                        v-if="configurableSlugs.includes(integration.slug)"
-                        icon="i-lucide-settings"
-                        size="xs" 
-                        variant="ghost" 
-                        color="neutral"
-                        @click="configureIntegration(integration)" 
-                      />
-                      <UButton
-                        v-if="getIntegrationDocLink(integration.slug)"
-                        icon="i-lucide-external-link"
-                        size="xs"
-                        variant="ghost"
-                        color="neutral"
-                        :disabled="integration.slug === 'webhook'"
-                        :to="getIntegrationDocLink(integration.slug)"
-                        target="_blank"
-                      />
-                    </div>
+        </AppButtonInput>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-[1fr_240px] gap-6 items-start">
+        <!-- Card grid -->
+        <div>
+          <div v-if="!filteredIntegrations.length" class="text-sm text-gray-500 py-12 text-center">
+            No integrations match your search.
+          </div>
+          <div v-else class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+            <div
+              v-for="integration in filteredIntegrations"
+              :key="integration.slug"
+              class="flex flex-col gap-2 rounded-lg border border-gray-150 dark:border-carbon-800/40 p-3 bg-gray-50/20 dark:bg-carbon-900/10"
+            >
+              <div class="flex items-start justify-between gap-2">
+                <div class="flex items-center gap-3 min-w-0">
+                  <!-- Icon -->
+                  <div class="w-10 h-10 shrink-0 rounded-lg bg-gray-50 dark:bg-carbon-800 flex items-center justify-center p-2 shadow-inner">
+                    <GithubIcon v-if="integration.slug === 'github'" icon-class="w-6 h-6" />
+                    <img v-else-if="getIntegrationIcon(integration.slug)" :src="getIntegrationIcon(integration.slug)" class="w-6 h-6 object-contain" alt="">
+                    <UIcon v-else :name="getIntegrationFallbackIcon(integration.slug)" class="w-5 h-5 text-primary-500" />
                   </div>
-                </template>
-                
-                <div class="flex flex-col items-center justify-center p-6 space-y-4">
-                  <!-- Large Icon -->
-                  <div class="w-20 h-20 rounded-2xl bg-gray-50 dark:bg-carbon-800 flex items-center justify-center p-4 shadow-inner">
-                    <GithubIcon v-if="integration.slug === 'github'" icon-class="w-12 h-12" />
-                    <img v-else-if="getIntegrationIcon(integration.slug)" :src="getIntegrationIcon(integration.slug)" class="w-12 h-12 object-contain" alt="">
-                    <UIcon v-else :name="getIntegrationFallbackIcon(integration.slug)" class="w-10 h-10 text-primary-500" />
+
+                  <!-- Name -->
+                  <div class="min-w-0 flex items-center gap-1.5">
+                    <h3 class="font-semibold text-sm text-gray-950 dark:text-wire-200 truncate">{{ integration.name }}</h3>
+                    <span
+                      class="inline-block w-1.5 h-1.5 rounded-full shrink-0"
+                      :class="integration.enabled ? 'bg-primary-500' : 'bg-gray-300 dark:bg-carbon-700'"
+                      :title="integration.enabled ? 'Enabled' : 'Disabled'"
+                    />
                   </div>
-                  
-                  <!-- Discrete Description -->
-                  <p class="text-xs text-gray-500 dark:text-wire-200/60 text-center max-w-[220px] line-clamp-2">
-                    {{ getIntegrationDescription(integration.slug) }}
-                  </p>
                 </div>
-              </UCard>
+
+                <!-- Actions -->
+                <div class="flex items-center gap-1 shrink-0">
+                  <UTooltip v-if="integration.locked" text="Always active — nothing to toggle">
+                    <USwitch :model-value="integration.enabled" disabled />
+                  </UTooltip>
+                  <USwitch v-else v-model="integration.enabled" @update:model-value="handleSaveIntegration(integration, true)" />
+                  <UButton
+                    v-if="configurableSlugs.includes(integration.slug)"
+                    icon="i-lucide-settings"
+                    size="xs"
+                    variant="ghost"
+                    color="neutral"
+                    @click="configureIntegration(integration)"
+                  />
+                  <UButton
+                    v-if="getIntegrationDocLink(integration.slug)"
+                    icon="i-lucide-external-link"
+                    size="xs"
+                    variant="ghost"
+                    color="neutral"
+                    :disabled="integration.slug === 'webhook'"
+                    :to="getIntegrationDocLink(integration.slug)"
+                    target="_blank"
+                    :aria-label="`${integration.name} documentation (opens in a new tab)`"
+                  />
+                </div>
+              </div>
+
+              <p class="text-xs text-gray-500 dark:text-wire-200/60 line-clamp-2 min-h-8">
+                {{ getIntegrationDescription(integration.slug) }}
+              </p>
             </div>
           </div>
-        </UCard>
+        </div>
+
+        <!-- Category filter panel (desktop) -->
+        <div class="hidden lg:block sticky top-4">
+          <UCard class="shadow-none">
+            <template #header>
+              <div class="flex items-center justify-between">
+                <span class="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-wire-400/70">Filters</span>
+                <UButton
+                  v-if="selectedCategories.length || searchQuery || statusFilter !== 'all'"
+                  size="xs"
+                  variant="ghost"
+                  color="neutral"
+                  @click="clearFilters"
+                >
+                  Clear
+                </UButton>
+              </div>
+            </template>
+            <div class="space-y-4">
+              <div class="space-y-2">
+                <span class="text-xs font-semibold text-gray-500 dark:text-wire-400/70">Status</span>
+                <div class="flex gap-1">
+                  <UButton
+                    v-for="option in statusOptions"
+                    :key="option.value"
+                    size="xs"
+                    :variant="statusFilter === option.value ? 'solid' : 'outline'"
+                    :color="statusFilter === option.value ? 'primary' : 'neutral'"
+                    class="flex-1 justify-center"
+                    @click="statusFilter = option.value"
+                  >
+                    {{ option.label }}
+                  </UButton>
+                </div>
+              </div>
+              <div class="space-y-2">
+                <span class="text-xs font-semibold text-gray-500 dark:text-wire-400/70">Categories</span>
+                <label
+                  v-for="{ category, count } in categoriesWithCounts"
+                  :key="category"
+                  class="flex items-center justify-between gap-2 cursor-pointer text-sm"
+                >
+                  <span class="flex items-center gap-2">
+                    <UCheckbox
+                      :model-value="selectedCategories.includes(category)"
+                      @update:model-value="toggleCategory(category)"
+                    />
+                    <span class="text-gray-700 dark:text-wire-200">{{ category }}</span>
+                  </span>
+                  <span class="text-xs text-gray-400 dark:text-wire-400/50">{{ count }}</span>
+                </label>
+              </div>
+            </div>
+          </UCard>
+        </div>
       </div>
     </template>
+
+    <!-- Category filter panel (mobile) -->
+    <USlideover v-model:open="showMobileFilters" title="Filters" class="w-full sm:w-[360px] max-w-full">
+      <template #content>
+        <div class="p-4 space-y-4">
+          <div class="flex items-center justify-between">
+            <h3 class="font-semibold text-lg">Filters</h3>
+            <UButton
+              v-if="selectedCategories.length || searchQuery || statusFilter !== 'all'"
+              size="xs"
+              variant="ghost"
+              color="neutral"
+              @click="clearFilters"
+            >
+              Clear all
+            </UButton>
+          </div>
+          <div class="space-y-2">
+            <span class="text-xs font-semibold text-gray-500 dark:text-wire-400/70">Status</span>
+            <div class="flex gap-1">
+              <UButton
+                v-for="option in statusOptions"
+                :key="option.value"
+                size="xs"
+                :variant="statusFilter === option.value ? 'solid' : 'outline'"
+                :color="statusFilter === option.value ? 'primary' : 'neutral'"
+                class="flex-1 justify-center"
+                @click="statusFilter = option.value"
+              >
+                {{ option.label }}
+              </UButton>
+            </div>
+          </div>
+          <div class="space-y-2">
+            <span class="text-xs font-semibold text-gray-500 dark:text-wire-400/70">Categories</span>
+            <label
+              v-for="{ category, count } in categoriesWithCounts"
+              :key="category"
+              class="flex items-center justify-between gap-2 cursor-pointer text-sm"
+            >
+              <span class="flex items-center gap-2">
+                <UCheckbox
+                  :model-value="selectedCategories.includes(category)"
+                  @update:model-value="toggleCategory(category)"
+                />
+                <span class="text-gray-700 dark:text-wire-200">{{ category }}</span>
+              </span>
+              <span class="text-xs text-gray-400 dark:text-wire-400/50">{{ count }}</span>
+            </label>
+          </div>
+          <UButton block color="primary" @click="showMobileFilters = false">Show results</UButton>
+        </div>
+      </template>
+    </USlideover>
 
     <IntegrationsNtfyConfigModal
       v-model:open="showNtfyModal"

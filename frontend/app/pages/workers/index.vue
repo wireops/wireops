@@ -135,7 +135,10 @@ onUnmounted(() => {
         <div class="flex items-center justify-center w-9 h-9 rounded-lg bg-yellow-400/10">
           <UIcon name="i-lucide-network" class="w-5 h-5 text-yellow-400" />
         </div>
-        Workers
+        <span>
+          <span class="block">Workers</span>
+          <span class="block text-sm font-normal text-gray-500 dark:text-wire-200/60">Remote hosts connected over WebSocket to run deploys and jobs.</span>
+        </span>
       </h1>
       <div class="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
         <UButton icon="i-lucide-plus" label="Add Worker" :loading="isGenerating" class="w-full justify-center shadow-[0_0_16px_rgba(255,198,0,0.35)] transition-shadow hover:shadow-[0_0_24px_rgba(255,198,0,0.55)] sm:w-auto" @click="generateToken" />

@@ -3,6 +3,7 @@ package routes
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -43,13 +44,14 @@ type routeRegistrar struct {
 	logBroker *logstream.Broker
 }
 
-// isNotificationIntegration reports whether slug is one of the 4
-// notify-backed integrations. It intentionally still hardcodes this set
-// (rather than deriving it from the descriptor's Capabilities) because
-// CapNotifier has no backing Go interface yet — that wiring is phase 3's
-// job (see internal/integrations/capability.go).
+// isNotificationIntegration reports whether slug is one of the notify-backed
+// integrations, i.e. whatever declares CapNotifier in its Descriptor — the
+// /test route below only knows how to build+dispatch a notify.Config, so
+// this must stay in sync with what notify.Notifier.dispatch iterates, which
+// it now is by construction since both read the same descriptor metadata.
 func isNotificationIntegration(slug string) bool {
-	return slug == "webhook" || slug == "ntfy" || slug == "discord" || slug == "slack"
+	entry, ok := integrations.Get(slug)
+	return ok && entry.Descriptor.HasCapability(integrations.CapNotifier)
 }
 
 // integrationDescriptor looks up slug's registered Descriptor, returning the
@@ -86,27 +88,30 @@ func validateRequiredIntegrationConfig(slug string, cfg map[string]interface{}) 
 // through byte-identical rather than re-encrypting the now-plaintext value
 // this function resolved to.
 func (rr routeRegistrar) resolveMaskedConfigForValidation(store integrations.Store, slug string, cfg map[string]interface{}) (map[string]interface{}, error) {
+	instance, err := store.Load(slug)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load existing integration record: %w", err)
+	}
+	return resolveMaskedConfigAgainst(instance, slug, cfg)
+}
+
+// resolveMaskedConfigAgainst is resolveMaskedConfigForValidation's logic
+// against an already-loaded Instance, for callers (the PUT handler) that
+// have already done their own store.Load moments earlier — avoids a second
+// DB fetch + decrypt pass over the same row within one request.
+func resolveMaskedConfigAgainst(instance integrations.Instance, slug string, cfg map[string]interface{}) (map[string]interface{}, error) {
 	resolved := make(map[string]interface{}, len(cfg))
 	for k, v := range cfg {
 		resolved[k] = v
 	}
 
-	var stored *integrations.Instance
 	for _, key := range integrationDescriptor(slug).SensitiveKeys() {
 		val, ok := resolved[key].(string)
 		if !ok || val != notify.MaskSecret("x") {
 			continue
 		}
 
-		if stored == nil {
-			instance, err := store.Load(slug)
-			if err != nil {
-				return nil, fmt.Errorf("failed to load existing integration record: %w", err)
-			}
-			stored = &instance
-		}
-
-		storedVal, ok := stored.Config[key].(string)
+		storedVal, ok := instance.Config[key].(string)
 		if !ok || storedVal == "" {
 			return nil, fmt.Errorf("cannot resolve masked %s: no saved value found in existing configuration", key)
 		}
@@ -749,13 +754,12 @@ func (rr routeRegistrar) registerIntegrationRoutes(secretKey []byte) {
 			Config   map[string]interface{} `json:"config"`
 		}
 
+		instances := store.LoadAll()
+
 		var out []IntegrationOutput
 		for _, entry := range integrations.All() {
 			slug := entry.Descriptor.Slug
-			instance, err := store.Load(slug)
-			if err != nil {
-				return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
-			}
+			instance := instances[slug]
 			item := IntegrationOutput{
 				Slug:     slug,
 				Name:     entry.Descriptor.Name,
@@ -804,7 +808,7 @@ func (rr routeRegistrar) registerIntegrationRoutes(secretKey []byte) {
 		// validation purposes only — body.Config itself keeps the sentinel
 		// (or a genuinely new value) intact for Store.Save, which does its
 		// own sentinel resolution against the still-encrypted stored value.
-		resolved, err := rr.resolveMaskedConfigForValidation(store, slug, body.Config)
+		resolved, err := resolveMaskedConfigAgainst(existing, slug, body.Config)
 		if err != nil {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 		}
@@ -818,7 +822,11 @@ func (rr routeRegistrar) registerIntegrationRoutes(secretKey []byte) {
 		}
 
 		if err := store.Save(slug, body.Enabled, body.Config); err != nil {
-			return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+			status := http.StatusInternalServerError
+			if errors.Is(err, integrations.ErrMaskUnresolvable) {
+				status = http.StatusBadRequest
+			}
+			return e.JSON(status, map[string]string{"error": err.Error()})
 		}
 
 		return e.JSON(http.StatusOK, map[string]interface{}{

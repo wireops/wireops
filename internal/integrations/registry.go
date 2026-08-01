@@ -1,6 +1,7 @@
 package integrations
 
 import (
+	"fmt"
 	"reflect"
 	"sort"
 	"sync"
@@ -47,6 +48,20 @@ func Register(d Descriptor, impl any) {
 		panic("integration " + d.Slug + " already registered")
 	}
 
+	if err := validateCapabilities(d, impl); err != nil {
+		panic(err.Error())
+	}
+
+	registry[d.Slug] = Entry{Descriptor: d, Impl: impl}
+}
+
+// validateCapabilities checks d.Capabilities against knownCapabilityInterfaces
+// for impl, returning an error (never panicking itself) describing the first
+// mismatch found — either a declared capability impl doesn't satisfy, or an
+// interface impl satisfies that d didn't declare. Register panics on this;
+// registry_capability_test.go calls it directly so both share one copy of
+// the consistency rule instead of two independently-maintained ones.
+func validateCapabilities(d Descriptor, impl any) error {
 	declared := make(map[CapabilityID]bool, len(d.Capabilities))
 	for _, capID := range d.Capabilities {
 		declared[capID] = true
@@ -56,13 +71,12 @@ func Register(d Descriptor, impl any) {
 		implementsIface := impl != nil && reflect.TypeOf(impl).Implements(ifaceType)
 		switch {
 		case declared[capID] && !implementsIface:
-			panic("integration " + d.Slug + " declares capability " + string(capID) + " but its implementation does not satisfy the corresponding interface")
+			return fmt.Errorf("integration %s declares capability %s but its implementation does not satisfy the corresponding interface", d.Slug, capID)
 		case !declared[capID] && implementsIface:
-			panic("integration " + d.Slug + " implementation satisfies capability " + string(capID) + " but does not declare it")
+			return fmt.Errorf("integration %s implementation satisfies capability %s but does not declare it", d.Slug, capID)
 		}
 	}
-
-	registry[d.Slug] = Entry{Descriptor: d, Impl: impl}
+	return nil
 }
 
 // Get returns the registry Entry for slug, or false if not found.

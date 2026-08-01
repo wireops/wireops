@@ -1,6 +1,7 @@
 package integrations_test
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -167,6 +168,90 @@ func TestStoreMaskedResubmitDoesNotDoubleEncrypt(t *testing.T) {
 	secondCiphertext, _ := secondRaw["token"].(string)
 	if secondCiphertext != firstCiphertext {
 		t.Fatalf("masked resubmit changed the stored ciphertext: first=%q second=%q", firstCiphertext, secondCiphertext)
+	}
+}
+
+// TestStoreLoadAllDegradesOneBrokenRowInstead0fFailingEverything is the
+// direct regression proof for the GET /api/custom/integrations blast-radius
+// bug: a row whose Encrypted field can't be decrypted (e.g. a pre-migration
+// plaintext value under a field newly marked Encrypted) must not take down
+// every other integration's result — it should come back as an
+// effectively-unconfigured Instance, logged, while every other slug's real
+// state is still returned.
+func TestStoreLoadAllDegradesOneBrokenRowInsteadOfFailingEverything(t *testing.T) {
+	app := newIntegrationsStoreTestApp(t)
+	store := integrations.NewStore(app, []byte(testStoreSecretKey))
+
+	if err := store.Save("vault", true, map[string]any{
+		"address": "https://vault.example.com",
+		"token":   "s.mytoken",
+	}); err != nil {
+		t.Fatalf("save vault: %v", err)
+	}
+
+	// Simulate a pre-migration row: webhook's "secret" field stored plaintext
+	// even though the descriptor now marks it Encrypted.
+	col, err := app.FindCollectionByNameOrId("integrations")
+	if err != nil {
+		t.Fatalf("find collection: %v", err)
+	}
+	rec := core.NewRecord(col)
+	rec.Set("slug", "webhook")
+	rec.Set("enabled", true)
+	rec.Set("config", map[string]any{"url": "https://hooks.example.com", "secret": "plaintext-not-ciphertext"})
+	if err := app.Save(rec); err != nil {
+		t.Fatalf("save raw webhook row: %v", err)
+	}
+
+	instances := store.LoadAll()
+
+	vault, ok := instances["vault"]
+	if !ok || !vault.Enabled || vault.Config["token"] != "s.mytoken" {
+		t.Fatalf("expected vault to load normally alongside the broken webhook row, got %+v (ok=%v)", vault, ok)
+	}
+
+	webhook, ok := instances["webhook"]
+	if !ok {
+		t.Fatal("expected webhook to still appear in LoadAll's result, downgraded rather than absent")
+	}
+	if webhook.Enabled {
+		t.Fatalf("expected the undecryptable webhook row to be treated as unconfigured (Enabled=false), got %+v", webhook)
+	}
+}
+
+// TestStoreSaveMaskUnresolvableIsDistinguishable confirms Save wraps
+// ErrMaskUnresolvable specifically for the "operator resubmitted the mask
+// sentinel but there's nothing on file to resolve it against" case, so
+// route handlers can tell this client-caused failure apart from a
+// server-side one (SECRET_KEY misconfigured, DB unreachable) and return the
+// right HTTP status for each.
+func TestStoreSaveMaskUnresolvableIsDistinguishable(t *testing.T) {
+	app := newIntegrationsStoreTestApp(t)
+	store := integrations.NewStore(app, []byte(testStoreSecretKey))
+
+	err := store.Save("vault", true, map[string]any{
+		"address": "https://vault.example.com",
+		"token":   "••••••••",
+	})
+	if err == nil {
+		t.Fatal("expected an error resolving a mask sentinel with no existing stored value")
+	}
+	if !errors.Is(err, integrations.ErrMaskUnresolvable) {
+		t.Fatalf("expected err to wrap ErrMaskUnresolvable, got: %v", err)
+	}
+
+	// A genuinely server-side failure (invalid secret key) must NOT be
+	// mistaken for ErrMaskUnresolvable.
+	badKeyStore := integrations.NewStore(app, nil)
+	err = badKeyStore.Save("vault", true, map[string]any{
+		"address": "https://vault.example.com",
+		"token":   "s.mytoken",
+	})
+	if err == nil {
+		t.Fatal("expected an error saving with an invalid secret key")
+	}
+	if errors.Is(err, integrations.ErrMaskUnresolvable) {
+		t.Fatalf("invalid-secret-key failure must not be classified as ErrMaskUnresolvable: %v", err)
 	}
 }
 

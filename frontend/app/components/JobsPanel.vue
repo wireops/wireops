@@ -161,7 +161,10 @@ function formatRelative(dateStr: string) {
         <div class="flex items-center justify-center w-9 h-9 rounded-lg bg-yellow-400/10">
           <UIcon name="i-lucide-calendar-clock" class="w-5 h-5 text-yellow-400" />
         </div>
-        Jobs
+        <span>
+          <span class="block">Jobs</span>
+          <span class="block text-sm font-normal text-gray-500 dark:text-wire-200/60">Cron-scheduled one-shot Docker jobs.</span>
+        </span>
       </h1>
       <div class="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:gap-3">
         <UButton

@@ -94,6 +94,16 @@ func (d Descriptor) filterKeys(match func(ConfigField) bool) []string {
 	return keys
 }
 
+// HasCapability reports whether d declares id among its Capabilities.
+func (d Descriptor) HasCapability(id CapabilityID) bool {
+	for _, c := range d.Capabilities {
+		if c == id {
+			return true
+		}
+	}
+	return false
+}
+
 // Field returns the ConfigField with the given Key, if present.
 func (d Descriptor) Field(key string) (ConfigField, bool) {
 	for _, f := range d.Fields {
