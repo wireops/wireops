@@ -26,7 +26,7 @@ const remainingCount = computed(() => {
 </script>
 
 <template>
-  <div class="flex items-center gap-1.5 flex-wrap">
+  <span class="inline-flex items-center gap-1.5 flex-wrap">
     <UTooltip
       v-for="container in visibleContainers"
       :key="container.name"
@@ -38,12 +38,12 @@ const remainingCount = computed(() => {
       />
     </UTooltip>
 
-    <div
+    <span
       v-if="remainingCount > 0"
-      class="w-7 h-7 flex flex-shrink-0 items-center justify-center rounded-md bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-xs font-medium text-gray-500 dark:text-gray-400"
+      class="w-7 h-7 inline-flex flex-shrink-0 items-center justify-center rounded-md bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-xs font-medium text-gray-500 dark:text-gray-400"
       :title="`${remainingCount} more container${remainingCount > 1 ? 's' : ''}`"
     >
       +{{ remainingCount }}
-    </div>
-  </div>
+    </span>
+  </span>
 </template>

@@ -18,6 +18,7 @@ withDefaults(defineProps<{
   <UPopover mode="hover" :content="{ side: 'top' }">
     <span
       class="inline-flex items-center gap-1 shrink-0 rounded-md border border-amber-500/40 px-1.5 py-0.5 text-amber-500"
+      :title="description"
       @click.stop.prevent
     >
       <UIcon :name="icon" class="h-3 w-3 shrink-0" aria-hidden="true" />

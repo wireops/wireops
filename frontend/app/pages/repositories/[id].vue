@@ -67,8 +67,9 @@ const dangerZoneActions = computed(() => [
   },
 ])
 
-function onRepositoryDeleted() {
-  navigateTo('/repositories')
+async function onRepositoryDeleted() {
+  showDeleteModal.value = false
+  await navigateTo('/repositories', { replace: true })
 }
 
 async function syncRepo() {

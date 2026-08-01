@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { AUTH_TYPE } from '~/constants/repositoryAuth'
 
 const { PLATFORM_OPTIONS, platformIconUrl } = useRepositoryPlatform()
@@ -436,7 +436,7 @@ async function handleKeySaved(key: Record<string, any>) {
                   :key="provider.slug"
                   type="button"
                   class="flex flex-col items-center justify-center gap-3 rounded-lg border border-gray-200 dark:border-gray-800 p-6 text-center cursor-pointer hover:border-primary-500 hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors disabled:opacity-60 disabled:cursor-wait"
-                  :disabled="connectingSlug === provider.slug"
+                  :disabled="!!connectingSlug"
                   @click="selectProvider(provider.slug)"
                 >
                   <GithubIcon v-if="provider.slug === 'github'" icon-class="w-10 h-10 text-gray-700 dark:text-white" />
@@ -448,7 +448,8 @@ async function handleKeySaved(key: Record<string, any>) {
 
                 <button
                   type="button"
-                  class="flex flex-col items-center justify-center gap-3 rounded-lg border border-gray-200 dark:border-gray-800 p-6 text-center cursor-pointer hover:border-primary-500 hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors"
+                  class="flex flex-col items-center justify-center gap-3 rounded-lg border border-gray-200 dark:border-gray-800 p-6 text-center cursor-pointer hover:border-primary-500 hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors disabled:opacity-60 disabled:cursor-wait"
+                  :disabled="!!connectingSlug"
                   @click="selectGeneric"
                 >
                   <GenericIcon variant="git" icon-class="w-10 h-10 text-gray-400" />

@@ -4,6 +4,9 @@ import { h, ref } from 'vue'
 import StacksPanel from '../StacksPanel.vue'
 import StackCard from '../StackCard.vue'
 import GitProviderBadge from '../GitProviderBadge.vue'
+import RepositoryIcon from '../RepositoryIcon.vue'
+import GithubIcon from '../GithubIcon.vue'
+import GenericIcon from '../GenericIcon.vue'
 
 describe('StacksPanel', () => {
   it('renders a keyboard-focusable link for each stack with a status badge', () => {
@@ -68,6 +71,9 @@ describe('StacksPanel', () => {
         components: {
           StackCard,
           GitProviderBadge,
+          RepositoryIcon,
+          GithubIcon,
+          GenericIcon,
         },
         stubs: {
           BadgeStatus: {

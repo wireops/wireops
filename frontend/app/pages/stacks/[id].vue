@@ -698,9 +698,9 @@ onMounted(() => {
         <UButton icon="i-lucide-arrow-left" variant="ghost" size="sm" to="/stacks" />
         <div class="min-w-0">
           <h1 class="flex items-center gap-3 min-w-0 text-xl sm:text-2xl font-bold">
-            <div class="flex items-center justify-center w-8 h-8 sm:w-9 sm:h-9 rounded-lg bg-yellow-400/10 shrink-0">
+            <span class="inline-flex items-center justify-center w-8 h-8 sm:w-9 sm:h-9 rounded-lg bg-yellow-400/10 shrink-0">
               <UIcon name="i-lucide-layers" class="w-4 h-4 sm:w-5 sm:h-5 text-yellow-400" />
-            </div>
+            </span>
             <span class="truncate">{{ stack?.name }}</span>
             <StackContainersList v-if="stack?.containers_list?.length" class="shrink-0" :containers="stack.containers_list" />
           </h1>
