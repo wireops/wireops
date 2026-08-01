@@ -7,6 +7,13 @@ import (
 	"github.com/pocketbase/pocketbase/tests"
 
 	"github.com/wireops/wireops/internal/crypto"
+
+	// Blank-imported so its descriptor is registered in this test binary's
+	// global integrations registry — Store.Load/Save derive EncryptedKeys()
+	// from the registered Descriptor; in production cmd/serve.go
+	// blank-imports every provider before any request is served. See the
+	// identical comment in internal/secrets/test_helpers_test.go.
+	_ "github.com/wireops/wireops/internal/integrations/s3"
 )
 
 const testS3SecretKey = "01234567890123456789012345678901" // 32 bytes

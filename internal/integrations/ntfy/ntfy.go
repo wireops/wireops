@@ -4,29 +4,25 @@ import (
 	"github.com/wireops/wireops/internal/integrations"
 )
 
-// NtfyIntegration handles ntfy notifications as an integration.
-type NtfyIntegration struct{}
+// descriptor describes Ntfy as a Notification integration. Its config is
+// consumed by internal/notify (BuildConfig/NewProvider) — it has no
+// container actions and no registered capability implementation (Impl is
+// nil), same as the other notification stubs.
+var descriptor = integrations.Descriptor{
+	Slug:     "ntfy",
+	Name:     "Ntfy",
+	Category: integrations.CategoryNotification,
+	Fields: []integrations.ConfigField{
+		{Key: keyURL, Kind: integrations.FieldURL, Required: true},
+		{Key: keySecret, Kind: integrations.FieldPassword, Sensitive: true, Encrypted: true},
+		{Key: keyUser, Kind: integrations.FieldText},
+		{Key: keyTopic, Kind: integrations.FieldText, Required: true},
+		{Key: keyTemplate, Kind: integrations.FieldText},
+		{Key: keyEvents, Kind: integrations.FieldList},
+	},
+	Capabilities: []integrations.CapabilityID{integrations.CapNotifier, integrations.CapTestable},
+}
 
 func init() {
-	integrations.Register(&NtfyIntegration{})
-}
-
-// Slug returns the unique identifier for this integration.
-func (n *NtfyIntegration) Slug() string {
-	return "ntfy"
-}
-
-// Name returns the human-readable name of the integration.
-func (n *NtfyIntegration) Name() string {
-	return "Ntfy"
-}
-
-// Category returns the category of the integration.
-func (n *NtfyIntegration) Category() string {
-	return "Notification"
-}
-
-// ResolveContainerActions returns no container actions as this is a notification integration.
-func (n *NtfyIntegration) ResolveContainerActions(config map[string]interface{}, ctx integrations.ContainerContext) []integrations.ContainerAction {
-	return nil
+	integrations.Register(descriptor, nil)
 }

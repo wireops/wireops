@@ -13,6 +13,7 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 
 	"github.com/wireops/wireops/internal/crypto"
+	"github.com/wireops/wireops/internal/integrations"
 )
 
 // vaultClientTimeout bounds a single Vault HTTP call. It is intentionally
@@ -127,37 +128,28 @@ func BuildVaultClient(app core.App) (*vaultapi.Client, string, error) {
 		return nil, "", errors.New("vault: app is not configured")
 	}
 
-	rec, err := app.FindFirstRecordByFilter("integrations", "slug = {:slug}", map[string]any{"slug": "vault"})
+	secretKey := crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))
+	store := integrations.NewStore(app, secretKey)
+	instance, err := store.Load("vault")
 	if err != nil {
-		return nil, "", errors.New("vault: backend is not configured")
+		return nil, "", fmt.Errorf("vault: failed to read backend config: %w", err)
 	}
-	if !rec.GetBool("enabled") {
+	if !instance.Enabled {
 		return nil, "", errors.New("vault: backend is disabled")
 	}
 
-	var cfg struct {
-		Address      string `json:"address"`
-		Token        string `json:"token"`
-		AllowedMount string `json:"allowed_mount"`
-	}
-	if err := rec.UnmarshalJSONField("config", &cfg); err != nil {
-		return nil, "", fmt.Errorf("vault: failed to read backend config: %w", err)
-	}
-	if cfg.Address == "" || cfg.Token == "" {
+	address, _ := instance.Config["address"].(string)
+	token, _ := instance.Config["token"].(string)
+	allowedMount, _ := instance.Config["allowed_mount"].(string)
+	if address == "" || token == "" {
 		return nil, "", errors.New("vault: backend config is missing address or token")
 	}
 
-	secretKey := crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))
-	tokenBytes, err := crypto.Decrypt(cfg.Token, secretKey)
-	if err != nil {
-		return nil, "", fmt.Errorf("vault: failed to decrypt token: %w", err)
-	}
-
-	client, err := buildVaultClientFromParts(cfg.Address, string(tokenBytes))
+	client, err := buildVaultClientFromParts(address, token)
 	if err != nil {
 		return nil, "", err
 	}
-	return client, strings.Trim(cfg.AllowedMount, "/"), nil
+	return client, strings.Trim(allowedMount, "/"), nil
 }
 
 // NewVaultClientForConfig constructs an authenticated Vault client from raw

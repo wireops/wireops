@@ -8,7 +8,7 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 
 	"github.com/wireops/wireops/internal/backup/remote"
-	"github.com/wireops/wireops/internal/crypto"
+	"github.com/wireops/wireops/internal/integrations"
 )
 
 // s3IntegrationSlug is the "integrations" collection slug for the S3
@@ -19,37 +19,21 @@ import (
 // pattern this mirrors).
 const s3IntegrationSlug = "s3"
 
-// s3IntegrationConfig returns the S3 integration's config map with its
-// "secret" field decrypted in place, and whether the integration exists and
-// is enabled. ok=false (with a nil error) is the normal state for a host
-// that hasn't configured remote backup storage — not a failure.
+// s3IntegrationConfig returns the S3 integration's config map (with its
+// "secret" field already decrypted by Store.Load) and whether the
+// integration exists and is enabled. ok=false (with a nil error) is the
+// normal state for a host that hasn't configured remote backup storage —
+// not a failure.
 func s3IntegrationConfig(app core.App) (config map[string]any, ok bool, err error) {
-	rec, findErr := app.FindFirstRecordByFilter("integrations", "slug = {:slug}", map[string]any{"slug": s3IntegrationSlug})
-	if findErr != nil {
-		if errors.Is(findErr, sql.ErrNoRows) {
-			return nil, false, nil
-		}
-		return nil, false, findErr
+	store := integrations.NewStore(app, secretKeyFromEnv())
+	instance, err := store.Load(s3IntegrationSlug)
+	if err != nil {
+		return nil, false, err
 	}
-	if !rec.GetBool("enabled") {
+	if !instance.Enabled {
 		return nil, false, nil
 	}
-
-	if err := rec.UnmarshalJSONField("config", &config); err != nil {
-		return nil, false, fmt.Errorf("failed to parse s3 integration config: %w", err)
-	}
-	if config == nil {
-		config = map[string]any{}
-	}
-
-	if raw, _ := config["secret"].(string); raw != "" {
-		plaintext, err := crypto.Decrypt(raw, secretKeyFromEnv())
-		if err != nil {
-			return nil, false, fmt.Errorf("failed to decrypt s3 integration secret: %w", err)
-		}
-		config["secret"] = string(plaintext)
-	}
-	return config, true, nil
+	return instance.Config, true, nil
 }
 
 func remoteCredentials(config map[string]any) map[string]any {
@@ -133,30 +117,17 @@ func MigrateLegacyS3Settings(app core.App, secretKey []byte) error {
 
 	return app.RunInTransaction(func(txApp core.App) error {
 		if !alreadyMigrated {
-			col, err := txApp.FindCollectionByNameOrId("integrations")
-			if err != nil {
-				return fmt.Errorf("failed to find integrations collection: %w", err)
-			}
-
-			encryptedSecret, err := crypto.Encrypt([]byte(s3.Secret), secretKey)
-			if err != nil {
-				return fmt.Errorf("failed to encrypt legacy S3 secret: %w", err)
-			}
-
-			rec := core.NewRecord(col)
-			rec.Set("slug", s3IntegrationSlug)
-			rec.Set("enabled", true)
-			rec.Set("config", map[string]any{
+			store := integrations.NewStore(txApp, secretKey)
+			if err := store.Save(s3IntegrationSlug, true, map[string]any{
 				"bucket":           s3.Bucket,
 				"region":           s3.Region,
 				"endpoint":         s3.Endpoint,
 				"prefix":           "",
 				"force_path_style": s3.ForcePathStyle,
 				"access_key":       s3.AccessKey,
-				"secret":           encryptedSecret,
+				"secret":           s3.Secret,
 				"encrypt_content":  true,
-			})
-			if err := txApp.Save(rec); err != nil {
+			}); err != nil {
 				return fmt.Errorf("failed to save migrated s3 integration: %w", err)
 			}
 		}

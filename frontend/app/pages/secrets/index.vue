@@ -264,7 +264,10 @@ onMounted(() => {
           <span class="flex h-9 w-9 items-center justify-center rounded-lg bg-yellow-400/10">
             <UIcon name="i-lucide-key-round" class="h-5 w-5 text-yellow-400" />
           </span>
-          Secrets
+          <span>
+            <span class="block">Secrets</span>
+            <span class="block text-sm font-normal text-gray-500 dark:text-wire-200/60">Reusable variables and secrets for stacks and jobs.</span>
+          </span>
         </h1>
       </div>
       <div class="flex items-center gap-2">

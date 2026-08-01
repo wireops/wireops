@@ -4,12 +4,14 @@ import (
 	"context"
 	"log"
 	"net/http"
-	"strings"
+	"os"
 	"sync"
 	"time"
 
-	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
+
+	"github.com/wireops/wireops/internal/crypto"
+	"github.com/wireops/wireops/internal/integrations"
 )
 
 // Event represents a sync lifecycle event.
@@ -89,24 +91,26 @@ func (n *Notifier) DispatchWithConfig(ctx context.Context, cfg *Config, p Payloa
 }
 
 func (n *Notifier) dispatch(ctx context.Context, p Payload) error {
-	recs, err := n.app.FindAllRecords("integrations", dbx.HashExp{"enabled": true})
+	store := integrations.NewStore(n.app, crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY")))
+
+	instances, err := store.LoadAll()
 	if err != nil {
-		return err
+		log.Printf("[notify] failed to load integrations: %v", err)
+		return nil
 	}
 
-	for _, rec := range recs {
-		slug := rec.GetString("slug")
-		if slug != "webhook" && slug != "ntfy" && slug != "discord" && slug != "slack" {
+	for _, entry := range integrations.All() {
+		if !entry.Descriptor.HasCapability(integrations.CapNotifier) {
+			continue
+		}
+		slug := entry.Descriptor.Slug
+
+		instance, ok := instances[slug]
+		if !ok || !instance.Enabled {
 			continue
 		}
 
-		var configMap map[string]interface{}
-		if err := rec.UnmarshalJSONField("config", &configMap); err != nil {
-			log.Printf("[notify] failed to unmarshal integration %s config: %v", slug, err)
-			continue
-		}
-
-		cfg := n.BuildConfig(slug, configMap)
+		cfg := n.BuildConfig(slug, instance.Config)
 		if cfg == nil {
 			continue
 		}
@@ -194,10 +198,10 @@ func (n *Notifier) BuildConfig(slug string, configMap map[string]interface{}) *C
 	return cfg
 }
 
-// MaskSecret returns a masked representation of the secret for API responses.
+// MaskSecret returns a masked representation of the secret for API
+// responses. Delegates to integrations.MaskSecret — masking is now a Store
+// concern shared by every integration, not just notify's four providers
+// (allowed import direction: notify -> integrations, never the reverse).
 func MaskSecret(secret string) string {
-	if strings.TrimSpace(secret) == "" {
-		return ""
-	}
-	return "••••••••"
+	return integrations.MaskSecret(secret)
 }

@@ -254,7 +254,10 @@ async function handlePurge(dirName: string) {
           <div class="flex items-center justify-center w-9 h-9 rounded-lg bg-yellow-400/10">
             <UIcon name="i-lucide-layers" class="w-5 h-5 text-yellow-400" />
           </div>
-          Stacks
+          <span>
+            <span class="block">Stacks</span>
+            <span class="block text-sm font-normal text-gray-500 dark:text-wire-200/60">Docker Compose deployments synced from Git and dispatched to workers.</span>
+          </span>
         </h1>
         <div v-if="isUpdating" class="flex items-center gap-2 text-sm text-gray-500" role="status" aria-live="polite">
           <UIcon name="i-lucide-loader-2" class="w-4 h-4 animate-spin" />

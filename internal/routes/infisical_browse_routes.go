@@ -12,7 +12,7 @@ import (
 	infisical "github.com/infisical/go-sdk"
 	"github.com/pocketbase/pocketbase/core"
 
-	"github.com/wireops/wireops/internal/crypto"
+	"github.com/wireops/wireops/internal/integrations"
 	"github.com/wireops/wireops/internal/rbac"
 	"github.com/wireops/wireops/internal/secrets"
 )
@@ -63,6 +63,8 @@ type infisicalBrowseEntry struct {
 }
 
 func (rr routeRegistrar) registerInfisicalBrowseRoutes(secretKey []byte) {
+	store := integrations.NewStore(rr.app, secretKey)
+
 	rr.r.GET("/api/custom/integrations/infisical/projects", func(e *core.RequestEvent) error {
 		client, siteURL, allowedProjectID, cancel, err := secrets.BuildInfisicalClient(e.Request.Context(), rr.app)
 		if err != nil {
@@ -190,18 +192,11 @@ func (rr routeRegistrar) registerInfisicalBrowseRoutes(secretKey []byte) {
 		}
 
 		cfg := map[string]interface{}{"client_id": body.ClientID, "client_secret": body.ClientSecret}
-		resolved, err := rr.resolveMaskedIntegrationConfig("infisical", cfg)
+		resolved, err := rr.resolveMaskedConfigForValidation(store, "infisical", cfg)
 		if err != nil {
 			return e.JSON(http.StatusOK, map[string]string{"success": "false", "error": err.Error()})
 		}
-		clientSecret, _ := cfg["client_secret"].(string)
-		if resolved["client_secret"] {
-			secretBytes, err := crypto.Decrypt(clientSecret, secretKey)
-			if err != nil {
-				return e.JSON(http.StatusOK, map[string]string{"success": "false", "error": fmt.Sprintf("failed to decrypt stored client_secret: %v", err)})
-			}
-			clientSecret = string(secretBytes)
-		}
+		clientSecret, _ := resolved["client_secret"].(string)
 
 		siteURL := body.SiteURL
 		if siteURL == "" {

@@ -10,8 +10,18 @@ import (
 // DozzleIntegration replaces the standard container logs with a link to the self-hosted Dozzle instance
 type DozzleIntegration struct{}
 
+var descriptor = integrations.Descriptor{
+	Slug:     "dozzle",
+	Name:     "Dozzle",
+	Category: integrations.CategoryLogging,
+	Fields: []integrations.ConfigField{
+		{Key: "url", Kind: integrations.FieldURL, Required: true},
+	},
+	Capabilities: []integrations.CapabilityID{integrations.CapActionProvider},
+}
+
 func init() {
-	integrations.Register(&DozzleIntegration{})
+	integrations.Register(descriptor, integrations.LegacyActionAdapter(&DozzleIntegration{}))
 }
 
 func (d *DozzleIntegration) Slug() string {
