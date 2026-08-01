@@ -4,34 +4,25 @@ import (
 	"github.com/wireops/wireops/internal/integrations"
 )
 
-// InfisicalIntegration exposes Infisical as a secret backend integration.
-// Its connection config (site_url/client_id/client_secret) is stored in the
-// integrations collection and consumed by
-// internal/secrets.InfisicalSecretProvider — it has no container actions of
-// its own.
-type InfisicalIntegration struct{}
+// descriptor describes Infisical as a Secret Backend integration. Its
+// connection config (site_url/client_id/client_secret, plus the
+// allowed_project_id scoping field) is stored in the integrations
+// collection and consumed by internal/secrets.InfisicalSecretProvider — it
+// has no container actions and no registered capability implementation
+// (Impl is nil).
+var descriptor = integrations.Descriptor{
+	Slug:     "infisical",
+	Name:     "Infisical",
+	Category: integrations.CategorySecretBackend,
+	Fields: []integrations.ConfigField{
+		{Key: "site_url", Kind: integrations.FieldURL},
+		{Key: "client_id", Kind: integrations.FieldText, Required: true},
+		{Key: "client_secret", Kind: integrations.FieldPassword, Required: true, Sensitive: true, Encrypted: true},
+		{Key: "allowed_project_id", Kind: integrations.FieldText},
+	},
+	Capabilities: []integrations.CapabilityID{integrations.CapSecretResolver, integrations.CapBrowsable, integrations.CapTestable},
+}
 
 func init() {
-	integrations.Register(&InfisicalIntegration{})
-}
-
-// Slug returns the unique identifier for this integration.
-func (i *InfisicalIntegration) Slug() string {
-	return "infisical"
-}
-
-// Name returns the human-readable name of the integration.
-func (i *InfisicalIntegration) Name() string {
-	return "Infisical"
-}
-
-// Category returns the category of the integration.
-func (i *InfisicalIntegration) Category() string {
-	return "Secret Backend"
-}
-
-// ResolveContainerActions returns no container actions — this is a secret
-// backend, not a container-action integration.
-func (i *InfisicalIntegration) ResolveContainerActions(config map[string]interface{}, ctx integrations.ContainerContext) []integrations.ContainerAction {
-	return nil
+	integrations.Register(descriptor, nil)
 }

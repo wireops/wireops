@@ -4,29 +4,23 @@ import (
 	"github.com/wireops/wireops/internal/integrations"
 )
 
-// WebhookIntegration handles webhook notifications as an integration.
-type WebhookIntegration struct{}
+// descriptor describes Webhook as a Notification integration. Its config is
+// consumed by internal/notify (BuildConfig/NewProvider) — it has no
+// container actions and no registered capability implementation (Impl is
+// nil), same as the other notification stubs.
+var descriptor = integrations.Descriptor{
+	Slug:     "webhook",
+	Name:     "Webhook",
+	Category: integrations.CategoryNotification,
+	Fields: []integrations.ConfigField{
+		{Key: "url", Kind: integrations.FieldURL},
+		{Key: "secret", Kind: integrations.FieldPassword, Sensitive: true},
+		{Key: "headers", Kind: integrations.FieldKV},
+		{Key: "events", Kind: integrations.FieldList},
+	},
+	Capabilities: []integrations.CapabilityID{integrations.CapNotifier, integrations.CapTestable},
+}
 
 func init() {
-	integrations.Register(&WebhookIntegration{})
-}
-
-// Slug returns the unique identifier for this integration.
-func (w *WebhookIntegration) Slug() string {
-	return "webhook"
-}
-
-// Name returns the human-readable name of the integration.
-func (w *WebhookIntegration) Name() string {
-	return "Webhook"
-}
-
-// Category returns the category of the integration.
-func (w *WebhookIntegration) Category() string {
-	return "Notification"
-}
-
-// ResolveContainerActions returns no container actions as this is a notification integration.
-func (w *WebhookIntegration) ResolveContainerActions(config map[string]interface{}, ctx integrations.ContainerContext) []integrations.ContainerAction {
-	return nil
+	integrations.Register(descriptor, nil)
 }

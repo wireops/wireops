@@ -13,8 +13,15 @@ const u60 = "\x60"
 // TraefikIntegration extracts Traefik router rules to create links to the application
 type TraefikIntegration struct{}
 
+var descriptor = integrations.Descriptor{
+	Slug:         "traefik",
+	Name:         "Traefik",
+	Category:     integrations.CategoryReverseProxy,
+	Capabilities: []integrations.CapabilityID{integrations.CapActionProvider},
+}
+
 func init() {
-	integrations.Register(&TraefikIntegration{})
+	integrations.Register(descriptor, integrations.LegacyActionAdapter(&TraefikIntegration{}))
 }
 
 func (t *TraefikIntegration) Slug() string {

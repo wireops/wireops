@@ -177,33 +177,33 @@ func TestValidateRequiredIntegrationConfig(t *testing.T) {
 // allowed_mount/allowed_project_id are plain, optional config — never masked,
 // never encrypted, never required.
 func TestScopingFieldsExcludedFromSensitiveAndRequiredKeys(t *testing.T) {
-	for _, key := range sensitiveIntegrationConfigKeys("vault") {
+	for _, key := range integrationDescriptor("vault").SensitiveKeys() {
 		if key == "allowed_mount" {
 			t.Fatal("allowed_mount must not be treated as sensitive")
 		}
 	}
-	for _, key := range encryptedIntegrationConfigKeys("vault") {
+	for _, key := range integrationDescriptor("vault").EncryptedKeys() {
 		if key == "allowed_mount" {
 			t.Fatal("allowed_mount must not be encrypted at rest")
 		}
 	}
-	for _, key := range requiredIntegrationConfigKeys("vault") {
+	for _, key := range integrationDescriptor("vault").RequiredKeys() {
 		if key == "allowed_mount" {
 			t.Fatal("allowed_mount must not be required")
 		}
 	}
 
-	for _, key := range sensitiveIntegrationConfigKeys("infisical") {
+	for _, key := range integrationDescriptor("infisical").SensitiveKeys() {
 		if key == "allowed_project_id" {
 			t.Fatal("allowed_project_id must not be treated as sensitive")
 		}
 	}
-	for _, key := range encryptedIntegrationConfigKeys("infisical") {
+	for _, key := range integrationDescriptor("infisical").EncryptedKeys() {
 		if key == "allowed_project_id" {
 			t.Fatal("allowed_project_id must not be encrypted at rest")
 		}
 	}
-	for _, key := range requiredIntegrationConfigKeys("infisical") {
+	for _, key := range integrationDescriptor("infisical").RequiredKeys() {
 		if key == "allowed_project_id" {
 			t.Fatal("allowed_project_id must not be required")
 		}

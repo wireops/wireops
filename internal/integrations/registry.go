@@ -1,44 +1,121 @@
 package integrations
 
 import (
+	"reflect"
+	"sort"
 	"sync"
 )
 
+// Entry is one registered integration: its static Descriptor plus whatever
+// implementation value (if any) was registered alongside it. Impl is typed
+// as any because different integrations back different capability
+// interfaces (or none at all, for pure-config stubs like discord/vault) —
+// use GetImpl[T] or Capable[T] to retrieve it as a concrete interface type.
+type Entry struct {
+	Descriptor Descriptor
+	Impl       any
+}
+
 var (
-	registry = make(map[string]Integration)
+	registry = make(map[string]Entry)
 	mu       sync.RWMutex
 )
 
-// Register registers a new integration into the global registry.
-// Panics if an integration with the same slug is already registered.
-func Register(integration Integration) {
+// knownCapabilityInterfaces maps a CapabilityID to the Go interface type
+// Register should verify impl against, for capabilities that have a real
+// interface defined. Capabilities not listed here (e.g. CapNotifier today)
+// are accepted as declared intent with no implementation check — they exist
+// so descriptors can express what an integration does ahead of their
+// interface landing in a later phase.
+var knownCapabilityInterfaces = map[CapabilityID]reflect.Type{
+	CapActionProvider: reflect.TypeOf((*ActionProvider)(nil)).Elem(),
+}
+
+// Register registers a new integration into the global registry. Panics if:
+//   - an integration with the same slug is already registered (same as
+//     before this refactor);
+//   - d declares a Capability that has a known backing interface, but impl
+//     does not implement it;
+//   - impl implements a known capability interface that d did not declare —
+//     catches a descriptor that forgot to list a capability its impl
+//     actually has.
+func Register(d Descriptor, impl any) {
 	mu.Lock()
 	defer mu.Unlock()
 
-	slug := integration.Slug()
-	if _, exists := registry[slug]; exists {
-		panic("integration " + slug + " already registered")
+	if _, exists := registry[d.Slug]; exists {
+		panic("integration " + d.Slug + " already registered")
 	}
-	registry[slug] = integration
+
+	declared := make(map[CapabilityID]bool, len(d.Capabilities))
+	for _, capID := range d.Capabilities {
+		declared[capID] = true
+	}
+
+	for capID, ifaceType := range knownCapabilityInterfaces {
+		implementsIface := impl != nil && reflect.TypeOf(impl).Implements(ifaceType)
+		switch {
+		case declared[capID] && !implementsIface:
+			panic("integration " + d.Slug + " declares capability " + string(capID) + " but its implementation does not satisfy the corresponding interface")
+		case !declared[capID] && implementsIface:
+			panic("integration " + d.Slug + " implementation satisfies capability " + string(capID) + " but does not declare it")
+		}
+	}
+
+	registry[d.Slug] = Entry{Descriptor: d, Impl: impl}
 }
 
-// Get returns the integration by its slug, or false if not found.
-func Get(slug string) (Integration, bool) {
+// Get returns the registry Entry for slug, or false if not found.
+func Get(slug string) (Entry, bool) {
 	mu.RLock()
 	defer mu.RUnlock()
 
-	i, ok := registry[slug]
-	return i, ok
+	e, ok := registry[slug]
+	return e, ok
 }
 
-// All returns a slice of all registered integrations.
-func All() []Integration {
+// All returns every registered Entry, sorted by Category.Order then Slug —
+// deterministic, unlike the old map-iteration order this replaces.
+func All() []Entry {
 	mu.RLock()
 	defer mu.RUnlock()
 
-	var all []Integration
-	for _, i := range registry {
-		all = append(all, i)
+	all := make([]Entry, 0, len(registry))
+	for _, e := range registry {
+		all = append(all, e)
 	}
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].Descriptor.Category.Order != all[j].Descriptor.Category.Order {
+			return all[i].Descriptor.Category.Order < all[j].Descriptor.Category.Order
+		}
+		return all[i].Descriptor.Slug < all[j].Descriptor.Slug
+	})
 	return all
+}
+
+// Capable returns the Impl of every registered entry whose Impl satisfies T,
+// in the same deterministic order as All().
+func Capable[T any]() []T {
+	var out []T
+	for _, e := range All() {
+		if impl, ok := e.Impl.(T); ok {
+			out = append(out, impl)
+		}
+	}
+	return out
+}
+
+// GetImpl returns slug's Impl asserted to T, and whether the slug is
+// registered and its Impl satisfies T.
+func GetImpl[T any](slug string) (T, bool) {
+	var zero T
+	e, ok := Get(slug)
+	if !ok {
+		return zero, false
+	}
+	impl, ok := e.Impl.(T)
+	if !ok {
+		return zero, false
+	}
+	return impl, true
 }

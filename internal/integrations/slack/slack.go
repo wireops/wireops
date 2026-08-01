@@ -4,29 +4,23 @@ import (
 	"github.com/wireops/wireops/internal/integrations"
 )
 
-// SlackIntegration handles Slack notifications as an integration.
-type SlackIntegration struct{}
+// descriptor describes Slack as a Notification integration. Its config is
+// consumed by internal/notify (BuildConfig/NewProvider) — it has no
+// container actions and no registered capability implementation (Impl is
+// nil), same as the other notification stubs.
+var descriptor = integrations.Descriptor{
+	Slug:     "slack",
+	Name:     "Slack",
+	Category: integrations.CategoryNotification,
+	Fields: []integrations.ConfigField{
+		{Key: "url", Kind: integrations.FieldURL, Sensitive: true},
+		{Key: "mention_on_error", Kind: integrations.FieldBool},
+		{Key: "mention_text", Kind: integrations.FieldText},
+		{Key: "events", Kind: integrations.FieldList},
+	},
+	Capabilities: []integrations.CapabilityID{integrations.CapNotifier, integrations.CapTestable},
+}
 
 func init() {
-	integrations.Register(&SlackIntegration{})
-}
-
-// Slug returns the unique identifier for this integration.
-func (s *SlackIntegration) Slug() string {
-	return "slack"
-}
-
-// Name returns the human-readable name of the integration.
-func (s *SlackIntegration) Name() string {
-	return "Slack"
-}
-
-// Category returns the category of the integration.
-func (s *SlackIntegration) Category() string {
-	return "Notification"
-}
-
-// ResolveContainerActions returns no container actions as this is a notification integration.
-func (s *SlackIntegration) ResolveContainerActions(config map[string]interface{}, ctx integrations.ContainerContext) []integrations.ContainerAction {
-	return nil
+	integrations.Register(descriptor, nil)
 }

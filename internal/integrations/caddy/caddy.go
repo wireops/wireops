@@ -16,8 +16,15 @@ var caddySiteLabel = regexp.MustCompile(`^caddy(?:_\d+)?$`)
 // CaddyIntegration extracts caddy-docker-proxy site labels to create application links.
 type CaddyIntegration struct{}
 
+var descriptor = integrations.Descriptor{
+	Slug:         "caddy",
+	Name:         "Caddy",
+	Category:     integrations.CategoryReverseProxy,
+	Capabilities: []integrations.CapabilityID{integrations.CapActionProvider},
+}
+
 func init() {
-	integrations.Register(&CaddyIntegration{})
+	integrations.Register(descriptor, integrations.LegacyActionAdapter(&CaddyIntegration{}))
 }
 
 func (c *CaddyIntegration) Slug() string {

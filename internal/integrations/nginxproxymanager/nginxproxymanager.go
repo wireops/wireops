@@ -13,8 +13,15 @@ import (
 // NginxProxyManagerIntegration creates application links from wireops proxy hint labels.
 type NginxProxyManagerIntegration struct{}
 
+var descriptor = integrations.Descriptor{
+	Slug:         "nginx-proxy-manager",
+	Name:         "Nginx Proxy Manager",
+	Category:     integrations.CategoryReverseProxy,
+	Capabilities: []integrations.CapabilityID{integrations.CapActionProvider},
+}
+
 func init() {
-	integrations.Register(&NginxProxyManagerIntegration{})
+	integrations.Register(descriptor, integrations.LegacyActionAdapter(&NginxProxyManagerIntegration{}))
 }
 
 func (n *NginxProxyManagerIntegration) Slug() string {

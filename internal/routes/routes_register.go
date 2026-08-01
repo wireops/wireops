@@ -44,43 +44,25 @@ type routeRegistrar struct {
 	logBroker *logstream.Broker
 }
 
+// isNotificationIntegration reports whether slug is one of the 4
+// notify-backed integrations. It intentionally still hardcodes this set
+// (rather than deriving it from the descriptor's Capabilities) because
+// CapNotifier has no backing Go interface yet — that wiring is phase 3's
+// job (see internal/integrations/capability.go).
 func isNotificationIntegration(slug string) bool {
 	return slug == "webhook" || slug == "ntfy" || slug == "discord" || slug == "slack"
 }
 
-func sensitiveIntegrationConfigKeys(slug string) []string {
-	switch slug {
-	case "discord", "slack":
-		return []string{"url"}
-	case "webhook", "ntfy":
-		return []string{"secret"}
-	case "vault":
-		return []string{"token"}
-	case "infisical":
-		return []string{"client_secret"}
-	case "s3":
-		return []string{"secret"}
-	default:
-		return nil
-	}
+// integrationDescriptor looks up slug's registered Descriptor, returning the
+// zero Descriptor if the slug isn't registered — callers only use this for
+// key-list lookups (SensitiveKeys/EncryptedKeys/RequiredKeys), which are
+// nil-safe on a zero Descriptor.
+func integrationDescriptor(slug string) integrations.Descriptor {
+	entry, _ := integrations.Get(slug)
+	return entry.Descriptor
 }
 
-// encryptedIntegrationConfigKeys is a subset of sensitiveIntegrationConfigKeys:
-// the keys that must actually be AES-GCM encrypted at rest (not just masked
-// in API responses), because they grant direct read access to an external
-// secret backend. webhook/ntfy/discord/slack sensitive values remain
-// plaintext at rest, matching existing behavior — only widen this list
-// deliberately.
-func encryptedIntegrationConfigKeys(slug string) []string {
-	switch slug {
-	case "vault", "infisical", "s3":
-		return sensitiveIntegrationConfigKeys(slug)
-	default:
-		return nil
-	}
-}
-
-// encryptIntegrationConfig AES-GCM encrypts encryptedIntegrationConfigKeys
+// encryptIntegrationConfig AES-GCM encrypts the descriptor's EncryptedKeys()
 // fields in-place before the config JSON is persisted, mirroring how
 // git_password/ssh_private_key are handled for stack credentials.
 //
@@ -93,7 +75,7 @@ func encryptedIntegrationConfigKeys(slug string) []string {
 // valid base64 alphabet at a length divisible by 4, so it silently skipped
 // encryption and persisted the secret in plaintext.
 func encryptIntegrationConfig(slug string, cfg map[string]interface{}, secretKey []byte, alreadyEncryptedKeys map[string]bool) error {
-	for _, key := range encryptedIntegrationConfigKeys(slug) {
+	for _, key := range integrationDescriptor(slug).EncryptedKeys() {
 		if alreadyEncryptedKeys[key] {
 			continue
 		}
@@ -113,21 +95,8 @@ func encryptIntegrationConfig(slug string, cfg map[string]interface{}, secretKey
 	return nil
 }
 
-func requiredIntegrationConfigKeys(slug string) []string {
-	switch slug {
-	case "vault":
-		return []string{"address", "token"}
-	case "infisical":
-		return []string{"client_id", "client_secret"}
-	case "s3":
-		return []string{"bucket", "region", "access_key", "secret"}
-	default:
-		return nil
-	}
-}
-
 func validateRequiredIntegrationConfig(slug string, cfg map[string]interface{}) error {
-	for _, key := range requiredIntegrationConfigKeys(slug) {
+	for _, key := range integrationDescriptor(slug).RequiredKeys() {
 		val, _ := cfg[key].(string)
 		if strings.TrimSpace(val) == "" {
 			return fmt.Errorf("%s is required", key)
@@ -136,19 +105,15 @@ func validateRequiredIntegrationConfig(slug string, cfg map[string]interface{}) 
 	return nil
 }
 
-// alwaysLockedIntegrationSlugs are integrations that can never be
-// enabled/disabled/reconfigured from the API regardless of what's in their
-// DB row — e.g. "sops", which is always active and has no connection to
-// configure (see migration 53). Keeping this independent of the DB row means
-// the guarantee holds even if the seed row is missing or gets deleted.
-var alwaysLockedIntegrationSlugs = map[string]bool{"sops": true, "github": true}
-
 // isIntegrationLocked reports whether slug can't be enabled/disabled/
-// reconfigured from the API — either because it's in
-// alwaysLockedIntegrationSlugs, or its integrations row has locked=true. An
-// integration with no saved row yet is never locked (unless always-locked).
+// reconfigured from the API — either because its Descriptor.Locked is true
+// (e.g. "sops"/"github", which are always active and have no connection to
+// configure — see migration 53), or its integrations row has locked=true.
+// An integration with no saved row yet is never locked (unless
+// descriptor-locked). ORing the two means the descriptor-level guarantee
+// holds even if the seed row is missing or gets deleted.
 func isIntegrationLocked(app core.App, slug string) bool {
-	if alwaysLockedIntegrationSlugs[slug] {
+	if integrationDescriptor(slug).Locked {
 		return true
 	}
 	rec, err := app.FindFirstRecordByFilter("integrations", "slug = {:slug}", map[string]any{"slug": slug})
@@ -159,7 +124,7 @@ func isIntegrationLocked(app core.App, slug string) bool {
 }
 
 func maskIntegrationConfig(slug string, cfg map[string]interface{}) {
-	for _, key := range sensitiveIntegrationConfigKeys(slug) {
+	for _, key := range integrationDescriptor(slug).SensitiveKeys() {
 		if val, ok := cfg[key].(string); ok && val != "" {
 			cfg[key] = notify.MaskSecret(val)
 		}
@@ -178,7 +143,7 @@ func (rr routeRegistrar) resolveMaskedIntegrationConfig(slug string, cfg map[str
 	}
 
 	var savedConfig map[string]interface{}
-	for _, key := range sensitiveIntegrationConfigKeys(slug) {
+	for _, key := range integrationDescriptor(slug).SensitiveKeys() {
 		val, ok := cfg[key].(string)
 		if !ok || val != notify.MaskSecret("x") {
 			continue
@@ -853,12 +818,12 @@ func (rr routeRegistrar) registerIntegrationRoutes(secretKey []byte) {
 		}
 
 		var out []IntegrationOutput
-		for _, impl := range integrations.All() {
-			slug := impl.Slug()
+		for _, entry := range integrations.All() {
+			slug := entry.Descriptor.Slug
 			item := IntegrationOutput{
 				Slug:     slug,
-				Name:     impl.Name(),
-				Category: impl.Category(),
+				Name:     entry.Descriptor.Name,
+				Category: entry.Descriptor.Category.Label,
 				Enabled:  false,
 				Locked:   isIntegrationLocked(rr.app, slug),
 				Config:   map[string]interface{}{},
@@ -972,23 +937,23 @@ func (rr routeRegistrar) registerIntegrationRoutes(secretKey []byte) {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
 		if len(recs) == 0 {
-			return e.JSON(http.StatusOK, map[string][]integrations.ContainerAction{})
+			return e.JSON(http.StatusOK, map[string][]integrations.Action{})
 		}
 
 		activePlugins := make([]struct {
-			Plugin integrations.Integration
+			Plugin integrations.ActionProvider
 			Config map[string]interface{}
 		}, 0)
 		for _, rec := range recs {
 			slug := rec.GetString("slug")
-			if plugin, exists := integrations.Get(slug); exists {
+			if plugin, exists := integrations.GetImpl[integrations.ActionProvider](slug); exists {
 				var cfg map[string]interface{}
 				_ = rec.UnmarshalJSONField("config", &cfg)
 				if cfg == nil {
 					cfg = make(map[string]interface{})
 				}
 				activePlugins = append(activePlugins, struct {
-					Plugin integrations.Integration
+					Plugin integrations.ActionProvider
 					Config map[string]interface{}
 				}{plugin, cfg})
 			}
@@ -1024,18 +989,19 @@ func (rr routeRegistrar) registerIntegrationRoutes(secretKey []byte) {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to unmarshal worker response"})
 		}
 		if len(statuses) == 0 {
-			return e.JSON(http.StatusOK, map[string][]integrations.ContainerAction{})
+			return e.JSON(http.StatusOK, map[string][]integrations.Action{})
 		}
 
-		result := make(map[string][]integrations.ContainerAction)
+		result := make(map[string][]integrations.Action)
 		for _, status := range statuses {
-			ctx := integrations.ContainerContext{
-				ContainerID:   status.ContainerID,
-				ContainerName: status.ContainerName,
-				Labels:        status.Labels,
+			scope := integrations.ActionScope{
+				Kind:   integrations.ScopeContainer,
+				ID:     status.ContainerID,
+				Name:   status.ContainerName,
+				Labels: status.Labels,
 			}
 			for _, ap := range activePlugins {
-				actions := ap.Plugin.ResolveContainerActions(ap.Config, ctx)
+				actions := ap.Plugin.ResolveActions(ap.Config, scope)
 				if len(actions) > 0 {
 					result[status.ContainerID] = append(result[status.ContainerID], actions...)
 				}
