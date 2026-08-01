@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { AUTH_TYPE } from '~/constants/repositoryAuth'
 
 const { PLATFORM_OPTIONS, platformIconUrl } = useRepositoryPlatform()
 const { $pb } = useNuxtApp()
 const { testCredentials, listGitProviders, listGitProviderOrgs, listGitProviderRepos, listGitProviderBranches } = useApi()
+const { connect: connectProvider } = useGitProviderOAuth()
 const toast = useToast()
 const { announce } = useA11yAnnouncer()
 
@@ -27,11 +28,22 @@ const initializing = ref(false)
 
 const gitProviders = ref<{ slug: string, name: string, configured: boolean }[]>([])
 const connectedProviderSlug = ref('')
+
+// Wizard step: when at least one SCM integration (GitHub, future
+// Gitea/Forgejo, ...) is configured on the server, new repositories start
+// on a "Source" step with a big-card picker (one card per configured
+// provider, plus a "Generic" card for a manual git URL); "Details" then
+// collects name/branch/access. With no integrations configured, there's
+// nothing to pick between, so it's skipped straight to "Details".
+const step = ref<'select' | 'form'>('form')
+const connectingSlug = ref('')
+const availableProviders = computed(() => gitProviders.value.filter(p => p.configured))
 const orgs = ref<{ login: string, avatar_url?: string }[]>([])
 const selectedOrg = ref('')
 const repos = ref<{ full_name: string, name: string, owner: string, private: boolean, default_branch: string, clone_url: string }[]>([])
 const selectedRepo = ref('')
 const branches = ref<{ name: string }[]>([])
+const loadingOrgs = ref(false)
 const loadingRepos = ref(false)
 const loadingBranches = ref(false)
 
@@ -39,8 +51,42 @@ const orgOptions = computed(() => [
   { label: 'My repositories', value: '' },
   ...orgs.value.map(org => ({ label: org.login, value: org.login })),
 ])
+const hasSingleOrg = computed(() => orgOptions.value.length === 1)
 const repoOptions = computed(() => repos.value.map(repo => ({ label: repo.full_name, value: repo.full_name })))
 const branchOptions = computed(() => branches.value.map(branch => ({ label: branch.name, value: branch.name })))
+
+// Steps before the current one get a green check instead of their own icon —
+// same convention as CreateStackModal's stepper.
+const greenTrigger = 'group-data-[state=completed]:bg-green-500 dark:group-data-[state=completed]:bg-green-600'
+const greenToYellowSeparator = 'group-data-[state=completed]:bg-gradient-to-r group-data-[state=completed]:from-green-500 group-data-[state=completed]:to-yellow-500 dark:group-data-[state=completed]:from-green-600'
+
+const stepperItems = computed(() => [
+  {
+    title: 'Source',
+    description: availableProviders.value.length > 0 ? 'Provider or Git URL' : 'Git URL',
+    icon: step.value === 'form' ? 'i-lucide-check' : 'i-lucide-git-branch',
+    // "Details" is the current step, never fully "completed" while this
+    // modal is open, so the separator between them always fades from the
+    // completed green into the active yellow — same convention as
+    // CreateStackModal's stepper.
+    ui: step.value === 'form' ? { trigger: greenTrigger, separator: greenToYellowSeparator } : undefined,
+  },
+  {
+    title: 'Details',
+    description: 'Name, branch & access',
+    icon: 'i-lucide-settings',
+    // Only reachable via a card pick in the Source step, not by clicking
+    // ahead on the stepper itself.
+    disabled: step.value === 'select',
+  },
+])
+
+const activeStep = computed({
+  get: () => (step.value === 'select' ? 0 : 1),
+  set: (val: number) => {
+    if (val === 0) backToProviderSelect()
+  },
+})
 
 async function loadGitProviders() {
   try {
@@ -50,23 +96,35 @@ async function loadGitProviders() {
   }
 }
 
-// activateConnection wires up a (possibly already-connected) provider key:
-// the org/repo/branch pickers, isPrivate, and the lock on the manual
-// "Repository Key" picker all key off connectedProviderSlug. Shared by a
-// fresh "Connect" click and by auto-detecting an existing global connection
-// on open, so both paths behave identically.
-async function activateConnection(slug: string, keyId: string) {
+// beginConnection wires up a (possibly already-connected) provider key and
+// switches to the "Details" step immediately — isPrivate, the org/repo
+// pickers, and the lock on the manual "Repository Key" picker all key off
+// connectedProviderSlug. The org/repo listing itself (loadOrgsAndRepos)
+// happens after the step switch, behind loading skeletons, instead of
+// blocking the transition: GitHub's API can take a few seconds here and a
+// frozen card picker reads as "stuck", not "loading".
+function beginConnection(slug: string, keyId: string) {
   form.value.repository_key = keyId
+  form.value.platform = slug
+  urlScheme.value = 'http'
   isPrivate.value = true
   connectedProviderSlug.value = slug
   selectedOrg.value = ''
   selectedRepo.value = ''
+  orgs.value = []
   repos.value = []
   branches.value = []
+  step.value = 'form'
+}
+
+async function loadOrgsAndRepos(slug: string, keyId: string) {
+  loadingOrgs.value = true
   try {
     orgs.value = await listGitProviderOrgs(slug, keyId)
   } catch {
     orgs.value = []
+  } finally {
+    loadingOrgs.value = false
   }
   await loadReposForOrg()
 }
@@ -79,9 +137,50 @@ function findConnectedKey(slug: string) {
   return keys.value.find(key => key.auth_type === AUTH_TYPE.OAUTH_TOKEN && key.oauth_provider === slug)
 }
 
-async function handleConnected(slug: string, result: { keyId: string, login: string }) {
-  await loadKeys()
-  await activateConnection(slug, result.keyId)
+// Generic card: skip provider connection entirely, go to the plain
+// git-url "Details" step.
+function selectGeneric() {
+  connectedProviderSlug.value = ''
+  step.value = 'form'
+}
+
+// Provider card: reuse an existing global connection if there is one,
+// otherwise kick off the OAuth popup for that provider's slug.
+async function selectProvider(slug: string) {
+  const existingKey = findConnectedKey(slug)
+  if (existingKey) {
+    beginConnection(slug, existingKey.id)
+    await loadOrgsAndRepos(slug, existingKey.id)
+    return
+  }
+  connectingSlug.value = slug
+  try {
+    const result = await connectProvider(slug)
+    if (!result) {
+      toast.add({ title: 'Connection cancelled or failed', color: 'warning' })
+      return
+    }
+    await loadKeys()
+    beginConnection(slug, result.keyId)
+    await loadOrgsAndRepos(slug, result.keyId)
+  } catch (error: any) {
+    toast.add({ title: 'Failed to connect', description: error?.message || 'Unknown error', color: 'error' })
+  } finally {
+    connectingSlug.value = ''
+  }
+}
+
+function backToProviderSelect() {
+  form.value = { name: '', git_url: '', branch: 'main', platform: 'github', repository_key: '' }
+  urlScheme.value = 'http'
+  isPrivate.value = false
+  connectedProviderSlug.value = ''
+  orgs.value = []
+  repos.value = []
+  branches.value = []
+  selectedOrg.value = ''
+  selectedRepo.value = ''
+  step.value = 'select'
 }
 
 async function loadReposForOrg() {
@@ -105,6 +204,7 @@ async function selectRepo(fullName: string) {
   if (!repo) return
   form.value.git_url = repo.clone_url
   form.value.branch = repo.default_branch
+  isPrivate.value = repo.private
   if (!form.value.name.trim()) form.value.name = repo.name
 
   loadingBranches.value = true
@@ -163,6 +263,7 @@ watch(isOpen, async (open) => {
   await loadKeys()
   const repository = props.repository
   if (repository) {
+    step.value = 'form'
     form.value = {
       name: repository.name || '',
       git_url: repository.git_url || '',
@@ -177,14 +278,12 @@ watch(isOpen, async (open) => {
     urlScheme.value = 'http'
     isPrivate.value = false
 
-    // New repository: if a provider is already globally connected, jump
-    // straight to its org/repo picker instead of making the user click
-    // "Connect" again for every repo they add.
-    const configuredProvider = gitProviders.value.find(p => p.configured)
-    const existingKey = configuredProvider ? findConnectedKey(configuredProvider.slug) : undefined
-    if (configuredProvider && existingKey) {
-      await activateConnection(configuredProvider.slug, existingKey.id)
-    }
+    // No SCM integration configured at all: nothing to pick between, so
+    // treat this as a plain generic git-url repository. Otherwise always
+    // start on the card picker (GitHub / future Gitea / Forgejo / Generic)
+    // and let the user choose — selectProvider() reuses an existing
+    // connection under the hood once they pick a provider card.
+    step.value = availableProviders.value.length === 0 ? 'form' : 'select'
   }
   await nextTick()
   initializing.value = false
@@ -198,9 +297,12 @@ watch(urlScheme, (scheme) => {
   isPrivate.value = scheme === 'ssh'
 })
 watch(isPrivate, (enabled) => {
+  // Skip when a provider connection drives isPrivate off the selected
+  // repo's visibility (selectRepo()) — only a manual uncheck of "Private
+  // Repository" should drop the manually-picked key.
+  if (connectedProviderSlug.value) return
   if (!enabled && urlScheme.value === 'http') {
     form.value.repository_key = ''
-    connectedProviderSlug.value = ''
   }
 })
 watch(() => form.value.git_url, () => {
@@ -267,6 +369,7 @@ async function testConnection() {
 }
 
 async function submit() {
+  if (step.value === 'select') return
   const error = validateForm()
   if (error) {
     gitUrlError.value = validateGitUrl()
@@ -312,132 +415,187 @@ async function handleKeySaved(key: Record<string, any>) {
 <template>
   <UModal v-model:open="isOpen" scrollable :ui="{ content: 'sm:max-w-2xl w-full' }">
     <template #content>
-      <UCard class="sm:min-w-[640px] w-full">
-        <template #header>
-          <div class="flex items-center gap-2">
-            <UIcon name="i-lucide-git-branch" class="w-5 h-5 text-gray-500" />
-            <h2 class="font-semibold">{{ isEditMode ? 'Edit Repository' : 'Add Repository' }}</h2>
-          </div>
-        </template>
-
-        <form class="space-y-4" @submit.prevent="submit">
-          <UFormField label="Name" required>
-            <AppTextInput v-model="form.name" placeholder="my-app" />
-          </UFormField>
-
-          <div class="flex items-end gap-3">
-            <UFormField label="Platform" required class="flex-1">
-              <USelectMenu v-model="form.platform" :items="PLATFORM_OPTIONS" value-key="value" class="w-full" :search-input="false">
-                <template #leading>
-                  <img v-if="platformIconUrl(form.platform)" :src="platformIconUrl(form.platform)!" class="w-4 h-4 object-contain" alt="">
-                </template>
-                <template #item-leading="{ item }">
-                  <img v-if="platformIconUrl(item.value)" :src="platformIconUrl(item.value)!" class="w-4 h-4 object-contain" alt="">
-                </template>
-              </USelectMenu>
-            </UFormField>
-            <UFormField label="Protocol">
-              <URadioGroup
-                v-model="urlScheme"
-                :items="[{ label: 'HTTP', value: 'http' }, { label: 'SSH', value: 'ssh' }]"
-                orientation="horizontal"
-              />
-            </UFormField>
-          </div>
-
-          <div v-if="urlScheme === 'http' && gitProviders.some(p => p.configured)" class="flex flex-wrap items-center gap-2">
-            <template v-for="provider in gitProviders.filter(p => p.configured)" :key="provider.slug">
-              <UBadge v-if="connectedProviderSlug === provider.slug" color="success" variant="soft" class="py-1.5">
-                Connected to {{ provider.name }}
-              </UBadge>
-              <ConnectGithubButton v-else-if="provider.slug === 'github'" @connected="result => handleConnected(provider.slug, result)" />
-            </template>
-          </div>
-
-          <template v-if="connectedProviderSlug">
-            <div class="flex items-end gap-3">
-              <UFormField label="Organization" class="flex-1">
-                <USelectMenu
-                  v-model="selectedOrg"
-                  :items="orgOptions"
-                  value-key="value"
-                  class="w-full"
-                  @update:model-value="loadReposForOrg"
-                />
-              </UFormField>
-              <UFormField label="Repository" required class="flex-1">
-                <USelectMenu
-                  v-model="selectedRepo"
-                  :items="repoOptions"
-                  value-key="value"
-                  placeholder="Select a repository"
-                  :loading="loadingRepos"
-                  class="w-full"
-                  @update:model-value="selectRepo"
-                />
-              </UFormField>
+      <form class="w-full" @submit.prevent="submit">
+        <UCard class="sm:min-w-[640px] w-full" :ui="{ body: { base: 'p-6' }, header: { base: 'px-6 py-4' }, footer: { base: 'px-6 py-4' } }">
+          <template #header>
+            <div class="space-y-4">
+              <div class="flex items-center gap-2">
+                <UIcon name="i-lucide-git-branch" class="w-5 h-5 text-primary-500" />
+                <h2 class="font-semibold text-lg">{{ isEditMode ? 'Edit Repository' : 'Add Repository' }}</h2>
+              </div>
+              <UStepper v-if="!isEditMode" v-model="activeStep" :items="stepperItems" class="w-full" />
             </div>
           </template>
 
-          <UFormField label="Git URL" required :error="gitUrlError">
-            <AppTextInput v-model="form.git_url" :placeholder="urlPlaceholder" />
-          </UFormField>
+          <div class="space-y-4">
+            <div v-show="step === 'select'" class="space-y-4">
+              <p class="text-sm text-gray-500">Where is this repository hosted?</p>
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <button
+                  v-for="provider in availableProviders"
+                  :key="provider.slug"
+                  type="button"
+                  class="flex flex-col items-center justify-center gap-3 rounded-lg border border-gray-200 dark:border-gray-800 p-6 text-center cursor-pointer hover:border-primary-500 hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors disabled:opacity-60 disabled:cursor-wait"
+                  :disabled="!!connectingSlug"
+                  @click="selectProvider(provider.slug)"
+                >
+                  <GithubIcon v-if="provider.slug === 'github'" icon-class="w-10 h-10 text-gray-700 dark:text-white" />
+                  <img v-else-if="platformIconUrl(provider.slug)" :src="platformIconUrl(provider.slug)!" class="w-10 h-10 object-contain" alt="">
+                  <UIcon v-else name="i-lucide-git-branch" class="w-10 h-10 text-gray-400" />
+                  <span class="font-medium">{{ provider.name }}</span>
+                  <span class="text-xs text-gray-500">{{ connectingSlug === provider.slug ? 'Connecting…' : 'Browse your organizations & repos' }}</span>
+                </button>
 
-          <UFormField label="Branch">
-            <USelectMenu
-              v-if="connectedProviderSlug && branchOptions.length > 0"
-              v-model="form.branch"
-              :items="branchOptions"
-              value-key="value"
-              :loading="loadingBranches"
-              class="w-full"
-            />
-            <AppTextInput v-else v-model="form.branch" placeholder="main" />
-          </UFormField>
+                <button
+                  type="button"
+                  class="flex flex-col items-center justify-center gap-3 rounded-lg border border-gray-200 dark:border-gray-800 p-6 text-center cursor-pointer hover:border-primary-500 hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors disabled:opacity-60 disabled:cursor-wait"
+                  :disabled="!!connectingSlug"
+                  @click="selectGeneric"
+                >
+                  <GenericIcon variant="git" icon-class="w-10 h-10 text-gray-400" />
+                  <span class="font-medium">Generic</span>
+                  <span class="text-xs text-gray-500">Any Git server via URL</span>
+                </button>
+              </div>
+            </div>
 
-          <div v-if="urlScheme === 'http'" class="flex items-center gap-2">
-            <UCheckbox v-model="isPrivate" label="Private Repository" />
-            <span class="text-xs text-gray-500">Public repositories do not need a key.</span>
-          </div>
+            <div v-show="step === 'form'" class="space-y-4">
+              <div class="flex items-end gap-3">
+                <UFormField label="Name" required class="flex-1">
+                  <AppTextInput v-model="form.name" placeholder="my-app" />
+                </UFormField>
+                <div
+                  v-if="connectedProviderSlug"
+                  class="flex items-center gap-2 rounded-lg border border-green-500/40 bg-green-500/10 px-3 py-1.5 shrink-0 mb-[1px]"
+                >
+                  <UIcon name="i-lucide-check" class="w-4 h-4 text-green-600 dark:text-green-400" />
+                  <GithubIcon v-if="connectedProviderSlug === 'github'" icon-class="w-4 h-4 text-gray-700 dark:text-white" />
+                  <img v-else-if="platformIconUrl(connectedProviderSlug)" :src="platformIconUrl(connectedProviderSlug)!" class="w-4 h-4 object-contain" alt="">
+                  <UIcon v-else name="i-lucide-git-branch" class="w-4 h-4 text-gray-400" />
+                  <span class="text-sm font-medium text-green-700 dark:text-green-400">{{ availableProviders.find(p => p.slug === connectedProviderSlug)?.name || connectedProviderSlug }}</span>
+                </div>
+              </div>
 
-          <div v-if="(urlScheme === 'ssh' || isPrivate) && !connectedProviderSlug" class="flex items-end gap-2">
-            <UFormField label="Repository Key" required class="flex-1">
-              <USelectMenu
-                v-model="form.repository_key"
-                :items="keyOptions"
-                value-key="value"
-                placeholder="Select a reusable key"
-                class="w-full"
-              />
-            </UFormField>
-            <UButton
-              label="New Key"
-              icon="i-lucide-plus"
-              variant="outline"
-              color="neutral"
-              @click="showCreateKey = true"
-            />
-          </div>
-          <p v-if="(urlScheme === 'ssh' || isPrivate) && !connectedProviderSlug && compatibleKeys.length === 0" class="text-xs text-amber-600 dark:text-amber-400">
-            No compatible keys yet. Create one to continue.
-          </p>
+              <div v-if="!connectedProviderSlug" class="flex items-end gap-3">
+                <UFormField label="Platform" required class="flex-1">
+                  <USelectMenu v-model="form.platform" :items="PLATFORM_OPTIONS" value-key="value" class="w-full" :search-input="false">
+                    <template #leading>
+                      <img v-if="platformIconUrl(form.platform)" :src="platformIconUrl(form.platform)!" class="w-4 h-4 object-contain" alt="">
+                    </template>
+                    <template #item-leading="{ item }">
+                      <img v-if="platformIconUrl(item.value)" :src="platformIconUrl(item.value)!" class="w-4 h-4 object-contain" alt="">
+                    </template>
+                  </USelectMenu>
+                </UFormField>
+                <UFormField label="Protocol">
+                  <URadioGroup
+                    v-model="urlScheme"
+                    :items="[{ label: 'HTTP', value: 'http' }, { label: 'SSH', value: 'ssh' }]"
+                    orientation="horizontal"
+                  />
+                </UFormField>
+              </div>
 
-          <div class="flex justify-between items-center pt-4 border-t border-gray-100 dark:border-gray-800">
-            <UButton
-              label="Test Connection"
-              icon="i-lucide-plug"
-              variant="outline"
-              color="neutral"
-              :loading="testingConnection"
-              @click="testConnection"
-            />
-            <div class="flex gap-2">
-              <CancelButton @click="isOpen = false" />
-              <UButton type="submit" :label="isEditMode ? 'Save' : 'Create'" :loading="saving" />
+              <template v-if="connectedProviderSlug">
+                <div class="flex items-end gap-3">
+                  <UFormField label="Organization" class="flex-1">
+                    <USkeleton v-if="loadingOrgs" class="h-[38px] w-full rounded-lg" />
+                    <AppSelectInput
+                      v-else
+                      :model-value="selectedOrg"
+                      :items="orgOptions"
+                      :disabled="hasSingleOrg"
+                      @update:model-value="value => { selectedOrg = value; loadReposForOrg() }"
+                    />
+                  </UFormField>
+                  <UFormField label="Repository" required class="flex-1">
+                    <USkeleton v-if="loadingOrgs" class="h-[38px] w-full rounded-lg" />
+                    <AppSelectInput
+                      v-else
+                      :model-value="selectedRepo"
+                      :items="repoOptions"
+                      placeholder="Select a repository"
+                      :loading="loadingRepos"
+                      @update:model-value="selectRepo"
+                    />
+                  </UFormField>
+                </div>
+              </template>
+
+              <UFormField label="Git URL" required :error="gitUrlError">
+                <AppTextInput v-model="form.git_url" :placeholder="urlPlaceholder" />
+              </UFormField>
+
+              <UFormField label="Branch">
+                <AppSelectInput
+                  v-if="connectedProviderSlug && branchOptions.length > 0"
+                  v-model="form.branch"
+                  :items="branchOptions"
+                  :loading="loadingBranches"
+                />
+                <AppTextInput v-else v-model="form.branch" placeholder="main" />
+              </UFormField>
+
+              <div v-if="urlScheme === 'http' && !connectedProviderSlug" class="flex items-center gap-2">
+                <UCheckbox v-model="isPrivate" label="Private Repository" />
+                <span class="text-xs text-gray-500">Public repositories do not need a key.</span>
+              </div>
+              <UBadge v-if="connectedProviderSlug && selectedRepo" :color="isPrivate ? 'warning' : 'success'" variant="soft" class="py-1.5">
+                {{ isPrivate ? 'Private repository' : 'Public repository' }}
+              </UBadge>
+
+              <div v-if="(urlScheme === 'ssh' || isPrivate) && !connectedProviderSlug" class="flex items-end gap-2">
+                <UFormField label="Repository Key" required class="flex-1">
+                  <USelectMenu
+                    v-model="form.repository_key"
+                    :items="keyOptions"
+                    value-key="value"
+                    placeholder="Select a reusable key"
+                    class="w-full"
+                  />
+                </UFormField>
+                <UButton
+                  label="New Key"
+                  icon="i-lucide-plus"
+                  variant="outline"
+                  color="neutral"
+                  @click="showCreateKey = true"
+                />
+              </div>
+              <p v-if="(urlScheme === 'ssh' || isPrivate) && !connectedProviderSlug && compatibleKeys.length === 0" class="text-xs text-amber-600 dark:text-amber-400">
+                No compatible keys yet. Create one to continue.
+              </p>
             </div>
           </div>
-        </form>
-      </UCard>
+
+          <template #footer>
+            <div class="flex justify-between items-center w-full gap-2">
+              <UButton
+                v-if="step === 'form' && !isEditMode"
+                label="Back"
+                variant="outline"
+                icon="i-lucide-arrow-left"
+                @click="backToProviderSelect"
+              />
+              <div v-else/>
+
+              <div class="flex gap-2">
+                <UButton
+                  v-if="step === 'form'"
+                  label="Test Connection"
+                  icon="i-lucide-plug"
+                  variant="outline"
+                  color="neutral"
+                  :loading="testingConnection"
+                  @click="testConnection"
+                />
+                <CancelButton @click="isOpen = false" />
+                <UButton v-if="step === 'form'" type="submit" :label="isEditMode ? 'Save' : 'Create'" :loading="saving" />
+              </div>
+            </div>
+          </template>
+        </UCard>
+      </form>
     </template>
   </UModal>
 

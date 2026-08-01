@@ -1,6 +1,5 @@
 <script setup lang="ts">
 const { $pb } = useNuxtApp()
-const { platformIconUrl } = useRepositoryPlatform()
 const { canManageRepos } = usePermissions()
 
 const repositorySearchInput = ref<any>()
@@ -52,9 +51,6 @@ const filteredRepos = computed(() => {
 
 const showCreate = ref(false)
 
-const showDelete = ref(false)
-const deleteRepoId = ref('')
-const deleteRepoName = ref('')
 let goPrefixTimer: ReturnType<typeof setTimeout> | undefined
 let goPrefixPending = false
 
@@ -151,12 +147,6 @@ onBeforeUnmount(() => {
   clearTimeout(goPrefixTimer)
 })
 
-function openDeleteModal(repo: any) {
-  deleteRepoId.value = repo.id
-  deleteRepoName.value = repo.name
-  showDelete.value = true
-}
-
 const statusColor = (s: string) => {
   switch (s) {
     case 'connected': return 'success'
@@ -231,7 +221,7 @@ const statusColor = (s: string) => {
           <p class="text-xs text-gray-400 mt-1">Try adjusting your search or filters</p>
         </div>
 
-        <div v-else class="space-y-3">
+        <div v-else class="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div
             v-for="repo in filteredRepos"
             :key="repo.id"
@@ -239,13 +229,7 @@ const statusColor = (s: string) => {
           >
             <!-- Platform icon — left, separated -->
             <div class="mr-2 border-r border-gray-200 dark:border-carbon-700 pr-4 flex items-center">
-              <img
-                v-if="platformIconUrl(repo.platform)"
-                :src="platformIconUrl(repo.platform)!"
-                class="w-5 h-5 object-contain"
-                alt=""
-              >
-              <UIcon v-else name="i-lucide-git-branch" class="w-5 h-5 text-gray-400" />
+              <RepositoryIcon :repository="repo" icon-class="w-5 h-5 object-contain" />
             </div>
 
             <NuxtLink :to="`/repositories/${repo.id}`" class="flex-1 min-w-0">
@@ -254,7 +238,7 @@ const statusColor = (s: string) => {
                 <BadgeStatus :status="repo.status" />
               </div>
               <p class="text-sm text-gray-500 dark:text-wire-200/50 font-mono truncate">{{ repo.git_url }}</p>
-              <div class="hidden sm:flex items-center gap-4 mt-2 text-xs text-gray-400 dark:text-wire-200/40">
+              <div class="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-xs text-gray-400 dark:text-wire-200/40">
                 <span class="flex items-center gap-1">
                   <UIcon name="i-lucide-git-branch" class="w-3 h-3" />
                   {{ repo.branch || 'main' }}
@@ -269,11 +253,6 @@ const statusColor = (s: string) => {
                 </span>
               </div>
             </NuxtLink>
-            <div v-if="canManageRepos" class="ml-2 border-l border-gray-200 dark:border-carbon-700 pl-4 flex items-center">
-              <UTooltip text="Delete repository">
-                <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="xs" @click.stop="openDeleteModal(repo)" />
-              </UTooltip>
-            </div>
           </div>
         </div>
       </div>
@@ -289,6 +268,5 @@ const statusColor = (s: string) => {
     </UCard>
 
     <RepositoryCreateModal v-model:open="showCreate" @created="refreshRepositories" />
-    <RepositoryDeleteModal v-model:open="showDelete" :repository-id="deleteRepoId" :repository-name="deleteRepoName" @deleted="refreshRepositories" />
   </div>
 </template>
