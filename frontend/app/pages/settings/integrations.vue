@@ -327,6 +327,7 @@ onMounted(() => {
                     size="xs"
                     variant="ghost"
                     color="neutral"
+                    :aria-label="`Configure ${integration.name}`"
                     @click="configureIntegration(integration)"
                   />
                   <UButton

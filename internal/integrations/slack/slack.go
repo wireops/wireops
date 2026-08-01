@@ -13,7 +13,7 @@ var descriptor = integrations.Descriptor{
 	Name:     "Slack",
 	Category: integrations.CategoryNotification,
 	Fields: []integrations.ConfigField{
-		{Key: keyURL, Kind: integrations.FieldURL, Sensitive: true, Encrypted: true},
+		{Key: keyURL, Kind: integrations.FieldURL, Required: true, Sensitive: true, Encrypted: true},
 		{Key: keyMentionOnError, Kind: integrations.FieldBool},
 		{Key: keyMentionText, Kind: integrations.FieldText},
 		{Key: keyEvents, Kind: integrations.FieldList},

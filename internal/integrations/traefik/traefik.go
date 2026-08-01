@@ -14,9 +14,13 @@ const u60 = "\x60"
 type TraefikIntegration struct{}
 
 var descriptor = integrations.Descriptor{
-	Slug:         "traefik",
-	Name:         "Traefik",
-	Category:     integrations.CategoryReverseProxy,
+	Slug:     "traefik",
+	Name:     "Traefik",
+	Category: integrations.CategoryReverseProxy,
+	Fields: []integrations.ConfigField{
+		{Key: "scheme", Kind: integrations.FieldText},
+		{Key: "port", Kind: integrations.FieldText},
+	},
 	Capabilities: []integrations.CapabilityID{integrations.CapActionProvider},
 }
 

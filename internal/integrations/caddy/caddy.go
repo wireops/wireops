@@ -17,9 +17,15 @@ var caddySiteLabel = regexp.MustCompile(`^caddy(?:_\d+)?$`)
 type CaddyIntegration struct{}
 
 var descriptor = integrations.Descriptor{
-	Slug:         "caddy",
-	Name:         "Caddy",
-	Category:     integrations.CategoryReverseProxy,
+	Slug:     "caddy",
+	Name:     "Caddy",
+	Category: integrations.CategoryReverseProxy,
+	Fields: []integrations.ConfigField{
+		{Key: "scheme", Kind: integrations.FieldText},
+		{Key: "port", Kind: integrations.FieldText},
+		{Key: "allow_wildcards", Kind: integrations.FieldBool},
+		{Key: "allow_local_hosts", Kind: integrations.FieldBool},
+	},
 	Capabilities: []integrations.CapabilityID{integrations.CapActionProvider},
 }
 

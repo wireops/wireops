@@ -122,15 +122,39 @@ func (s Store) decodeRecord(slug string, d Descriptor, rec *core.Record) (Instan
 	}
 
 	for _, key := range d.EncryptedKeys() {
-		val, ok := cfg[key].(string)
-		if !ok || val == "" {
+		raw, ok := cfg[key]
+		if !ok {
 			continue
 		}
-		plaintext, err := crypto.Decrypt(val, s.secretKey)
-		if err != nil {
-			return Instance{}, fmt.Errorf("integrations: failed to decrypt %s.%s: %w", slug, key, err)
+		switch val := raw.(type) {
+		case string:
+			if val == "" {
+				continue
+			}
+			plaintext, err := crypto.Decrypt(val, s.secretKey)
+			if err != nil {
+				return Instance{}, fmt.Errorf("integrations: failed to decrypt %s.%s: %w", slug, key, err)
+			}
+			cfg[key] = string(plaintext)
+		case []interface{}:
+			for i, item := range val {
+				kv, ok := item.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				ciphertext, ok := kv["value"].(string)
+				if !ok || ciphertext == "" {
+					continue
+				}
+				plaintext, err := crypto.Decrypt(ciphertext, s.secretKey)
+				if err != nil {
+					return Instance{}, fmt.Errorf("integrations: failed to decrypt %s.%s[%d]: %w", slug, key, i, err)
+				}
+				kv["value"] = string(plaintext)
+				val[i] = kv
+			}
+			cfg[key] = val
 		}
-		cfg[key] = string(plaintext)
 	}
 
 	return Instance{
@@ -152,12 +176,18 @@ func (s Store) decodeRecord(slug string, d Descriptor, rec *core.Record) (Instan
 // downgraded to the same "not configured" zero Instance a missing row would
 // produce, rather than failing the whole batch — one broken integration
 // must not take down the list for every other one.
-func (s Store) LoadAll() map[string]Instance {
+//
+// A failure of the underlying FindAllRecords query itself (as opposed to a
+// single row's decryption) is logged and returned as err, alongside an empty
+// map, so callers can choose to surface a 500 rather than silently reporting
+// "no integrations configured."
+func (s Store) LoadAll() (map[string]Instance, error) {
 	out := make(map[string]Instance)
 
 	recs, err := s.app.FindAllRecords("integrations")
 	if err != nil {
-		return out
+		log.Printf("[integrations] failed to query integrations collection: %v", err)
+		return out, fmt.Errorf("integrations: failed to query integrations collection: %w", err)
 	}
 
 	byRecordSlug := make(map[string]*core.Record, len(recs))
@@ -184,7 +214,7 @@ func (s Store) LoadAll() map[string]Instance {
 		out[slug] = instance
 	}
 
-	return out
+	return out, nil
 }
 
 // Save resolves cfg's mask sentinel against the currently-stored (still
@@ -202,8 +232,13 @@ func (s Store) LoadAll() map[string]Instance {
 // there's no way for a caller to get them out of sync and double-encrypt.
 func (s Store) Save(slug string, enabled bool, cfg map[string]any) error {
 	d := descriptorFor(slug)
-	if cfg == nil {
-		cfg = map[string]any{}
+
+	// Shallow-copy so mask-resolution and encryption below never mutate the
+	// caller's map — same contract Mask already gives its callers.
+	src := cfg
+	cfg = make(map[string]any, len(src))
+	for k, v := range src {
+		cfg[k] = v
 	}
 
 	rec, err := s.findRecord(slug)
@@ -219,38 +254,112 @@ func (s Store) Save(slug string, enabled bool, cfg map[string]any) error {
 	}
 
 	carriedOver := make(map[string]bool)
+	carriedOverKV := make(map[string]map[int]bool)
 	for _, key := range d.SensitiveKeys() {
-		val, ok := cfg[key].(string)
-		if !ok || val != maskSentinel {
+		raw, ok := cfg[key]
+		if !ok {
 			continue
 		}
-		if existingCfg == nil {
-			return fmt.Errorf("%w: cannot resolve masked %s: no existing %s configuration found", ErrMaskUnresolvable, key, slug)
+		switch val := raw.(type) {
+		case string:
+			if val != maskSentinel {
+				continue
+			}
+			existingVal, ok := existingCfg[key].(string)
+			if !ok || existingVal == "" {
+				return fmt.Errorf("%w: cannot resolve masked %s: no saved value found in existing %s configuration", ErrMaskUnresolvable, key, slug)
+			}
+			cfg[key] = existingVal
+			carriedOver[key] = true
+		case []interface{}:
+			existingByHeaderKey := make(map[string]string)
+			if existingList, ok := existingCfg[key].([]interface{}); ok {
+				for _, item := range existingList {
+					if m, ok := item.(map[string]interface{}); ok {
+						if hk, ok := m["key"].(string); ok && hk != "" {
+							if hv, ok := m["value"].(string); ok {
+								existingByHeaderKey[hk] = hv
+							}
+						}
+					}
+				}
+			}
+			resolved := make([]interface{}, len(val))
+			for i, item := range val {
+				kv, ok := item.(map[string]interface{})
+				if !ok {
+					resolved[i] = item
+					continue
+				}
+				kvCopy := make(map[string]interface{}, len(kv))
+				for k, v := range kv {
+					kvCopy[k] = v
+				}
+				if hv, ok := kvCopy["value"].(string); ok && hv == maskSentinel {
+					hk, _ := kvCopy["key"].(string)
+					existingVal, ok := existingByHeaderKey[hk]
+					if !ok || existingVal == "" {
+						return fmt.Errorf("%w: cannot resolve masked %s: no saved value found in existing %s configuration", ErrMaskUnresolvable, key, slug)
+					}
+					kvCopy["value"] = existingVal
+					if carriedOverKV[key] == nil {
+						carriedOverKV[key] = make(map[int]bool)
+					}
+					carriedOverKV[key][i] = true
+				}
+				resolved[i] = kvCopy
+			}
+			cfg[key] = resolved
 		}
-		existingVal, ok := existingCfg[key].(string)
-		if !ok || existingVal == "" {
-			return fmt.Errorf("%w: cannot resolve masked %s: no saved value found in existing %s configuration", ErrMaskUnresolvable, key, slug)
-		}
-		cfg[key] = existingVal
-		carriedOver[key] = true
 	}
 
 	for _, key := range d.EncryptedKeys() {
 		if carriedOver[key] {
 			continue
 		}
-		val, ok := cfg[key].(string)
-		if !ok || val == "" {
+		raw, ok := cfg[key]
+		if !ok {
 			continue
 		}
-		if len(s.secretKey) != 32 {
-			return fmt.Errorf("integrations: SECRET_KEY must be exactly 32 bytes to encrypt %s.%s (got %d)", slug, key, len(s.secretKey))
+		switch val := raw.(type) {
+		case string:
+			if val == "" {
+				continue
+			}
+			if len(s.secretKey) != 32 {
+				return fmt.Errorf("integrations: SECRET_KEY must be exactly 32 bytes to encrypt %s.%s (got %d)", slug, key, len(s.secretKey))
+			}
+			encrypted, err := crypto.Encrypt([]byte(val), s.secretKey)
+			if err != nil {
+				return fmt.Errorf("integrations: failed to encrypt %s.%s: %w", slug, key, err)
+			}
+			cfg[key] = encrypted
+		case []interface{}:
+			skip := carriedOverKV[key]
+			for i, item := range val {
+				if skip[i] {
+					continue
+				}
+				kv, ok := item.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				hv, ok := kv["value"].(string)
+				if !ok || hv == "" {
+					continue
+				}
+				if len(s.secretKey) != 32 {
+					return fmt.Errorf("integrations: SECRET_KEY must be exactly 32 bytes to encrypt %s.%s[%d] (got %d)", slug, key, i, len(s.secretKey))
+				}
+				encrypted, err := crypto.Encrypt([]byte(hv), s.secretKey)
+				if err != nil {
+					return fmt.Errorf("integrations: failed to encrypt %s.%s[%d]: %w", slug, key, i, err)
+				}
+				kv["value"] = encrypted
+				val[i] = kv
+			}
+			cfg[key] = val
 		}
-		encrypted, err := crypto.Encrypt([]byte(val), s.secretKey)
-		if err != nil {
-			return fmt.Errorf("integrations: failed to encrypt %s.%s: %w", slug, key, err)
-		}
-		cfg[key] = encrypted
 	}
 
 	if rec == nil {
@@ -279,8 +388,29 @@ func (s Store) Mask(slug string, cfg map[string]any) map[string]any {
 		out[k] = v
 	}
 	for _, key := range d.SensitiveKeys() {
-		if val, ok := out[key].(string); ok && val != "" {
-			out[key] = MaskSecret(val)
+		switch val := out[key].(type) {
+		case string:
+			if val != "" {
+				out[key] = MaskSecret(val)
+			}
+		case []interface{}:
+			masked := make([]interface{}, len(val))
+			for i, item := range val {
+				kv, ok := item.(map[string]interface{})
+				if !ok {
+					masked[i] = item
+					continue
+				}
+				kvCopy := make(map[string]interface{}, len(kv))
+				for k, v := range kv {
+					kvCopy[k] = v
+				}
+				if hv, ok := kvCopy["value"].(string); ok && hv != "" {
+					kvCopy["value"] = MaskSecret(hv)
+				}
+				masked[i] = kvCopy
+			}
+			out[key] = masked
 		}
 	}
 	return out
@@ -303,14 +433,19 @@ type Bound[T any] struct {
 // both enabled (per Store) and whose Impl satisfies T, in All()'s
 // deterministic order.
 func EnabledWith[T any](s Store) []Bound[T] {
+	instances, err := s.LoadAll()
+	if err != nil {
+		return nil
+	}
+
 	var out []Bound[T]
 	for _, e := range All() {
 		impl, ok := e.Impl.(T)
 		if !ok {
 			continue
 		}
-		instance, err := s.Load(e.Descriptor.Slug)
-		if err != nil || !instance.Enabled {
+		instance, ok := instances[e.Descriptor.Slug]
+		if !ok || !instance.Enabled {
 			continue
 		}
 		out = append(out, Bound[T]{Slug: e.Descriptor.Slug, Config: instance.Config, Impl: impl})

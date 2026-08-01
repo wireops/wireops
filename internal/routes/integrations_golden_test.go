@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
@@ -461,23 +462,15 @@ func TestIntegrationsDeleteRejectsLockedSlugs(t *testing.T) {
 }
 
 // TestIntegrationsDeleteNormalSucceeds covers the DELETE happy path (an
-// enabled, unlocked integration) response shape.
+// enabled, unlocked integration): the row is actually removed.
 //
-// This pins a real, reproducible quirk of the *current* handler rather than
-// the intended behavior: routes_register.go's DELETE handler calls
+// routes_register.go's DELETE handler used to call
 // `rr.app.FindRecordsByFilter("integrations", "slug = {:slug}", "", 0, 1, ...)`
-// — PocketBase's signature is (filter, sort, limit, offset, params), so
-// this passes limit=0 (unlimited) and offset=1, which skips the one
-// matching row entirely. Since exactly one row per slug is the normal case,
-// `recs` comes back empty and the handler takes its "no record found"
-// branch — it returns HTTP 200 {"status":"deleted"} without ever calling
-// app.Delete. The response is indistinguishable from a real delete, but the
-// DB row is left behind. This test locks that exact current behavior
-// (200 + "deleted" response, row NOT removed) so the refactor doesn't
-// silently change it one way or the other without a deliberate decision;
-// flagged in the commit message as a pre-existing bug worth a follow-up fix
-// (limit/offset are swapped — should be `1, 0`), out of scope for this
-// test-only commit.
+// — PocketBase's signature is (filter, sort, limit, offset, params), so that
+// passed limit=0 (unlimited) and offset=1, which skipped the one matching
+// row entirely, taking the handler's "no record found" branch and returning
+// 200 {"status":"deleted"} without ever calling app.Delete. Fixed to
+// limit=1, offset=0 so the matching row is actually found and removed.
 func TestIntegrationsDeleteNormalSucceeds(t *testing.T) {
 	app, mux, _ := setupIntegrationsGoldenTestApp(t, nil)
 
@@ -504,14 +497,12 @@ func TestIntegrationsDeleteNormalSucceeds(t *testing.T) {
 		t.Fatalf("expected status=deleted, got %+v", out)
 	}
 
-	// Current behavior: the row survives (see comment above) because of the
-	// limit/offset swap in the handler's FindRecordsByFilter call.
 	recs, err := app.FindAllRecords("integrations", dbx.HashExp{"slug": "vault"})
 	if err != nil {
 		t.Fatalf("query integrations: %v", err)
 	}
-	if len(recs) != 1 {
-		t.Fatalf("expected the vault record to still exist after DELETE (current limit/offset bug), found %d", len(recs))
+	if len(recs) != 0 {
+		t.Fatalf("expected the vault record to be removed after DELETE, found %d", len(recs))
 	}
 }
 
@@ -551,8 +542,8 @@ func TestIntegrationsTestDispatchesWebhookEndToEnd(t *testing.T) {
 		if req.Method != http.MethodPost {
 			t.Fatalf("expected POST to webhook receiver, got %s", req.Method)
 		}
-	default:
-		t.Fatal("expected the webhook receiver to have been called")
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for the webhook receiver to be called")
 	}
 }
 

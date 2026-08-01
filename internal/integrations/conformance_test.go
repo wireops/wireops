@@ -26,6 +26,10 @@ import (
 	_ "github.com/wireops/wireops/internal/integrations/webhook"
 )
 
+// expectedIntegrationCount must be updated whenever a provider package is
+// added to or removed from the blank imports above.
+const expectedIntegrationCount = 13
+
 // TestAllRegisteredDescriptorsAreValid runs ValidateDescriptor against every
 // entry in the real global registry (populated by the blank imports above),
 // plus re-checks slug uniqueness defensively (Register already panics on a
@@ -33,8 +37,8 @@ import (
 // already proves it — this is belt-and-suspenders).
 func TestAllRegisteredDescriptorsAreValid(t *testing.T) {
 	all := integrations.All()
-	if len(all) != 13 {
-		t.Fatalf("expected 13 registered integrations, got %d", len(all))
+	if len(all) != expectedIntegrationCount {
+		t.Fatalf("expected %d registered integrations, got %d (update expectedIntegrationCount if a provider was added/removed)", expectedIntegrationCount, len(all))
 	}
 
 	seen := make(map[string]bool, len(all))

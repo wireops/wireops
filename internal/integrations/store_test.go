@@ -203,7 +203,10 @@ func TestStoreLoadAllDegradesOneBrokenRowInsteadOfFailingEverything(t *testing.T
 		t.Fatalf("save raw webhook row: %v", err)
 	}
 
-	instances := store.LoadAll()
+	instances, err := store.LoadAll()
+	if err != nil {
+		t.Fatalf("LoadAll: %v", err)
+	}
 
 	vault, ok := instances["vault"]
 	if !ok || !vault.Enabled || vault.Config["token"] != "s.mytoken" {

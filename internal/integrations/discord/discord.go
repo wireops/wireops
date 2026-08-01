@@ -13,7 +13,7 @@ var descriptor = integrations.Descriptor{
 	Name:     "Discord",
 	Category: integrations.CategoryNotification,
 	Fields: []integrations.ConfigField{
-		{Key: keyURL, Kind: integrations.FieldURL, Sensitive: true, Encrypted: true},
+		{Key: keyURL, Kind: integrations.FieldURL, Required: true, Sensitive: true, Encrypted: true},
 		{Key: keyUsername, Kind: integrations.FieldText},
 		{Key: keyAvatarURL, Kind: integrations.FieldURL},
 		{Key: keyMentionOnError, Kind: integrations.FieldBool},

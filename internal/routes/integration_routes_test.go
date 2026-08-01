@@ -44,35 +44,33 @@ func TestValidateRequiredIntegrationConfig(t *testing.T) {
 // allowed_mount/allowed_project_id are plain, optional config — never masked,
 // never encrypted, never required.
 func TestScopingFieldsExcludedFromSensitiveAndRequiredKeys(t *testing.T) {
-	for _, key := range integrationDescriptor("vault").SensitiveKeys() {
-		if key == "allowed_mount" {
-			t.Fatal("allowed_mount must not be treated as sensitive")
-		}
-	}
-	for _, key := range integrationDescriptor("vault").EncryptedKeys() {
-		if key == "allowed_mount" {
-			t.Fatal("allowed_mount must not be encrypted at rest")
-		}
-	}
-	for _, key := range integrationDescriptor("vault").RequiredKeys() {
-		if key == "allowed_mount" {
-			t.Fatal("allowed_mount must not be required")
-		}
+	cases := []struct {
+		slug          string
+		disallowedKey string
+	}{
+		{"vault", "allowed_mount"},
+		{"infisical", "allowed_project_id"},
 	}
 
-	for _, key := range integrationDescriptor("infisical").SensitiveKeys() {
-		if key == "allowed_project_id" {
-			t.Fatal("allowed_project_id must not be treated as sensitive")
-		}
-	}
-	for _, key := range integrationDescriptor("infisical").EncryptedKeys() {
-		if key == "allowed_project_id" {
-			t.Fatal("allowed_project_id must not be encrypted at rest")
-		}
-	}
-	for _, key := range integrationDescriptor("infisical").RequiredKeys() {
-		if key == "allowed_project_id" {
-			t.Fatal("allowed_project_id must not be required")
-		}
+	for _, tc := range cases {
+		t.Run(tc.slug, func(t *testing.T) {
+			d := integrationDescriptor(tc.slug)
+			if len(d.Fields) == 0 {
+				t.Fatalf("expected %q to be a registered descriptor with fields", tc.slug)
+			}
+
+			keyLists := map[string][]string{
+				"sensitive": d.SensitiveKeys(),
+				"encrypted": d.EncryptedKeys(),
+				"required":  d.RequiredKeys(),
+			}
+			for kind, keys := range keyLists {
+				for _, key := range keys {
+					if key == tc.disallowedKey {
+						t.Fatalf("%s must not be %s", tc.disallowedKey, kind)
+					}
+				}
+			}
+		})
 	}
 }

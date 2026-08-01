@@ -11,9 +11,12 @@ import (
 type DozzleIntegration struct{}
 
 var descriptor = integrations.Descriptor{
-	Slug:         "dozzle",
-	Name:         "Dozzle",
-	Category:     integrations.CategoryLogging,
+	Slug:     "dozzle",
+	Name:     "Dozzle",
+	Category: integrations.CategoryLogging,
+	Fields: []integrations.ConfigField{
+		{Key: "url", Kind: integrations.FieldURL, Required: true},
+	},
 	Capabilities: []integrations.CapabilityID{integrations.CapActionProvider},
 }
 

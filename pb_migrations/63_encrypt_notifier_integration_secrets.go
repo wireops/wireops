@@ -67,6 +67,11 @@ func encryptNotifierIntegrationSecrets(app core.App, secretKey []byte) error {
 		if !ok || val == "" {
 			continue
 		}
+		if _, err := crypto.Decrypt(val, secretKey); err == nil {
+			// Already ciphertext (e.g. a down+up replay) — leave it alone,
+			// re-encrypting would double-wrap it.
+			continue
+		}
 
 		encrypted, err := crypto.Encrypt([]byte(val), secretKey)
 		if err != nil {

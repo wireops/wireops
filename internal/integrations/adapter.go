@@ -28,13 +28,7 @@ func (a legacyActionAdapter) ResolveActions(cfg Config, scope ActionScope) []Act
 	}
 	actions := make([]Action, 0, len(legacyActions))
 	for _, la := range legacyActions {
-		actions = append(actions, Action{
-			IntegrationSlug: la.IntegrationSlug,
-			Kind:            la.Kind,
-			Label:           la.Label,
-			URL:             la.URL,
-			Icon:            la.Icon,
-		})
+		actions = append(actions, Action(la))
 	}
 	return actions
 }

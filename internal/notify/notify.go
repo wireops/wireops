@@ -93,18 +93,20 @@ func (n *Notifier) DispatchWithConfig(ctx context.Context, cfg *Config, p Payloa
 func (n *Notifier) dispatch(ctx context.Context, p Payload) error {
 	store := integrations.NewStore(n.app, crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY")))
 
+	instances, err := store.LoadAll()
+	if err != nil {
+		log.Printf("[notify] failed to load integrations: %v", err)
+		return nil
+	}
+
 	for _, entry := range integrations.All() {
 		if !entry.Descriptor.HasCapability(integrations.CapNotifier) {
 			continue
 		}
 		slug := entry.Descriptor.Slug
 
-		instance, err := store.Load(slug)
-		if err != nil {
-			log.Printf("[notify] failed to load integration %s config: %v", slug, err)
-			continue
-		}
-		if !instance.Enabled {
+		instance, ok := instances[slug]
+		if !ok || !instance.Enabled {
 			continue
 		}
 

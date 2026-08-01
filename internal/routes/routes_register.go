@@ -107,7 +107,7 @@ func resolveMaskedConfigAgainst(instance integrations.Instance, slug string, cfg
 
 	for _, key := range integrationDescriptor(slug).SensitiveKeys() {
 		val, ok := resolved[key].(string)
-		if !ok || val != notify.MaskSecret("x") {
+		if !ok || val != integrations.MaskSecret("x") {
 			continue
 		}
 
@@ -754,7 +754,10 @@ func (rr routeRegistrar) registerIntegrationRoutes(secretKey []byte) {
 			Config   map[string]interface{} `json:"config"`
 		}
 
-		instances := store.LoadAll()
+		instances, err := store.LoadAll()
+		if err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
 
 		var out []IntegrationOutput
 		for _, entry := range integrations.All() {
@@ -829,10 +832,14 @@ func (rr routeRegistrar) registerIntegrationRoutes(secretKey []byte) {
 			return e.JSON(status, map[string]string{"error": err.Error()})
 		}
 
+		saved, err := store.Load(slug)
+		if err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
 		return e.JSON(http.StatusOK, map[string]interface{}{
 			"slug":    slug,
 			"enabled": body.Enabled,
-			"config":  store.Mask(slug, resolved),
+			"config":  store.Mask(slug, saved.Config),
 		})
 	}).BindFunc(rbac.Require(rbac.CapManageSettings))
 
@@ -848,7 +855,7 @@ func (rr routeRegistrar) registerIntegrationRoutes(secretKey []byte) {
 		if existing.Locked {
 			return e.JSON(http.StatusForbidden, map[string]string{"error": "this integration is always active and cannot be disabled"})
 		}
-		recs, err := rr.app.FindRecordsByFilter("integrations", "slug = {:slug}", "", 0, 1, dbx.Params{"slug": slug})
+		recs, err := rr.app.FindRecordsByFilter("integrations", "slug = {:slug}", "", 1, 0, dbx.Params{"slug": slug})
 		if err != nil || len(recs) == 0 {
 			return e.JSON(http.StatusOK, map[string]string{"status": "deleted"})
 		}
@@ -860,30 +867,24 @@ func (rr routeRegistrar) registerIntegrationRoutes(secretKey []byte) {
 
 	rr.r.GET("/api/custom/stacks/{id}/integration-actions", func(e *core.RequestEvent) error {
 		stackID := e.Request.PathValue("id")
-		recs, err := rr.app.FindAllRecords("integrations", dbx.HashExp{"enabled": true})
+		instances, err := store.LoadAll()
 		if err != nil {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		}
-		if len(recs) == 0 {
-			return e.JSON(http.StatusOK, map[string][]integrations.Action{})
 		}
 
 		activePlugins := make([]struct {
 			Plugin integrations.ActionProvider
 			Config map[string]interface{}
 		}, 0)
-		for _, rec := range recs {
-			slug := rec.GetString("slug")
+		for slug, instance := range instances {
+			if !instance.Enabled {
+				continue
+			}
 			if plugin, exists := integrations.GetImpl[integrations.ActionProvider](slug); exists {
-				var cfg map[string]interface{}
-				_ = rec.UnmarshalJSONField("config", &cfg)
-				if cfg == nil {
-					cfg = make(map[string]interface{})
-				}
 				activePlugins = append(activePlugins, struct {
 					Plugin integrations.ActionProvider
 					Config map[string]interface{}
-				}{plugin, cfg})
+				}{plugin, instance.Config})
 			}
 		}
 

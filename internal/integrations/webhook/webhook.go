@@ -15,7 +15,7 @@ var descriptor = integrations.Descriptor{
 	Fields: []integrations.ConfigField{
 		{Key: keyURL, Kind: integrations.FieldURL},
 		{Key: keySecret, Kind: integrations.FieldPassword, Sensitive: true, Encrypted: true},
-		{Key: keyHeaders, Kind: integrations.FieldKV},
+		{Key: keyHeaders, Kind: integrations.FieldKV, Sensitive: true, Encrypted: true},
 		{Key: keyEvents, Kind: integrations.FieldList},
 	},
 	Capabilities: []integrations.CapabilityID{integrations.CapNotifier, integrations.CapTestable},

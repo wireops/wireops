@@ -33,7 +33,7 @@ func ValidateDescriptor(d Descriptor) error {
 }
 
 // isKnownCategory reports whether c matches one of the 6 package-level
-// Category vars by ID.
+// Category vars exactly (ID, Label, and Order).
 func isKnownCategory(c Category) bool {
 	for _, known := range []Category{
 		CategoryReverseProxy,
@@ -43,7 +43,7 @@ func isKnownCategory(c Category) bool {
 		CategoryStorageBackend,
 		CategorySourceControl,
 	} {
-		if c.ID == known.ID {
+		if c == known {
 			return true
 		}
 	}

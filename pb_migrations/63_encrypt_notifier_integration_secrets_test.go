@@ -99,6 +99,34 @@ func TestEncryptNotifierIntegrationSecretsEncryptsPreExistingPlaintextRows(t *te
 	}
 }
 
+// TestEncryptNotifierIntegrationSecretsIsIdempotent confirms a second run
+// (e.g. a down+up migration replay) against already-encrypted rows leaves
+// them decryptable to the original plaintext, rather than double-encrypting
+// (which would make crypto.Decrypt return garbage instead of an error).
+func TestEncryptNotifierIntegrationSecretsIsIdempotent(t *testing.T) {
+	app := newNotifierSecretsTestApp(t)
+	secretKey := []byte("cccccccccccccccccccccccccccccc32")
+
+	seedIntegrationRow(t, app, "webhook", map[string]any{"secret": "hmac-secret"})
+
+	if err := encryptNotifierIntegrationSecrets(app, secretKey); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	if err := encryptNotifierIntegrationSecrets(app, secretKey); err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+
+	cfg := rawConfigFor(t, app, "webhook")
+	stored, _ := cfg["secret"].(string)
+	decrypted, err := crypto.Decrypt(stored, secretKey)
+	if err != nil {
+		t.Fatalf("webhook.secret did not decrypt after replayed migration: %v", err)
+	}
+	if string(decrypted) != "hmac-secret" {
+		t.Fatalf("webhook.secret decrypted to %q after replay, want %q (double-encrypted)", decrypted, "hmac-secret")
+	}
+}
+
 // TestEncryptNotifierIntegrationSecretsSkipsMissingRows confirms slugs with
 // no stored row yet (never configured) are a no-op, not an error.
 func TestEncryptNotifierIntegrationSecretsSkipsMissingRows(t *testing.T) {

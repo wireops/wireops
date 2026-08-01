@@ -10,5 +10,7 @@ const (
 	keyAccessKey      = "access_key"
 	keySecret         = "secret"
 	keyKMSEnabled     = "kms_enabled"
+	keyKMSKeyID       = "kms_key_id"
+	keyKMSRegion      = "kms_region"
 	keyEncryptContent = "encrypt_content"
 )

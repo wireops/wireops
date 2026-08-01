@@ -24,6 +24,8 @@ var descriptor = integrations.Descriptor{
 		{Key: keyAccessKey, Kind: integrations.FieldText, Required: true},
 		{Key: keySecret, Kind: integrations.FieldPassword, Required: true, Sensitive: true, Encrypted: true},
 		{Key: keyKMSEnabled, Kind: integrations.FieldBool},
+		{Key: keyKMSKeyID, Kind: integrations.FieldText},
+		{Key: keyKMSRegion, Kind: integrations.FieldText},
 		{Key: keyEncryptContent, Kind: integrations.FieldBool},
 	},
 	Capabilities: []integrations.CapabilityID{integrations.CapStorageBackend, integrations.CapTestable},
