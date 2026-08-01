@@ -399,6 +399,26 @@ Events: `sync.started`, `sync.done`, `sync.error`, `sync.test`.
 - Test function names must be in CamelCase.
 - **Vue Test Utils stubs must not use inline HTML-string `template:` fields.** Codacy's static analysis flags any `template: '<...>'` string literal as a generic XSS sink ("Non-HTML variable used to store raw HTML"), even in test-only mock components with no user input. Write stub components with `setup()` + `h()` from `vue` instead — see `frontend/app/components/_tests/WorkerEnvBadges.test.ts` and `WorkerSystemInfoCard.test.ts` for the pattern. This avoids the false positive entirely rather than suppressing it.
 
+### Frontend DOs and DON'Ts (accessibility, concurrency, testing)
+
+Recurring review findings distilled into rules — check new components/pages against these before calling frontend work done.
+
+**Markup / a11y:**
+- **DON'T** nest flow-content elements (`div`, another heading's icon wrapper, a component whose root is a `div`) inside phrasing-content-only elements (`h1`–`h6`, `p`, `button` label, `span`). **DO** use `span`/`inline-flex` for icon wrappers, badges, or lists rendered inside a heading — check the child component's own root tag too, not just the call site.
+- **DON'T** ship `target="_blank"` links with no indication they leave the page. **DO** add an `aria-label` (or visually-hidden text) noting it opens in a new tab.
+- **DON'T** make explanatory text reachable only via hover (`UPopover mode="hover"`, tooltip-only content). **DO** also set a `title` attribute on the trigger, or use a keyboard-focusable element, so keyboard/AT users get the same info.
+- **DON'T** render a static separator/prefix (e.g. `/`) unconditionally next to optional data. **DO** guard the separator with the same `v-if` as the data it separates.
+
+**State & concurrency:**
+- **DON'T** disable only the specific button/card a user clicked when guarding against a concurrent async action (OAuth popups, in-flight requests). **DO** disable every sibling trigger off the shared in-flight flag (e.g. `connectingSlug`) so two flows can't run at once and corrupt shared form state.
+- **DON'T** just `navigateTo()` after a delete action. **DO** close the confirmation modal first, then navigate with `{ replace: true }` so the back button doesn't return to the now-deleted resource (see `jobs/[id].vue`'s delete flow).
+
+**Testing:**
+- **DON'T** rely on Nuxt's auto-import for Vue composition APIs (`nextTick`, `computed`, `ref`, `watch`, …) in a component you intend to unit-test with plain Vue Test Utils. **DO** import them explicitly from `vue` — auto-import doesn't exist outside the Nuxt runtime, so an unimported `nextTick` works in the app but throws in tests.
+- **DON'T** use Vue Test Utils' `isVisible()` to assert `v-show` state in this repo — happy-dom's `getComputedStyle` doesn't reliably resolve inline `style="display: none"` here. **DO** read `element.style.display` directly.
+- **DON'T** leave a new component's nested children (icons, sub-components) unregistered in a test when they sit on the actual assertion path — an unresolved child just silently renders nothing, so a real regression there passes unnoticed. **DO** register the real component (or an equivalent `h()`-based stub) for anything the assertions actually depend on.
+- **DON'T** ship a new wizard/step-machine/filtering component without Vitest coverage of its main flow (happy path end-to-end) and its edge cases (empty/fallback state, validation blocking submit).
+
 ## Testing & Coverage
 
 - Backend: `go test -coverprofile=coverage.out $(go list ./... | grep -v '^github.com/wireops/wireops/worker\(/\|$\)')` (excludes `worker/...`, run separately). Current baseline: ~29% statement coverage overall — uneven across packages (e.g. `internal/config`, `internal/webhook`, `internal/setup` are near/at 100%; `internal/routes`, `internal/sync`, `internal/compose` are thin).
