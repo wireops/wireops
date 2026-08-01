@@ -222,7 +222,7 @@ async function toggleEnabled() {
               <UIcon name="i-lucide-calendar" class="w-4 h-4 text-yellow-400" />
               Scheduling & Dispatch
             </h3>
-            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm bg-gray-50 dark:bg-carbon-900/20 p-4 rounded-xl border border-gray-200 dark:border-carbon-800">
+            <div class="grid grid-cols-1 sm:grid-cols-4 gap-4 text-sm bg-gray-50 dark:bg-carbon-900/20 p-4 rounded-xl border border-gray-200 dark:border-carbon-800">
               <div class="space-y-1">
                 <p class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-wire-200/40 flex items-center gap-1.5">
                   <UIcon name="i-lucide-calendar-days" class="w-3.5 h-3.5 text-gray-400 dark:text-wire-200/40 shrink-0" />
@@ -246,6 +246,14 @@ async function toggleEnabled() {
                   <UBadge v-for="tag in definition.tags" :key="tag" :label="tag" variant="subtle" color="primary" size="sm" class="font-mono" />
                 </div>
                 <span v-else class="text-xs text-gray-400 italic">No tags specified</span>
+              </div>
+              <div class="space-y-1">
+                <p class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-wire-200/40 flex items-center gap-1.5">
+                  <UIcon name="i-lucide-shapes" class="w-3.5 h-3.5 text-gray-400 dark:text-wire-200/40 shrink-0" />
+                  Group
+                </p>
+                <UBadge v-if="definition.group" :label="definition.group" variant="outline" color="neutral" size="sm" />
+                <span v-else class="text-xs text-gray-400 italic">Ungrouped</span>
               </div>
             </div>
           </div>

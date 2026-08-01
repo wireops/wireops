@@ -127,10 +127,25 @@ const stacksForAvailability = computed(() =>
   (stacks.value || []).map((s: any) => ({ ...s, status: stackEffectiveStatus(s) }))
 )
 
+const route = useRoute()
+
 const searchQuery = ref('')
 const searchInputRef = ref<{ $el?: HTMLElement } | HTMLElement | null>(null)
 const statusFilter = ref('all')
 const sortBy = ref('name')
+const groupFilter = ref(typeof route.query.group === 'string' ? route.query.group : 'all')
+
+const groupOptions = computed(() => {
+  const groups = new Set((stacks.value || []).map((s: any) => s.group).filter(Boolean))
+  const items = [{ label: 'All groups', value: 'all' }]
+  if ((stacks.value || []).some((s: any) => !s.group)) {
+    items.push({ label: 'Ungrouped', value: '__ungrouped__' })
+  }
+  for (const g of [...groups].sort()) {
+    items.push({ label: g as string, value: g as string })
+  }
+  return items
+})
 
 function resolveSearchInput() {
   const root = searchInputRef.value instanceof HTMLElement ? searchInputRef.value : searchInputRef.value?.$el
@@ -188,6 +203,12 @@ const filteredStacks = computed(() => {
     } else {
       filtered = filtered.filter((s: any) => stackEffectiveStatus(s) === statusFilter.value)
     }
+  }
+
+  if (groupFilter.value !== 'all') {
+    filtered = filtered.filter((s: any) =>
+      groupFilter.value === '__ungrouped__' ? !s.group : s.group === groupFilter.value
+    )
   }
 
   filtered = [...filtered].sort((a: any, b: any) => {
@@ -321,6 +342,15 @@ async function handlePurge(dirName: string) {
             content-width
             class="sm:min-w-28"
             aria-label="Sort stacks"
+          />
+          <AppSelectInput
+            v-if="groupOptions.length > 1"
+            v-model="groupFilter"
+            :items="groupOptions"
+            placeholder="Filter by group"
+            content-width
+            class="sm:min-w-28"
+            aria-label="Filter stacks by group"
           />
         </div>
 
