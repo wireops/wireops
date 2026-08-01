@@ -12,6 +12,7 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 
 	"github.com/wireops/wireops/internal/crypto"
+	"github.com/wireops/wireops/internal/integrations"
 )
 
 // infisicalClientTimeout bounds Universal Auth login + secret retrieval.
@@ -128,43 +129,33 @@ func BuildInfisicalClient(ctx context.Context, app core.App) (infisical.Infisica
 		return nil, "", "", nil, errors.New("infisical: app is not configured")
 	}
 
-	rec, err := app.FindFirstRecordByFilter("integrations", "slug = {:slug}", map[string]any{"slug": "infisical"})
+	secretKeyBytes := crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))
+	store := integrations.NewStore(app, secretKeyBytes)
+	instance, err := store.Load("infisical")
 	if err != nil {
-		return nil, "", "", nil, errors.New("infisical: backend is not configured")
+		return nil, "", "", nil, fmt.Errorf("infisical: failed to read backend config: %w", err)
 	}
-	if !rec.GetBool("enabled") {
+	if !instance.Enabled {
 		return nil, "", "", nil, errors.New("infisical: backend is disabled")
 	}
 
-	var cfg struct {
-		SiteURL          string `json:"site_url"`
-		ClientID         string `json:"client_id"`
-		ClientSecret     string `json:"client_secret"`
-		AllowedProjectID string `json:"allowed_project_id"`
-	}
-	if err := rec.UnmarshalJSONField("config", &cfg); err != nil {
-		return nil, "", "", nil, fmt.Errorf("infisical: failed to read backend config: %w", err)
-	}
-	if cfg.ClientID == "" || cfg.ClientSecret == "" {
+	siteURL, _ := instance.Config["site_url"].(string)
+	clientID, _ := instance.Config["client_id"].(string)
+	clientSecret, _ := instance.Config["client_secret"].(string)
+	allowedProjectID, _ := instance.Config["allowed_project_id"].(string)
+	if clientID == "" || clientSecret == "" {
 		return nil, "", "", nil, errors.New("infisical: backend config is missing client_id or client_secret")
 	}
-	siteURL := cfg.SiteURL
 	if siteURL == "" {
 		siteURL = DefaultInfisicalSiteURL
 	}
 
-	secretKeyBytes := crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))
-	clientSecretBytes, err := crypto.Decrypt(cfg.ClientSecret, secretKeyBytes)
-	if err != nil {
-		return nil, "", "", nil, fmt.Errorf("infisical: failed to decrypt client_secret: %w", err)
-	}
-
-	client, cancel, err := buildInfisicalClientFromParts(ctx, siteURL, cfg.ClientID, string(clientSecretBytes))
+	client, cancel, err := buildInfisicalClientFromParts(ctx, siteURL, clientID, clientSecret)
 	if err != nil {
 		return nil, "", "", nil, err
 	}
 
-	return client, siteURL, cfg.AllowedProjectID, cancel, nil
+	return client, siteURL, allowedProjectID, cancel, nil
 }
 
 // NewInfisicalClientForConfig authenticates against Infisical via Universal

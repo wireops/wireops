@@ -4,12 +4,14 @@ import (
 	"context"
 	"log"
 	"net/http"
-	"strings"
+	"os"
 	"sync"
 	"time"
 
-	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
+
+	"github.com/wireops/wireops/internal/crypto"
+	"github.com/wireops/wireops/internal/integrations"
 )
 
 // Event represents a sync lifecycle event.
@@ -88,25 +90,28 @@ func (n *Notifier) DispatchWithConfig(ctx context.Context, cfg *Config, p Payloa
 	return provider.Send(ctx, cfg, p)
 }
 
+// notificationSlugs are the 4 notify-backed integrations dispatch() checks.
+// Kept as a hardcoded set (rather than derived from CapNotifier) for the
+// same reason routes_register.go's isNotificationIntegration does — that
+// capability has no backing Go interface yet (see
+// internal/integrations/capability.go), so there's nothing to filter All()
+// by beyond this list.
+var notificationSlugs = []string{"webhook", "ntfy", "discord", "slack"}
+
 func (n *Notifier) dispatch(ctx context.Context, p Payload) error {
-	recs, err := n.app.FindAllRecords("integrations", dbx.HashExp{"enabled": true})
-	if err != nil {
-		return err
-	}
+	store := integrations.NewStore(n.app, crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY")))
 
-	for _, rec := range recs {
-		slug := rec.GetString("slug")
-		if slug != "webhook" && slug != "ntfy" && slug != "discord" && slug != "slack" {
+	for _, slug := range notificationSlugs {
+		instance, err := store.Load(slug)
+		if err != nil {
+			log.Printf("[notify] failed to load integration %s config: %v", slug, err)
+			continue
+		}
+		if !instance.Enabled {
 			continue
 		}
 
-		var configMap map[string]interface{}
-		if err := rec.UnmarshalJSONField("config", &configMap); err != nil {
-			log.Printf("[notify] failed to unmarshal integration %s config: %v", slug, err)
-			continue
-		}
-
-		cfg := n.BuildConfig(slug, configMap)
+		cfg := n.BuildConfig(slug, instance.Config)
 		if cfg == nil {
 			continue
 		}
@@ -194,10 +199,10 @@ func (n *Notifier) BuildConfig(slug string, configMap map[string]interface{}) *C
 	return cfg
 }
 
-// MaskSecret returns a masked representation of the secret for API responses.
+// MaskSecret returns a masked representation of the secret for API
+// responses. Delegates to integrations.MaskSecret — masking is now a Store
+// concern shared by every integration, not just notify's four providers
+// (allowed import direction: notify -> integrations, never the reverse).
 func MaskSecret(secret string) string {
-	if strings.TrimSpace(secret) == "" {
-		return ""
-	}
-	return "••••••••"
+	return integrations.MaskSecret(secret)
 }

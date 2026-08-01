@@ -13,12 +13,12 @@ var descriptor = integrations.Descriptor{
 	Name:     "Ntfy",
 	Category: integrations.CategoryNotification,
 	Fields: []integrations.ConfigField{
-		{Key: "url", Kind: integrations.FieldURL},
-		{Key: "secret", Kind: integrations.FieldPassword, Sensitive: true},
-		{Key: "user", Kind: integrations.FieldText},
-		{Key: "topic", Kind: integrations.FieldText},
-		{Key: "template", Kind: integrations.FieldText},
-		{Key: "events", Kind: integrations.FieldList},
+		{Key: keyURL, Kind: integrations.FieldURL},
+		{Key: keySecret, Kind: integrations.FieldPassword, Sensitive: true, Encrypted: true},
+		{Key: keyUser, Kind: integrations.FieldText},
+		{Key: keyTopic, Kind: integrations.FieldText},
+		{Key: keyTemplate, Kind: integrations.FieldText},
+		{Key: keyEvents, Kind: integrations.FieldList},
 	},
 	Capabilities: []integrations.CapabilityID{integrations.CapNotifier, integrations.CapTestable},
 }

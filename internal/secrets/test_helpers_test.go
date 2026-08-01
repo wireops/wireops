@@ -5,6 +5,16 @@ import (
 
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
+
+	// Blank-imported so their descriptors are registered in this test
+	// binary's global integrations registry — Store.Load/Save derive their
+	// EncryptedKeys() from the registered Descriptor, and in production
+	// cmd/serve.go blank-imports every provider before any request is
+	// served. Without these, Store silently treats "vault"/"infisical" as
+	// unregistered (zero Descriptor, EncryptedKeys() == nil) and never
+	// encrypts/decrypts token/client_secret.
+	_ "github.com/wireops/wireops/internal/integrations/infisical"
+	_ "github.com/wireops/wireops/internal/integrations/vault"
 )
 
 // newSecretBackendsTestApp returns a test PocketBase app with a minimal

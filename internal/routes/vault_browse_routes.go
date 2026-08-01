@@ -8,7 +8,7 @@ import (
 
 	"github.com/pocketbase/pocketbase/core"
 
-	"github.com/wireops/wireops/internal/crypto"
+	"github.com/wireops/wireops/internal/integrations"
 	"github.com/wireops/wireops/internal/rbac"
 	"github.com/wireops/wireops/internal/secrets"
 )
@@ -28,6 +28,8 @@ type vaultMountInfo struct {
 }
 
 func (rr routeRegistrar) registerVaultBrowseRoutes(secretKey []byte) {
+	store := integrations.NewStore(rr.app, secretKey)
+
 	rr.r.GET("/api/custom/integrations/vault/mounts", func(e *core.RequestEvent) error {
 		client, allowedMount, err := secrets.BuildVaultClient(rr.app)
 		if err != nil {
@@ -151,18 +153,11 @@ func (rr routeRegistrar) registerVaultBrowseRoutes(secretKey []byte) {
 		}
 
 		cfg := map[string]interface{}{"address": body.Address, "token": body.Token}
-		resolved, err := rr.resolveMaskedIntegrationConfig("vault", cfg)
+		resolved, err := rr.resolveMaskedConfigForValidation(store, "vault", cfg)
 		if err != nil {
 			return e.JSON(http.StatusOK, map[string]string{"success": "false", "error": err.Error()})
 		}
-		token, _ := cfg["token"].(string)
-		if resolved["token"] {
-			tokenBytes, err := crypto.Decrypt(token, secretKey)
-			if err != nil {
-				return e.JSON(http.StatusOK, map[string]string{"success": "false", "error": fmt.Sprintf("failed to decrypt stored token: %v", err)})
-			}
-			token = string(tokenBytes)
-		}
+		token, _ := resolved["token"].(string)
 
 		client, err := secrets.NewVaultClientForConfig(body.Address, token)
 		if err != nil {

@@ -15,10 +15,10 @@ var descriptor = integrations.Descriptor{
 	Name:     "Infisical",
 	Category: integrations.CategorySecretBackend,
 	Fields: []integrations.ConfigField{
-		{Key: "site_url", Kind: integrations.FieldURL},
-		{Key: "client_id", Kind: integrations.FieldText, Required: true},
-		{Key: "client_secret", Kind: integrations.FieldPassword, Required: true, Sensitive: true, Encrypted: true},
-		{Key: "allowed_project_id", Kind: integrations.FieldText},
+		{Key: keySiteURL, Kind: integrations.FieldURL},
+		{Key: keyClientID, Kind: integrations.FieldText, Required: true},
+		{Key: keyClientSecret, Kind: integrations.FieldPassword, Required: true, Sensitive: true, Encrypted: true},
+		{Key: keyAllowedProjectID, Kind: integrations.FieldText},
 	},
 	Capabilities: []integrations.CapabilityID{integrations.CapSecretResolver, integrations.CapBrowsable, integrations.CapTestable},
 }

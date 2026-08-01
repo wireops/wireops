@@ -14,9 +14,9 @@ var descriptor = integrations.Descriptor{
 	Name:     "HashiCorp Vault",
 	Category: integrations.CategorySecretBackend,
 	Fields: []integrations.ConfigField{
-		{Key: "address", Kind: integrations.FieldURL, Required: true},
-		{Key: "token", Kind: integrations.FieldPassword, Required: true, Sensitive: true, Encrypted: true},
-		{Key: "allowed_mount", Kind: integrations.FieldText},
+		{Key: keyAddress, Kind: integrations.FieldURL, Required: true},
+		{Key: keyToken, Kind: integrations.FieldPassword, Required: true, Sensitive: true, Encrypted: true},
+		{Key: keyAllowedMount, Kind: integrations.FieldText},
 	},
 	Capabilities: []integrations.CapabilityID{integrations.CapSecretResolver, integrations.CapBrowsable, integrations.CapTestable},
 }
