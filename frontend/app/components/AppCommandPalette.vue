@@ -37,9 +37,14 @@ watch(isShowingCommandPalette, (val) => {
   if (val) loadData()
 })
 
-const groupNames = computed(() => {
+const stackGroupNames = computed(() => {
   const names = new Set<string>()
   for (const s of stacks.value) if (s.group) names.add(s.group)
+  return names
+})
+
+const groupNames = computed(() => {
+  const names = new Set<string>(stackGroupNames.value)
   for (const j of jobs.value) if (j.definition?.group) names.add(j.definition.group)
   return [...names].sort()
 })
@@ -55,7 +60,8 @@ const groups = computed(() => {
         icon: 'i-lucide-shapes',
         onSelect: () => {
           isShowingCommandPalette.value = false
-          router.push(`/stacks?group=${encodeURIComponent(g)}`)
+          const target = stackGroupNames.value.has(g) ? '/stacks' : '/jobs'
+          router.push(`${target}?group=${encodeURIComponent(g)}`)
         }
       }))
     },

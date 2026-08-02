@@ -112,3 +112,47 @@ func TestStackDependencyGraphRouteUnknownStack(t *testing.T) {
 		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestStackDependencyGraphRouteInvalidCompose(t *testing.T) {
+	app, mux := setupStackDependencyGraphTestApp(t)
+
+	repo, worker := createOverridesTestRepoAndWorker(t, app)
+	stack := createOverridesTestStack(t, app, repo.Id, worker.Id, t.TempDir())
+	stack.Set("current_version", 1)
+	if err := app.Save(stack); err != nil {
+		t.Fatalf("set current_version: %v", err)
+	}
+
+	writeStackRevisionFile(t, app, stack.Id, 1, "not: [valid: compose")
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/custom/stacks/%s/dependency-graph", stack.Id), nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"error"`) {
+		t.Fatalf("expected error body, got: %s", rec.Body.String())
+	}
+}
+
+func TestStackDependencyGraphRouteMissingCompose(t *testing.T) {
+	app, mux := setupStackDependencyGraphTestApp(t)
+
+	repo, worker := createOverridesTestRepoAndWorker(t, app)
+	// No revision written and no worker connected, so the route falls through
+	// to the local-source resolution path and fails to reach the file.
+	stack := createOverridesTestStack(t, app, repo.Id, worker.Id, t.TempDir())
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/custom/stacks/%s/dependency-graph", stack.Id), nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"error"`) {
+		t.Fatalf("expected error body, got: %s", rec.Body.String())
+	}
+}

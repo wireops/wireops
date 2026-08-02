@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { stackEffectiveStatus, stackRepositorySubtitle } from '../utils/stack-status'
 import type { AvailabilitySegment } from './StatusAvailabilityBar.vue'
 
@@ -134,6 +134,9 @@ const searchInputRef = ref<{ $el?: HTMLElement } | HTMLElement | null>(null)
 const statusFilter = ref('all')
 const sortBy = ref('name')
 const groupFilter = ref(typeof route.query.group === 'string' ? route.query.group : 'all')
+watch(() => route.query.group, (val) => {
+  groupFilter.value = typeof val === 'string' ? val : 'all'
+})
 
 const groupOptions = computed(() => {
   const groups = new Set((stacks.value || []).map((s: any) => s.group).filter(Boolean))

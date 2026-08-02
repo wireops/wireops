@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -538,14 +539,18 @@ func writeComposeResolutionError(e *core.RequestEvent, err error) error {
 // truth both /compose and the dependency-graph route read from.
 func (rr routeRegistrar) resolveCurrentComposeContent(ctx context.Context, stack *core.Record) (content []byte, filename string, err error) {
 	stackID := stack.Id
+	maxBytes := config.GetComposeMaxBytes()
 
 	currentVersion := stack.GetInt("current_version")
 	if currentVersion > 0 {
 		renderer := sync.NewRenderer(rr.app)
 		filePath := renderer.GetRevisionFilePath(stackID, currentVersion)
-		data, readErr := os.ReadFile(filePath)
+		data, readErr := readFileBounded(filePath, maxBytes)
 		if readErr == nil {
 			return data, fmt.Sprintf("v%d.yml", currentVersion), nil
+		}
+		if errors.Is(readErr, compose.ErrOutputTooLarge) {
+			return nil, "", &composeResolutionError{status: http.StatusUnprocessableEntity, message: readErr.Error()}
 		}
 		log.Printf("[routes] rendered compose v%d missing for stack %s: %v. Falling back to repo file.", currentVersion, stackID, readErr)
 	}
@@ -571,6 +576,9 @@ func (rr routeRegistrar) resolveCurrentComposeContent(ctx context.Context, stack
 		if decodeErr != nil {
 			return nil, "", &composeResolutionError{status: http.StatusInternalServerError, message: "failed to decode compose file"}
 		}
+		if int64(len(data)) > maxBytes {
+			return nil, "", &composeResolutionError{status: http.StatusUnprocessableEntity, message: fmt.Sprintf("compose file is %d bytes, over the %d byte limit (raise COMPOSE_MAX_KB if this is legitimate): %s", len(data), maxBytes, compose.ErrOutputTooLarge)}
+		}
 		return data, filepath.Base(importPath), nil
 	}
 
@@ -586,16 +594,39 @@ func (rr routeRegistrar) resolveCurrentComposeContent(ctx context.Context, stack
 		return nil, "", &composeResolutionError{status: http.StatusBadRequest, message: verr.Error()}
 	}
 
-	workDir := filepath.Join(config.GetReposWorkspace(), stack.GetString("repository"))
+	root := filepath.Join(config.GetReposWorkspace(), stack.GetString("repository"))
+	workDir := root
 	if composePath != "" && composePath != "." {
-		workDir = filepath.Join(workDir, composePath)
+		workDir = filepath.Join(root, composePath)
 	}
 
-	data, readErr := os.ReadFile(filepath.Join(workDir, composeFile))
+	data, resolvedName, readErr := compose.ReadFile(root, workDir, composeFile, maxBytes)
 	if readErr != nil {
+		if errors.Is(readErr, compose.ErrOutputTooLarge) {
+			return nil, "", &composeResolutionError{status: http.StatusUnprocessableEntity, message: readErr.Error()}
+		}
 		return nil, "", &composeResolutionError{status: http.StatusNotFound, message: "compose file not found"}
 	}
-	return data, composeFile, nil
+	return data, resolvedName, nil
+}
+
+// readFileBounded reads a file up to maxBytes, returning compose.ErrOutputTooLarge
+// if it exceeds that limit rather than buffering the whole thing into memory.
+func readFileBounded(path string, maxBytes int64) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	data, err := io.ReadAll(io.LimitReader(f, maxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxBytes {
+		return nil, fmt.Errorf("file %s exceeds the %d byte limit: %w", path, maxBytes, compose.ErrOutputTooLarge)
+	}
+	return data, nil
 }
 
 func (rr routeRegistrar) registerStackComposeRoute() {
@@ -622,8 +653,7 @@ func (rr routeRegistrar) registerStackComposeRoute() {
 // badge rather than the whole graph failing to load.
 func (rr routeRegistrar) stackLiveServiceStatuses(ctx context.Context, stack *core.Record) []compose.ServiceStatus {
 	workerID := stack.GetString("worker")
-	if worker, werr := rr.resolveWorker(workerID); werr == nil && rr.workerSvc != nil && rr.workerSvc.IsConnected(workerID) {
-		_ = worker
+	if _, werr := rr.resolveWorker(workerID); werr == nil && rr.workerSvc != nil && rr.workerSvc.IsConnected(workerID) {
 		projectName := compose.ProjectName(stackWorkDir(rr.app, stack))
 		res, dispatchErr := rr.workerSvc.Dispatch(ctx, workerID, protocol.GetStatusCommand{
 			CommandID:   fmt.Sprintf("status-%s", stack.Id),
@@ -679,14 +709,13 @@ func (rr routeRegistrar) registerStackDependencyGraphRoute() {
 
 		statusByService := make(map[string]compose.ServiceStatus, len(graph.Nodes))
 		for _, s := range rr.stackLiveServiceStatuses(e.Request.Context(), stack) {
-			statusByService[s.ServiceName] = s
+			statusByService[depgraph.ServiceNodeID(s.ServiceName)] = s
 		}
 		for i := range graph.Nodes {
 			if graph.Nodes[i].Kind != depgraph.KindService {
 				continue
 			}
-			name := strings.TrimPrefix(graph.Nodes[i].ID, "service:")
-			if s, ok := statusByService[name]; ok {
+			if s, ok := statusByService[graph.Nodes[i].ID]; ok {
 				graph.Nodes[i].Status = s.Status
 				graph.Nodes[i].Health = s.Health
 			}
@@ -1126,7 +1155,7 @@ func (rr routeRegistrar) registerCreateFromWireopsRoute() {
 		stack.Set("sync_interval_seconds", def.SyncIntervalSeconds)
 		stack.Set("wait_running_jobs", waitRunningJobs)
 		stack.Set("worker_tags", workerTags)
-		stack.Set("group", def.Group)
+		stack.Set("group", strings.TrimSpace(def.Group))
 		stack.Set("config_source", "wireops_file")
 		stack.Set("wireops_file_path", body.WireopsFile)
 		if err := rr.app.Save(stack); err != nil {

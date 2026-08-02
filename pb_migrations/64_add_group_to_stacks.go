@@ -17,6 +17,7 @@ func init() {
 		if col.Fields.GetByName("group") == nil {
 			col.Fields.Add(&core.TextField{
 				Name: "group",
+				Max:  120,
 			})
 		}
 
@@ -32,9 +33,7 @@ func init() {
 			return err
 		}
 
-		if f := col.Fields.GetByName("group"); f != nil {
-			col.Fields.RemoveByName("group")
-		}
+		col.Fields.RemoveByName("group")
 
 		return app.Save(col)
 	})

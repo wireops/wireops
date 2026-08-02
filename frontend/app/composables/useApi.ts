@@ -160,6 +160,7 @@ export function useApi() {
   type WireopsDefinition = {
     version: string
     name: string
+    group?: string
     deploy_timeout_seconds: number
     compose?: { remove_orphans?: boolean; force_pull?: boolean }
     jobs?: { wait_running?: boolean }

@@ -280,10 +280,9 @@ async function saveEdit() {
   const payload: Record<string, any> = {
     name: editForm.value.name,
     worker: editForm.value.worker,
-    group: editForm.value.group || '',
   }
 
-  // compose_path/compose_file (and other wireops.yaml-derived fields) are
+  // compose_path/compose_file/group (and other wireops.yaml-derived fields) are
   // immutable once a stack is created from wireops.yaml — the backend
   // rejects any attempt to change them, so don't even send them.
   if (!isWireopsManaged.value) {
@@ -295,6 +294,7 @@ async function saveEdit() {
 
     payload.compose_path = editForm.value.compose_path
     payload.compose_file = editForm.value.compose_file
+    payload.group = editForm.value.group || ''
   }
 
   try {
@@ -851,7 +851,7 @@ onMounted(() => {
         <form v-else class="grid grid-cols-1 sm:grid-cols-2 gap-4" @submit.prevent="saveEdit">
           <UFormField label="Name"><AppTextInput v-model="editForm.name" aria-label="Stack name" /></UFormField>
           <UFormField label="Worker"><AppSelectInput v-model="editForm.worker" :items="workerOptions" /></UFormField>
-          <UFormField label="Group"><AppTextInput v-model="editForm.group" placeholder="e.g. observability" aria-label="Stack group" /></UFormField>
+          <UFormField label="Group"><AppTextInput v-model="editForm.group" placeholder="e.g. observability" aria-label="Stack group" :disabled="isWireopsManaged" /></UFormField>
           <UFormField label="Compose Path" :error="editErrors.compose_path">
             <AppTextInput v-model="editForm.compose_path" aria-label="Compose path" :disabled="isWireopsManaged" />
           </UFormField>

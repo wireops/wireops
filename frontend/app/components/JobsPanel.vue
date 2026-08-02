@@ -50,6 +50,9 @@ const searchQuery = ref('')
 const statusFilter = ref('all')
 const repositoryFilter = ref('all')
 const groupFilter = ref(typeof route.query.group === 'string' ? route.query.group : 'all')
+watch(() => route.query.group, (val) => {
+  groupFilter.value = typeof val === 'string' ? val : 'all'
+})
 
 const jobsWithReversedRuns = computed(() => {
   if (!jobs.value) return []

@@ -43,18 +43,23 @@ const stats = computed(() => {
 })
 
 const groupCounts = computed(() => {
-  const counts = new Map<string, number>()
+  const counts = new Map<string, { stacks: number, jobs: number }>()
+  const bump = (group: string, key: 'stacks' | 'jobs') => {
+    const entry = counts.get(group) || { stacks: 0, jobs: 0 }
+    entry[key]++
+    counts.set(group, entry)
+  }
   for (const s of stacks.value || []) {
-    if (s.group) counts.set(s.group, (counts.get(s.group) || 0) + 1)
+    if (s.group) bump(s.group, 'stacks')
   }
   for (const j of jobs.value || []) {
     const g = j.definition?.group
-    if (g) counts.set(g, (counts.get(g) || 0) + 1)
+    if (g) bump(g, 'jobs')
   }
   return [...counts.entries()]
-    .sort((a, b) => b[1] - a[1])
+    .sort((a, b) => (b[1].stacks + b[1].jobs) - (a[1].stacks + a[1].jobs))
     .slice(0, 5)
-    .map(([group, count]) => ({ group, count }))
+    .map(([group, { stacks, jobs }]) => ({ group, stacks, jobs }))
 })
 
 const dataReady = computed(() =>
@@ -388,17 +393,29 @@ onMounted(() => {
             <div
               v-for="entry in groupCounts"
               :key="entry.group"
-              class="py-2 flex items-center justify-between"
+              class="py-2 flex items-center justify-between gap-2"
             >
-              <span class="text-sm font-medium">{{ entry.group }}</span>
-              <UButton
-                :to="`/stacks?group=${encodeURIComponent(entry.group)}`"
-                :label="`${entry.count}`"
-                size="xs"
-                color="neutral"
-                variant="ghost"
-                trailing-icon="i-lucide-arrow-right"
-              />
+              <span class="text-sm font-medium truncate">{{ entry.group }}</span>
+              <div class="flex items-center gap-1 shrink-0">
+                <UButton
+                  v-if="entry.stacks > 0"
+                  :to="`/stacks?group=${encodeURIComponent(entry.group)}`"
+                  :label="`${entry.stacks} stack${entry.stacks === 1 ? '' : 's'}`"
+                  size="xs"
+                  color="neutral"
+                  variant="ghost"
+                  trailing-icon="i-lucide-arrow-right"
+                />
+                <UButton
+                  v-if="entry.jobs > 0"
+                  :to="`/jobs?group=${encodeURIComponent(entry.group)}`"
+                  :label="`${entry.jobs} job${entry.jobs === 1 ? '' : 's'}`"
+                  size="xs"
+                  color="neutral"
+                  variant="ghost"
+                  trailing-icon="i-lucide-arrow-right"
+                />
+              </div>
             </div>
           </div>
         </UCard>
