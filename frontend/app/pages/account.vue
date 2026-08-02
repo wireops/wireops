@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 
-const { user } = useAuth()
+const { user, logout } = useAuth()
 const { updateSelf } = useApi()
 const toast = useToast()
 
@@ -45,7 +45,8 @@ async function handleChangePassword() {
       password_confirm: passwordForm.value.passwordConfirm,
     })
     passwordForm.value = { oldPassword: '', password: '', passwordConfirm: '' }
-    toast.add({ title: 'Password updated', color: 'success' })
+    toast.add({ title: 'Password updated', description: 'Please sign in again with your new password.', color: 'success' })
+    logout()
   } catch (e: any) {
     toast.add({ title: 'Failed to update password', description: e?.message, color: 'error' })
   } finally {
@@ -57,9 +58,9 @@ async function handleChangePassword() {
 <template>
   <div class="max-w-2xl space-y-6">
     <h1 class="flex items-center gap-3 text-2xl font-bold text-gray-900 dark:text-wire-200">
-      <div class="flex items-center justify-center w-9 h-9 rounded-lg bg-yellow-400/10">
+      <span class="inline-flex items-center justify-center w-9 h-9 rounded-lg bg-yellow-400/10">
         <UIcon name="i-lucide-user-circle" class="w-5 h-5 text-yellow-400" />
-      </div>
+      </span>
       <span>
         <span class="block">Account</span>
         <span class="block text-sm font-normal text-gray-500 dark:text-wire-200/60">Your profile and login credentials.</span>

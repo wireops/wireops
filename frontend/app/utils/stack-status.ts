@@ -187,13 +187,13 @@ export function stackEffectiveStatus(stack: any): string | undefined {
 export function buildStackStatusFilter(effectiveStatus: string): string | null {
   switch (effectiveStatus) {
     case 'active':
-      return "(status = 'active') || (status = 'syncing' && deployed_at != '')"
+      return "((status = 'active') || (status = 'syncing' && deployed_at != ''))"
     case 'paused':
-      return "(status = 'paused') || (status = 'pending') || (status = 'syncing' && deployed_at = '')"
+      return "((status = 'paused') || (status = 'pending') || (status = 'syncing' && deployed_at = ''))"
     case 'error':
       return "(status = 'error')"
     case 'pending':
-      return "(status = 'pending') || (status = 'syncing' && deployed_at = '')"
+      return "((status = 'pending') || (status = 'syncing' && deployed_at = ''))"
     default:
       return null
   }

@@ -66,7 +66,7 @@ export function usePaginatedList<T>(
   let debounceTimer: ReturnType<typeof setTimeout> | undefined
   function reload(background = false) {
     clearTimeout(debounceTimer)
-    load(background)
+    return load(background)
   }
 
   // Resetting `page` to 1 from the debounced-filter handler below would also

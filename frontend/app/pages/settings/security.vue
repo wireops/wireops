@@ -8,7 +8,10 @@ const { getAppSettings, saveAppSettings, getGlobalWorkerPolicy, saveGlobalWorker
 
 const route = useRoute()
 const router = useRouter()
-const activeTab = ref((route.query.tab as string) || (isAdmin.value ? 'sso-mappings' : 'worker-policies'))
+
+function defaultTab() {
+  return isAdmin.value ? 'sso-mappings' : 'worker-policies'
+}
 
 const tabs = computed(() => {
   const list = []
@@ -19,6 +22,12 @@ const tabs = computed(() => {
   return list
 })
 
+function isValidTab(val: unknown): val is string {
+  return tabs.value.some(t => t.value === val)
+}
+
+const activeTab = ref(isValidTab(route.query.tab) ? (route.query.tab as string) : defaultTab())
+
 watch(activeTab, (newVal) => {
   if (route.query.tab !== newVal) {
     router.replace({ query: { ...route.query, tab: newVal } })
@@ -26,8 +35,10 @@ watch(activeTab, (newVal) => {
 })
 
 watch(() => route.query.tab, (newVal) => {
-  if (newVal && newVal !== activeTab.value) {
-    activeTab.value = newVal as string
+  if (isValidTab(newVal) && newVal !== activeTab.value) {
+    activeTab.value = newVal
+  } else if (!isValidTab(newVal) && newVal) {
+    activeTab.value = defaultTab()
   }
 })
 

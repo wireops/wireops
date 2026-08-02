@@ -263,6 +263,7 @@ watch(
             size="lg"
             class="w-full justify-start"
             to="/account"
+            :aria-current="isActive('/account') ? 'page' : undefined"
           />
           <UButton
             icon="i-lucide-log-out"

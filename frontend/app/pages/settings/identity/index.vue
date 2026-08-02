@@ -390,7 +390,7 @@ onMounted(() => {
             <UPagination
               v-model="usersPage"
               :total="totalUsers"
-              :page-count="usersPerPage"
+              :items-per-page="usersPerPage"
             />
             <span class="text-xs text-gray-500">Page {{ usersPage }} of {{ usersTotalPages }}</span>
           </div>

@@ -11,6 +11,7 @@ import (
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/router"
+	"github.com/pocketbase/pocketbase/tools/search"
 
 	"github.com/wireops/wireops/internal/config"
 	"github.com/wireops/wireops/internal/job"
@@ -111,6 +112,39 @@ func buildJobsFilter(e *core.RequestEvent) (string, dbx.Params) {
 	return strings.Join(clauses, " && "), params
 }
 
+// countRecordsByPBFilter counts records matching a PocketBase filter
+// expression (the same "field ~ {:x}" syntax FindRecordsByFilter accepts)
+// without fetching the matching rows themselves - app.CountRecords only
+// takes raw dbx expressions, which don't understand PocketBase filter
+// operators like "~", so the filter has to be resolved the same way
+// FindRecordsByFilter resolves it internally.
+func countRecordsByPBFilter(app core.App, collectionNameOrId string, filter string, params dbx.Params) (int64, error) {
+	collection, err := app.FindCollectionByNameOrId(collectionNameOrId)
+	if err != nil {
+		return 0, err
+	}
+
+	q := app.RecordQuery(collection).Select("count(*)")
+
+	if filter != "" {
+		resolver := core.NewRecordFieldResolver(app, collection, nil, true)
+		expr, err := search.FilterData(filter).BuildExpr(resolver, params)
+		if err != nil {
+			return 0, err
+		}
+		q.AndWhere(expr)
+		if err := resolver.UpdateQuery(q); err != nil {
+			return 0, err
+		}
+	}
+
+	var total int64
+	if err := q.Row(&total); err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
 func parsePageParam(v string, def int) int {
 	n, err := strconv.Atoi(v)
 	if err != nil || n < 1 {
@@ -134,7 +168,7 @@ func handleListJobs(app core.App) func(*core.RequestEvent) error {
 
 		filter, params := buildJobsFilter(e)
 
-		total, err := app.FindRecordsByFilter("scheduled_jobs", filter, "", 0, 0, params)
+		total, err := countRecordsByPBFilter(app, "scheduled_jobs", filter, params)
 		if err != nil {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
@@ -203,7 +237,7 @@ func handleListJobs(app core.App) func(*core.RequestEvent) error {
 			items = append(items, item)
 		}
 
-		return e.JSON(http.StatusOK, jobListResponse{Items: items, TotalItems: len(total)})
+		return e.JSON(http.StatusOK, jobListResponse{Items: items, TotalItems: int(total)})
 	}
 }
 

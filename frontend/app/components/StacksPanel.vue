@@ -134,13 +134,25 @@ async function refreshList() {
   await Promise.all([reloadStacks(), refreshStacksAggregate(), refreshWorkers(), refreshRepos()])
 }
 
+// Realtime record events (stacks/repositories channels) can fire several
+// times in a burst - e.g. a reconcile touching many stacks - so the
+// fleet-wide aggregate refetch is debounced to a single trailing call
+// instead of running once per event.
+let aggregateDebounceTimer: ReturnType<typeof setTimeout> | undefined
+function debouncedRefreshStacksAggregate() {
+  clearTimeout(aggregateDebounceTimer)
+  aggregateDebounceTimer = setTimeout(() => {
+    refreshStacksAggregate()
+  }, 300)
+}
+
 onMounted(() => {
   window.addEventListener('keydown', handleSlashShortcut)
   subscribe('stacks', () => {
     isUpdating.value = true
     announce('Stacks list updating')
     reloadStacks(true)
-    refreshStacksAggregate()
+    debouncedRefreshStacksAggregate()
     refreshWorkers()
     clearTimeout(updateTimer)
     updateTimer = setTimeout(() => {
@@ -154,13 +166,14 @@ onMounted(() => {
   subscribe('repositories', () => {
     refreshRepos()
     reloadStacks(true)
-    refreshStacksAggregate()
+    debouncedRefreshStacksAggregate()
   })
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleSlashShortcut)
   clearTimeout(updateTimer)
+  clearTimeout(aggregateDebounceTimer)
 })
 
 const showCreate = ref(false)
@@ -405,7 +418,7 @@ async function handlePurge(dirName: string) {
             <UPagination
               v-model="page"
               :total="totalStacks"
-              :page-count="perPage"
+              :items-per-page="perPage"
             />
             <span class="text-xs text-gray-500">Page {{ page }} of {{ totalPages }}</span>
           </div>

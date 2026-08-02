@@ -114,7 +114,11 @@ describe('StacksPanel', () => {
           ImportStackModal: true,
           StackContainersList: true,
           UModal: { template: '<div><slot name="body" /></div>' },
-          UPagination: { template: '<div />' },
+          UPagination: {
+            setup() {
+              return () => h('div')
+            },
+          },
         },
       },
     })

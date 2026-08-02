@@ -89,11 +89,9 @@ Deeper technical docs (moved to the [Wiki](https://github.com/wireops/wireops/wi
 ### Mobile
 
 <p align="center">
-  <a href=".github/assets/screenshots/mobile-dashboard.png"><img src=".github/assets/screenshots/mobile-dashboard.png" alt="Mobile dashboard" width="220"></a>
-  &nbsp;&nbsp;
-  <a href=".github/assets/screenshots/mobile-stack-detail.png"><img src=".github/assets/screenshots/mobile-stack-detail.png" alt="Mobile stack detail" width="220"></a>
-  &nbsp;&nbsp;
-  <a href=".github/assets/screenshots/mobile-secrets.png"><img src=".github/assets/screenshots/mobile-secrets.png" alt="Mobile secrets management" width="220"></a><br>
+  <a href=".github/assets/screenshots/mobile-dashboard.png"><img src=".github/assets/screenshots/mobile-dashboard.png" alt="Mobile dashboard" width="30%"></a>
+  <a href=".github/assets/screenshots/mobile-stack-detail.png"><img src=".github/assets/screenshots/mobile-stack-detail.png" alt="Mobile stack detail" width="30%"></a>
+  <a href=".github/assets/screenshots/mobile-secrets.png"><img src=".github/assets/screenshots/mobile-secrets.png" alt="Mobile secrets management" width="30%"></a><br>
   <sub><b>Mobile-friendly UI</b> — manage stacks and secrets from your phone</sub>
 </p>
 

@@ -4,11 +4,13 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/mail"
 	"time"
 
+	validation "github.com/go-ozzo/ozzo-validation/v4"
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/mailer"
@@ -72,6 +74,10 @@ func handleUpdateSelf(app core.App) func(*core.RequestEvent) error {
 		}
 
 		if err := app.Save(rec); err != nil {
+			var valErr validation.Errors
+			if errors.As(err, &valErr) {
+				return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+			}
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
 

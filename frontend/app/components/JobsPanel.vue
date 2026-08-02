@@ -452,7 +452,7 @@ function formatRelative(dateStr: string) {
           <UPagination
             v-model="page"
             :total="totalJobs"
-            :page-count="perPage"
+            :items-per-page="perPage"
           />
           <span class="text-xs text-gray-500">Page {{ page }} of {{ totalPages }}</span>
         </div>

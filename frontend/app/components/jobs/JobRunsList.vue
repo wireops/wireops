@@ -214,7 +214,7 @@ defineExpose({
         <UPagination
           v-model="page"
           :total="totalItems"
-          :page-count="perPage"
+          :items-per-page="perPage"
         />
         <div class="flex items-center gap-2">
           <span class="text-xs text-gray-500">Per page</span>
