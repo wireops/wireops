@@ -1,3 +1,18 @@
+export const GROUP_ALL = 'all'
+export const GROUP_UNGROUPED = '__ungrouped__'
+const GROUP_PREFIX = 'group:'
+
+// Named groups are namespaced with a prefix before being used as a <select>
+// value, so a group literally named "all" or "__ungrouped__" can't collide
+// with the sentinel filter values below it.
+export function encodeGroupValue(name: string): string {
+  return `${GROUP_PREFIX}${name}`
+}
+
+export function decodeGroupValue(value: string): string {
+  return value.startsWith(GROUP_PREFIX) ? value.slice(GROUP_PREFIX.length) : value
+}
+
 export interface FilterableJob {
   name?: string
   definition?: { name?: string, group?: string }
@@ -33,10 +48,10 @@ export function filterJobs<T extends FilterableJob>(
     filtered = filtered.filter(job => job.repository?.id === repositoryFilter)
   }
 
-  if (groupFilter && groupFilter !== 'all') {
-    filtered = filtered.filter(job =>
-      groupFilter === '__ungrouped__' ? !job.definition?.group : job.definition?.group === groupFilter
-    )
+  if (groupFilter && groupFilter !== GROUP_ALL) {
+    filtered = groupFilter === GROUP_UNGROUPED
+      ? filtered.filter(job => !job.definition?.group)
+      : filtered.filter(job => job.definition?.group === decodeGroupValue(groupFilter))
   }
 
   return filtered

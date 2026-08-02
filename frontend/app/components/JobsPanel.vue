@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { AvailabilitySegment } from './StatusAvailabilityBar.vue'
+import { GROUP_ALL, GROUP_UNGROUPED, encodeGroupValue } from '../utils/job-filter'
 
 const { $pb } = useNuxtApp()
 const { listJobs, triggerJobRun, getWorkers } = useApi()
@@ -49,9 +50,14 @@ const route = useRoute()
 const searchQuery = ref('')
 const statusFilter = ref('all')
 const repositoryFilter = ref('all')
-const groupFilter = ref(typeof route.query.group === 'string' ? route.query.group : 'all')
+function groupQueryToFilterValue(val: unknown): string {
+  if (typeof val !== 'string' || val === '') return GROUP_ALL
+  return val === GROUP_ALL || val === GROUP_UNGROUPED ? val : encodeGroupValue(val)
+}
+
+const groupFilter = ref(groupQueryToFilterValue(route.query.group))
 watch(() => route.query.group, (val) => {
-  groupFilter.value = typeof val === 'string' ? val : 'all'
+  groupFilter.value = groupQueryToFilterValue(val)
 })
 
 const jobsWithReversedRuns = computed(() => {
@@ -77,12 +83,12 @@ const groupOptions = computed(() => {
   const groups = new Set(
     jobsWithReversedRuns.value.map((job: any) => job.definition?.group).filter(Boolean)
   )
-  const items = [{ label: 'All groups', value: 'all' }]
+  const items = [{ label: 'All groups', value: GROUP_ALL }]
   if (jobsWithReversedRuns.value.some((job: any) => !job.definition?.group)) {
-    items.push({ label: 'Ungrouped', value: '__ungrouped__' })
+    items.push({ label: 'Ungrouped', value: GROUP_UNGROUPED })
   }
   for (const g of [...groups].sort()) {
-    items.push({ label: g as string, value: g as string })
+    items.push({ label: g as string, value: encodeGroupValue(g as string) })
   }
   return items
 })
