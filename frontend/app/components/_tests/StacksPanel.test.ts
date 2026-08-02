@@ -38,6 +38,7 @@ describe('StacksPanel', () => {
     ;(globalThis as any).useRepositoryPlatform = () => ({
       platformIconUrl: vi.fn(),
     })
+    ;(globalThis as any).useRoute = () => ({ query: {} })
     ;(globalThis as any).useAsyncData = (key: string) => {
       if (key === 'stack_card_workers') {
         return {

@@ -36,6 +36,7 @@ type Definition struct {
 	Description string    `yaml:"description" json:"description"`
 	Cron        string    `yaml:"cron"        json:"cron"`
 	Tags        []string  `yaml:"tags"        json:"tags"`
+	Group       string    `yaml:"group"       json:"group,omitempty"`
 	Mode        Mode      `yaml:"mode"        json:"mode"`
 	Image       string    `yaml:"image"       json:"image"`
 	Command     Command   `yaml:"command"     json:"command"`

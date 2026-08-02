@@ -32,6 +32,7 @@ const defaultForm = () => ({
   name: '',
   repository: '',
   worker: '',
+  group: '',
   compose_path: '',
   compose_file: 'docker-compose.yml',
   selected_file: '',
@@ -477,6 +478,7 @@ async function handleSubmit() {
         name: form.value.name,
         repository: form.value.repository,
         worker: form.value.worker,
+        group: form.value.group,
         compose_path: form.value.compose_path,
         compose_file: form.value.compose_file,
         auto_sync: true,
@@ -548,6 +550,9 @@ async function handleSubmit() {
                 <UFormField label="Name" required>
                   <AppTextInput v-model="form.name" placeholder="my-stack" aria-label="Stack name" />
                 </UFormField>
+                <UFormField label="Group">
+                  <AppTextInput v-model="form.group" placeholder="e.g. observability" aria-label="Stack group" />
+                </UFormField>
               </template>
 
               <template v-else>
@@ -608,6 +613,7 @@ async function handleSubmit() {
                       <span>{{ wireopsDefinition.resolved_compose_path }}/{{ wireopsDefinition.resolved_compose_file }}</span>
                     </div>
                     <div class="flex flex-wrap gap-1.5">
+                      <UBadge v-if="wireopsDefinition.group" :label="`group: ${wireopsDefinition.group}`" color="neutral" variant="outline" size="xs" />
                       <UBadge v-if="wireopsDefinition.deploy_timeout_seconds" :label="`timeout: ${wireopsDefinition.deploy_timeout_seconds}s`" variant="subtle" size="xs" />
                       <UBadge :label="`remove_orphans: ${wireopsDefinition.compose?.remove_orphans ?? true}`" variant="subtle" size="xs" />
                       <UBadge :label="`force_pull: ${wireopsDefinition.compose?.force_pull ?? false}`" variant="subtle" size="xs" />

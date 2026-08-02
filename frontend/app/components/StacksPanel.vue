@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { stackEffectiveStatus, stackRepositorySubtitle } from '../utils/stack-status'
+import { GROUP_ALL, GROUP_UNGROUPED, encodeGroupValue, decodeGroupValue } from '../utils/job-filter'
 import type { AvailabilitySegment } from './StatusAvailabilityBar.vue'
 
 const { $pb } = useNuxtApp()
@@ -127,10 +128,33 @@ const stacksForAvailability = computed(() =>
   (stacks.value || []).map((s: any) => ({ ...s, status: stackEffectiveStatus(s) }))
 )
 
+const route = useRoute()
+
 const searchQuery = ref('')
 const searchInputRef = ref<{ $el?: HTMLElement } | HTMLElement | null>(null)
 const statusFilter = ref('all')
 const sortBy = ref('name')
+function groupQueryToFilterValue(val: unknown): string {
+  if (typeof val !== 'string' || val === '') return GROUP_ALL
+  return val === GROUP_ALL || val === GROUP_UNGROUPED ? val : encodeGroupValue(val)
+}
+
+const groupFilter = ref(groupQueryToFilterValue(route.query.group))
+watch(() => route.query.group, (val) => {
+  groupFilter.value = groupQueryToFilterValue(val)
+})
+
+const groupOptions = computed(() => {
+  const groups = new Set((stacks.value || []).map((s: any) => s.group).filter(Boolean))
+  const items = [{ label: 'All groups', value: GROUP_ALL }]
+  if ((stacks.value || []).some((s: any) => !s.group)) {
+    items.push({ label: 'Ungrouped', value: GROUP_UNGROUPED })
+  }
+  for (const g of [...groups].sort()) {
+    items.push({ label: g as string, value: encodeGroupValue(g as string) })
+  }
+  return items
+})
 
 function resolveSearchInput() {
   const root = searchInputRef.value instanceof HTMLElement ? searchInputRef.value : searchInputRef.value?.$el
@@ -188,6 +212,12 @@ const filteredStacks = computed(() => {
     } else {
       filtered = filtered.filter((s: any) => stackEffectiveStatus(s) === statusFilter.value)
     }
+  }
+
+  if (groupFilter.value !== GROUP_ALL) {
+    filtered = groupFilter.value === GROUP_UNGROUPED
+      ? filtered.filter((s: any) => !s.group)
+      : filtered.filter((s: any) => s.group === decodeGroupValue(groupFilter.value))
   }
 
   filtered = [...filtered].sort((a: any, b: any) => {
@@ -321,6 +351,15 @@ async function handlePurge(dirName: string) {
             content-width
             class="sm:min-w-28"
             aria-label="Sort stacks"
+          />
+          <AppSelectInput
+            v-if="groupOptions.length > 1"
+            v-model="groupFilter"
+            :items="groupOptions"
+            placeholder="Filter by group"
+            content-width
+            class="sm:min-w-28"
+            aria-label="Filter stacks by group"
           />
         </div>
 

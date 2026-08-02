@@ -44,6 +44,7 @@ type SyncConfig struct {
 type Definition struct {
 	Version              string         `yaml:"version" json:"version"`
 	Name                 string         `yaml:"name"    json:"name"`
+	Group                string         `yaml:"group"   json:"group,omitempty"`
 	Timeout              string         `yaml:"timeout" json:"-"`
 	DeployTimeoutSeconds int            `yaml:"-"       json:"deploy_timeout_seconds"`
 	Compose              *ComposeConfig `yaml:"compose" json:"compose,omitempty"`

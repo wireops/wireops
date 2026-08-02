@@ -53,6 +53,7 @@ const lastSyncedLabel = computed(() => relativeTime(props.stack?.last_synced_at)
             <h3 class="truncate text-base font-bold tracking-tight text-gray-950 transition-colors group-hover:text-yellow-500 group-focus-visible:text-yellow-500 dark:text-white">
               {{ stack.name }}
             </h3>
+            <UBadge v-if="stack.group" :label="stack.group" color="neutral" variant="outline" size="xs" class="shrink-0" />
           </div>
           <div class="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-gray-500 dark:text-wire-200/50">
             <GitProviderBadge :stack="stack" />
