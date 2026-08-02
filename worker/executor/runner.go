@@ -760,7 +760,7 @@ func prepareJobConfigFiles(jobRunID string, files []protocol.ConfigFileSpec) ([]
 	// configFileMode, default 0444 world-readable, which is what actually
 	// gates content access here).
 	dir := filepath.Join(stackDir, "jobs", jobRunID, "configs")
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0755); err != nil { // lgtm[go/path-injection] -- jobRunID validated above via safepath.ValidateConfigName (rejects '/', '\\', '.', leading '.')
 		return nil, noop, fmt.Errorf("failed to create job config dir: %w", err)
 	}
 	cleanup := func() {
@@ -808,7 +808,7 @@ func prepareJobConfigFiles(jobRunID string, files []protocol.ConfigFileSpec) ([]
 				return nil, noop, fmt.Errorf("failed to decode config %q: %w", f.Name, err)
 			}
 			path := filepath.Join(dir, name)
-			if err := os.WriteFile(path, content, configFileMode(f.Mode)); err != nil {
+			if err := os.WriteFile(path, content, configFileMode(f.Mode)); err != nil { // lgtm[go/path-injection] -- name validated above via safepath.ValidateConfigName
 				cleanup()
 				return nil, noop, fmt.Errorf("failed to write config %q: %w", f.Name, err)
 			}
@@ -817,7 +817,7 @@ func prepareJobConfigFiles(jobRunID string, files []protocol.ConfigFileSpec) ([]
 		}
 
 		groupDir := filepath.Join(dir, name)
-		if err := os.MkdirAll(groupDir, 0755); err != nil {
+		if err := os.MkdirAll(groupDir, 0755); err != nil { // lgtm[go/path-injection] -- name validated above via safepath.ValidateConfigName
 			cleanup()
 			return nil, noop, fmt.Errorf("failed to create config dir %q: %w", name, err)
 		}
@@ -828,11 +828,11 @@ func prepareJobConfigFiles(jobRunID string, files []protocol.ConfigFileSpec) ([]
 				return nil, noop, fmt.Errorf("failed to decode config %q: %w", f.Name, err)
 			}
 			path := filepath.Join(groupDir, filepath.FromSlash(f.RelPath))
-			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil { // lgtm[go/path-injection] -- f.RelPath validated above via safepath.CleanRelativePath (rejects '..' and absolute paths)
 				cleanup()
 				return nil, noop, fmt.Errorf("failed to create config dir for %q: %w", f.Name, err)
 			}
-			if err := os.WriteFile(path, content, configFileMode(f.Mode)); err != nil {
+			if err := os.WriteFile(path, content, configFileMode(f.Mode)); err != nil { // lgtm[go/path-injection] -- f.RelPath validated above via safepath.CleanRelativePath
 				cleanup()
 				return nil, noop, fmt.Errorf("failed to write config %q: %w", f.Name, err)
 			}

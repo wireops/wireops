@@ -94,7 +94,7 @@ func Resolve(workDir string, sources []Source) ([]ResolvedFile, error) {
 		if err := checkSize(s.Name, s.Path, info.Size(), &total); err != nil {
 			return nil, err
 		}
-		content, err := os.ReadFile(full)
+		content, err := os.ReadFile(full) // #nosec G304 -- full is validated above via safepath.CleanRelativePath + containedJoin
 		if err != nil {
 			return nil, fmt.Errorf("config %q: cannot read %q: %w", s.Name, s.Path, err)
 		}

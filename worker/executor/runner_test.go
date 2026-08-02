@@ -187,11 +187,11 @@ func TestPrepareJobConfigFilesDirectoryGroup(t *testing.T) {
 	}
 	hostDir := strings.TrimSuffix(volumes[0], ":/etc/app/conf.d:ro")
 
-	a, err := os.ReadFile(filepath.Join(hostDir, "a.conf"))
+	a, err := os.ReadFile(filepath.Join(hostDir, "a.conf")) // #nosec G304 -- hostDir is a t.TempDir(), literal filename
 	if err != nil || string(a) != "A" {
 		t.Errorf("expected a.conf with content A, got content=%q err=%v", a, err)
 	}
-	b, err := os.ReadFile(filepath.Join(hostDir, "nested", "b.conf"))
+	b, err := os.ReadFile(filepath.Join(hostDir, "nested", "b.conf")) // #nosec G304 -- hostDir is a t.TempDir(), literal filename
 	if err != nil || string(b) != "B" {
 		t.Errorf("expected nested/b.conf with content B, got content=%q err=%v", b, err)
 	}
