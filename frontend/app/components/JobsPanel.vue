@@ -44,9 +44,12 @@ const emptyStateStep = computed(() => {
   }
 })
 
+const route = useRoute()
+
 const searchQuery = ref('')
 const statusFilter = ref('all')
 const repositoryFilter = ref('all')
+const groupFilter = ref(typeof route.query.group === 'string' ? route.query.group : 'all')
 
 const jobsWithReversedRuns = computed(() => {
   if (!jobs.value) return []
@@ -67,11 +70,26 @@ const repositoryOptions = computed(() => {
   ]
 })
 
+const groupOptions = computed(() => {
+  const groups = new Set(
+    jobsWithReversedRuns.value.map((job: any) => job.definition?.group).filter(Boolean)
+  )
+  const items = [{ label: 'All groups', value: 'all' }]
+  if (jobsWithReversedRuns.value.some((job: any) => !job.definition?.group)) {
+    items.push({ label: 'Ungrouped', value: '__ungrouped__' })
+  }
+  for (const g of [...groups].sort()) {
+    items.push({ label: g as string, value: g as string })
+  }
+  return items
+})
+
 const filteredJobs = computed(() =>
   filterJobs(jobsWithReversedRuns.value, {
     searchQuery: searchQuery.value,
     statusFilter: statusFilter.value,
-    repositoryFilter: repositoryFilter.value
+    repositoryFilter: repositoryFilter.value,
+    groupFilter: groupFilter.value
   })
 )
 
@@ -237,6 +255,15 @@ function formatRelative(dateStr: string) {
             class="sm:min-w-28"
             aria-label="Filter jobs by repository"
           />
+          <AppSelectInput
+            v-if="groupOptions.length > 1"
+            v-model="groupFilter"
+            :items="groupOptions"
+            placeholder="Filter by group"
+            content-width
+            class="sm:min-w-28"
+            aria-label="Filter jobs by group"
+          />
         </div>
 
         <StatusAvailabilityBar
@@ -276,6 +303,7 @@ function formatRelative(dateStr: string) {
                   <UIcon name="i-lucide-triangle-alert" class="w-4 h-4 text-amber-500 shrink-0" />
                 </UTooltip>
                 <BadgeStatus :status="job.status" class="shrink-0" />
+                <UBadge v-if="job.definition?.group" :label="job.definition.group" color="neutral" variant="outline" size="xs" class="shrink-0" />
 
                 <!-- Last 5 executions dots -->
                 <div v-if="job.recent_runs && job.recent_runs.length > 0" class="hidden md:flex items-center gap-1 ml-2 shrink-0">

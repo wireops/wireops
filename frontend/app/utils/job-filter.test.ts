@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest'
 import { filterJobs } from './job-filter'
 
 const jobs = [
-  { id: '1', name: 'nightly-backup', repository: { id: 'r1', name: 'infra' }, job_file: 'backup.yml', status: 'active' },
-  { id: '2', definition: { name: 'cleanup-job' }, repository: { id: 'r2', name: 'tools' }, job_file: 'cleanup.yml', status: 'paused' },
+  { id: '1', name: 'nightly-backup', repository: { id: 'r1', name: 'infra' }, job_file: 'backup.yml', status: 'active', definition: { group: 'data' } },
+  { id: '2', definition: { name: 'cleanup-job', group: 'edge' }, repository: { id: 'r2', name: 'tools' }, job_file: 'cleanup.yml', status: 'paused' },
   { id: '3', name: 'deploy-check', repository: { id: 'r1', name: 'infra' }, job_file: 'check.yml', status: 'error' },
 ]
 
@@ -39,5 +39,18 @@ describe('filterJobs', () => {
   it('trims leading/trailing whitespace and treats whitespace-only queries as empty', () => {
     expect(filterJobs(jobs, { searchQuery: '  backup  ', statusFilter: 'all', repositoryFilter: 'all' }).map(j => j.id)).toEqual(['1'])
     expect(filterJobs(jobs, { searchQuery: '   ', statusFilter: 'all', repositoryFilter: 'all' }).map(j => j.id)).toEqual(['1', '2', '3'])
+  })
+
+  it('filters by group alone', () => {
+    expect(filterJobs(jobs, { searchQuery: '', statusFilter: 'all', repositoryFilter: 'all', groupFilter: 'data' }).map(j => j.id)).toEqual(['1'])
+  })
+
+  it('filters ungrouped jobs with the __ungrouped__ sentinel', () => {
+    expect(filterJobs(jobs, { searchQuery: '', statusFilter: 'all', repositoryFilter: 'all', groupFilter: '__ungrouped__' }).map(j => j.id)).toEqual(['3'])
+  })
+
+  it('leaves results untouched when groupFilter is omitted or "all"', () => {
+    expect(filterJobs(jobs, { searchQuery: '', statusFilter: 'all', repositoryFilter: 'all' }).map(j => j.id)).toEqual(['1', '2', '3'])
+    expect(filterJobs(jobs, { searchQuery: '', statusFilter: 'all', repositoryFilter: 'all', groupFilter: 'all' }).map(j => j.id)).toEqual(['1', '2', '3'])
   })
 })

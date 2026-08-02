@@ -1,6 +1,6 @@
 export interface FilterableJob {
   name?: string
-  definition?: { name?: string }
+  definition?: { name?: string, group?: string }
   repository?: { id?: string, name?: string }
   job_file?: string
   status?: string
@@ -17,7 +17,7 @@ export function matchesJobSearch(job: FilterableJob, query: string): boolean {
 
 export function filterJobs<T extends FilterableJob>(
   jobs: T[],
-  { searchQuery, statusFilter, repositoryFilter }: { searchQuery: string, statusFilter: string, repositoryFilter: string }
+  { searchQuery, statusFilter, repositoryFilter, groupFilter }: { searchQuery: string, statusFilter: string, repositoryFilter: string, groupFilter?: string }
 ): T[] {
   let filtered = jobs
 
@@ -31,6 +31,12 @@ export function filterJobs<T extends FilterableJob>(
 
   if (repositoryFilter !== 'all') {
     filtered = filtered.filter(job => job.repository?.id === repositoryFilter)
+  }
+
+  if (groupFilter && groupFilter !== 'all') {
+    filtered = filtered.filter(job =>
+      groupFilter === '__ungrouped__' ? !job.definition?.group : job.definition?.group === groupFilter
+    )
   }
 
   return filtered

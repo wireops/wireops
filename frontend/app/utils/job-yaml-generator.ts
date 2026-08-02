@@ -8,6 +8,7 @@ export interface BuildJobYamlOptions {
   description: string
   cron: string
   tags: string[]
+  group?: string
   mode: string
   image: string
   command: string
@@ -63,6 +64,11 @@ export function buildJobYaml(options: BuildJobYamlOptions) {
     })
   } else {
     lines.push('tags: []')
+  }
+
+  const group = options.group?.trim()
+  if (group) {
+    lines.push(`group: ${yamlString(group)}`)
   }
 
   lines.push(`mode: ${yamlString(options.mode)}`)

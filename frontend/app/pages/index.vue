@@ -42,6 +42,21 @@ const stats = computed(() => {
   }
 })
 
+const groupCounts = computed(() => {
+  const counts = new Map<string, number>()
+  for (const s of stacks.value || []) {
+    if (s.group) counts.set(s.group, (counts.get(s.group) || 0) + 1)
+  }
+  for (const j of jobs.value || []) {
+    const g = j.definition?.group
+    if (g) counts.set(g, (counts.get(g) || 0) + 1)
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([group, count]) => ({ group, count }))
+})
+
 const dataReady = computed(() =>
   stacks.value !== null && jobs.value !== null && workers.value !== null && repos.value !== null
 )
@@ -360,6 +375,31 @@ onMounted(() => {
             </div>
             <p class="font-medium text-wire-200">All Systems Operational</p>
             <p class="text-sm text-wire-200/50 mt-1">All {{ stats.stacks }} stacks are healthy</p>
+          </div>
+        </UCard>
+
+        <!-- By Group -->
+        <UCard v-if="groupCounts.length > 0">
+          <template #header>
+            <h2 class="font-semibold">By Group</h2>
+          </template>
+
+          <div class="divide-y divide-carbon-800">
+            <div
+              v-for="entry in groupCounts"
+              :key="entry.group"
+              class="py-2 flex items-center justify-between"
+            >
+              <span class="text-sm font-medium">{{ entry.group }}</span>
+              <UButton
+                :to="`/stacks?group=${encodeURIComponent(entry.group)}`"
+                :label="`${entry.count}`"
+                size="xs"
+                color="neutral"
+                variant="ghost"
+                trailing-icon="i-lucide-arrow-right"
+              />
+            </div>
           </div>
         </UCard>
       </div>

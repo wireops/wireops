@@ -37,8 +37,28 @@ watch(isShowingCommandPalette, (val) => {
   if (val) loadData()
 })
 
+const groupNames = computed(() => {
+  const names = new Set<string>()
+  for (const s of stacks.value) if (s.group) names.add(s.group)
+  for (const j of jobs.value) if (j.definition?.group) names.add(j.definition.group)
+  return [...names].sort()
+})
+
 const groups = computed(() => {
   return [
+    {
+      id: 'groups',
+      label: 'Groups',
+      items: groupNames.value.map(g => ({
+        id: `group-${g}`,
+        label: `Group: ${g}`,
+        icon: 'i-lucide-shapes',
+        onSelect: () => {
+          isShowingCommandPalette.value = false
+          router.push(`/stacks?group=${encodeURIComponent(g)}`)
+        }
+      }))
+    },
     {
       id: 'stacks',
       label: 'Stacks',

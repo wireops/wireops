@@ -1126,6 +1126,7 @@ func (rr routeRegistrar) registerCreateFromWireopsRoute() {
 		stack.Set("sync_interval_seconds", def.SyncIntervalSeconds)
 		stack.Set("wait_running_jobs", waitRunningJobs)
 		stack.Set("worker_tags", workerTags)
+		stack.Set("group", def.Group)
 		stack.Set("config_source", "wireops_file")
 		stack.Set("wireops_file_path", body.WireopsFile)
 		if err := rr.app.Save(stack); err != nil {

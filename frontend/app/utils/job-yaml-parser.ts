@@ -7,6 +7,7 @@ export interface ParsedJobYaml {
   command?: string
   commandAsArray?: boolean
   tags?: string[]
+  group?: string
   volumes?: { host: string; container: string }[]
   network?: string
   cpu?: string
@@ -103,6 +104,7 @@ export function parseJobYaml(yamlContent: string): ParsedJobYaml {
       if (key === 'mode') result.mode = cleanValue
       if (key === 'image') result.image = cleanValue
       if (key === 'network') result.network = cleanValue
+      if (key === 'group') result.group = cleanValue
 
       if (key === 'command') {
         if (cleanValue === '') {

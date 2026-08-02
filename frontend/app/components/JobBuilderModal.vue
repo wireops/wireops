@@ -41,7 +41,8 @@ const form = ref({
   command: 'echo "hello from wireops"',
   commandAsArray: false,
   network: '',
-  tags: 'production, cleanup'
+  tags: 'production, cleanup',
+  group: ''
 })
 
 const resourceForm = ref({
@@ -187,6 +188,7 @@ const yamlCode = computed(() => {
     description: form.value.description,
     cron: form.value.cron,
     tags: tagsList.value,
+    group: form.value.group,
     mode: form.value.mode,
     image: form.value.image,
     command: form.value.command,
@@ -311,6 +313,7 @@ function handleImportYaml() {
       form.value.commandAsArray = !!parsed.commandAsArray
     }
     if (parsed.network !== undefined) form.value.network = parsed.network
+    if (parsed.group !== undefined) form.value.group = parsed.group
 
     if (parsed.tags) {
       tagsArray.value = [...parsed.tags]
@@ -657,6 +660,10 @@ function handleImportYaml() {
                     @keydown.enter.prevent="handleTagEnter"
                   >
                 </div>
+              </UFormField>
+
+              <UFormField label="Group" class="w-full">
+                <AppTextInput v-model="form.group" placeholder="e.g. observability" aria-label="Job group" />
               </UFormField>
 
               <div class="space-y-1.5">
