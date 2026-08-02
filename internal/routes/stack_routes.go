@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 	"github.com/wireops/wireops/internal/compose"
 	"github.com/wireops/wireops/internal/config"
 	"github.com/wireops/wireops/internal/crypto"
+	"github.com/wireops/wireops/internal/depgraph"
 	"github.com/wireops/wireops/internal/envvars"
 	"github.com/wireops/wireops/internal/manifest"
 	"github.com/wireops/wireops/internal/policy"
@@ -365,6 +367,7 @@ func (rr routeRegistrar) registerStackInspectionRoutes() {
 						"container_id":   s.ContainerID,
 						"container_name": s.ContainerName,
 						"ports":          s.Ports,
+						"health":         s.Health,
 					})
 				}
 				return e.JSON(http.StatusOK, result)
@@ -512,6 +515,89 @@ func (rr routeRegistrar) registerContainerReadRoutes() {
 	}).BindFunc(rbac.Require(rbac.CapViewLogs))
 }
 
+// composeResolutionError carries the HTTP status a compose-content lookup
+// failure should surface, so resolveCurrentComposeContent's callers can
+// translate it without each re-deriving the right status code.
+type composeResolutionError struct {
+	status  int
+	message string
+}
+
+func (e *composeResolutionError) Error() string { return e.message }
+
+func writeComposeResolutionError(e *core.RequestEvent, err error) error {
+	if ce, ok := err.(*composeResolutionError); ok {
+		return e.JSON(ce.status, map[string]string{"error": ce.message})
+	}
+	return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+}
+
+// resolveCurrentComposeContent returns the stack's current rendered compose
+// content (or, absent a rendered revision, its source: an imported local
+// file over the worker, or the repo's compose file) — the single source of
+// truth both /compose and the dependency-graph route read from.
+func (rr routeRegistrar) resolveCurrentComposeContent(ctx context.Context, stack *core.Record) (content []byte, filename string, err error) {
+	stackID := stack.Id
+
+	currentVersion := stack.GetInt("current_version")
+	if currentVersion > 0 {
+		renderer := sync.NewRenderer(rr.app)
+		filePath := renderer.GetRevisionFilePath(stackID, currentVersion)
+		data, readErr := os.ReadFile(filePath)
+		if readErr == nil {
+			return data, fmt.Sprintf("v%d.yml", currentVersion), nil
+		}
+		log.Printf("[routes] rendered compose v%d missing for stack %s: %v. Falling back to repo file.", currentVersion, stackID, readErr)
+	}
+
+	if stack.GetString("source_type") == "local" {
+		workerID := stack.GetString("worker")
+		worker, werr := rr.resolveWorker(workerID)
+		if werr != nil {
+			return nil, "", &composeResolutionError{status: http.StatusBadRequest, message: werr.Error()}
+		}
+		if rr.workerSvc == nil || !rr.workerSvc.IsConnected(workerID) {
+			return nil, "", &composeResolutionError{status: http.StatusServiceUnavailable, message: fmt.Sprintf(OfflineWorkerMsg, worker.GetString("hostname"))}
+		}
+		importPath := stack.GetString("import_path")
+		result, dispatchErr := rr.workerSvc.Dispatch(ctx, workerID, protocol.ReadFileCommand{
+			CommandID: fmt.Sprintf("compose-%s", stackID),
+			Path:      importPath,
+		})
+		if dispatchErr != nil || result.Error != "" {
+			return nil, "", &composeResolutionError{status: http.StatusNotFound, message: "compose file not found"}
+		}
+		data, decodeErr := base64.StdEncoding.DecodeString(result.Output)
+		if decodeErr != nil {
+			return nil, "", &composeResolutionError{status: http.StatusInternalServerError, message: "failed to decode compose file"}
+		}
+		return data, filepath.Base(importPath), nil
+	}
+
+	composePath := stack.GetString("compose_path")
+	if verr := safepath.ValidateComposePath(composePath); verr != nil {
+		return nil, "", &composeResolutionError{status: http.StatusBadRequest, message: verr.Error()}
+	}
+	composeFile := stack.GetString("compose_file")
+	if composeFile == "" {
+		composeFile = "docker-compose.yml"
+	}
+	if verr := safepath.ValidateComposeFile(composeFile); verr != nil {
+		return nil, "", &composeResolutionError{status: http.StatusBadRequest, message: verr.Error()}
+	}
+
+	workDir := filepath.Join(config.GetReposWorkspace(), stack.GetString("repository"))
+	if composePath != "" && composePath != "." {
+		workDir = filepath.Join(workDir, composePath)
+	}
+
+	data, readErr := os.ReadFile(filepath.Join(workDir, composeFile))
+	if readErr != nil {
+		return nil, "", &composeResolutionError{status: http.StatusNotFound, message: "compose file not found"}
+	}
+	return data, composeFile, nil
+}
+
 func (rr routeRegistrar) registerStackComposeRoute() {
 	rr.r.GET("/api/custom/stacks/{id}/compose", func(e *core.RequestEvent) error {
 		stackID := e.Request.PathValue("id")
@@ -520,66 +606,93 @@ func (rr routeRegistrar) registerStackComposeRoute() {
 			return e.JSON(http.StatusNotFound, map[string]string{"error": "stack not found"})
 		}
 
-		currentVersion := stack.GetInt("current_version")
-		if currentVersion > 0 {
-			renderer := sync.NewRenderer(rr.app)
-			filePath := renderer.GetRevisionFilePath(stackID, currentVersion)
-			data, err := os.ReadFile(filePath)
-			if err == nil {
-				return e.JSON(http.StatusOK, map[string]string{
-					"content":  string(data),
-					"filename": fmt.Sprintf("v%d.yml", currentVersion),
-				})
-			}
-			log.Printf("[routes] rendered compose v%d missing for stack %s: %v. Falling back to repo file.", currentVersion, stackID, err)
-		}
-
-		if stack.GetString("source_type") == "local" {
-			workerID := stack.GetString("worker")
-			worker, err := rr.resolveWorker(workerID)
-			if err != nil {
-				return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
-			}
-			if rr.workerSvc == nil || !rr.workerSvc.IsConnected(workerID) {
-				return e.JSON(http.StatusServiceUnavailable, map[string]string{"error": fmt.Sprintf(OfflineWorkerMsg, worker.GetString("hostname"))})
-			}
-			importPath := stack.GetString("import_path")
-			result, dispatchErr := rr.workerSvc.Dispatch(e.Request.Context(), workerID, protocol.ReadFileCommand{
-				CommandID: fmt.Sprintf("compose-%s", stackID),
-				Path:      importPath,
-			})
-			if dispatchErr != nil || result.Error != "" {
-				return e.JSON(http.StatusNotFound, map[string]string{"error": "compose file not found"})
-			}
-			data, decodeErr := base64.StdEncoding.DecodeString(result.Output)
-			if decodeErr != nil {
-				return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to decode compose file"})
-			}
-			return e.JSON(http.StatusOK, map[string]string{"content": string(data), "filename": filepath.Base(importPath)})
-		}
-
-		composePath := stack.GetString("compose_path")
-		if err := safepath.ValidateComposePath(composePath); err != nil {
-			return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
-		}
-		composeFile := stack.GetString("compose_file")
-		if composeFile == "" {
-			composeFile = "docker-compose.yml"
-		}
-		if err := safepath.ValidateComposeFile(composeFile); err != nil {
-			return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
-		}
-
-		workDir := filepath.Join(config.GetReposWorkspace(), stack.GetString("repository"))
-		if composePath != "" && composePath != "." {
-			workDir = filepath.Join(workDir, composePath)
-		}
-
-		data, err := os.ReadFile(filepath.Join(workDir, composeFile))
+		content, filename, err := rr.resolveCurrentComposeContent(e.Request.Context(), stack)
 		if err != nil {
-			return e.JSON(http.StatusNotFound, map[string]string{"error": "compose file not found"})
+			return writeComposeResolutionError(e, err)
 		}
-		return e.JSON(http.StatusOK, map[string]string{"content": string(data), "filename": composeFile})
+		return e.JSON(http.StatusOK, map[string]string{"content": string(content), "filename": filename})
+	}).BindFunc(rbac.Require(rbac.CapViewStacks))
+}
+
+// stackLiveServiceStatuses fetches live per-service status for the
+// dependency graph. Unlike registerStackInspectionRoutes' /services route,
+// it never surfaces an HTTP error for an offline/unresolvable worker: the
+// graph's structure comes entirely from the rendered compose file, so a
+// missing live overlay just means nodes render without a status/health
+// badge rather than the whole graph failing to load.
+func (rr routeRegistrar) stackLiveServiceStatuses(ctx context.Context, stack *core.Record) []compose.ServiceStatus {
+	workerID := stack.GetString("worker")
+	if worker, werr := rr.resolveWorker(workerID); werr == nil && rr.workerSvc != nil && rr.workerSvc.IsConnected(workerID) {
+		_ = worker
+		projectName := compose.ProjectName(stackWorkDir(rr.app, stack))
+		res, dispatchErr := rr.workerSvc.Dispatch(ctx, workerID, protocol.GetStatusCommand{
+			CommandID:   fmt.Sprintf("status-%s", stack.Id),
+			ProjectName: projectName,
+		})
+		if dispatchErr == nil && res.Error == "" {
+			var statuses []compose.ServiceStatus
+			if err := json.Unmarshal([]byte(res.Output), &statuses); err == nil {
+				return statuses
+			}
+		}
+	}
+
+	records, err := rr.app.FindAllRecords("stack_services", dbx.HashExp{"stack": stack.Id})
+	if err != nil {
+		return nil
+	}
+	statuses := make([]compose.ServiceStatus, 0, len(records))
+	for _, s := range records {
+		statuses = append(statuses, compose.ServiceStatus{
+			ServiceName:   s.GetString("service_name"),
+			Status:        s.GetString("status"),
+			ContainerID:   s.GetString("container_id"),
+			ContainerName: s.GetString("container_name"),
+		})
+	}
+	return statuses
+}
+
+// registerStackDependencyGraphRoute derives a dependency graph (services,
+// networks, volumes as nodes; depends_on/network/volume relationships as
+// edges) from the stack's current rendered compose file, overlaid with live
+// per-service status where available. Server+frontend only: no worker
+// protocol change, no docker invocation here — internal/depgraph parses the
+// already-rendered YAML.
+func (rr routeRegistrar) registerStackDependencyGraphRoute() {
+	rr.r.GET("/api/custom/stacks/{id}/dependency-graph", func(e *core.RequestEvent) error {
+		stackID := e.Request.PathValue("id")
+		stack, err := rr.app.FindRecordById("stacks", stackID)
+		if err != nil {
+			return e.JSON(http.StatusNotFound, map[string]string{"error": "stack not found"})
+		}
+
+		content, _, err := rr.resolveCurrentComposeContent(e.Request.Context(), stack)
+		if err != nil {
+			return writeComposeResolutionError(e, err)
+		}
+
+		graph, err := depgraph.BuildFromCompose(content)
+		if err != nil {
+			return e.JSON(http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
+		}
+
+		statusByService := make(map[string]compose.ServiceStatus, len(graph.Nodes))
+		for _, s := range rr.stackLiveServiceStatuses(e.Request.Context(), stack) {
+			statusByService[s.ServiceName] = s
+		}
+		for i := range graph.Nodes {
+			if graph.Nodes[i].Kind != depgraph.KindService {
+				continue
+			}
+			name := strings.TrimPrefix(graph.Nodes[i].ID, "service:")
+			if s, ok := statusByService[name]; ok {
+				graph.Nodes[i].Status = s.Status
+				graph.Nodes[i].Health = s.Health
+			}
+		}
+
+		return e.JSON(http.StatusOK, graph)
 	}).BindFunc(rbac.Require(rbac.CapViewStacks))
 }
 

@@ -261,6 +261,7 @@ const activeTab = ref('overview')
 const tabs = [
   { label: 'Overview', value: 'overview', icon: 'i-lucide-info' },
   { label: 'Variables', value: 'env', icon: 'i-lucide-variable' },
+  { label: 'Dependencies', value: 'dependencies', icon: 'i-lucide-git-fork' },
   { label: 'Sync Logs', value: 'logs', icon: 'i-lucide-scroll-text' },
 ]
 
@@ -999,6 +1000,11 @@ onMounted(() => {
       <EnvironmentVariablesCard target-type="stack" :target-id="stackId" @keys-changed="localEnvKeys = $event" />
 
       <GlobalVariablesExporter target-type="stack" :target-id="stackId" :local-keys="localEnvKeys" />
+    </div>
+
+    <!-- Dependencies -->
+    <div v-if="activeTab === 'dependencies'">
+      <StackDependencyGraph :stack-id="stackId" />
     </div>
 
     <!-- Sync Logs -->
