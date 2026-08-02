@@ -67,7 +67,12 @@ func Resolve(workDir string, sources []Source) ([]ResolvedFile, error) {
 			return nil, fmt.Errorf("config %q: %w", s.Name, err)
 		}
 
-		info, err := os.Stat(full)
+		// Lstat, not Stat: a symlink inside the repo can point anywhere on
+		// the host filesystem while its own lexical path stays within
+		// workDir, so following it would bypass containedJoin's check
+		// entirely. Reject symlinks (and anything else non-regular) here,
+		// before ever resolving/reading the target.
+		info, err := os.Lstat(full)
 		if err != nil {
 			return nil, fmt.Errorf("config %q: cannot stat %q: %w", s.Name, s.Path, err)
 		}
@@ -80,6 +85,10 @@ func Resolve(workDir string, sources []Source) ([]ResolvedFile, error) {
 			total = newTotal
 			results = append(results, files...)
 			continue
+		}
+
+		if !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("config %q: %q is not a regular file (symlinks are not allowed)", s.Name, s.Path)
 		}
 
 		if err := checkSize(s.Name, s.Path, info.Size(), &total); err != nil {
@@ -117,9 +126,15 @@ func resolveDir(s Source, full string, total int64) ([]ResolvedFile, int64, erro
 		}
 		relSlash := filepath.ToSlash(rel)
 
+		// d.Info() reflects the directory entry itself (lstat semantics),
+		// not any symlink target — same reasoning as the top-level Lstat
+		// check above: a symlink here could point outside workDir entirely.
 		info, err := d.Info()
 		if err != nil {
 			return fmt.Errorf("cannot stat %q: %w", relSlash, err)
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("%q is not a regular file (symlinks are not allowed)", relSlash)
 		}
 		if err := checkSize(s.Name, s.Path+"/"+relSlash, info.Size(), &total); err != nil {
 			return err

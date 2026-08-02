@@ -45,10 +45,11 @@ func createStackConfigFiles(app core.App) error {
 	}
 
 	col.Fields.Add(&core.RelationField{
-		Name:         "stack",
-		CollectionId: stacksCol.Id,
-		Required:     true,
-		MaxSelect:    1,
+		Name:          "stack",
+		CollectionId:  stacksCol.Id,
+		Required:      true,
+		MaxSelect:     1,
+		CascadeDelete: true,
 	})
 	col.Fields.Add(&core.TextField{Name: "name", Required: true})
 	col.Fields.Add(&core.TextField{Name: "source_path", Required: true})
@@ -80,10 +81,11 @@ func createJobConfigFiles(app core.App) error {
 	}
 
 	col.Fields.Add(&core.RelationField{
-		Name:         "job",
-		CollectionId: jobsCol.Id,
-		Required:     true,
-		MaxSelect:    1,
+		Name:          "job",
+		CollectionId:  jobsCol.Id,
+		Required:      true,
+		MaxSelect:     1,
+		CascadeDelete: true,
 	})
 	col.Fields.Add(&core.TextField{Name: "name", Required: true})
 	col.Fields.Add(&core.TextField{Name: "source_path", Required: true})

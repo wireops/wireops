@@ -314,6 +314,21 @@ func TestDefinitionValidate(t *testing.T) {
 			},
 			wantErr: `configs[1].name "a" is duplicated`,
 		},
+		{
+			name: "Config duplicate target",
+			def: Definition{
+				Name:        "Test Job",
+				Description: "A test job",
+				Image:       "alpine:latest",
+				Cron:        "*/5 * * * *",
+				Resources:   Resources{CPU: "0.5", Memory: "512m", Timeout: "10m"},
+				Configs: []ConfigEntry{
+					{Name: "a", Path: "a.conf", Target: "/same"},
+					{Name: "b", Path: "b.conf", Target: "/same"},
+				},
+			},
+			wantErr: `configs[1].target "/same" is duplicated`,
+		},
 	}
 
 	for _, tc := range cases {

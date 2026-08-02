@@ -181,6 +181,7 @@ func (d *Definition) Validate() error {
 	}
 
 	seenConfigNames := make(map[string]bool, len(d.Configs))
+	seenTargets := make(map[string]bool, len(d.Configs))
 	for i, c := range d.Configs {
 		if err := safepath.ValidateConfigName(c.Name); err != nil {
 			errs = append(errs, fmt.Sprintf("configs[%d].name is invalid: %v", i, err))
@@ -194,6 +195,10 @@ func (d *Definition) Validate() error {
 		}
 		if err := safepath.ValidateContainerMountPath(c.Target); err != nil {
 			errs = append(errs, fmt.Sprintf("configs[%d].target is invalid: %v", i, err))
+		} else if seenTargets[c.Target] {
+			errs = append(errs, fmt.Sprintf("configs[%d].target %q is duplicated", i, c.Target))
+		} else {
+			seenTargets[c.Target] = true
 		}
 		if c.Mode != "" {
 			if _, err := strconv.ParseUint(c.Mode, 8, 32); err != nil {

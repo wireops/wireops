@@ -30,6 +30,7 @@ func newTrackTestApp(t *testing.T) *tests.TestApp {
 	stackConfigFiles.Fields.Add(&core.TextField{Name: "source_path", Required: true})
 	stackConfigFiles.Fields.Add(&core.TextField{Name: "target", Required: true})
 	stackConfigFiles.Fields.Add(&core.TextField{Name: "checksum", Required: true})
+	stackConfigFiles.AddIndex("idx_stack_config_files_unique", true, "stack, name", "")
 	mustSaveTrackCollection(t, app, stackConfigFiles)
 
 	jobConfigFiles := core.NewBaseCollection("job_config_files")
@@ -38,6 +39,7 @@ func newTrackTestApp(t *testing.T) *tests.TestApp {
 	jobConfigFiles.Fields.Add(&core.TextField{Name: "source_path", Required: true})
 	jobConfigFiles.Fields.Add(&core.TextField{Name: "target", Required: true})
 	jobConfigFiles.Fields.Add(&core.TextField{Name: "checksum", Required: true})
+	jobConfigFiles.AddIndex("idx_job_config_files_unique", true, "job, name", "")
 	mustSaveTrackCollection(t, app, jobConfigFiles)
 
 	return app
@@ -138,6 +140,39 @@ func TestUpsertStackConfigFilesEmptyClearsRows(t *testing.T) {
 	}
 	if len(recs) != 0 {
 		t.Fatalf("expected 0 records, got %d", len(recs))
+	}
+}
+
+func TestUpsertStackConfigFilesRejectsDuplicateNameInSameStack(t *testing.T) {
+	app := newTrackTestApp(t)
+	stack := mustCreateTrackRecord(t, app, "stacks", map[string]any{"name": "s1"})
+
+	if err := UpsertStackConfigFiles(app, stack.Id, []TrackedFile{
+		{Name: "keep", SourcePath: "keep.conf", Target: "/keep", Checksum: "0"},
+	}); err != nil {
+		t.Fatalf("initial upsert: %v", err)
+	}
+
+	// Two rows sharing (stack, name) violate migration 65's unique index —
+	// this is exactly what a caller must avoid (e.g. by service-qualifying
+	// TrackedFile.Name when two services annotate the same friendly config
+	// name), so the upsert must fail rather than silently keep one row.
+	err := UpsertStackConfigFiles(app, stack.Id, []TrackedFile{
+		{Name: "dup", SourcePath: "a.conf", Target: "/a", Checksum: "1"},
+		{Name: "dup", SourcePath: "b.conf", Target: "/b", Checksum: "2"},
+	})
+	if err == nil {
+		t.Fatal("expected unique constraint violation for duplicate (stack, name)")
+	}
+
+	// The transaction must roll back entirely: the failed second call must
+	// not have deleted the row from the first call.
+	recs, findErr := app.FindAllRecords("stack_config_files", dbx.HashExp{"stack": stack.Id})
+	if findErr != nil {
+		t.Fatalf("find records: %v", findErr)
+	}
+	if len(recs) != 1 || recs[0].GetString("name") != "keep" {
+		t.Fatalf("expected rollback to leave the original 1 row untouched, got %d records: %+v", len(recs), recs)
 	}
 }
 

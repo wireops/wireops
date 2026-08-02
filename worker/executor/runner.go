@@ -752,8 +752,15 @@ func prepareJobConfigFiles(jobRunID string, files []protocol.ConfigFileSpec) ([]
 		return nil, noop, fmt.Errorf("invalid job run id: %w", err)
 	}
 
+	// Directory-source binds (groupDir below) are mounted directly into the
+	// job container, and RunJob never forces --user root — the container's
+	// image may run as an arbitrary non-root UID. That UID needs at least
+	// read+execute on every directory in the bind path to traverse it, so
+	// these are 0755, not 0700 (files themselves stay locked down by
+	// configFileMode, default 0444 world-readable, which is what actually
+	// gates content access here).
 	dir := filepath.Join(stackDir, "jobs", jobRunID, "configs")
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, noop, fmt.Errorf("failed to create job config dir: %w", err)
 	}
 	cleanup := func() {
@@ -810,7 +817,7 @@ func prepareJobConfigFiles(jobRunID string, files []protocol.ConfigFileSpec) ([]
 		}
 
 		groupDir := filepath.Join(dir, name)
-		if err := os.MkdirAll(groupDir, 0700); err != nil {
+		if err := os.MkdirAll(groupDir, 0755); err != nil {
 			cleanup()
 			return nil, noop, fmt.Errorf("failed to create config dir %q: %w", name, err)
 		}
@@ -821,7 +828,7 @@ func prepareJobConfigFiles(jobRunID string, files []protocol.ConfigFileSpec) ([]
 				return nil, noop, fmt.Errorf("failed to decode config %q: %w", f.Name, err)
 			}
 			path := filepath.Join(groupDir, filepath.FromSlash(f.RelPath))
-			if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 				cleanup()
 				return nil, noop, fmt.Errorf("failed to create config dir for %q: %w", f.Name, err)
 			}
@@ -841,6 +848,8 @@ func configFileMode(modeStr string) os.FileMode {
 	if modeStr != "" {
 		if parsed, err := strconv.ParseUint(modeStr, 8, 32); err == nil {
 			mode = os.FileMode(parsed)
+		} else {
+			log.Printf("[executor] invalid config file mode %q, falling back to 0444: %v", modeStr, err)
 		}
 	}
 	return mode

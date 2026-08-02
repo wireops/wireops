@@ -27,33 +27,39 @@ func UpsertJobConfigFiles(app core.App, jobID string, files []TrackedFile) error
 	return upsertTrackedFiles(app, "job_config_files", "job", jobID, files)
 }
 
+// upsertTrackedFiles replaces every row for targetID in one transaction, so
+// a failure partway through a delete-then-recreate pass (e.g. a bad record
+// on file N of M) rolls back instead of leaving a half-deleted, half-written
+// set of tracking rows.
 func upsertTrackedFiles(app core.App, collectionName, targetField, targetID string, files []TrackedFile) error {
 	collection, err := app.FindCollectionByNameOrId(collectionName)
 	if err != nil {
 		return err
 	}
 
-	existing, err := app.FindAllRecords(collectionName, dbx.HashExp{targetField: targetID})
-	if err != nil {
-		return err
-	}
-	for _, rec := range existing {
-		if err := app.Delete(rec); err != nil {
+	return app.RunInTransaction(func(txApp core.App) error {
+		existing, err := txApp.FindAllRecords(collectionName, dbx.HashExp{targetField: targetID})
+		if err != nil {
 			return err
 		}
-	}
-
-	for _, f := range files {
-		record := core.NewRecord(collection)
-		record.Set(targetField, targetID)
-		record.Set("name", f.Name)
-		record.Set("source_path", f.SourcePath)
-		record.Set("target", f.Target)
-		record.Set("checksum", f.Checksum)
-		if err := app.Save(record); err != nil {
-			return err
+		for _, rec := range existing {
+			if err := txApp.Delete(rec); err != nil {
+				return err
+			}
 		}
-	}
 
-	return nil
+		for _, f := range files {
+			record := core.NewRecord(collection)
+			record.Set(targetField, targetID)
+			record.Set("name", f.Name)
+			record.Set("source_path", f.SourcePath)
+			record.Set("target", f.Target)
+			record.Set("checksum", f.Checksum)
+			if err := txApp.Save(record); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
 }

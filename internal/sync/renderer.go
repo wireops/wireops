@@ -554,6 +554,12 @@ func injectConfigContent(configMap map[string]interface{}, services map[string]i
 	if len(directives) == 0 {
 		return nil, nil
 	}
+	// collectConfigDirectives iterates Go maps (services, and each service's
+	// annotations), so its output order is nondeterministic across calls.
+	// That order ends up in svc["configs"] (a YAML list, order-preserving),
+	// so leaving it unsorted would make the structural checksum flap on
+	// every render of identical input, forcing spurious redeploys.
+	sort.Slice(directives, func(i, j int) bool { return directives[i].key < directives[j].key })
 
 	sources := make([]configfiles.Source, len(directives))
 	for i, d := range directives {
@@ -580,10 +586,15 @@ func injectConfigContent(configMap map[string]interface{}, services map[string]i
 
 		for _, rf := range byKey[d.key] {
 			target := d.Target
-			trackName := d.Name
+			// Service-qualified (d.key, not the bare annotation Name): two
+			// services can annotate the same friendly Name for unrelated
+			// source/target pairs, and stack_config_files has a unique
+			// (stack, name) index — a bare Name would collide across
+			// services and fail the tracking upsert.
+			trackName := d.key
 			if rf.RelPath != "" {
 				target = strings.TrimRight(d.Target, "/") + "/" + rf.RelPath
-				trackName = d.Name + "/" + rf.RelPath
+				trackName = d.key + "/" + rf.RelPath
 			}
 			configKey := sanitizeConfigKey(d.key, rf.RelPath)
 

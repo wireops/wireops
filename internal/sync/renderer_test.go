@@ -293,6 +293,13 @@ services:
 	if len(res.ConfigFiles) != 2 {
 		t.Fatalf("expected 2 tracked configs (one per service), got %d: %+v", len(res.ConfigFiles), res.ConfigFiles)
 	}
+	// web and api both annotate the friendly name "app-cert" for unrelated
+	// mount points — TrackedFile.Name must be service-qualified (not the
+	// bare annotation name) or the two rows collide on stack_config_files'
+	// (stack, name) unique index and the tracking upsert fails outright.
+	if res.ConfigFiles[0].Name == res.ConfigFiles[1].Name {
+		t.Errorf("expected distinct tracked config names for web/api sharing the app-cert annotation, got both %q", res.ConfigFiles[0].Name)
+	}
 
 	contentStr := readRenderedFile(t, renderer, stack.Id, res.Version)
 	if !contains(contentStr, "target: /etc/ssl/web-cert.pem") {

@@ -153,6 +153,33 @@ func TestResolveAbsolutePathRejected(t *testing.T) {
 	}
 }
 
+func TestResolveSymlinkEscapeRejected(t *testing.T) {
+	dir := t.TempDir()
+	link := filepath.Join(dir, "link.conf")
+	if err := os.Symlink("/etc/hostname", link); err != nil {
+		t.Skipf("cannot create symlink on this platform: %v", err)
+	}
+
+	_, err := Resolve(dir, []Source{{Name: "evil", Path: "link.conf"}})
+	if err == nil {
+		t.Fatal("expected error for symlink pointing outside workDir")
+	}
+}
+
+func TestResolveSymlinkEscapeInsideDirectoryRejected(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "confd/a.conf", []byte("a"))
+	link := filepath.Join(dir, "confd", "evil.conf")
+	if err := os.Symlink("/etc/hostname", link); err != nil {
+		t.Skipf("cannot create symlink on this platform: %v", err)
+	}
+
+	_, err := Resolve(dir, []Source{{Name: "confd", Path: "confd"}})
+	if err == nil {
+		t.Fatal("expected error for symlink inside a directory source pointing outside workDir")
+	}
+}
+
 func TestResolvePerFileSizeLimit(t *testing.T) {
 	dir := t.TempDir()
 	big := make([]byte, MaxFileBytes+1)
