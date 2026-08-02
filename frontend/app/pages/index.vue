@@ -8,7 +8,7 @@ const { data: stacks, refresh } = useAsyncData('stacks', () =>
 )
 
 const { data: jobs, refresh: refreshJobs } = useAsyncData('dashboard_jobs', () =>
-  listJobs().catch(() => [])
+  listJobs().then(r => r.items).catch(() => [])
 )
 
 const { data: workers, refresh: refreshWorkers } = useAsyncData('dashboard_workers', () =>

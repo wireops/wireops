@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import type { AvailabilitySegment } from './StatusAvailabilityBar.vue'
-import { GROUP_ALL, GROUP_UNGROUPED, encodeGroupValue } from '../utils/job-filter'
+import { GROUP_ALL, GROUP_UNGROUPED, encodeGroupValue, decodeGroupValue } from '../utils/job-filter'
+import { usePaginatedList } from '../composables/usePaginatedList'
 
 const { $pb } = useNuxtApp()
-const { listJobs, triggerJobRun, getWorkers } = useApi()
+const { listJobs, listJobGroups, triggerJobRun, getWorkers } = useApi()
 const { subscribe } = useRealtime()
 const toast = useToast()
 const { isViewer } = usePermissions()
@@ -14,8 +15,6 @@ const { data: repos, refresh: refreshRepos } = useAsyncData('repos_for_jobs', ()
 const { data: jobWorkers, refresh: refreshJobWorkers } = useAsyncData('job_builder_workers', () =>
   getWorkers().catch(() => [])
 )
-
-const { data: jobs, refresh, pending } = useAsyncData('jobs_list', () => listJobs())
 
 const hasRepos = computed(() => (repos.value?.length ?? 0) > 0)
 const hasWorkers = computed(() =>
@@ -60,59 +59,87 @@ watch(() => route.query.group, (val) => {
   groupFilter.value = groupQueryToFilterValue(val)
 })
 
-const jobsWithReversedRuns = computed(() => {
-  if (!jobs.value) return []
-  return jobs.value.map((job: any) => ({
+const {
+  page, perPage, items: pagedJobs, totalItems: totalJobs, totalPages, loading: jobsLoading, reload: reloadJobs,
+} = usePaginatedList(
+  async ({ page: p, perPage: pp }) => {
+    const result = await listJobs({
+      page: p,
+      perPage: pp,
+      status: statusFilter.value !== 'all' ? statusFilter.value : undefined,
+      repository: repositoryFilter.value !== 'all' ? repositoryFilter.value : undefined,
+      search: searchQuery.value.trim() || undefined,
+    })
+    return { items: result.items, totalItems: result.total_items }
+  },
+  { perPage: 20, watchDebounced: [searchQuery, statusFilter, repositoryFilter] }
+)
+
+// group lives only inside each job's parsed job.yaml (see jobs.go's
+// buildJobsFilter comment), not a stored column, so it can't be pushed into
+// the paginated query above - it's applied client-side over whatever page is
+// currently loaded instead. That means a group filter can under-report
+// matches that exist on a different page; accepted trade-off until group
+// becomes a synced column (see FEATURE_PROPOSALS.md).
+const jobs = computed(() => {
+  if (!pagedJobs.value) return []
+  const withRuns = pagedJobs.value.map((job: any) => ({
     ...job,
     reversedRecentRuns: job.recent_runs ? [...job.recent_runs].reverse() : []
   }))
+  if (groupFilter.value === GROUP_ALL) return withRuns
+  return groupFilter.value === GROUP_UNGROUPED
+    ? withRuns.filter((job: any) => !job.definition?.group)
+    : withRuns.filter((job: any) => job.definition?.group === decodeGroupValue(groupFilter.value))
 })
 
-const repositoryOptions = computed(() => {
-  const seen = new Map<string, string>()
-  for (const job of jobsWithReversedRuns.value) {
-    if (job.repository?.id) seen.set(job.repository.id, job.repository.name)
-  }
-  return [
-    { label: 'All Repositories', value: 'all' },
-    ...[...seen.entries()].map(([value, label]) => ({ label, value }))
-  ]
-})
+const repositoryOptions = computed(() => [
+  { label: 'All Repositories', value: 'all' },
+  ...(repos.value || []).map((r: any) => ({ label: r.name, value: r.id }))
+])
+
+const { data: jobGroupsData, refresh: refreshJobGroups } = useAsyncData('job_groups', () =>
+  listJobGroups().catch(() => ({ groups: [], has_ungrouped: false }))
+)
 
 const groupOptions = computed(() => {
-  const groups = new Set(
-    jobsWithReversedRuns.value.map((job: any) => job.definition?.group).filter(Boolean)
-  )
   const items = [{ label: 'All groups', value: GROUP_ALL }]
-  if (jobsWithReversedRuns.value.some((job: any) => !job.definition?.group)) {
+  if (jobGroupsData.value?.has_ungrouped) {
     items.push({ label: 'Ungrouped', value: GROUP_UNGROUPED })
   }
-  for (const g of [...groups].sort()) {
-    items.push({ label: g as string, value: encodeGroupValue(g as string) })
+  for (const g of jobGroupsData.value?.groups || []) {
+    items.push({ label: g, value: encodeGroupValue(g) })
   }
   return items
 })
 
-const filteredJobs = computed(() =>
-  filterJobs(jobsWithReversedRuns.value, {
-    searchQuery: searchQuery.value,
-    statusFilter: statusFilter.value,
-    repositoryFilter: repositoryFilter.value,
-    groupFilter: groupFilter.value
-  })
+// Fleet-wide status counts for the availability bar and the "no jobs at
+// all" empty state - both need every job, not just the current filtered
+// page. A narrow field selection on the raw collection (bypassing the
+// job.yaml-parsing custom endpoint entirely) keeps this cheap.
+const { data: jobsAggregate, refresh: refreshJobsAggregate } = useAsyncData('jobs_aggregate', () =>
+  $pb.collection('scheduled_jobs').getFullList({ fields: 'id,status', requestKey: null })
 )
 
+async function refresh() {
+  await Promise.all([reloadJobs(), refreshJobsAggregate(), refreshJobGroups()])
+}
+
 onMounted(() => {
-  subscribe('scheduled_jobs', () => refresh())
+  subscribe('scheduled_jobs', () => {
+    reloadJobs(true)
+    refreshJobsAggregate()
+    refreshJobGroups()
+  })
   subscribe('job_runs', (data: any) => {
     const jobId = data.record?.job
-    if (jobId && jobs.value?.some((j: any) => j.id === jobId)) {
-      refresh()
+    if (jobId && pagedJobs.value?.some((j: any) => j.id === jobId)) {
+      reloadJobs(true)
     }
   })
   subscribe('repositories', () => {
     refreshRepos()
-    refresh()
+    reloadJobs(true)
   })
   subscribe('workers', () => refreshJobWorkers())
 })
@@ -129,7 +156,7 @@ async function toggleEnabled(job: any) {
   try {
     await $pb.collection('scheduled_jobs').update(job.id, { enabled: !job.enabled })
     toast.add({ title: job.enabled ? 'Job disabled' : 'Job enabled', color: 'success' })
-    refresh()
+    reloadJobs()
   } catch (e: any) {
     toast.add({ title: 'Failed to update job', description: e?.message, color: 'error' })
   }
@@ -220,12 +247,12 @@ function formatRelative(dateStr: string) {
         </div>
       </template>
 
-      <div v-if="pending && !jobs" class="space-y-3">
+      <div v-if="jobsLoading && !pagedJobs.length" class="space-y-3">
         <USkeleton v-for="i in 3" :key="i" class="h-20 w-full" />
       </div>
 
       <EmptyState
-        v-else-if="!jobs || jobs.length === 0"
+        v-else-if="!jobsAggregate || jobsAggregate.length === 0"
         icon="i-lucide-calendar-clock"
         title="No jobs yet"
         :description="emptyStateStep.description"
@@ -277,12 +304,12 @@ function formatRelative(dateStr: string) {
 
         <StatusAvailabilityBar
           v-model="statusFilter"
-          :items="jobs"
+          :items="jobsAggregate"
           :segments="jobStatusSegments"
           aria-label="Job status availability breakdown"
         />
 
-        <div v-if="filteredJobs.length === 0" class="text-center py-12" role="status" aria-live="polite">
+        <div v-if="!jobsLoading && jobs.length === 0" class="text-center py-12" role="status" aria-live="polite">
           <UIcon name="i-lucide-search-x" class="w-12 h-12 text-gray-300 mx-auto mb-4" />
           <p class="text-gray-500">No jobs found</p>
           <p class="text-xs text-gray-400 mt-1">Try adjusting your search</p>
@@ -290,7 +317,7 @@ function formatRelative(dateStr: string) {
 
         <div v-else class="space-y-3">
           <div
-            v-for="job in filteredJobs"
+            v-for="job in jobs"
             :key="job.id"
             class="flex items-center justify-between p-4 bg-gray-50 dark:bg-carbon-800/40 rounded-xl border border-gray-200 border-l-4 dark:border-carbon-700 hover:shadow-[0_0_0_2px_rgba(255,198,0,0.35),0_0_20px_rgba(255,198,0,0.12)] transition-all"
             :class="statusBorderClass(job.status)"
@@ -419,6 +446,15 @@ function formatRelative(dateStr: string) {
               </template>
             </div>
           </div>
+        </div>
+
+        <div v-if="totalPages > 1" class="flex justify-between items-center pt-2">
+          <UPagination
+            v-model="page"
+            :total="totalJobs"
+            :items-per-page="perPage"
+          />
+          <span class="text-xs text-gray-500">Page {{ page }} of {{ totalPages }}</span>
         </div>
         </div>
       </UCard>

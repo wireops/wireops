@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { h, ref } from 'vue'
 import StacksPanel from '../StacksPanel.vue'
 import StackCard from '../StackCard.vue'
@@ -8,13 +8,29 @@ import RepositoryIcon from '../RepositoryIcon.vue'
 import GithubIcon from '../GithubIcon.vue'
 import GenericIcon from '../GenericIcon.vue'
 
+const stackFixture = {
+  id: 'stack-1',
+  name: 'Payments',
+  worker: 'worker-1',
+  status: 'active',
+  group: '',
+  deployed_at: '2024-01-01 00:00:00.000Z',
+  expand: {
+    repository: { name: 'repo-a', platform: 'github', status: 'connected' },
+    worker: { id: 'worker-1', hostname: 'worker-a', status: 'ACTIVE' },
+  },
+  containers_list: [],
+}
+
 describe('StacksPanel', () => {
-  it('renders a keyboard-focusable link for each stack with a status badge', () => {
+  it('renders a keyboard-focusable link for each stack with a status badge', async () => {
     const refresh = vi.fn()
     ;(globalThis as any).useNuxtApp = () => ({
       $pb: {
+        filter: (raw: string) => raw,
         collection: () => ({
-          getFullList: vi.fn(),
+          getFullList: vi.fn().mockResolvedValue([stackFixture]),
+          getList: vi.fn().mockResolvedValue({ items: [stackFixture], totalItems: 1 }),
         }),
       },
     })
@@ -50,19 +66,7 @@ describe('StacksPanel', () => {
       }
 
       return {
-        data: ref([
-          {
-            id: 'stack-1',
-            name: 'Payments',
-            worker: 'worker-1',
-            status: 'active',
-            expand: {
-              repository: { name: 'repo-a', platform: 'github', status: 'connected' },
-              worker: { id: 'worker-1', hostname: 'worker-a', status: 'ACTIVE' },
-            },
-            containers_list: [],
-          },
-        ]),
+        data: ref([stackFixture]),
         refresh,
       }
     }
@@ -110,9 +114,16 @@ describe('StacksPanel', () => {
           ImportStackModal: true,
           StackContainersList: true,
           UModal: { template: '<div><slot name="body" /></div>' },
+          UPagination: {
+            setup() {
+              return () => h('div')
+            },
+          },
         },
       },
     })
+
+    await flushPromises()
 
     const stackLinks = wrapper.findAll('a[aria-label="Open stack Payments"]')
     expect(stackLinks).toHaveLength(1)

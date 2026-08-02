@@ -28,12 +28,6 @@ export function useAuth() {
     navigateTo('/login')
   }
 
-  const changePassword = async (oldPassword: string, password: string, passwordConfirm: string) => {
-    const userId = $pb.authStore.record?.id
-    if (!userId) throw new Error('Not authenticated')
-    return $pb.collection('users').update(userId, { oldPassword, password, passwordConfirm })
-  }
-
   const requestPasswordReset = async (email: string) => {
     return $pb.collection('users').requestPasswordReset(email)
   }
@@ -85,5 +79,5 @@ export function useAuth() {
 
   const isAuthenticated = computed(() => $pb.authStore.isValid)
 
-  return { user, login, logout, changePassword, requestPasswordReset, confirmPasswordReset, isAuthenticated, getSSOProviders, loginWithSSO }
+  return { user, login, logout, requestPasswordReset, confirmPasswordReset, isAuthenticated, getSSOProviders, loginWithSSO }
 }

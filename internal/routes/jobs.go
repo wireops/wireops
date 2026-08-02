@@ -5,10 +5,13 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/router"
+	"github.com/pocketbase/pocketbase/tools/search"
 
 	"github.com/wireops/wireops/internal/config"
 	"github.com/wireops/wireops/internal/job"
@@ -77,11 +80,100 @@ func resolveJobParams(app core.App, e *core.RequestEvent) (*core.Record, string,
 	return rec, repoWorkspace, repoID, jobFile, nil
 }
 
-// RegisterJobRoutes mounts custom REST endpoints for scheduled jobs.
-func RegisterJobRoutes(r *router.Router[*core.RequestEvent], app core.App, sched *jobscheduler.Scheduler) {
-	// List all scheduled jobs with their definitions resolved server-side.
-	r.GET("/api/custom/jobs", func(e *core.RequestEvent) error {
-		records, err := app.FindAllRecords("scheduled_jobs")
+type jobListResponse struct {
+	Items      []jobListItem `json:"items"`
+	TotalItems int           `json:"total_items"`
+}
+
+// buildJobsFilter turns the list endpoint's page/status/repository/search
+// query params into a PocketBase filter string + bind params. status and
+// repository are real scheduled_jobs columns so they can be pushed to the
+// DB; group can't be (it only exists inside the parsed job.yaml, not a
+// stored column) so it isn't handled here - see the /api/custom/jobs/groups
+// endpoint below for that facet.
+func buildJobsFilter(e *core.RequestEvent) (string, dbx.Params) {
+	q := e.Request.URL.Query()
+	clauses := []string{}
+	params := dbx.Params{}
+
+	if status := q.Get("status"); status != "" && status != "all" {
+		clauses = append(clauses, "status = {:status}")
+		params["status"] = status
+	}
+	if repository := q.Get("repository"); repository != "" && repository != "all" {
+		clauses = append(clauses, "repository = {:repository}")
+		params["repository"] = repository
+	}
+	if search := strings.TrimSpace(q.Get("search")); search != "" {
+		clauses = append(clauses, "name ~ {:search}")
+		params["search"] = search
+	}
+
+	return strings.Join(clauses, " && "), params
+}
+
+// countRecordsByPBFilter counts records matching a PocketBase filter
+// expression (the same "field ~ {:x}" syntax FindRecordsByFilter accepts)
+// without fetching the matching rows themselves - app.CountRecords only
+// takes raw dbx expressions, which don't understand PocketBase filter
+// operators like "~", so the filter has to be resolved the same way
+// FindRecordsByFilter resolves it internally.
+func countRecordsByPBFilter(app core.App, collectionNameOrId string, filter string, params dbx.Params) (int64, error) {
+	collection, err := app.FindCollectionByNameOrId(collectionNameOrId)
+	if err != nil {
+		return 0, err
+	}
+
+	q := app.RecordQuery(collection).Select("count(*)")
+
+	if filter != "" {
+		resolver := core.NewRecordFieldResolver(app, collection, nil, true)
+		expr, err := search.FilterData(filter).BuildExpr(resolver, params)
+		if err != nil {
+			return 0, err
+		}
+		q.AndWhere(expr)
+		if err := resolver.UpdateQuery(q); err != nil {
+			return 0, err
+		}
+	}
+
+	var total int64
+	if err := q.Row(&total); err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
+func parsePageParam(v string, def int) int {
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 {
+		return def
+	}
+	return n
+}
+
+// handleListJobs lists scheduled jobs with their definitions resolved
+// server-side, paged and filtered at the DB level before the (relatively
+// expensive) per-job job.yaml parse + repo/run lookups run - those only
+// happen for the page actually being returned, not the whole collection
+// like before.
+func handleListJobs(app core.App) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
+		page := parsePageParam(e.Request.URL.Query().Get("page"), 1)
+		perPage := parsePageParam(e.Request.URL.Query().Get("per_page"), 24)
+		if perPage > 200 {
+			perPage = 200
+		}
+
+		filter, params := buildJobsFilter(e)
+
+		total, err := countRecordsByPBFilter(app, "scheduled_jobs", filter, params)
+		if err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+
+		records, err := app.FindRecordsByFilter("scheduled_jobs", filter, "-created", perPage, (page-1)*perPage, params)
 		if err != nil {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
@@ -145,8 +237,55 @@ func RegisterJobRoutes(r *router.Router[*core.RequestEvent], app core.App, sched
 			items = append(items, item)
 		}
 
-		return e.JSON(http.StatusOK, items)
-	}).BindFunc(rbac.Require(rbac.CapViewJobs))
+		return e.JSON(http.StatusOK, jobListResponse{Items: items, TotalItems: int(total)})
+	}
+}
+
+// handleListJobGroups is a lightweight companion to handleListJobs,
+// returning only the group parsed out of each job's job.yaml. group isn't a
+// stored column (see buildJobsFilter's comment) so it can't be
+// filtered/paged at the DB level; the UI uses this to populate the group
+// filter dropdown without paying for the repo/run enrichment the main list
+// does.
+func handleListJobGroups(app core.App) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
+		records, err := app.FindAllRecords("scheduled_jobs")
+		if err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+
+		repoWorkspace := config.GetReposWorkspace()
+		seen := map[string]bool{}
+		groups := []string{}
+		hasUngrouped := false
+
+		for _, rec := range records {
+			def, derr := job.ParseJobFile(repoWorkspace, rec.GetString("repository"), rec.GetString("job_file"))
+			group := ""
+			if derr == nil && def != nil {
+				group = def.Group
+			}
+			if group == "" {
+				hasUngrouped = true
+				continue
+			}
+			if !seen[group] {
+				seen[group] = true
+				groups = append(groups, group)
+			}
+		}
+
+		return e.JSON(http.StatusOK, map[string]any{
+			"groups":        groups,
+			"has_ungrouped": hasUngrouped,
+		})
+	}
+}
+
+// RegisterJobRoutes mounts custom REST endpoints for scheduled jobs.
+func RegisterJobRoutes(r *router.Router[*core.RequestEvent], app core.App, sched *jobscheduler.Scheduler) {
+	r.GET("/api/custom/jobs", handleListJobs(app)).BindFunc(rbac.Require(rbac.CapViewJobs))
+	r.GET("/api/custom/jobs/groups", handleListJobGroups(app)).BindFunc(rbac.Require(rbac.CapViewJobs))
 
 	// Cancel a running job run (kills the container).
 	r.POST("/api/custom/job-runs/{runId}/cancel", func(e *core.RequestEvent) error {
