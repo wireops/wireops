@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/wireops/wireops/internal/protocol"
 )
 
 func TestMatchPattern(t *testing.T) {
@@ -127,6 +129,104 @@ func TestPrepareComposeFileCanKeepWorkDirForDebugging(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(workDir, composeFile)); err != nil {
 		t.Fatalf("expected compose file to be kept after cleanup: %v", err)
 	}
+}
+
+func TestPrepareJobConfigFilesSingleFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldStackDir := stackDir
+	stackDir = tmpDir
+	defer func() { stackDir = oldStackDir }()
+
+	specs := []protocol.ConfigFileSpec{
+		{Name: "nginx-conf", Target: "/etc/nginx/nginx.conf", ContentB64: base64.StdEncoding.EncodeToString([]byte("server {}"))},
+	}
+	volumes, cleanup, err := prepareJobConfigFiles("run-1", specs)
+	if err != nil {
+		t.Fatalf("prepareJobConfigFiles failed: %v", err)
+	}
+	defer cleanup()
+
+	if len(volumes) != 1 {
+		t.Fatalf("expected 1 volume, got %d: %v", len(volumes), volumes)
+	}
+	if !strings.HasSuffix(volumes[0], ":/etc/nginx/nginx.conf:ro") {
+		t.Errorf("expected file bind mount at /etc/nginx/nginx.conf, got %q", volumes[0])
+	}
+	hostPath := strings.TrimSuffix(volumes[0], ":/etc/nginx/nginx.conf:ro")
+	content, err := os.ReadFile(hostPath)
+	if err != nil {
+		t.Fatalf("expected written config file: %v", err)
+	}
+	if string(content) != "server {}" {
+		t.Errorf("unexpected content: %q", content)
+	}
+}
+
+func TestPrepareJobConfigFilesDirectoryGroup(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldStackDir := stackDir
+	stackDir = tmpDir
+	defer func() { stackDir = oldStackDir }()
+
+	specs := []protocol.ConfigFileSpec{
+		{Name: "confd", RelPath: "a.conf", Target: "/etc/app/conf.d", ContentB64: base64.StdEncoding.EncodeToString([]byte("A"))},
+		{Name: "confd", RelPath: "nested/b.conf", Target: "/etc/app/conf.d", ContentB64: base64.StdEncoding.EncodeToString([]byte("B"))},
+	}
+	volumes, cleanup, err := prepareJobConfigFiles("run-2", specs)
+	if err != nil {
+		t.Fatalf("prepareJobConfigFiles failed: %v", err)
+	}
+	defer cleanup()
+
+	// Directory sources bind-mount once, not once per file.
+	if len(volumes) != 1 {
+		t.Fatalf("expected 1 volume (single directory bind), got %d: %v", len(volumes), volumes)
+	}
+	if !strings.HasSuffix(volumes[0], ":/etc/app/conf.d:ro") {
+		t.Errorf("expected directory bind mount at /etc/app/conf.d, got %q", volumes[0])
+	}
+	hostDir := strings.TrimSuffix(volumes[0], ":/etc/app/conf.d:ro")
+
+	a, err := os.ReadFile(filepath.Join(hostDir, "a.conf"))
+	if err != nil || string(a) != "A" {
+		t.Errorf("expected a.conf with content A, got content=%q err=%v", a, err)
+	}
+	b, err := os.ReadFile(filepath.Join(hostDir, "nested", "b.conf"))
+	if err != nil || string(b) != "B" {
+		t.Errorf("expected nested/b.conf with content B, got content=%q err=%v", b, err)
+	}
+}
+
+func TestPrepareJobConfigFilesRejectsRelPathTraversal(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldStackDir := stackDir
+	stackDir = tmpDir
+	defer func() { stackDir = oldStackDir }()
+
+	specs := []protocol.ConfigFileSpec{
+		{Name: "confd", RelPath: "../../etc/passwd", Target: "/etc/app/conf.d", ContentB64: base64.StdEncoding.EncodeToString([]byte("evil"))},
+		{Name: "confd", RelPath: "a.conf", Target: "/etc/app/conf.d", ContentB64: base64.StdEncoding.EncodeToString([]byte("A"))},
+	}
+	_, _, err := prepareJobConfigFiles("run-3", specs)
+	if err == nil {
+		t.Fatal("expected error for rel_path escaping config directory")
+	}
+}
+
+func TestPrepareJobConfigFilesEmpty(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldStackDir := stackDir
+	stackDir = tmpDir
+	defer func() { stackDir = oldStackDir }()
+
+	volumes, cleanup, err := prepareJobConfigFiles("run-4", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(volumes) != 0 {
+		t.Errorf("expected no volumes, got %v", volumes)
+	}
+	cleanup() // must not panic
 }
 
 func TestSafeEnv(t *testing.T) {

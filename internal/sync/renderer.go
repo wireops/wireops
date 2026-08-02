@@ -19,9 +19,11 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/wireops/wireops/internal/compose"
 	"github.com/wireops/wireops/internal/config"
+	"github.com/wireops/wireops/internal/configfiles"
 	"github.com/wireops/wireops/internal/crypto"
 	"github.com/wireops/wireops/internal/lint"
 	"github.com/wireops/wireops/internal/policy"
+	"github.com/wireops/wireops/internal/safepath"
 )
 
 // RenderResult represents the result of the label injection process.
@@ -29,6 +31,12 @@ type RenderResult struct {
 	Version      int
 	Checksum     string
 	RenderedPath string // e.g., v5.yml
+
+	// ConfigFiles lists every git-committed file resolved from
+	// dev.wireops.config.<name> service annotations and embedded into this
+	// revision. Used by the caller to populate the stack_config_files
+	// tracking table.
+	ConfigFiles []configfiles.TrackedFile
 }
 
 // ServiceOverride holds render-time (not committed to git) overrides for a single
@@ -151,6 +159,17 @@ func (r *Renderer) GenerateRevision(
 	services, ok := servicesRaw.(map[string]interface{})
 	if !ok || len(services) == 0 {
 		return nil, fmt.Errorf("services block is invalid or empty")
+	}
+
+	// Synthesize the compose config's native `configs:` element (top-level
+	// content block + each service's own `configs:` list entry) entirely
+	// from dev.wireops.config.<name> annotations on the service — no
+	// wireops.yaml involvement at all. The annotation value is
+	// "<repo-relative source>:<in-container target>"; source may be a file
+	// or a directory (recursively expanded, one config entry per file).
+	trackedConfigs, err := injectConfigContent(configMap, services, workDir)
+	if err != nil {
+		return nil, err
 	}
 
 	if len(overrides) > 0 {
@@ -298,6 +317,7 @@ func (r *Renderer) GenerateRevision(
 			Version:      currentVersion,
 			Checksum:     checksum,
 			RenderedPath: fmt.Sprintf("v%d.yml", currentVersion),
+			ConfigFiles:  trackedConfigs,
 		}, nil
 	}
 
@@ -341,6 +361,7 @@ func (r *Renderer) GenerateRevision(
 		Version:      nextVersion,
 		Checksum:     checksum,
 		RenderedPath: fileName,
+		ConfigFiles:  trackedConfigs,
 	}, nil
 }
 
@@ -499,6 +520,176 @@ func stripWireopsMetadata(m map[string]interface{}) {
 			delete(m, k)
 		}
 	}
+}
+
+// configAnnotationPrefix marks a service annotation as a config mount
+// directive: `dev.wireops.config.<name>: <repo-relative source>:<in-container
+// target>`. <name> is just an arbitrary label distinguishing multiple
+// annotations on the same service — all resolution info (source, target)
+// lives in the value, so there is no wireops.yaml involvement at all.
+// Mirrors the existing `customization.image.slug` convention
+// (internal/depgraph/graph.go) of expressing per-service intent as a
+// compose annotation read back server-side.
+const configAnnotationPrefix = "dev.wireops.config."
+
+// injectConfigContent synthesizes the compose config's native `configs:`
+// element — the top-level content block plus each service's own `configs:`
+// list entry — entirely from dev.wireops.config.<name> annotations on the
+// service. The user's raw compose file never needs to declare `configs:`
+// itself. Source may name a file or a directory (recursively expanded into
+// one synthesized config entry per file, mounted under the declared target).
+//
+// It returns the resolved files for tracking, and errors on a malformed
+// annotation value or an unresolvable/oversized source.
+//
+// Because content is embedded directly into configMap before the checksum
+// is computed (unlike env vars, which stay as literal `${VAR}` placeholders
+// under --no-interpolate), a config content-only change is already captured
+// by the structural checksum — no separate HMAC fold is needed here.
+func injectConfigContent(configMap map[string]interface{}, services map[string]interface{}, workDir string) ([]configfiles.TrackedFile, error) {
+	directives, err := collectConfigDirectives(services)
+	if err != nil {
+		return nil, err
+	}
+	if len(directives) == 0 {
+		return nil, nil
+	}
+
+	sources := make([]configfiles.Source, len(directives))
+	for i, d := range directives {
+		sources[i] = configfiles.Source{Name: d.key, Path: d.Source}
+	}
+	resolved, err := configfiles.Resolve(workDir, sources)
+	if err != nil {
+		return nil, err
+	}
+	byKey := make(map[string][]configfiles.ResolvedFile, len(directives))
+	for _, rf := range resolved {
+		byKey[rf.Name] = append(byKey[rf.Name], rf)
+	}
+
+	topConfigs, _ := configMap["configs"].(map[string]interface{})
+	if topConfigs == nil {
+		topConfigs = map[string]interface{}{}
+	}
+
+	var tracked []configfiles.TrackedFile
+	for _, d := range directives {
+		svc := services[d.ServiceName].(map[string]interface{})
+		existing, _ := svc["configs"].([]interface{})
+
+		for _, rf := range byKey[d.key] {
+			target := d.Target
+			trackName := d.Name
+			if rf.RelPath != "" {
+				target = strings.TrimRight(d.Target, "/") + "/" + rf.RelPath
+				trackName = d.Name + "/" + rf.RelPath
+			}
+			configKey := sanitizeConfigKey(d.key, rf.RelPath)
+
+			topConfigs[configKey] = map[string]interface{}{"content": string(rf.Content)}
+			existing = append(existing, map[string]interface{}{"source": configKey, "target": target})
+			tracked = append(tracked, configfiles.TrackedFile{
+				Name:       trackName,
+				SourcePath: rf.SourcePath,
+				Target:     target,
+				Checksum:   rf.Checksum,
+			})
+		}
+
+		svc["configs"] = existing
+		services[d.ServiceName] = svc
+	}
+
+	configMap["configs"] = topConfigs
+	return tracked, nil
+}
+
+// configDirective is a single dev.wireops.config.<name> directive parsed off
+// a service's annotations, plus a per-(service,name) key unique enough to
+// key the configfiles.Resolve() call and the synthesized compose config
+// name (two services independently annotating an unrelated source/target
+// pair under the same friendly Name must not collide).
+type configDirective struct {
+	ServiceName string
+	Name        string
+	Source      string
+	Target      string
+	key         string
+}
+
+// collectConfigDirectives scans every service's annotations (and
+// deploy.annotations) for dev.wireops.config.<name> directives, validating
+// each value's "<source>:<target>" shape.
+func collectConfigDirectives(services map[string]interface{}) ([]configDirective, error) {
+	var directives []configDirective
+	for serviceName, svcRaw := range services {
+		svc, ok := svcRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		annotations := NormalizeToMap(svc["annotations"])
+		merged := map[string]interface{}{}
+		for k, v := range annotations {
+			merged[k] = v
+		}
+		if deploy, ok := svc["deploy"].(map[string]interface{}); ok {
+			for k, v := range NormalizeToMap(deploy["annotations"]) {
+				merged[k] = v
+			}
+		}
+
+		for k, v := range merged {
+			if !strings.HasPrefix(k, configAnnotationPrefix) {
+				continue
+			}
+			name := strings.TrimPrefix(k, configAnnotationPrefix)
+			if err := safepath.ValidateConfigName(name); err != nil {
+				return nil, fmt.Errorf("service %q: invalid config annotation name %q: %w", serviceName, name, err)
+			}
+			value, _ := v.(string)
+			source, target, err := splitConfigMapping(value)
+			if err != nil {
+				return nil, fmt.Errorf("service %q: %s%s: %w", serviceName, configAnnotationPrefix, name, err)
+			}
+			directives = append(directives, configDirective{
+				ServiceName: serviceName,
+				Name:        name,
+				Source:      source,
+				Target:      target,
+				key:         serviceName + "__" + name,
+			})
+		}
+	}
+	return directives, nil
+}
+
+// splitConfigMapping parses a "<source>:<target>" annotation value: source
+// is a repo-relative file or directory, target is an absolute in-container
+// path. Split on the first ':' — source paths must not contain one.
+func splitConfigMapping(value string) (source, target string, err error) {
+	idx := strings.Index(value, ":")
+	if idx <= 0 || idx == len(value)-1 {
+		return "", "", fmt.Errorf(`expected "<source>:<target>", got %q`, value)
+	}
+	source, target = value[:idx], value[idx+1:]
+	if _, err := safepath.CleanRelativePath(source); err != nil {
+		return "", "", fmt.Errorf("invalid source %q: %w", source, err)
+	}
+	if err := safepath.ValidateContainerMountPath(target); err != nil {
+		return "", "", fmt.Errorf("invalid target %q: %w", target, err)
+	}
+	return source, target, nil
+}
+
+// sanitizeConfigKey turns a (service__name, relPath) pair into a compose
+// config key — safe characters only, unique per resolved file.
+func sanitizeConfigKey(key, relPath string) string {
+	if relPath == "" {
+		return key
+	}
+	return key + "-" + strings.NewReplacer("/", "-", " ", "_").Replace(relPath)
 }
 
 // NormalizeToMap converts a label/annotation block (which can be a map or a list) into a map.

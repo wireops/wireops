@@ -143,7 +143,7 @@ func TestDefinitionValidate(t *testing.T) {
 		{
 			name: "Missing description",
 			def: Definition{
-				Name: "Test Job",
+				Name:  "Test Job",
 				Image: "alpine:latest",
 				Cron:  "*/5 * * * *",
 				Resources: Resources{
@@ -243,13 +243,76 @@ func TestDefinitionValidate(t *testing.T) {
 			name: "Multiple missing fields",
 			def: Definition{
 				Name: "",
-				Cron:  "",
+				Cron: "",
 				Resources: Resources{
 					CPU:    "",
 					Memory: "",
 				},
 			},
 			wantErr: "name is required, description is required, image is required, cron is required, resources.cpu is required, resources.memory is required, resources.timeout is required",
+		},
+		{
+			name: "Valid config entry",
+			def: Definition{
+				Name:        "Test Job",
+				Description: "A test job",
+				Image:       "alpine:latest",
+				Cron:        "*/5 * * * *",
+				Resources:   Resources{CPU: "0.5", Memory: "512m", Timeout: "10m"},
+				Configs:     []ConfigEntry{{Name: "app-settings", Path: "settings.json", Target: "/app/settings.json"}},
+			},
+			wantErr: "",
+		},
+		{
+			name: "Config missing target",
+			def: Definition{
+				Name:        "Test Job",
+				Description: "A test job",
+				Image:       "alpine:latest",
+				Cron:        "*/5 * * * *",
+				Resources:   Resources{CPU: "0.5", Memory: "512m", Timeout: "10m"},
+				Configs:     []ConfigEntry{{Name: "a", Path: "a.conf"}},
+			},
+			wantErr: "configs[0].target is invalid",
+		},
+		{
+			name: "Config relative target",
+			def: Definition{
+				Name:        "Test Job",
+				Description: "A test job",
+				Image:       "alpine:latest",
+				Cron:        "*/5 * * * *",
+				Resources:   Resources{CPU: "0.5", Memory: "512m", Timeout: "10m"},
+				Configs:     []ConfigEntry{{Name: "a", Path: "a.conf", Target: "relative/path"}},
+			},
+			wantErr: "configs[0].target is invalid",
+		},
+		{
+			name: "Config invalid mode",
+			def: Definition{
+				Name:        "Test Job",
+				Description: "A test job",
+				Image:       "alpine:latest",
+				Cron:        "*/5 * * * *",
+				Resources:   Resources{CPU: "0.5", Memory: "512m", Timeout: "10m"},
+				Configs:     []ConfigEntry{{Name: "a", Path: "a.conf", Target: "/a", Mode: "999"}},
+			},
+			wantErr: "configs[0].mode is invalid octal",
+		},
+		{
+			name: "Config duplicate name",
+			def: Definition{
+				Name:        "Test Job",
+				Description: "A test job",
+				Image:       "alpine:latest",
+				Cron:        "*/5 * * * *",
+				Resources:   Resources{CPU: "0.5", Memory: "512m", Timeout: "10m"},
+				Configs: []ConfigEntry{
+					{Name: "a", Path: "a.conf", Target: "/a"},
+					{Name: "a", Path: "b.conf", Target: "/b"},
+				},
+			},
+			wantErr: `configs[1].name "a" is duplicated`,
 		},
 	}
 

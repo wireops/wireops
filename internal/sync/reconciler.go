@@ -22,6 +22,7 @@ import (
 
 	"github.com/wireops/wireops/internal/audit"
 	"github.com/wireops/wireops/internal/config"
+	"github.com/wireops/wireops/internal/configfiles"
 	"github.com/wireops/wireops/internal/constants"
 	"github.com/wireops/wireops/internal/crypto"
 	"github.com/wireops/wireops/internal/envvars"
@@ -349,6 +350,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		return fmt.Errorf("%s", errMsg)
 	}
 	renderDuration := time.Since(renderStart).Milliseconds()
+	r.upsertStackConfigTracking(stackID, renderRes.ConfigFiles)
 
 	// If the renderer found no changes (same checksum -> same version returned),
 	// the compose file content is identical to what's already deployed. Skip the
@@ -661,6 +663,7 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 		return fmt.Errorf("%s", errMsg)
 	}
 	renderDuration := time.Since(renderStart).Milliseconds()
+	r.upsertStackConfigTracking(stackID, renderRes.ConfigFiles)
 
 	syncLog, err := r.createSyncLog(stackID, "manual", commitSHA, "rollback to "+commitSHA)
 	if err != nil {
@@ -946,6 +949,7 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 		errMsg := fmt.Sprintf("failed to generate label revision on redeploy: %v", err)
 		return failRedeploy(errMsg, time.Since(start).Milliseconds(), "sync")
 	}
+	r.upsertStackConfigTracking(stackID, renderRes.ConfigFiles)
 
 	renderedFilePath := r.renderer.GetRevisionFilePath(stackID, renderRes.Version)
 	var output string
@@ -1206,6 +1210,10 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 		log.Printf("[reconciler] warning: failed to ensure .gitignore for stack %s (local sync): %v", stackID, gitignoreErr)
 	}
 
+	// Local stacks (source_type=local) have only the single compose file
+	// copied from the worker host into workDir, not a git checkout — a
+	// dev.wireops.config.* annotation here would simply fail to resolve its
+	// source, which is the expected outcome (configs is a GitOps-only feature).
 	renderRes, err := r.renderer.GenerateRevision(ctx, stack, nil, workDir, composeFile, envVars, "imported", false, workerID, workerFingerprint, LoadRenderOverrides(stack))
 	if err != nil && errors.Is(err, ErrUnknownOverrideService) {
 		r.clearStaleRenderOverrides(stack, stackID, err.Error())
@@ -1502,6 +1510,15 @@ func isTransientGitError(err error) bool {
 
 func (r *Reconciler) loadEnvVars(ctx context.Context, stackID string) ([]string, error) {
 	return envvars.LoadStack(ctx, r.app, r.secretsRegistry, stackID)
+}
+
+// upsertStackConfigTracking refreshes the stack_config_files rows for
+// stackID from a render result. It's UI/drift tracking only, so a failure
+// here is logged, not surfaced as a deploy error.
+func (r *Reconciler) upsertStackConfigTracking(stackID string, files []configfiles.TrackedFile) {
+	if err := configfiles.UpsertStackConfigFiles(r.app, stackID, files); err != nil {
+		log.Printf("[reconciler] warning: failed to update stack_config_files tracking for %s: %v", stackID, err)
+	}
 }
 
 // LoadRenderOverrides reads any persisted render-time overrides for the stack.
