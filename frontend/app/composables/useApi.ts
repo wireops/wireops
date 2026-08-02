@@ -191,6 +191,7 @@ export function useApi() {
     description: string
     cron: string
     tags: string[]
+    group?: string
     mode: 'once' | 'once_all'
     image: string
     command: string[]
@@ -214,7 +215,28 @@ export function useApi() {
     errors?: string[]
     recent_runs?: { id: string; status: string; created: string }[]
   }
-  const listJobs = () => customGet<JobListItem[]>('/api/custom/jobs')
+  type ListJobsParams = {
+    page?: number
+    perPage?: number
+    status?: string
+    repository?: string
+    search?: string
+  }
+  // perPage defaults to the endpoint's max page size (200) rather than its
+  // UI default (24) so callers that just want "every job" - the dashboard
+  // widget and command palette index, neither of which paginates - keep
+  // working as a single request without needing their own paging loop.
+  const listJobs = (params: ListJobsParams = {}) => {
+    const query = new URLSearchParams({
+      page: String(params.page ?? 1),
+      per_page: String(params.perPage ?? 200),
+    })
+    if (params.status) query.set('status', params.status)
+    if (params.repository) query.set('repository', params.repository)
+    if (params.search) query.set('search', params.search)
+    return customGet<{ items: JobListItem[]; total_items: number }>(`/api/custom/jobs?${query.toString()}`)
+  }
+  const listJobGroups = () => customGet<{ groups: string[]; has_ungrouped: boolean }>('/api/custom/jobs/groups')
   const triggerJobRun = (jobId: string) => customPost(`/api/custom/jobs/${jobId}/run`)
   const cancelJobRun = (runId: string) => customPost(`/api/custom/job-runs/${runId}/cancel`)
   const deleteJobRun = (runId: string) => customDelete(`/api/custom/job-runs/${runId}`)
@@ -408,5 +430,14 @@ export function useApi() {
   const getBackupSettings = () => customGet<BackupSettings>('/api/custom/backups/settings')
   const saveBackupSettings = (data: BackupSettings) => customPut<BackupSettings>('/api/custom/backups/settings', data)
 
-  return { triggerSync, triggerRollback, forceRedeploy, setRenderOverrides, clearRenderOverrides, getRenderOverridesDiff, getServices, getDependencyGraph, getStackResources, stopContainer, restartContainer, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, getRepoFiles, getStackFiles, getJobFiles, getJobDefinitionFromFile, getWireopsFiles, getWireopsDefinitionFromFile, createStackFromWireops, lintCompose, testCredentials, keyscan, listGitProviders, getGitProviderAuthorizeUrl, listGitProviderOrgs, listGitProviderRepos, listGitProviderBranches, listOrphans, purgeOrphan, getSystemInfo, customPost, customGet, customPut, customPatch, customDelete, getWorkers, createWorkerToken, revokeWorker, transferStack, discoverProjects, importStack, listJobs, triggerJobRun, cancelJobRun, deleteJobRun, getJobDefinition, getJobRaw, getWorkerPolicy, saveWorkerPolicy, resetWorkerPolicy, getGlobalWorkerPolicy, saveGlobalWorkerPolicy, getAppSettings, saveAppSettings, listAuditLogs, listBackups, createBackup, deleteBackup, restoreBackup, syncLocalBackup, getBackupSettings, saveBackupSettings }
+  type UpdateSelfBody = {
+    name?: string
+    old_password?: string
+    password?: string
+    password_confirm?: string
+  }
+  const updateSelf = (body: UpdateSelfBody) =>
+    customPatch<{ id: string; name: string; email: string }>('/api/custom/users/me', body)
+
+  return { triggerSync, triggerRollback, forceRedeploy, setRenderOverrides, clearRenderOverrides, getRenderOverridesDiff, getServices, getDependencyGraph, getStackResources, stopContainer, restartContainer, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, getRepoFiles, getStackFiles, getJobFiles, getJobDefinitionFromFile, getWireopsFiles, getWireopsDefinitionFromFile, createStackFromWireops, lintCompose, testCredentials, keyscan, listGitProviders, getGitProviderAuthorizeUrl, listGitProviderOrgs, listGitProviderRepos, listGitProviderBranches, listOrphans, purgeOrphan, getSystemInfo, customPost, customGet, customPut, customPatch, customDelete, getWorkers, createWorkerToken, revokeWorker, transferStack, discoverProjects, importStack, listJobs, listJobGroups, triggerJobRun, cancelJobRun, deleteJobRun, getJobDefinition, getJobRaw, getWorkerPolicy, saveWorkerPolicy, resetWorkerPolicy, getGlobalWorkerPolicy, saveGlobalWorkerPolicy, getAppSettings, saveAppSettings, listAuditLogs, listBackups, createBackup, deleteBackup, restoreBackup, syncLocalBackup, getBackupSettings, saveBackupSettings, updateSelf }
 }

@@ -4,7 +4,6 @@ import { reactive, ref } from 'vue'
 import SecurityPage from '../security.vue'
 
 function setupGlobals() {
-  const updateUser = vi.fn().mockResolvedValue({})
   const toastAdd = vi.fn()
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
     ok: true,
@@ -19,10 +18,7 @@ function setupGlobals() {
     $pb: {
       baseURL: 'http://localhost',
       authStore: { token: 'token', record: { id: 'user-1' } },
-      collection: (name: string) => {
-        if (name === 'users') return { update: updateUser }
-        return { update: vi.fn() }
-      },
+      collection: (name: string) => ({ update: vi.fn() }),
     },
   })
   ;(globalThis as any).useToast = () => ({ add: toastAdd })
@@ -54,7 +50,7 @@ function setupGlobals() {
     listAuditLogs: vi.fn().mockResolvedValue({ items: [], totalItems: 0 }),
   })
 
-  return { saveAppSettings, saveGlobalWorkerPolicy, getGlobalWorkerPolicy, updateUser, toastAdd }
+  return { saveAppSettings, saveGlobalWorkerPolicy, getGlobalWorkerPolicy, toastAdd }
 }
 
 describe('security.vue worker policy presets', () => {
@@ -78,24 +74,6 @@ describe('security.vue worker policy presets', () => {
     expect(savedPolicy.block_host_pid).toBe(true)
     expect(savedPolicy.block_host_ipc).toBe(true)
     expect(savedPolicy.block_docker_socket).toBe(true)
-  })
-
-  it('rejects blank password fields before updating the user', async () => {
-    const { updateUser, toastAdd } = setupGlobals()
-
-    const wrapper = mount(SecurityPage, {
-      global: { stubs: { transition: false } },
-      shallow: true,
-    })
-    await flushPromises()
-
-    ;(wrapper.vm as any).changePasswordForm.oldPassword = ''
-    ;(wrapper.vm as any).changePasswordForm.password = 'new-password'
-    ;(wrapper.vm as any).changePasswordForm.passwordConfirm = 'new-password'
-    await (wrapper.vm as any).handleChangePassword()
-
-    expect(updateUser).not.toHaveBeenCalled()
-    expect(toastAdd).toHaveBeenCalledWith(expect.objectContaining({ title: 'All password fields are required' }))
   })
 
   it('trims SSO group mappings and rejects blank groups before posting', async () => {

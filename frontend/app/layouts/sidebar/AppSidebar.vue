@@ -256,6 +256,15 @@ watch(
             @click="emit('toggleTheme')"
           />
           <UButton
+            icon="i-lucide-user-circle"
+            label="Account"
+            variant="ghost"
+            color="neutral"
+            size="lg"
+            class="w-full justify-start"
+            to="/account"
+          />
+          <UButton
             icon="i-lucide-log-out"
             label="Logout"
             variant="ghost"
@@ -414,6 +423,19 @@ watch(
             size="lg"
             :class="['w-full transition-all duration-300', collapsed ? 'justify-center px-0' : 'justify-start']"
             @click="emit('toggleTheme')"
+          />
+        </UTooltip>
+        <UTooltip :text="collapsed ? 'Account' : ''" :prevent="!collapsed" placement="right">
+          <UButton
+            icon="i-lucide-user-circle"
+            :label="collapsed ? undefined : 'Account'"
+            :aria-label="collapsed ? 'Account' : undefined"
+            variant="ghost"
+            color="neutral"
+            size="lg"
+            :class="['w-full transition-all duration-300', collapsed ? 'justify-center px-0' : 'justify-start']"
+            to="/account"
+            :aria-current="isActive('/account') ? 'page' : undefined"
           />
         </UTooltip>
         <UTooltip :text="collapsed ? 'Logout' : ''" :prevent="!collapsed" placement="right">

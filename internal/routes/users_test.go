@@ -128,3 +128,119 @@ func TestUpdateUserAllowsDemoteWhenMultipleAdmins(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+func callUpdateSelfHandler(t *testing.T, app core.App, body any, actor *core.Record) *httptest.ResponseRecorder {
+	t.Helper()
+	b, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal body: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPatch, "/api/custom/users/me", bytes.NewBuffer(b))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	e := &core.RequestEvent{
+		App: app,
+		Event: router.Event{
+			Response: rec,
+			Request:  req,
+		},
+		Auth: actor,
+	}
+	if err := handleUpdateSelf(app)(e); err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	return rec
+}
+
+// TestUpdateSelfAllowsViewerToChangeOwnPassword guards against the users
+// collection's admin-only UpdateRule (pb_migrations/26_add_rbac_identity.go)
+// silently blocking a non-admin's self-service password change.
+func TestUpdateSelfAllowsViewerToChangeOwnPassword(t *testing.T) {
+	app := newSetupTestApp(t)
+	clearAllUsers(t, app)
+	viewer := createTestUser(t, app, "viewer@example.com", "Password1!", rbac.RoleViewer)
+
+	rec := callUpdateSelfHandler(t, app, map[string]any{
+		"old_password":     "Password1!",
+		"password":         "NewPassword2!",
+		"password_confirm": "NewPassword2!",
+	}, viewer)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	reloaded, err := app.FindRecordById("users", viewer.Id)
+	if err != nil {
+		t.Fatalf("reload user: %v", err)
+	}
+	if !reloaded.ValidatePassword("NewPassword2!") {
+		t.Fatal("expected password to have been updated")
+	}
+}
+
+func TestUpdateSelfRejectsWrongOldPassword(t *testing.T) {
+	app := newSetupTestApp(t)
+	clearAllUsers(t, app)
+	user := createTestUser(t, app, "user@example.com", "Password1!", rbac.RoleViewer)
+
+	rec := callUpdateSelfHandler(t, app, map[string]any{
+		"old_password":     "WrongPassword!",
+		"password":         "NewPassword2!",
+		"password_confirm": "NewPassword2!",
+	}, user)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	reloaded, err := app.FindRecordById("users", user.Id)
+	if err != nil {
+		t.Fatalf("reload user: %v", err)
+	}
+	if !reloaded.ValidatePassword("Password1!") {
+		t.Fatal("password should not have changed")
+	}
+}
+
+func TestUpdateSelfRejectsMismatchedConfirmation(t *testing.T) {
+	app := newSetupTestApp(t)
+	clearAllUsers(t, app)
+	user := createTestUser(t, app, "user@example.com", "Password1!", rbac.RoleViewer)
+
+	rec := callUpdateSelfHandler(t, app, map[string]any{
+		"old_password":     "Password1!",
+		"password":         "NewPassword2!",
+		"password_confirm": "SomethingElse3!",
+	}, user)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestUpdateSelfCanUpdateName(t *testing.T) {
+	app := newSetupTestApp(t)
+	clearAllUsers(t, app)
+	user := createTestUser(t, app, "user@example.com", "Password1!", rbac.RoleViewer)
+
+	rec := callUpdateSelfHandler(t, app, map[string]any{"name": "New Name"}, user)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	reloaded, err := app.FindRecordById("users", user.Id)
+	if err != nil {
+		t.Fatalf("reload user: %v", err)
+	}
+	if reloaded.GetString("name") != "New Name" {
+		t.Fatalf("expected name to be updated, got %q", reloaded.GetString("name"))
+	}
+}
+
+func TestUpdateSelfRejectsUnauthenticated(t *testing.T) {
+	app := newSetupTestApp(t)
+	clearAllUsers(t, app)
+
+	rec := callUpdateSelfHandler(t, app, map[string]any{"name": "New Name"}, nil)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d: %s", rec.Code, rec.Body.String())
+	}
+}

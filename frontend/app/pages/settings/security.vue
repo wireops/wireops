@@ -8,12 +8,10 @@ const { getAppSettings, saveAppSettings, getGlobalWorkerPolicy, saveGlobalWorker
 
 const route = useRoute()
 const router = useRouter()
-const activeTab = ref((route.query.tab as string) || 'credentials')
+const activeTab = ref((route.query.tab as string) || (isAdmin.value ? 'sso-mappings' : 'worker-policies'))
 
 const tabs = computed(() => {
-  const list = [
-    { label: 'Credentials', value: 'credentials', icon: 'i-lucide-key' }
-  ]
+  const list = []
   if (isAdmin.value) {
     list.push({ label: 'SSO Mappings', value: 'sso-mappings', icon: 'i-lucide-users' })
   }
@@ -104,44 +102,6 @@ async function handleSaveAppSettings(options: { title?: string; description?: st
     return false
   } finally {
     appSettingsSaving.value = false
-  }
-}
-
-// --- Change Password ---
-const changePasswordForm = ref({ oldPassword: '', password: '', passwordConfirm: '' })
-const changePasswordLoading = ref(false)
-
-async function handleChangePassword() {
-  if (
-    !changePasswordForm.value.oldPassword.trim()
-    || !changePasswordForm.value.password.trim()
-    || !changePasswordForm.value.passwordConfirm.trim()
-  ) {
-    toast.add({ title: 'All password fields are required', color: 'error' })
-    return
-  }
-  if (changePasswordForm.value.password !== changePasswordForm.value.passwordConfirm) {
-    toast.add({ title: 'Passwords do not match', color: 'error' })
-    return
-  }
-  changePasswordLoading.value = true
-  try {
-    const userId = $pb.authStore.record?.id
-    if (!userId) {
-      toast.add({ title: 'Session invalid', description: 'Please log in again.', color: 'error' })
-      return
-    }
-    await $pb.collection('users').update(userId, {
-      oldPassword: changePasswordForm.value.oldPassword,
-      password: changePasswordForm.value.password,
-      passwordConfirm: changePasswordForm.value.passwordConfirm,
-    })
-    changePasswordForm.value = { oldPassword: '', password: '', passwordConfirm: '' }
-    toast.add({ title: 'Password updated', color: 'success' })
-  } catch (e: any) {
-    toast.add({ title: 'Failed to update password', description: e?.message, color: 'error' })
-  } finally {
-    changePasswordLoading.value = false
   }
 }
 
@@ -353,25 +313,6 @@ onMounted(async () => {
 <template>
   <div class="space-y-6">
     <UTabs v-model="activeTab" :items="tabs" />
-
-    <!-- Credentials Tab -->
-    <div v-if="activeTab === 'credentials'" class="space-y-6">
-      <UCard>
-        <template #header><h3 class="font-semibold">Change Password</h3></template>
-        <form class="space-y-4" @submit.prevent="handleChangePassword">
-          <UFormField label="Current Password">
-            <AppTextInput v-model="changePasswordForm.oldPassword" type="password" placeholder="••••••••" icon="i-lucide-lock" aria-label="Current password" class="w-full" />
-          </UFormField>
-          <UFormField label="New Password">
-            <AppTextInput v-model="changePasswordForm.password" type="password" placeholder="••••••••" icon="i-lucide-lock" aria-label="New password" class="w-full" />
-          </UFormField>
-          <UFormField label="Confirm New Password">
-            <AppTextInput v-model="changePasswordForm.passwordConfirm" type="password" placeholder="••••••••" icon="i-lucide-lock" aria-label="Confirm new password" class="w-full" />
-          </UFormField>
-          <UButton type="submit" label="Update Password" icon="i-lucide-check" :loading="changePasswordLoading" />
-        </form>
-      </UCard>
-    </div>
 
     <!-- SSO Mappings Tab -->
     <div v-if="activeTab === 'sso-mappings' && isAdmin" class="space-y-6">

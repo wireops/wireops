@@ -23,6 +23,64 @@ func RegisterUserRoutes(r *router.Router[*core.RequestEvent], app core.App) {
 	r.GET("/api/custom/users/invite/validate", handleValidateInvite(app))
 	r.POST("/api/custom/users/invite/accept", handleAcceptInvite(app))
 	r.PUT("/api/custom/users/{id}", handleUpdateUser(app)).BindFunc(rbac.Require(rbac.CapManageUsers))
+	r.PATCH("/api/custom/users/me", handleUpdateSelf(app))
+}
+
+// handleUpdateSelf lets any authenticated user update their own name and/or
+// password. It intentionally bypasses the users collection's admin-only
+// UpdateRule (see pb_migrations/26_add_rbac_identity.go) by only ever
+// mutating e.Auth's own record - never a path-supplied id - the same way
+// handleAcceptInvite already writes to the users collection outside the
+// collection rule.
+func handleUpdateSelf(app core.App) func(*core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
+		if e.Auth == nil {
+			return e.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+		}
+
+		var body struct {
+			Name            *string `json:"name"`
+			OldPassword     *string `json:"old_password"`
+			Password        *string `json:"password"`
+			PasswordConfirm *string `json:"password_confirm"`
+		}
+		if err := json.NewDecoder(e.Request.Body).Decode(&body); err != nil {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		}
+
+		rec, err := app.FindRecordById("users", e.Auth.Id)
+		if err != nil {
+			return e.JSON(http.StatusNotFound, map[string]string{"error": "user not found"})
+		}
+
+		if body.Name != nil {
+			rec.Set("name", *body.Name)
+		}
+
+		if body.OldPassword != nil || body.Password != nil || body.PasswordConfirm != nil {
+			if body.OldPassword == nil || body.Password == nil || body.PasswordConfirm == nil ||
+				*body.OldPassword == "" || *body.Password == "" || *body.PasswordConfirm == "" {
+				return e.JSON(http.StatusBadRequest, map[string]string{"error": "old_password, password and password_confirm are required"})
+			}
+			if *body.Password != *body.PasswordConfirm {
+				return e.JSON(http.StatusBadRequest, map[string]string{"error": "passwords do not match"})
+			}
+			if !rec.ValidatePassword(*body.OldPassword) {
+				return e.JSON(http.StatusBadRequest, map[string]string{"error": "current password is incorrect"})
+			}
+			rec.Set("password", *body.Password)
+		}
+
+		if err := app.Save(rec); err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+
+		return e.JSON(http.StatusOK, map[string]string{
+			"id":    rec.Id,
+			"name":  rec.GetString("name"),
+			"email": rec.GetString("email"),
+		})
+	}
 }
 
 func handleCreateInvite(app core.App) func(*core.RequestEvent) error {

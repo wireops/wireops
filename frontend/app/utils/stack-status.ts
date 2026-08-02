@@ -179,6 +179,26 @@ export function stackEffectiveStatus(stack: any): string | undefined {
   return stack?.deployed_at ? 'active' : 'pending'
 }
 
+// buildStackStatusFilter mirrors stackEffectiveStatus's folding of the
+// transient "syncing" state into active/pending, expressed as a PocketBase
+// filter clause instead of a client-side predicate - so a server-paginated
+// stacks query can filter by "effective" status the same way the UI displays
+// it. Kept next to stackEffectiveStatus so the two stay in sync.
+export function buildStackStatusFilter(effectiveStatus: string): string | null {
+  switch (effectiveStatus) {
+    case 'active':
+      return "(status = 'active') || (status = 'syncing' && deployed_at != '')"
+    case 'paused':
+      return "(status = 'paused') || (status = 'pending') || (status = 'syncing' && deployed_at = '')"
+    case 'error':
+      return "(status = 'error')"
+    case 'pending':
+      return "(status = 'pending') || (status = 'syncing' && deployed_at = '')"
+    default:
+      return null
+  }
+}
+
 // "active" reflects the post-deploy check's live docker-inspect result at
 // the moment of the last deploy (internal/sync/postcheck.go) - not a
 // continuously monitored live state. Nothing re-checks container health

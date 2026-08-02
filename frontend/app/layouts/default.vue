@@ -64,6 +64,7 @@ const activeNavLabel = computed(() => {
     }
     if (isActive(item.to)) return item.label
   }
+  if (route.path.startsWith('/account')) return 'Account'
   return 'Menu'
 })
 

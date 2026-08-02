@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { stackEffectiveStatus, stackRepositorySubtitle } from '../utils/stack-status'
+import { stackEffectiveStatus, buildStackStatusFilter } from '../utils/stack-status'
 import { GROUP_ALL, GROUP_UNGROUPED, encodeGroupValue, decodeGroupValue } from '../utils/job-filter'
+import { usePaginatedList } from '../composables/usePaginatedList'
 import type { AvailabilitySegment } from './StatusAvailabilityBar.vue'
 
 const { $pb } = useNuxtApp()
@@ -11,9 +12,86 @@ const toast = useToast()
 const { announce } = useA11yAnnouncer()
 const { isViewer } = usePermissions()
 
-const { data: stacks, refresh } = useAsyncData('stacks_list', () =>
-  $pb.collection('stacks').getFullList({ sort: '-updated', expand: 'repository,worker' })
+const route = useRoute()
+
+const searchQuery = ref('')
+const searchInputRef = ref<{ $el?: HTMLElement } | HTMLElement | null>(null)
+const statusFilter = ref('all')
+const sortBy = ref('updated')
+
+function groupQueryToFilterValue(val: unknown): string {
+  if (typeof val !== 'string' || val === '') return GROUP_ALL
+  return val === GROUP_ALL || val === GROUP_UNGROUPED ? val : encodeGroupValue(val)
+}
+
+const groupFilter = ref(groupQueryToFilterValue(route.query.group))
+watch(() => route.query.group, (val) => {
+  groupFilter.value = groupQueryToFilterValue(val)
+})
+
+const sortParam = computed(() => {
+  switch (sortBy.value) {
+    case 'name': return 'name'
+    case 'last_synced': return '-last_synced_at'
+    // Approximation: sorts by the raw status column, not the "syncing folds
+    // into active/pending" effective status shown in the UI - a syncing
+    // stack's position can shift by one bucket versus what's displayed.
+    case 'status': return 'status'
+    default: return '-updated'
+  }
+})
+
+function buildStacksFilter() {
+  const clauses: string[] = []
+  if (searchQuery.value.trim()) {
+    // Container-name search (previously matched against containers_list, a
+    // JSON field) is dropped here: it can't be expressed as a PocketBase
+    // filter without a server-side search index, and keeping it would mean
+    // falling back to a full unpaginated fetch defeating the point of this
+    // change. Name/group search remains.
+    clauses.push($pb.filter('(name ~ {:q} || group ~ {:q})', { q: searchQuery.value.trim() }))
+  }
+  if (statusFilter.value !== 'all') {
+    const statusClause = buildStackStatusFilter(statusFilter.value)
+    if (statusClause) clauses.push(statusClause)
+  }
+  if (groupFilter.value !== GROUP_ALL) {
+    clauses.push(groupFilter.value === GROUP_UNGROUPED
+      ? "(group = '' || group = null)"
+      : $pb.filter('(group = {:g})', { g: decodeGroupValue(groupFilter.value) }))
+  }
+  return clauses.join(' && ')
+}
+
+const {
+  page, perPage, items: stacks, totalItems: totalStacks, totalPages, loading: stacksLoading, reload: reloadStacks,
+} = usePaginatedList(
+  async ({ page: p, perPage: pp, sort }) => {
+    const result = await $pb.collection('stacks').getList(p, pp, {
+      sort,
+      filter: buildStacksFilter(),
+      expand: 'repository,worker',
+      // Debounced search/filter changes can fire overlapping requests to
+      // this same collection; usePaginatedList already discards
+      // out-of-order responses via its own requestId, so PocketBase's
+      // built-in auto-cancel (same requestKey) is redundant here and would
+      // otherwise surface as an unhandled ClientResponseError.
+      requestKey: null,
+    })
+    return { items: result.items, totalItems: result.totalItems }
+  },
+  { perPage: 24, sort: sortParam, watchDebounced: [searchQuery, statusFilter, groupFilter] }
 )
+
+// Fleet-wide aggregate used only for the group dropdown and the status
+// availability bar - both need counts across every stack, not just the
+// current page. A narrow field selection keeps this cheap even though it
+// isn't paginated: the expensive part of the main query is the full record
+// payload + expand, not these three columns.
+const { data: stacksAggregate, refresh: refreshStacksAggregate } = useAsyncData('stacks_aggregate', () =>
+  $pb.collection('stacks').getFullList({ fields: 'id,status,group,deployed_at', requestKey: null })
+)
+
 const { data: workers, refresh: refreshWorkers } = useAsyncData('stack_card_workers', () =>
   getWorkers().catch(() => [])
 )
@@ -53,7 +131,7 @@ const isUpdating = ref(false)
 let updateTimer: ReturnType<typeof setTimeout> | undefined
 
 async function refreshList() {
-  await Promise.all([refresh(), refreshWorkers(), refreshRepos()])
+  await Promise.all([reloadStacks(), refreshStacksAggregate(), refreshWorkers(), refreshRepos()])
 }
 
 onMounted(() => {
@@ -61,7 +139,8 @@ onMounted(() => {
   subscribe('stacks', () => {
     isUpdating.value = true
     announce('Stacks list updating')
-    refresh()
+    reloadStacks(true)
+    refreshStacksAggregate()
     refreshWorkers()
     clearTimeout(updateTimer)
     updateTimer = setTimeout(() => {
@@ -74,7 +153,8 @@ onMounted(() => {
   })
   subscribe('repositories', () => {
     refreshRepos()
-    refresh()
+    reloadStacks(true)
+    refreshStacksAggregate()
   })
 })
 
@@ -125,29 +205,13 @@ const stackStatusSegments: AvailabilitySegment[] = [
 ]
 
 const stacksForAvailability = computed(() =>
-  (stacks.value || []).map((s: any) => ({ ...s, status: stackEffectiveStatus(s) }))
+  (stacksAggregate.value || []).map((s: any) => ({ ...s, status: stackEffectiveStatus(s) }))
 )
 
-const route = useRoute()
-
-const searchQuery = ref('')
-const searchInputRef = ref<{ $el?: HTMLElement } | HTMLElement | null>(null)
-const statusFilter = ref('all')
-const sortBy = ref('name')
-function groupQueryToFilterValue(val: unknown): string {
-  if (typeof val !== 'string' || val === '') return GROUP_ALL
-  return val === GROUP_ALL || val === GROUP_UNGROUPED ? val : encodeGroupValue(val)
-}
-
-const groupFilter = ref(groupQueryToFilterValue(route.query.group))
-watch(() => route.query.group, (val) => {
-  groupFilter.value = groupQueryToFilterValue(val)
-})
-
 const groupOptions = computed(() => {
-  const groups = new Set((stacks.value || []).map((s: any) => s.group).filter(Boolean))
+  const groups = new Set((stacksAggregate.value || []).map((s: any) => s.group).filter(Boolean))
   const items = [{ label: 'All groups', value: GROUP_ALL }]
-  if ((stacks.value || []).some((s: any) => !s.group)) {
+  if ((stacksAggregate.value || []).some((s: any) => !s.group)) {
     items.push({ label: 'Ungrouped', value: GROUP_UNGROUPED })
   }
   for (const g of [...groups].sort()) {
@@ -190,55 +254,6 @@ function handleSlashShortcut(event: KeyboardEvent) {
   input.select()
   announce('Stack search focused')
 }
-
-const filteredStacks = computed(() => {
-  let filtered = stacks.value || []
-
-  if (searchQuery.value) {
-    const query = searchQuery.value.toLowerCase()
-    filtered = filtered.filter((s: any) =>
-      s.name.toLowerCase().includes(query) ||
-      stackRepositorySubtitle(s).toLowerCase().includes(query) ||
-      (s.containers_list || []).some((c: any) => c.name?.toLowerCase().includes(query))
-    )
-  }
-
-  if (statusFilter.value !== 'all') {
-    if (statusFilter.value === 'paused') {
-      filtered = filtered.filter((s: any) => {
-        const status = stackEffectiveStatus(s)
-        return status === 'paused' || status === 'pending'
-      })
-    } else {
-      filtered = filtered.filter((s: any) => stackEffectiveStatus(s) === statusFilter.value)
-    }
-  }
-
-  if (groupFilter.value !== GROUP_ALL) {
-    filtered = groupFilter.value === GROUP_UNGROUPED
-      ? filtered.filter((s: any) => !s.group)
-      : filtered.filter((s: any) => s.group === decodeGroupValue(groupFilter.value))
-  }
-
-  filtered = [...filtered].sort((a: any, b: any) => {
-    switch (sortBy.value) {
-      case 'name':
-        return a.name.localeCompare(b.name)
-      case 'updated':
-        return new Date(b.updated).getTime() - new Date(a.updated).getTime()
-      case 'last_synced':
-        if (!a.last_synced_at) return 1
-        if (!b.last_synced_at) return -1
-        return new Date(b.last_synced_at).getTime() - new Date(a.last_synced_at).getTime()
-      case 'status':
-        return stackEffectiveStatus(a).localeCompare(stackEffectiveStatus(b))
-      default:
-        return 0
-    }
-  })
-
-  return filtered
-})
 
 const showImport = ref(false)
 
@@ -306,7 +321,7 @@ async function handlePurge(dirName: string) {
         <div class="flex items-center justify-between">
           <h3 class="font-semibold text-gray-900 dark:text-wire-200">
             Stacks
-            <span v-if="stacks?.length" class="ml-1.5 text-yellow-400">({{ stacks.length }})</span>
+            <span v-if="totalStacks" class="ml-1.5 text-yellow-400">({{ totalStacks }})</span>
           </h3>
           <div class="flex items-center gap-3">
             <UButton v-if="!isViewer" icon="i-lucide-package-search" label="Manage Orphans" variant="outline" color="warning" size="xs" class="hidden sm:inline-flex" @click="openOrphans" />
@@ -315,7 +330,7 @@ async function handlePurge(dirName: string) {
         </div>
       </template>
 
-      <div v-if="stacks?.length" class="space-y-4">
+      <div v-if="stacksAggregate?.length" class="space-y-4">
         <div class="flex flex-row flex-wrap items-center gap-2 sm:gap-3" role="search" aria-label="Filter stacks">
           <AppTextInput
             ref="searchInputRef"
@@ -370,20 +385,31 @@ async function handlePurge(dirName: string) {
           aria-label="Stack status availability breakdown"
         />
 
-        <div v-if="filteredStacks.length === 0" class="text-center py-12" role="status" aria-live="polite">
+        <div v-if="!stacksLoading && totalStacks === 0" class="text-center py-12" role="status" aria-live="polite">
           <UIcon name="i-lucide-search-x" class="w-12 h-12 text-gray-300 mx-auto mb-4" />
           <p class="text-gray-500">No stacks found</p>
           <p class="text-xs text-gray-400 mt-1">Try adjusting your search or filters</p>
         </div>
 
-        <div v-else class="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-3">
-          <StackCard
-            v-for="stack in filteredStacks"
-            :key="stack.id"
-            :stack="stack"
-            :workers-by-id="workersById"
-          />
-        </div>
+        <template v-else>
+          <div class="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-3">
+            <StackCard
+              v-for="stack in stacks"
+              :key="stack.id"
+              :stack="stack"
+              :workers-by-id="workersById"
+            />
+          </div>
+
+          <div v-if="totalPages > 1" class="flex justify-between items-center pt-2">
+            <UPagination
+              v-model="page"
+              :total="totalStacks"
+              :page-count="perPage"
+            />
+            <span class="text-xs text-gray-500">Page {{ page }} of {{ totalPages }}</span>
+          </div>
+        </template>
       </div>
 
       <EmptyState

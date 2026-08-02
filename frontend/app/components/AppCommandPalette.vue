@@ -18,7 +18,7 @@ async function loadData() {
   try {
     const [s, j, r, w] = await Promise.all([
       $pb.collection('stacks').getFullList(),
-      listJobs().catch(() => []),
+      listJobs().then(res => res.items).catch(() => []),
       $pb.collection('repositories').getFullList(),
       getWorkers().catch(() => [])
     ])

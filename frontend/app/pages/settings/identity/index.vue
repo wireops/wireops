@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
+import { usePaginatedList } from '../../../composables/usePaginatedList'
 
 const { $pb } = useNuxtApp()
 const toast = useToast()
@@ -57,22 +58,31 @@ const roleOptions = [
   { label: 'Admin', value: 'admin' },
 ]
 
-const users = ref<any[]>([])
-const usersLoading = ref(false)
 const inviteEmail = ref('')
 const inviteRole = ref('viewer')
 const inviteLoading = ref(false)
 
-async function loadUsers() {
-  usersLoading.value = true
-  try {
-    users.value = await $pb.collection('users').getFullList({ sort: 'created' })
-  } catch (e: any) {
-    toast.add({ title: 'Failed to load users', description: e?.message, color: 'error' })
-  } finally {
-    usersLoading.value = false
-  }
-}
+const usersSearchQuery = ref('')
+
+const {
+  page: usersPage, perPage: usersPerPage, items: users, totalItems: totalUsers, totalPages: usersTotalPages,
+  loading: usersLoading, reload: loadUsers,
+} = usePaginatedList(
+  async ({ page, perPage }) => {
+    const filter = usersSearchQuery.value.trim()
+      ? $pb.filter('(email ~ {:q})', { q: usersSearchQuery.value.trim() })
+      : ''
+    try {
+      // requestKey: null - see the matching comment in StacksPanel.vue.
+      const result = await $pb.collection('users').getList(page, perPage, { sort: 'created', filter, requestKey: null })
+      return { items: result.items, totalItems: result.totalItems }
+    } catch (e: any) {
+      toast.add({ title: 'Failed to load users', description: e?.message, color: 'error' })
+      return { items: [], totalItems: 0 }
+    }
+  },
+  { perPage: 24, watchDebounced: [usersSearchQuery] }
+)
 
 async function sendInvite() {
   if (!inviteEmail.value) return
@@ -155,7 +165,6 @@ const showApiKeyModal = ref(false)
 const targetAccountName = ref('')
 const saSearchQuery = ref('')
 const showDisabledSAs = ref(false)
-const usersSearchQuery = ref('')
 const openApiKeys = ref<Record<string, boolean>>({})
 
 function toggleApiKeyAccordion(saId: string) {
@@ -176,12 +185,6 @@ const filteredServiceAccounts = computed(() => {
       )
     })
     .sort((a, b) => a.name.localeCompare(b.name))
-})
-
-const filteredUsers = computed(() => {
-  const query = usersSearchQuery.value.toLowerCase().trim()
-  if (!query) return users.value
-  return users.value.filter((u) => u.email.toLowerCase().includes(query))
 })
 
 async function apiFetch(path: string, options: RequestInit = {}) {
@@ -303,7 +306,6 @@ async function executeToggleSAEnabled() {
 }
 
 onMounted(() => {
-  loadUsers()
   if (isAdmin.value) {
     loadServiceAccounts()
   }
@@ -335,9 +337,9 @@ onMounted(() => {
             <AppTextInput v-model="usersSearchQuery" placeholder="Search email..." icon="i-lucide-search" class="w-full" aria-label="Search users by email" />
           </div>
           <div v-if="usersLoading" class="text-sm text-gray-500">Loading...</div>
-          <div v-else-if="filteredUsers.length === 0" class="text-sm text-gray-500">No users found.</div>
+          <div v-else-if="totalUsers === 0" class="text-sm text-gray-500">No users found.</div>
           <ul v-else class="divide-y divide-gray-100 dark:divide-gray-800">
-            <li v-for="u in filteredUsers" :key="u.id" class="flex items-center justify-between py-3 first:pt-0 last:pb-0">
+            <li v-for="u in users" :key="u.id" class="flex items-center justify-between py-3 first:pt-0 last:pb-0">
             <div class="flex items-center gap-3">
               <div class="flex items-center justify-center w-8 h-8 rounded-full" :class="u.disabled ? 'bg-gray-400/10' : 'bg-yellow-400/10'">
                 <UIcon name="i-lucide-user" class="w-4 h-4" :class="u.disabled ? 'text-gray-400' : 'text-yellow-400'" />
@@ -384,6 +386,14 @@ onMounted(() => {
             </div>
           </li>
           </ul>
+          <div v-if="usersTotalPages > 1" class="flex justify-between items-center pt-2">
+            <UPagination
+              v-model="usersPage"
+              :total="totalUsers"
+              :page-count="usersPerPage"
+            />
+            <span class="text-xs text-gray-500">Page {{ usersPage }} of {{ usersTotalPages }}</span>
+          </div>
         </div>
       </UCard>
     </div>
