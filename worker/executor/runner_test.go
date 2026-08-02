@@ -229,6 +229,34 @@ func TestPrepareJobConfigFilesEmpty(t *testing.T) {
 	cleanup() // must not panic
 }
 
+func TestPrepareJobConfigFilesRejectsPathSeparatorInJobRunID(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldStackDir := stackDir
+	stackDir = tmpDir
+	defer func() { stackDir = oldStackDir }()
+
+	specs := []protocol.ConfigFileSpec{
+		{Name: "a", Target: "/a", ContentB64: base64.StdEncoding.EncodeToString([]byte("A"))},
+	}
+	if _, _, err := prepareJobConfigFiles("../../etc", specs); err == nil {
+		t.Fatal("expected error for job run id containing path separators")
+	}
+}
+
+func TestPrepareJobConfigFilesRejectsPathSeparatorInName(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldStackDir := stackDir
+	stackDir = tmpDir
+	defer func() { stackDir = oldStackDir }()
+
+	specs := []protocol.ConfigFileSpec{
+		{Name: "../escape", Target: "/a", ContentB64: base64.StdEncoding.EncodeToString([]byte("A"))},
+	}
+	if _, _, err := prepareJobConfigFiles("run-5", specs); err == nil {
+		t.Fatal("expected error for config name containing path separators")
+	}
+}
+
 func TestSafeEnv(t *testing.T) {
 	// Set a custom environment variable to verify preservation
 	os.Setenv("TEST_WIREOPS_VAR", "preserve-me")

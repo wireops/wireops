@@ -738,15 +738,21 @@ func prepareComposeFile(stackID, commandID, b64Content string) (string, string, 
 // prepareJobConfigFiles decodes each job.yaml `configs:` entry and writes it
 // to a job-scoped directory under stackDir/jobs/<jobRunID>/configs/<name>,
 // returning the "-v hostPath:target:ro" docker run flags to bind-mount them.
-// filepath.Base sanitizes both the job run ID and each config name to
-// prevent path traversal.
+// Every path component sourced from the dispatch payload (job run ID,
+// config name, rel path) is validated with safepath *before* it is used to
+// build a filesystem path — reject-on-invalid, not sanitize-and-continue —
+// matching the pattern used elsewhere in this file (e.g. ValidateHostPath).
 func prepareJobConfigFiles(jobRunID string, files []protocol.ConfigFileSpec) ([]string, func(), error) {
 	noop := func() {}
 	if len(files) == 0 {
 		return nil, noop, nil
 	}
 
-	dir := filepath.Join(stackDir, "jobs", filepath.Base(jobRunID), "configs")
+	if err := safepath.ValidateConfigName(jobRunID); err != nil {
+		return nil, noop, fmt.Errorf("invalid job run id: %w", err)
+	}
+
+	dir := filepath.Join(stackDir, "jobs", jobRunID, "configs")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, noop, fmt.Errorf("failed to create job config dir: %w", err)
 	}
@@ -769,6 +775,14 @@ func prepareJobConfigFiles(jobRunID string, files []protocol.ConfigFileSpec) ([]
 	var order []string
 	grouped := map[string][]protocol.ConfigFileSpec{}
 	for _, f := range files {
+		if err := safepath.ValidateConfigName(f.Name); err != nil {
+			return nil, noop, fmt.Errorf("invalid config name %q: %w", f.Name, err)
+		}
+		if f.RelPath != "" {
+			if _, err := safepath.CleanRelativePath(f.RelPath); err != nil {
+				return nil, noop, fmt.Errorf("invalid config %q rel_path %q: %w", f.Name, f.RelPath, err)
+			}
+		}
 		if _, seen := grouped[f.Name]; !seen {
 			order = append(order, f.Name)
 		}
@@ -778,7 +792,6 @@ func prepareJobConfigFiles(jobRunID string, files []protocol.ConfigFileSpec) ([]
 	volumes := make([]string, 0, len(order))
 	for _, name := range order {
 		specs := grouped[name]
-		safeName := filepath.Base(name)
 
 		if len(specs) == 1 && specs[0].RelPath == "" {
 			f := specs[0]
@@ -787,7 +800,7 @@ func prepareJobConfigFiles(jobRunID string, files []protocol.ConfigFileSpec) ([]
 				cleanup()
 				return nil, noop, fmt.Errorf("failed to decode config %q: %w", f.Name, err)
 			}
-			path := filepath.Join(dir, safeName)
+			path := filepath.Join(dir, name)
 			if err := os.WriteFile(path, content, configFileMode(f.Mode)); err != nil {
 				cleanup()
 				return nil, noop, fmt.Errorf("failed to write config %q: %w", f.Name, err)
@@ -796,7 +809,7 @@ func prepareJobConfigFiles(jobRunID string, files []protocol.ConfigFileSpec) ([]
 			continue
 		}
 
-		groupDir := filepath.Join(dir, safeName)
+		groupDir := filepath.Join(dir, name)
 		if err := os.MkdirAll(groupDir, 0700); err != nil {
 			cleanup()
 			return nil, noop, fmt.Errorf("failed to create config dir %q: %w", name, err)
@@ -807,16 +820,7 @@ func prepareJobConfigFiles(jobRunID string, files []protocol.ConfigFileSpec) ([]
 				cleanup()
 				return nil, noop, fmt.Errorf("failed to decode config %q: %w", f.Name, err)
 			}
-			relPath := filepath.FromSlash(f.RelPath)
-			path := filepath.Join(groupDir, relPath)
-			// Defense in depth: RelPath is server-generated from an actual
-			// filesystem walk and should never traverse, but the worker
-			// trusts the dispatch payload otherwise, so re-verify containment
-			// here rather than assume it.
-			if !isSubpath(groupDir, path) {
-				cleanup()
-				return nil, noop, fmt.Errorf("config %q: rel_path escapes config directory", f.Name)
-			}
+			path := filepath.Join(groupDir, filepath.FromSlash(f.RelPath))
 			if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 				cleanup()
 				return nil, noop, fmt.Errorf("failed to create config dir for %q: %w", f.Name, err)
