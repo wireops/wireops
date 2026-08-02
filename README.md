@@ -31,6 +31,7 @@ Targets developers, homelabs, and self-hosters running plain `docker compose` st
 
 - [Project Scope](#project-scope)
 - [Features](#features)
+- [Screenshots](#screenshots)
 - [Tech Stack](#tech-stack)
 - [Quick Start](#quick-start)
 - [Usage](#usage)
@@ -58,6 +59,43 @@ Deeper technical docs (moved to the [Wiki](https://github.com/wireops/wireops/wi
 - 🚀 Force redeploy with recreate options
 - 🗓️ Cron-scheduled one-shot Docker jobs (`job.yaml`)
 - 🐙 Native GitHub OAuth connect (Gitea/Forgejo/GitLab ready)
+
+## Screenshots
+
+*Click any screenshot to zoom.*
+
+### Desktop
+
+<p align="center">
+  <a href=".github/assets/screenshots/stacks-overview.png"><img src=".github/assets/screenshots/stacks-overview.png" alt="Stacks overview" width="800"></a><br>
+  <sub><b>Stacks</b> — every Compose deployment, sync/deploy status, and assigned worker</sub>
+</p>
+
+<p align="center">
+  <a href=".github/assets/screenshots/dependency-graph.png"><img src=".github/assets/screenshots/dependency-graph.png" alt="Stack dependency graph" width="500"></a><br>
+  <sub><b>Dependency graph</b> — visualize service, network, and volume dependencies per stack</sub>
+</p>
+
+<p align="center">
+  <a href=".github/assets/screenshots/jobs.png"><img src=".github/assets/screenshots/jobs.png" alt="Cron jobs" width="500"></a><br>
+  <sub><b>Jobs</b> — cron-scheduled one-shot Docker jobs with run history</sub>
+</p>
+
+<p align="center">
+  <a href=".github/assets/screenshots/integrations.png"><img src=".github/assets/screenshots/integrations.png" alt="Integrations" width="500"></a><br>
+  <sub><b>Integrations</b> — Traefik, Caddy, Dozzle, Vault, Infisical, SOPS, and more</sub>
+</p>
+
+### Mobile
+
+<p align="center">
+  <a href=".github/assets/screenshots/mobile-dashboard.png"><img src=".github/assets/screenshots/mobile-dashboard.png" alt="Mobile dashboard" width="220"></a>
+  &nbsp;&nbsp;
+  <a href=".github/assets/screenshots/mobile-stack-detail.png"><img src=".github/assets/screenshots/mobile-stack-detail.png" alt="Mobile stack detail" width="220"></a>
+  &nbsp;&nbsp;
+  <a href=".github/assets/screenshots/mobile-secrets.png"><img src=".github/assets/screenshots/mobile-secrets.png" alt="Mobile secrets management" width="220"></a><br>
+  <sub><b>Mobile-friendly UI</b> — manage stacks and secrets from your phone</sub>
+</p>
 
 ## Tech Stack
 
