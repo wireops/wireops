@@ -223,8 +223,10 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 				_ = r.markSyncError(stack, err.Error())
 				return err
 			}
-			if err := r.saveRecordStatus(stack, "stacks", "pending", "mark stack pending after offline queue"); err != nil {
-				return err
+			if shouldMarkPendingOnQueue(stack) {
+				if err := r.saveRecordStatus(stack, "stacks", "pending", "mark stack pending after offline queue"); err != nil {
+					return err
+				}
 			}
 			return nil
 		}
@@ -1109,8 +1111,10 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 			_ = r.markSyncError(stack, err.Error())
 			return err
 		}
-		if err := r.saveRecordStatus(stack, "stacks", "pending", "mark local stack pending after offline queue"); err != nil {
-			return err
+		if shouldMarkPendingOnQueue(stack) {
+			if err := r.saveRecordStatus(stack, "stacks", "pending", "mark local stack pending after offline queue"); err != nil {
+				return err
+			}
 		}
 		return nil
 	}
@@ -1792,6 +1796,16 @@ func effectivePrevStatus(stack *core.Record) string {
 		return "active"
 	}
 	return status
+}
+
+// shouldMarkPendingOnQueue reports whether a stack's status should be
+// overwritten to "pending" when its reconcile is queued for replay because
+// the worker is offline. "error" is left untouched: it's already meaningful,
+// and clobbering it with "pending" would let effectivePrevStatus mistake the
+// stack for healthy (since it was previously synced) once the worker
+// reconnects and the queued reconcile replays into a no-op skip.
+func shouldMarkPendingOnQueue(stack *core.Record) bool {
+	return stack.GetString("status") != "error"
 }
 
 func (r *Reconciler) markError(rec *core.Record, collection string) error {

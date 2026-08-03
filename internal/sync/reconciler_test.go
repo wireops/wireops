@@ -70,6 +70,32 @@ func TestEffectivePrevStatusKeepsPendingForNeverSyncedStack(t *testing.T) {
 	}
 }
 
+func TestShouldMarkPendingOnQueueSkipsErrorStatus(t *testing.T) {
+	app, stack := newReconcilerPhase1TestApp(t)
+
+	stack.Set("status", "error")
+	if err := app.Save(stack); err != nil {
+		t.Fatalf("failed to save stack: %v", err)
+	}
+
+	if shouldMarkPendingOnQueue(stack) {
+		t.Fatalf("shouldMarkPendingOnQueue = true, want false for status=error")
+	}
+}
+
+func TestShouldMarkPendingOnQueueAllowsActiveStatus(t *testing.T) {
+	app, stack := newReconcilerPhase1TestApp(t)
+
+	stack.Set("status", "active")
+	if err := app.Save(stack); err != nil {
+		t.Fatalf("failed to save stack: %v", err)
+	}
+
+	if !shouldMarkPendingOnQueue(stack) {
+		t.Fatalf("shouldMarkPendingOnQueue = false, want true for status=active")
+	}
+}
+
 func TestQueuePendingReconcilePersistsRecordAndQueuedLog(t *testing.T) {
 	app, stack := newReconcilerPhase1TestApp(t)
 	r := &Reconciler{app: app}
