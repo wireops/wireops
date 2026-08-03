@@ -20,6 +20,7 @@ import (
 	"github.com/wireops/wireops/internal/protocol"
 	"github.com/wireops/wireops/internal/rbac"
 	"github.com/wireops/wireops/internal/termsession"
+	"github.com/wireops/wireops/internal/termstream"
 )
 
 // terminalIdleTimeout closes a session that has received no input for this
@@ -55,6 +56,16 @@ func maxConcurrentSessionsPerWorker() int {
 // mocks for that interface don't need to grow a method they'll never use.
 type terminalSender interface {
 	SendMessage(workerID string, msgType protocol.MessageType, payload interface{}) error
+}
+
+// terminalQueuePurger is the optional capability to release a session's
+// worker-side ordered-delivery queue (see internal/worker.WorkerServer's
+// termQueues) when this package independently gives up on a session — idle
+// sweep or manual close — instead of leaving that goroutine+channel to leak
+// for the rest of the process's life if the worker never sends
+// terminal_closed. Same lazy type-assertion pattern as terminalSender.
+type terminalQueuePurger interface {
+	PurgeTerminalSessionQueue(sessionID string)
 }
 
 // terminalSessionMeta is the routing/ownership record kept for an open
@@ -115,6 +126,20 @@ func forgetTerminalSession(sessionID string) {
 	delete(terminalSessions, sessionID)
 }
 
+// HandleTerminalOpenRejected releases sessionID's reservation and closes out
+// its stream when the worker rejects a MsgTerminalOpen it never actually
+// attempted (draining or overloaded, see protocol.TerminalOpenCommandID).
+// That rejection arrives as an unsolicited CommandResult with no exec ever
+// started — so no MsgTerminalOutput/MsgTerminalClosed will ever follow —
+// without this, the reserved slot and the "open" DB row would sit there
+// until the 15-minute idle sweeper runs, and the client's SSE stream would
+// just hang with nothing ever delivered.
+func HandleTerminalOpenRejected(app core.App, broker *termstream.Broker, sessionID, reason string) {
+	forgetTerminalSession(sessionID)
+	termsession.CloseRecord(app, sessionID, -1)
+	broker.PublishClosed(sessionID, -1, reason)
+}
+
 // touchTerminalSession bumps sessionID's last-activity timestamp so the idle
 // sweeper doesn't close it. No-op for an unknown session.
 func touchTerminalSession(sessionID string) {
@@ -173,7 +198,7 @@ var terminalSweeperOnce sync.Once
 // terminalIdleTimeout. Idempotent — only the first call actually starts the
 // background goroutine, since terminalSessions is process-global state and
 // registerTerminalRoutes could in principle run more than once in tests.
-func startTerminalIdleSweeper(app core.App, sender terminalSender, hasSender bool) {
+func startTerminalIdleSweeper(app core.App, sender terminalSender, hasSender bool, purger terminalQueuePurger) {
 	terminalSweeperOnce.Do(func() {
 		go func() {
 			ticker := time.NewTicker(terminalIdleSweepInterval)
@@ -185,6 +210,9 @@ func startTerminalIdleSweeper(app core.App, sender terminalSender, hasSender boo
 						_ = sender.SendMessage(meta.workerID, protocol.MsgTerminalClose, protocol.TerminalCloseCommand{SessionID: sessionID})
 					}
 					forgetTerminalSession(sessionID)
+					if purger != nil {
+						purger.PurgeTerminalSessionQueue(sessionID)
+					}
 					// Don't wait on the worker's MsgTerminalClosed ack to mark the
 					// row closed — if the worker is offline/unreachable (hasSender
 					// false, or SendMessage silently failed) that ack never
@@ -242,7 +270,8 @@ func (rr routeRegistrar) authorizeTerminalSessionForClose(e *core.RequestEvent, 
 
 func (rr routeRegistrar) registerTerminalRoutes() {
 	sender, hasSender := rr.workerSvc.(terminalSender)
-	startTerminalIdleSweeper(rr.app, sender, hasSender)
+	purger, _ := rr.workerSvc.(terminalQueuePurger)
+	startTerminalIdleSweeper(rr.app, sender, hasSender, purger)
 
 	rr.r.POST("/api/custom/stacks/{id}/terminal/sessions", func(e *core.RequestEvent) error {
 		stackID := e.Request.PathValue("id")
@@ -295,7 +324,7 @@ func (rr routeRegistrar) registerTerminalRoutes() {
 		}
 
 		if err := sender.SendMessage(workerID, protocol.MsgTerminalOpen, protocol.TerminalOpenCommand{
-			CommandID:   fmt.Sprintf("terminal-open-%s", sessionID),
+			CommandID:   protocol.TerminalOpenCommandID(sessionID),
 			SessionID:   sessionID,
 			StackID:     stackID,
 			ProjectName: projectName,
@@ -452,6 +481,9 @@ func (rr routeRegistrar) registerTerminalRoutes() {
 			_ = sender.SendMessage(meta.workerID, protocol.MsgTerminalClose, protocol.TerminalCloseCommand{SessionID: sessionID})
 		}
 		forgetTerminalSession(sessionID)
+		if purger != nil {
+			purger.PurgeTerminalSessionQueue(sessionID)
+		}
 		// Same reasoning as the idle sweeper: don't leave the session record
 		// stuck "open" if the worker never sends back MsgTerminalClosed.
 		termsession.CloseRecord(rr.app, sessionID, -1)

@@ -265,6 +265,31 @@ type GetContainerLogsCommand struct {
 	Tail        string `json:"tail"`
 }
 
+// terminalOpenCommandIDPrefix marks a CommandID as belonging to a
+// TerminalOpenCommand — MsgTerminalOpen is dispatched fire-and-forget (not
+// through the durable request/response path other commands use), so a
+// worker-side rejection (draining/overloaded) arrives as an unsolicited
+// MsgResult with no registered waiter. The server recognizes it by this
+// prefix to still release the reservation and close out the stream instead
+// of leaving the client hanging (see internal/worker/server.go's MsgResult
+// handling and internal/routes.HandleTerminalOpenRejected).
+const terminalOpenCommandIDPrefix = "terminal-open-"
+
+// TerminalOpenCommandID builds the CommandID for a terminal-open dispatch to
+// sessionID, and TerminalOpenSessionIDFromCommandID reverses it.
+func TerminalOpenCommandID(sessionID string) string {
+	return terminalOpenCommandIDPrefix + sessionID
+}
+
+// TerminalOpenSessionIDFromCommandID extracts sessionID from a CommandID
+// built by TerminalOpenCommandID, reporting false if commandID isn't one.
+func TerminalOpenSessionIDFromCommandID(commandID string) (string, bool) {
+	if len(commandID) <= len(terminalOpenCommandIDPrefix) || commandID[:len(terminalOpenCommandIDPrefix)] != terminalOpenCommandIDPrefix {
+		return "", false
+	}
+	return commandID[len(terminalOpenCommandIDPrefix):], true
+}
+
 // TerminalOpenCommand asks the worker to open an interactive exec session
 // (docker exec, TTY attached) inside a container already verified to belong
 // to the requesting stack's compose project.

@@ -128,7 +128,9 @@ func CreateRecord(app core.App, p CreateRecordParams) {
 			log.Printf("[termsession] failed to open transcript file for %s: %v", sessionID, ferr)
 		} else if _, werr := f.Write(line); werr != nil {
 			log.Printf("[termsession] failed to write transcript header for %s: %v", sessionID, werr)
-			f.Close()
+			if cerr := f.Close(); cerr != nil {
+				log.Printf("[termsession] failed to close transcript file for %s after write error: %v", sessionID, cerr)
+			}
 		} else {
 			filesMu.Lock()
 			files[sessionID] = f

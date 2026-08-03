@@ -309,6 +309,10 @@ func Execute() error {
 		termsession.CloseRecord(app, msg.SessionID, msg.ExitCode)
 	})
 
+	workerServer.SetOnTerminalOpenRejected(func(sessionID, reason string) {
+		routes.HandleTerminalOpenRejected(app, termBroker, sessionID, reason)
+	})
+
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
 		log.Println("[db] Database migrations completed successfully.")
 
