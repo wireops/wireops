@@ -865,7 +865,7 @@ func prepareJobConfigFiles(jobRunID string, files []protocol.ConfigFileSpec) ([]
 				return nil, noop, fmt.Errorf("failed to decode config %q: %w", f.Name, err)
 			}
 			relPath := filepath.Clean(filepath.FromSlash(f.RelPath))
-			if filepath.IsAbs(relPath) || relPath == ".." || strings.HasPrefix(relPath, ".."+string(os.PathSeparator)) {
+			if relPath == "." || relPath == "" || filepath.IsAbs(relPath) || relPath == ".." || strings.HasPrefix(relPath, ".."+string(os.PathSeparator)) {
 				cleanup()
 				return nil, noop, fmt.Errorf("invalid config relative path %q for %q", f.RelPath, f.Name)
 			}
@@ -902,9 +902,19 @@ func prepareJobConfigFiles(jobRunID string, files []protocol.ConfigFileSpec) ([]
 				return nil, noop, fmt.Errorf("invalid config relative path %q for %q", f.RelPath, f.Name)
 			}
 
-			if err := os.WriteFile(finalPath, content, configFileMode(f.Mode)); err != nil {
+			fd, err := os.OpenFile(finalPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|os.O_NOFOLLOW, configFileMode(f.Mode))
+			if err != nil {
+				cleanup()
+				return nil, noop, fmt.Errorf("failed to open config %q for writing: %w", f.Name, err)
+			}
+			if _, err := fd.Write(content); err != nil {
+				_ = fd.Close()
 				cleanup()
 				return nil, noop, fmt.Errorf("failed to write config %q: %w", f.Name, err)
+			}
+			if err := fd.Close(); err != nil {
+				cleanup()
+				return nil, noop, fmt.Errorf("failed to close config %q: %w", f.Name, err)
 			}
 		}
 		volumes = append(volumes, groupDir+":"+specs[0].Target+":ro")
