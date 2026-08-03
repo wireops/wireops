@@ -43,6 +43,7 @@ const emit = defineEmits<{
   (e: 'show-logs', containerId: string, containerName: string): void
   (e: 'container-action', payload: { containerId: string, containerName: string, action: 'stop' | 'restart' }): void
   (e: 'bulk-container-action', payload: { containers: { containerId: string, containerName: string }[], action: 'stop' | 'restart' }): void
+  (e: 'open-terminal', payload: { containerId: string, containerName: string }): void
 }>()
 
 const { getStackResources } = useApi()
@@ -235,6 +236,17 @@ watch(() => props.stackId, refreshResources, { immediate: true })
                     :container-name="container.container_name || container.container_id"
                     @show-logs="(cid, cname) => emit('show-logs', cid, cname)"
                   />
+                  <UTooltip text="Open terminal">
+                    <UButton
+                      v-if="container.status === 'running'"
+                      icon="i-lucide-terminal"
+                      variant="ghost"
+                      color="neutral"
+                      size="xs"
+                      title="Terminal"
+                      @click="emit('open-terminal', { containerId: container.container_id, containerName: container.container_name || container.container_id })"
+                    />
+                  </UTooltip>
                   <UTooltip text="Stop container">
                     <UButton
                       v-if="container.status === 'running'"

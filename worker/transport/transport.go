@@ -478,6 +478,23 @@ func readLoop(conn *websocket.Conn, disconnectCh chan<- DisconnectReason) {
 			go handlers.HandleCancelCommand(sender, env.Payload)
 		case protocol.MsgGetMetrics:
 			handlers.DispatchThrottled(sender, handlers.InteractiveSemaphore, env.Type, env.Payload, handlers.HandleGetMetrics)
+		case protocol.MsgTerminalOpen:
+			handlers.DispatchThrottled(sender, handlers.InteractiveSemaphore, env.Type, env.Payload, handlers.HandleTerminalOpen)
+		case protocol.MsgTerminalInput:
+			// Handled inline, not `go`-spawned like the other terminal
+			// messages: readLoop receives these in the order the server
+			// sent them, and the Go scheduler gives no such guarantee
+			// across goroutines — a keystroke or pasted block split across
+			// multiple WS messages could reach the pty out of order (or
+			// interleaved) if dispatched concurrently. The work here is a
+			// small base64 decode plus one write to the exec connection, so
+			// blocking the read loop for it is cheap compared to the
+			// correctness cost of reordering terminal input.
+			handlers.HandleTerminalInput(sender, env.Payload)
+		case protocol.MsgTerminalResize:
+			go handlers.HandleTerminalResize(sender, env.Payload)
+		case protocol.MsgTerminalClose:
+			go handlers.HandleTerminalClose(sender, env.Payload)
 		default:
 			log.Printf("[worker] unknown message type=%s", env.Type)
 		}

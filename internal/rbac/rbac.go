@@ -35,6 +35,7 @@ const (
 	CapManageUsers    Capability = "manage_users"
 	CapManageSecurity Capability = "manage_security"
 	CapViewAuditLogs  Capability = "view_audit_logs"
+	CapUseTerminal    Capability = "use_terminal"
 )
 
 var minimumRoleByCapability = map[Capability]string{
@@ -51,6 +52,7 @@ var minimumRoleByCapability = map[Capability]string{
 	CapManageUsers:    RoleAdmin,
 	CapManageSecurity: RoleAdmin,
 	CapViewAuditLogs:  RoleAdmin,
+	CapUseTerminal:    RoleOperator,
 }
 
 func NormalizeRole(role string) string {

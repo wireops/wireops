@@ -94,11 +94,84 @@ type WorkerServer struct {
 	seenMu       sync.Mutex
 	seenMessages map[string]time.Time
 
-	onConnect       func(workerID string)
-	onDisconnect    func(workerID string)
-	onJobCompleted  func(protocol.JobCompletedMessage)
-	onHeartbeat     func(workerID string, activeIDs []string)
-	onCommandOutput func(protocol.CommandOutputMessage)
+	onConnect              func(workerID string)
+	onDisconnect           func(workerID string)
+	onJobCompleted         func(protocol.JobCompletedMessage)
+	onHeartbeat            func(workerID string, activeIDs []string)
+	onCommandOutput        func(protocol.CommandOutputMessage)
+	onTerminalOutput       func(protocol.TerminalOutputMessage)
+	onTerminalClosed       func(protocol.TerminalClosedMessage)
+	onTerminalOpenRejected func(sessionID, reason string)
+
+	// termQueues holds a per-session, single-consumer work queue (sessionID
+	// → *termQueue) so terminal_output/terminal_closed callbacks for the
+	// same session run in the order they arrived on the WebSocket, even
+	// though different sessions still run concurrently. Without this, `go
+	// s.onTerminalOutput(...)` per message gave no ordering guarantee, so a
+	// final output chunk could be delivered/persisted after the closed
+	// event that's supposed to follow it.
+	termQueues sync.Map
+}
+
+// termQueue is one session's ordered work channel plus its own shutdown
+// signal. The shutdown signal is a separate channel from the work channel
+// deliberately: closing the work channel itself as the "done" signal would
+// race a send on it from a stray/duplicate message arriving for the same
+// sessionID after MsgTerminalClosed's cleanup func has already run (send on
+// a closed channel panics, taking the whole server process down with it).
+type termQueue struct {
+	ch   chan func()
+	done chan struct{}
+	// closeDone guards closing done — the normal MsgTerminalClosed cleanup
+	// func and PurgeTerminalSessionQueue's backstop can race to close the
+	// same queue (idle sweep timing out right as the worker's ack arrives),
+	// and closing an already-closed channel panics.
+	closeDone sync.Once
+}
+
+// termSessionQueue returns sessionID's ordered work queue, starting its
+// single drain goroutine the first time the session is seen. The goroutine
+// exits once the enqueued MsgTerminalClosed cleanup func closes q.done —
+// after that, termSessionQueue is called again (e.g. a stray late message)
+// simply starts a fresh, isolated queue rather than touching the retired one.
+func (s *WorkerServer) termSessionQueue(sessionID string) *termQueue {
+	if v, ok := s.termQueues.Load(sessionID); ok {
+		return v.(*termQueue)
+	}
+	q := &termQueue{ch: make(chan func(), 256), done: make(chan struct{})}
+	actual, loaded := s.termQueues.LoadOrStore(sessionID, q)
+	if !loaded {
+		go func() {
+			for {
+				select {
+				case fn := <-q.ch:
+					fn()
+				case <-q.done:
+					return
+				}
+			}
+		}()
+	}
+	return actual.(*termQueue)
+}
+
+// PurgeTerminalSessionQueue tears down sessionID's queue and stops its drain
+// goroutine. The normal MsgTerminalClosed path already does this as part of
+// running its last enqueued func — this is the backstop for sessions that
+// never get there (worker disconnects, is revoked, or the exec session
+// otherwise ends without ever sending terminal_closed), which would
+// otherwise leak one goroutine+channel per session for the server's
+// lifetime. Safe to call on an already-purged or unknown session. Callers
+// (the idle sweeper and manual-close route in internal/routes/terminal.go)
+// already have their own 15-minute/on-demand triggers for giving up on a
+// session; this just makes sure the worker-side queue gives up with them.
+func (s *WorkerServer) PurgeTerminalSessionQueue(sessionID string) {
+	v, ok := s.termQueues.LoadAndDelete(sessionID)
+	if !ok {
+		return
+	}
+	q := v.(*termQueue)
+	q.closeDone.Do(func() { close(q.done) })
 }
 
 // MTLSServer is kept as an internal alias while the codebase finishes moving
@@ -133,6 +206,27 @@ func (s *WorkerServer) SetOnHeartbeat(f func(workerID string, activeIDs []string
 // records, since transport-level retries can theoretically redeliver a line.
 func (s *WorkerServer) SetOnCommandOutput(f func(protocol.CommandOutputMessage)) {
 	s.onCommandOutput = f
+}
+
+// SetOnTerminalOutput registers a callback invoked whenever a worker pushes a
+// chunk of output for an open interactive terminal session. Unsolicited,
+// same delivery caveats as SetOnCommandOutput.
+func (s *WorkerServer) SetOnTerminalOutput(f func(protocol.TerminalOutputMessage)) {
+	s.onTerminalOutput = f
+}
+
+// SetOnTerminalClosed registers a callback invoked when a worker reports that
+// an open terminal session's exec process has exited.
+func (s *WorkerServer) SetOnTerminalClosed(f func(protocol.TerminalClosedMessage)) {
+	s.onTerminalClosed = f
+}
+
+// SetOnTerminalOpenRejected registers a callback invoked when a worker
+// rejects a MsgTerminalOpen it never actually attempted (draining or
+// overloaded) — see the MsgResult handling in handleWebSocket for why this
+// needs its own callback instead of the normal request/response path.
+func (s *WorkerServer) SetOnTerminalOpenRejected(f func(sessionID, reason string)) {
+	s.onTerminalOpenRejected = f
 }
 
 // SetWorkerTags stores the tags reported by the worker at registration time.
@@ -820,10 +914,66 @@ func (s *WorkerServer) handleWebSocket(c *gin.Context) {
 					default:
 						logger.SafeLogf("[WORKER] Dropped duplicate/late result for command %s from %s", result.CommandID, workerID)
 					}
+				} else if sessionID, ok := protocol.TerminalOpenSessionIDFromCommandID(result.CommandID); ok {
+					// MsgTerminalOpen is dispatched fire-and-forget (no
+					// pending-result registration), so a worker rejecting it
+					// outright (draining/overloaded, before ever touching
+					// Docker) lands here instead of a normal result waiter.
+					logger.SafeLogf("[WORKER] terminal open rejected for session %s: %s", sessionID, result.Error)
+					if s.onTerminalOpenRejected != nil {
+						go s.onTerminalOpenRejected(sessionID, result.Error)
+					}
 				} else {
 					logger.SafeLogf("[WORKER] Received result for unknown command %s from %s", result.CommandID, workerID)
 				}
 				_ = s.SendAck(workerID, result.MessageID)
+			}
+
+		case protocol.MsgTerminalOutput:
+			payloadBytes, _ := json.Marshal(env.Payload)
+			var out protocol.TerminalOutputMessage
+			if jsonErr := json.Unmarshal(payloadBytes, &out); jsonErr == nil {
+				if s.onTerminalOutput != nil {
+					q := s.termSessionQueue(out.SessionID)
+					select {
+					case q.ch <- func() { s.onTerminalOutput(out) }:
+					default:
+						logger.SafeLogf("[WORKER] terminal session %s output queue full, dropping chunk seq=%d", out.SessionID, out.Seq)
+					}
+				}
+			} else {
+				logger.SafeLogf("[WORKER] Failed to parse terminal_output from %s: %v", workerID, jsonErr)
+			}
+
+		case protocol.MsgTerminalClosed:
+			payloadBytes, _ := json.Marshal(env.Payload)
+			var closed protocol.TerminalClosedMessage
+			if jsonErr := json.Unmarshal(payloadBytes, &closed); jsonErr == nil {
+				sessionID := closed.SessionID
+				q := s.termSessionQueue(sessionID)
+				fn := func() {
+					if s.onTerminalClosed != nil {
+						s.onTerminalClosed(closed)
+					}
+					s.termQueues.Delete(sessionID)
+					q.closeDone.Do(func() { close(q.done) })
+				}
+				select {
+				case q.ch <- fn:
+				default:
+					// Same non-blocking policy as MsgTerminalOutput above: a
+					// full 256-deep queue means the drain goroutine itself is
+					// stuck, and blocking here would stall this worker's
+					// entire read loop (every session, plus heartbeats and
+					// unrelated command results) waiting on it. Dropping the
+					// close leaves the session's DB row open, but the idle
+					// sweeper in internal/routes/terminal.go reaps that within
+					// 15 minutes regardless — same backstop already relied on
+					// elsewhere for a worker that never acks at all.
+					logger.SafeLogf("[WORKER] terminal session %s closed-event queue full, dropping (idle sweep will reap it)", sessionID)
+				}
+			} else {
+				logger.SafeLogf("[WORKER] Failed to parse terminal_closed from %s: %v", workerID, jsonErr)
 			}
 
 		case protocol.MsgGetMetricsResult:

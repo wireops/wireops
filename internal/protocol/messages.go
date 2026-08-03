@@ -28,6 +28,15 @@ const (
 	MsgGetMetricsResult MessageType = "get_metrics_result"
 	MsgAck              MessageType = "ack"
 
+	// Terminal session — server → worker. Open goes through the normal
+	// throttled dispatch path; Input/Resize/Close are fire-and-forget and
+	// must reach an already-open session immediately, so they bypass
+	// throttling on the worker side (see worker/transport).
+	MsgTerminalOpen   MessageType = "terminal_open"
+	MsgTerminalInput  MessageType = "terminal_input"
+	MsgTerminalResize MessageType = "terminal_resize"
+	MsgTerminalClose  MessageType = "terminal_close"
+
 	// Server → Worker lifecycle
 	MsgRequestRenewal   MessageType = "request_renewal"
 	MsgForceRebootstrap MessageType = "force_rebootstrap"
@@ -37,6 +46,10 @@ const (
 	MsgHeartbeat     MessageType = "heartbeat"
 	MsgJobCompleted  MessageType = "job_completed"
 	MsgCommandOutput MessageType = "command_output"
+
+	// Terminal session — worker → server, unsolicited.
+	MsgTerminalOutput MessageType = "terminal_output"
+	MsgTerminalClosed MessageType = "terminal_closed"
 )
 
 // Envelope wraps every WebSocket message so the receiver can inspect Type
@@ -250,6 +263,84 @@ type GetContainerLogsCommand struct {
 	ProjectName string `json:"project_name"`
 	ContainerID string `json:"container_id"`
 	Tail        string `json:"tail"`
+}
+
+// terminalOpenCommandIDPrefix marks a CommandID as belonging to a
+// TerminalOpenCommand — MsgTerminalOpen is dispatched fire-and-forget (not
+// through the durable request/response path other commands use), so a
+// worker-side rejection (draining/overloaded) arrives as an unsolicited
+// MsgResult with no registered waiter. The server recognizes it by this
+// prefix to still release the reservation and close out the stream instead
+// of leaving the client hanging (see internal/worker/server.go's MsgResult
+// handling and internal/routes.HandleTerminalOpenRejected).
+const terminalOpenCommandIDPrefix = "terminal-open-"
+
+// TerminalOpenCommandID builds the CommandID for a terminal-open dispatch to
+// sessionID, and TerminalOpenSessionIDFromCommandID reverses it.
+func TerminalOpenCommandID(sessionID string) string {
+	return terminalOpenCommandIDPrefix + sessionID
+}
+
+// TerminalOpenSessionIDFromCommandID extracts sessionID from a CommandID
+// built by TerminalOpenCommandID, reporting false if commandID isn't one.
+func TerminalOpenSessionIDFromCommandID(commandID string) (string, bool) {
+	if len(commandID) <= len(terminalOpenCommandIDPrefix) || commandID[:len(terminalOpenCommandIDPrefix)] != terminalOpenCommandIDPrefix {
+		return "", false
+	}
+	return commandID[len(terminalOpenCommandIDPrefix):], true
+}
+
+// TerminalOpenCommand asks the worker to open an interactive exec session
+// (docker exec, TTY attached) inside a container already verified to belong
+// to the requesting stack's compose project.
+type TerminalOpenCommand struct {
+	CommandID   string `json:"command_id"`
+	SessionID   string `json:"session_id"`
+	StackID     string `json:"stack_id"`
+	ProjectName string `json:"project_name"`
+	ContainerID string `json:"container_id"`
+	// Shell is the command to exec, e.g. ["/bin/bash"]. Worker falls back to
+	// /bin/sh if unset or if the requested shell isn't present in the image.
+	Shell []string `json:"shell,omitempty"`
+	Rows  uint     `json:"rows,omitempty"`
+	Cols  uint     `json:"cols,omitempty"`
+}
+
+// TerminalInputCommand carries raw keystroke bytes for an open session.
+type TerminalInputCommand struct {
+	SessionID string `json:"session_id"`
+	// DataB64 is base64-encoded so arbitrary bytes survive JSON transport.
+	DataB64 string `json:"data_b64"`
+}
+
+// TerminalResizeCommand notifies the worker's pty of a browser-side window resize.
+type TerminalResizeCommand struct {
+	SessionID string `json:"session_id"`
+	Rows      uint   `json:"rows"`
+	Cols      uint   `json:"cols"`
+}
+
+// TerminalCloseCommand asks the worker to terminate an open session.
+type TerminalCloseCommand struct {
+	SessionID string `json:"session_id"`
+}
+
+// TerminalOutputMessage is an unsolicited worker → server chunk of terminal
+// output. Seq is per-session, monotonically increasing, letting the server
+// detect gaps but not itself doing any reordering (delivery is in-order over
+// a single WebSocket connection).
+type TerminalOutputMessage struct {
+	SessionID string `json:"session_id"`
+	DataB64   string `json:"data_b64"`
+	Seq       int64  `json:"seq"`
+}
+
+// TerminalClosedMessage reports that a session's exec process has exited,
+// either on its own or because of a TerminalCloseCommand.
+type TerminalClosedMessage struct {
+	SessionID string `json:"session_id"`
+	ExitCode  int    `json:"exit_code"`
+	Error     string `json:"error,omitempty"`
 }
 
 // DiscoverProjectsCommand asks the worker to list Docker Compose projects on this

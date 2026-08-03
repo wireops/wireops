@@ -350,6 +350,7 @@ export function useApi() {
     timezone: string
     audit_retention_days: number
     job_run_retention_days: number
+    terminal_retention_days: number
   }
   const getAppSettings = async () => {
     try {
@@ -407,6 +408,48 @@ export function useApi() {
     return customGet<AuditLogResponse>(`/api/custom/audit-logs${query ? `?${query}` : ''}`)
   }
 
+  // --- Terminal Sessions ---
+  type TerminalSessionRecord = {
+    id: string
+    session_id: string
+    stack_name: string
+    service_name: string
+    container_name: string
+    container_id: string
+    user_email: string
+    worker_hostname: string
+    started_at: string
+    ended_at: string
+    exit_code: number
+    status: 'open' | 'closed'
+  }
+  type TerminalSessionResponse = {
+    page: number
+    perPage: number
+    totalItems: number
+    items: TerminalSessionRecord[]
+  }
+  type TerminalSessionFilters = {
+    page?: number
+    perPage?: number
+    from?: string
+    to?: string
+    stack_name?: string
+    user_email?: string
+    service_name?: string
+    status?: string
+  }
+  const listTerminalSessions = (filters: TerminalSessionFilters = {}) => {
+    const params = new URLSearchParams()
+    for (const [key, value] of Object.entries(filters)) {
+      if (value !== undefined && value !== '') {
+        params.set(key, String(value))
+      }
+    }
+    const query = params.toString()
+    return customGet<TerminalSessionResponse>(`/api/custom/terminal-sessions${query ? `?${query}` : ''}`)
+  }
+
   // --- Backups ---
   type BackupInfo = {
     key: string
@@ -439,5 +482,5 @@ export function useApi() {
   const updateSelf = (body: UpdateSelfBody) =>
     customPatch<{ id: string; name: string; email: string }>('/api/custom/users/me', body)
 
-  return { triggerSync, triggerRollback, forceRedeploy, setRenderOverrides, clearRenderOverrides, getRenderOverridesDiff, getServices, getDependencyGraph, getStackResources, stopContainer, restartContainer, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, getRepoFiles, getStackFiles, getJobFiles, getJobDefinitionFromFile, getWireopsFiles, getWireopsDefinitionFromFile, createStackFromWireops, lintCompose, testCredentials, keyscan, listGitProviders, getGitProviderAuthorizeUrl, listGitProviderOrgs, listGitProviderRepos, listGitProviderBranches, listOrphans, purgeOrphan, getSystemInfo, customPost, customGet, customPut, customPatch, customDelete, getWorkers, createWorkerToken, revokeWorker, transferStack, discoverProjects, importStack, listJobs, listJobGroups, triggerJobRun, cancelJobRun, deleteJobRun, getJobDefinition, getJobRaw, getWorkerPolicy, saveWorkerPolicy, resetWorkerPolicy, getGlobalWorkerPolicy, saveGlobalWorkerPolicy, getAppSettings, saveAppSettings, listAuditLogs, listBackups, createBackup, deleteBackup, restoreBackup, syncLocalBackup, getBackupSettings, saveBackupSettings, updateSelf }
+  return { triggerSync, triggerRollback, forceRedeploy, setRenderOverrides, clearRenderOverrides, getRenderOverridesDiff, getServices, getDependencyGraph, getStackResources, stopContainer, restartContainer, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, getRepoFiles, getStackFiles, getJobFiles, getJobDefinitionFromFile, getWireopsFiles, getWireopsDefinitionFromFile, createStackFromWireops, lintCompose, testCredentials, keyscan, listGitProviders, getGitProviderAuthorizeUrl, listGitProviderOrgs, listGitProviderRepos, listGitProviderBranches, listOrphans, purgeOrphan, getSystemInfo, customPost, customGet, customPut, customPatch, customDelete, getWorkers, createWorkerToken, revokeWorker, transferStack, discoverProjects, importStack, listJobs, listJobGroups, triggerJobRun, cancelJobRun, deleteJobRun, getJobDefinition, getJobRaw, getWorkerPolicy, saveWorkerPolicy, resetWorkerPolicy, getGlobalWorkerPolicy, saveGlobalWorkerPolicy, getAppSettings, saveAppSettings, listAuditLogs, listTerminalSessions, listBackups, createBackup, deleteBackup, restoreBackup, syncLocalBackup, getBackupSettings, saveBackupSettings, updateSelf }
 }
