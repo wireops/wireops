@@ -478,6 +478,14 @@ func readLoop(conn *websocket.Conn, disconnectCh chan<- DisconnectReason) {
 			go handlers.HandleCancelCommand(sender, env.Payload)
 		case protocol.MsgGetMetrics:
 			handlers.DispatchThrottled(sender, handlers.InteractiveSemaphore, env.Type, env.Payload, handlers.HandleGetMetrics)
+		case protocol.MsgTerminalOpen:
+			handlers.DispatchThrottled(sender, handlers.InteractiveSemaphore, env.Type, env.Payload, handlers.HandleTerminalOpen)
+		case protocol.MsgTerminalInput:
+			go handlers.HandleTerminalInput(sender, env.Payload)
+		case protocol.MsgTerminalResize:
+			go handlers.HandleTerminalResize(sender, env.Payload)
+		case protocol.MsgTerminalClose:
+			go handlers.HandleTerminalClose(sender, env.Payload)
 		default:
 			log.Printf("[worker] unknown message type=%s", env.Type)
 		}

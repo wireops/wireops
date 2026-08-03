@@ -74,6 +74,18 @@ func TestCapViewWorkersIsViewerLevel(t *testing.T) {
 	}
 }
 
+func TestCapUseTerminalIsOperatorLevel(t *testing.T) {
+	if got := MinimumRole(CapUseTerminal); got != RoleOperator {
+		t.Fatalf("expected operator, got %q", got)
+	}
+	if AtLeast(RoleViewer, MinimumRole(CapUseTerminal)) {
+		t.Fatal("expected viewer role to NOT satisfy CapUseTerminal")
+	}
+	if !AtLeast(RoleOperator, MinimumRole(CapUseTerminal)) {
+		t.Fatal("expected operator role to satisfy CapUseTerminal")
+	}
+}
+
 func TestResolveActorDisabledUser(t *testing.T) {
 	col := core.NewAuthCollection("users")
 	user := core.NewRecord(col)

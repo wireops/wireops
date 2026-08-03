@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"log"
 	"sync"
@@ -607,6 +608,85 @@ func HandleGetMetrics(sender Sender, payload interface{}) {
 		Type:    protocol.MsgGetMetricsResult,
 		Payload: resPayload,
 	})
+}
+
+// terminalSeq tracks the next output sequence number per open session, so
+// HandleTerminalOpen's onOutput closure can stamp each chunk without the
+// executor package needing to know about envelope framing.
+var terminalSeq sync.Map // sessionID -> *int64
+
+// HandleTerminalOpen opens an interactive docker-exec session and streams
+// its output back as unsolicited MsgTerminalOutput envelopes until the
+// process exits or a MsgTerminalClose arrives for the same session.
+func HandleTerminalOpen(sender Sender, payload interface{}) {
+	cmd, ok := unmarshalPayloadOrReply[protocol.TerminalOpenCommand](sender, payload, "")
+	if !ok {
+		return
+	}
+
+	seq := new(int64)
+	terminalSeq.Store(cmd.SessionID, seq)
+
+	onOutput := func(data []byte) {
+		n := atomic.AddInt64(seq, 1)
+		sender.SendEnvelope(protocol.Envelope{
+			Type: protocol.MsgTerminalOutput,
+			Payload: protocol.TerminalOutputMessage{
+				SessionID: cmd.SessionID,
+				DataB64:   base64.StdEncoding.EncodeToString(data),
+				Seq:       n,
+			},
+		})
+	}
+	onClosed := func(exitCode int, errMsg string) {
+		terminalSeq.Delete(cmd.SessionID)
+		sender.SendEnvelope(protocol.Envelope{
+			Type: protocol.MsgTerminalClosed,
+			Payload: protocol.TerminalClosedMessage{
+				SessionID: cmd.SessionID,
+				ExitCode:  exitCode,
+				Error:     errMsg,
+			},
+		})
+	}
+
+	executor.OpenTerminal(cmd.SessionID, cmd.ContainerID, cmd.ProjectName, cmd.Shell, cmd.Rows, cmd.Cols, onOutput, onClosed)
+}
+
+// HandleTerminalInput forwards keystroke bytes to an already-open session.
+// Fire-and-forget: no result is sent back, matching HandleCancelCommand.
+func HandleTerminalInput(sender Sender, payload interface{}) {
+	cmd, err := unmarshalPayload[protocol.TerminalInputCommand](payload)
+	if err != nil {
+		log.Printf("[worker] invalid terminal_input payload: %v", err)
+		return
+	}
+	data, err := base64.StdEncoding.DecodeString(cmd.DataB64)
+	if err != nil {
+		log.Printf("[worker] invalid terminal_input base64 for session %s: %v", cmd.SessionID, err)
+		return
+	}
+	executor.WriteTerminal(cmd.SessionID, data)
+}
+
+// HandleTerminalResize resizes an already-open session's pty.
+func HandleTerminalResize(sender Sender, payload interface{}) {
+	cmd, err := unmarshalPayload[protocol.TerminalResizeCommand](payload)
+	if err != nil {
+		log.Printf("[worker] invalid terminal_resize payload: %v", err)
+		return
+	}
+	executor.ResizeTerminal(cmd.SessionID, cmd.Rows, cmd.Cols)
+}
+
+// HandleTerminalClose terminates an open session's exec process.
+func HandleTerminalClose(sender Sender, payload interface{}) {
+	cmd, err := unmarshalPayload[protocol.TerminalCloseCommand](payload)
+	if err != nil {
+		log.Printf("[worker] invalid terminal_close payload: %v", err)
+		return
+	}
+	executor.CloseTerminal(cmd.SessionID)
 }
 
 func IsQueueFull() bool {

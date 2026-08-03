@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/base64"
 	"fmt"
 	"log"
 	"net/http"
@@ -31,6 +32,8 @@ import (
 	"github.com/wireops/wireops/internal/protocol"
 	"github.com/wireops/wireops/internal/routes"
 	wiresync "github.com/wireops/wireops/internal/sync"
+	"github.com/wireops/wireops/internal/termsession"
+	"github.com/wireops/wireops/internal/termstream"
 	"github.com/wireops/wireops/internal/worker"
 	"github.com/wireops/wireops/pkg/logger"
 	wiretls "github.com/wireops/wireops/pkg/tls"
@@ -38,8 +41,8 @@ import (
 	_ "github.com/wireops/wireops/internal/gitprovider/github"
 	_ "github.com/wireops/wireops/internal/integrations/caddy"
 	_ "github.com/wireops/wireops/internal/integrations/discord"
-	_ "github.com/wireops/wireops/internal/integrations/github"
 	_ "github.com/wireops/wireops/internal/integrations/dozzle"
+	_ "github.com/wireops/wireops/internal/integrations/github"
 	_ "github.com/wireops/wireops/internal/integrations/infisical"
 	_ "github.com/wireops/wireops/internal/integrations/nginxproxymanager"
 	_ "github.com/wireops/wireops/internal/integrations/ntfy"
@@ -230,6 +233,7 @@ func Execute() error {
 	scheduler := wiresync.NewScheduler(app, workerServer)
 	jobSched := jobscheduler.NewScheduler(app, workerServer, reposWorkspace)
 	logBroker := logstream.New()
+	termBroker := termstream.New()
 
 	var disconnectTimers sync.Map
 
@@ -289,6 +293,20 @@ func Execute() error {
 
 	workerServer.SetOnCommandOutput(func(msg protocol.CommandOutputMessage) {
 		logBroker.PublishLine(msg.StackID, msg.CommandID, msg.Phase, msg.Line, msg.Seq)
+	})
+
+	workerServer.SetOnTerminalOutput(func(msg protocol.TerminalOutputMessage) {
+		data, err := base64.StdEncoding.DecodeString(msg.DataB64)
+		if err != nil {
+			return
+		}
+		termBroker.PublishOutput(msg.SessionID, data)
+		termsession.AppendTranscript(msg.SessionID, data)
+	})
+
+	workerServer.SetOnTerminalClosed(func(msg protocol.TerminalClosedMessage) {
+		termBroker.PublishClosed(msg.SessionID, msg.ExitCode, msg.Error)
+		termsession.CloseRecord(app, msg.SessionID, msg.ExitCode)
 	})
 
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
@@ -363,7 +381,7 @@ func Execute() error {
 
 		routes.RegisterSetupRoutes(se.Router, app)
 		routes.RegisterMetricsRoutes(se.Router, app, workerServer)
-		routes.Register(se.Router, app, scheduler, workerServer, logBroker)
+		routes.Register(se.Router, app, scheduler, workerServer, logBroker, termBroker)
 		routes.RegisterWorkerRoutes(se.Router, app, workerSvc, workerServer, workerServer)
 		routes.RegisterJobRoutes(se.Router, app, jobSched)
 		routes.RegisterAuditRoutes(se.Router, app)
@@ -398,6 +416,9 @@ func Execute() error {
 		app.Cron().Add("retention_cleanup", "0 3 * * *", func() {
 			if err := audit.PurgeExpired(app); err != nil {
 				log.Printf("[cron] retention_cleanup failed: %v", err)
+			}
+			if err := termsession.PurgeExpired(app); err != nil {
+				log.Printf("[cron] terminal session retention_cleanup failed: %v", err)
 			}
 		})
 

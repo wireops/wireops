@@ -34,14 +34,16 @@ import (
 	"github.com/wireops/wireops/internal/protocol"
 	"github.com/wireops/wireops/internal/rbac"
 	"github.com/wireops/wireops/internal/sync"
+	"github.com/wireops/wireops/internal/termstream"
 )
 
 type routeRegistrar struct {
-	r         *router.Router[*core.RequestEvent]
-	app       core.App
-	scheduler *sync.Scheduler
-	workerSvc sync.WorkerDispatcher
-	logBroker *logstream.Broker
+	r          *router.Router[*core.RequestEvent]
+	app        core.App
+	scheduler  *sync.Scheduler
+	workerSvc  sync.WorkerDispatcher
+	logBroker  *logstream.Broker
+	termBroker *termstream.Broker
 }
 
 // isNotificationIntegration reports whether slug is one of the notify-backed

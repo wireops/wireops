@@ -51,6 +51,16 @@ func GetStacksStoragePath() string {
 	return filepath.Join(GetDataDir(), "stacks")
 }
 
+// GetTerminalSessionsStoragePath returns the directory used for recorded
+// interactive terminal session transcripts (see docs/TERMINAL.md).
+func GetTerminalSessionsStoragePath() string {
+	if p := strings.TrimSpace(os.Getenv("TERMINAL_SESSIONS_STORAGE_PATH")); p != "" {
+		return p
+	}
+
+	return filepath.Join(GetDataDir(), "terminal_sessions")
+}
+
 // GetAppURL returns the configured APP_URL or constructs a default based on the bind address
 func GetAppURL() string {
 	appURL := strings.TrimSpace(os.Getenv("APP_URL"))

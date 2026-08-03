@@ -94,11 +94,40 @@ type WorkerServer struct {
 	seenMu       sync.Mutex
 	seenMessages map[string]time.Time
 
-	onConnect       func(workerID string)
-	onDisconnect    func(workerID string)
-	onJobCompleted  func(protocol.JobCompletedMessage)
-	onHeartbeat     func(workerID string, activeIDs []string)
-	onCommandOutput func(protocol.CommandOutputMessage)
+	onConnect        func(workerID string)
+	onDisconnect     func(workerID string)
+	onJobCompleted   func(protocol.JobCompletedMessage)
+	onHeartbeat      func(workerID string, activeIDs []string)
+	onCommandOutput  func(protocol.CommandOutputMessage)
+	onTerminalOutput func(protocol.TerminalOutputMessage)
+	onTerminalClosed func(protocol.TerminalClosedMessage)
+
+	// termQueues holds a per-session, single-consumer work queue (sessionID
+	// → chan func()) so terminal_output/terminal_closed callbacks for the
+	// same session run in the order they arrived on the WebSocket, even
+	// though different sessions still run concurrently. Without this, `go
+	// s.onTerminalOutput(...)` per message gave no ordering guarantee, so a
+	// final output chunk could be delivered/persisted after the closed
+	// event that's supposed to follow it.
+	termQueues sync.Map
+}
+
+// termSessionQueue returns sessionID's ordered work queue, starting its
+// single drain goroutine the first time the session is seen.
+func (s *WorkerServer) termSessionQueue(sessionID string) chan func() {
+	if v, ok := s.termQueues.Load(sessionID); ok {
+		return v.(chan func())
+	}
+	ch := make(chan func(), 256)
+	actual, loaded := s.termQueues.LoadOrStore(sessionID, ch)
+	if !loaded {
+		go func() {
+			for fn := range ch {
+				fn()
+			}
+		}()
+	}
+	return actual.(chan func())
 }
 
 // MTLSServer is kept as an internal alias while the codebase finishes moving
@@ -133,6 +162,19 @@ func (s *WorkerServer) SetOnHeartbeat(f func(workerID string, activeIDs []string
 // records, since transport-level retries can theoretically redeliver a line.
 func (s *WorkerServer) SetOnCommandOutput(f func(protocol.CommandOutputMessage)) {
 	s.onCommandOutput = f
+}
+
+// SetOnTerminalOutput registers a callback invoked whenever a worker pushes a
+// chunk of output for an open interactive terminal session. Unsolicited,
+// same delivery caveats as SetOnCommandOutput.
+func (s *WorkerServer) SetOnTerminalOutput(f func(protocol.TerminalOutputMessage)) {
+	s.onTerminalOutput = f
+}
+
+// SetOnTerminalClosed registers a callback invoked when a worker reports that
+// an open terminal session's exec process has exited.
+func (s *WorkerServer) SetOnTerminalClosed(f func(protocol.TerminalClosedMessage)) {
+	s.onTerminalClosed = f
 }
 
 // SetWorkerTags stores the tags reported by the worker at registration time.
@@ -824,6 +866,39 @@ func (s *WorkerServer) handleWebSocket(c *gin.Context) {
 					logger.SafeLogf("[WORKER] Received result for unknown command %s from %s", result.CommandID, workerID)
 				}
 				_ = s.SendAck(workerID, result.MessageID)
+			}
+
+		case protocol.MsgTerminalOutput:
+			payloadBytes, _ := json.Marshal(env.Payload)
+			var out protocol.TerminalOutputMessage
+			if jsonErr := json.Unmarshal(payloadBytes, &out); jsonErr == nil {
+				if s.onTerminalOutput != nil {
+					ch := s.termSessionQueue(out.SessionID)
+					select {
+					case ch <- func() { s.onTerminalOutput(out) }:
+					default:
+						logger.SafeLogf("[WORKER] terminal session %s output queue full, dropping chunk seq=%d", out.SessionID, out.Seq)
+					}
+				}
+			} else {
+				logger.SafeLogf("[WORKER] Failed to parse terminal_output from %s: %v", workerID, jsonErr)
+			}
+
+		case protocol.MsgTerminalClosed:
+			payloadBytes, _ := json.Marshal(env.Payload)
+			var closed protocol.TerminalClosedMessage
+			if jsonErr := json.Unmarshal(payloadBytes, &closed); jsonErr == nil {
+				sessionID := closed.SessionID
+				ch := s.termSessionQueue(sessionID)
+				ch <- func() {
+					if s.onTerminalClosed != nil {
+						s.onTerminalClosed(closed)
+					}
+					s.termQueues.Delete(sessionID)
+					close(ch)
+				}
+			} else {
+				logger.SafeLogf("[WORKER] Failed to parse terminal_closed from %s: %v", workerID, jsonErr)
 			}
 
 		case protocol.MsgGetMetricsResult:

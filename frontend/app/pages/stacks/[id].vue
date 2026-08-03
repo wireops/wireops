@@ -172,6 +172,15 @@ function openContainerActionModal(containerId: string, containerName: string, ac
   showContainerConfirmModal.value = true
 }
 
+// Terminal
+const showTerminalModal = ref(false)
+const terminalState = ref<{ id: string, name: string }>({ id: '', name: '' })
+
+function openTerminalModal(containerId: string, containerName: string) {
+  terminalState.value = { id: containerId, name: containerName || containerId }
+  showTerminalModal.value = true
+}
+
 // Bulk container action confirmation
 const showBulkActionModal = ref(false)
 const bulkActionState = ref<{ containers: { containerId: string, containerName: string }[], action: 'stop' | 'restart' }>({
@@ -910,6 +919,7 @@ onMounted(() => {
         @show-logs="openContainerLogs"
         @container-action="openContainerActionModal($event.containerId, $event.containerName, $event.action)"
         @bulk-container-action="handleBulkContainerAction($event)"
+        @open-terminal="openTerminalModal($event.containerId, $event.containerName)"
       />
 
       <!-- Webhook Integration -->
@@ -1349,6 +1359,14 @@ onMounted(() => {
       :container-name="containerActionState.name"
       :action="containerActionState.action"
       @done="loadServices"
+    />
+
+    <!-- Terminal -->
+    <TerminalModal
+      v-model:open="showTerminalModal"
+      :stack-id="stackId"
+      :container-id="terminalState.id"
+      :container-name="terminalState.name"
     />
 
     <!-- Bulk container action confirm modal -->

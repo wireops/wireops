@@ -1,0 +1,2 @@
+{"height":22,"timestamp":1785766404,"version":2,"width":80}
+[0.055736042,"o","OCI runtime exec failed: exec failed: unable to start container process: exec: \"/bin/bash\": stat /bin/bash: no such file or directory\r\n"]

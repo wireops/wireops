@@ -17,6 +17,7 @@ import (
 	"github.com/wireops/wireops/internal/policy"
 	"github.com/wireops/wireops/internal/rbac"
 	"github.com/wireops/wireops/internal/sync"
+	"github.com/wireops/wireops/internal/termsession"
 	"github.com/wireops/wireops/internal/worker"
 )
 
@@ -398,29 +399,32 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 		if len(records) > 0 {
 			rec := records[0]
 			return e.JSON(http.StatusOK, map[string]interface{}{
-				"id":                     rec.Id,
-				"timezone":               rec.GetString("timezone"),
-				"audit_retention_days":   audit.AuditRetentionDays(app),
-				"job_run_retention_days": audit.JobRunRetentionDays(app),
-				"sso_groups_claim":       rec.GetString("sso_groups_claim"),
+				"id":                      rec.Id,
+				"timezone":                rec.GetString("timezone"),
+				"audit_retention_days":    audit.AuditRetentionDays(app),
+				"job_run_retention_days":  audit.JobRunRetentionDays(app),
+				"terminal_retention_days": termsession.RetentionDays(app),
+				"sso_groups_claim":        rec.GetString("sso_groups_claim"),
 			})
 		}
 		return e.JSON(http.StatusOK, map[string]interface{}{
-			"id":                     "",
-			"timezone":               "",
-			"audit_retention_days":   audit.DefaultAuditRetentionDays,
-			"job_run_retention_days": audit.DefaultJobRunRetentionDays,
-			"sso_groups_claim":       "groups",
+			"id":                      "",
+			"timezone":                "",
+			"audit_retention_days":    audit.DefaultAuditRetentionDays,
+			"job_run_retention_days":  audit.DefaultJobRunRetentionDays,
+			"terminal_retention_days": termsession.DefaultRetentionDays,
+			"sso_groups_claim":        "groups",
 		})
 	}).BindFunc(rbac.Require(rbac.CapManageSettings))
 
 	// PUT /api/custom/settings/app-settings
 	r.PUT("/api/custom/settings/app-settings", func(e *core.RequestEvent) error {
 		var body struct {
-			Timezone            *string `json:"timezone"`
-			AuditRetentionDays  *int    `json:"audit_retention_days"`
-			JobRunRetentionDays *int    `json:"job_run_retention_days"`
-			SSOGroupsClaim      *string `json:"sso_groups_claim"`
+			Timezone              *string `json:"timezone"`
+			AuditRetentionDays    *int    `json:"audit_retention_days"`
+			JobRunRetentionDays   *int    `json:"job_run_retention_days"`
+			TerminalRetentionDays *int    `json:"terminal_retention_days"`
+			SSOGroupsClaim        *string `json:"sso_groups_claim"`
 		}
 		if err := json.NewDecoder(e.Request.Body).Decode(&body); err != nil {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid JSON body"})
@@ -431,7 +435,7 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 				return e.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid timezone"})
 			}
 		}
-		if err := validateRetentionDays(body.AuditRetentionDays, body.JobRunRetentionDays); err != nil {
+		if err := validateRetentionDays(body.AuditRetentionDays, body.JobRunRetentionDays, body.TerminalRetentionDays); err != nil {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 		}
 
@@ -464,6 +468,11 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 		} else if rec.GetInt("job_run_retention_days") <= 0 {
 			rec.Set("job_run_retention_days", audit.DefaultJobRunRetentionDays)
 		}
+		if body.TerminalRetentionDays != nil {
+			rec.Set("terminal_retention_days", *body.TerminalRetentionDays)
+		} else if rec.GetInt("terminal_retention_days") <= 0 {
+			rec.Set("terminal_retention_days", termsession.DefaultRetentionDays)
+		}
 		if body.SSOGroupsClaim != nil {
 			if *body.SSOGroupsClaim != rec.GetString("sso_groups_claim") && !rbac.Can(e, rbac.CapManageSecurity) {
 				return e.JSON(http.StatusForbidden, map[string]string{"error": "CapManageSecurity is required to modify sso_groups_claim"})
@@ -477,20 +486,24 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to save app settings: " + err.Error()})
 		}
 		return e.JSON(http.StatusOK, map[string]interface{}{
-			"id":                     rec.Id,
-			"timezone":               rec.GetString("timezone"),
-			"audit_retention_days":   audit.AuditRetentionDays(app),
-			"job_run_retention_days": audit.JobRunRetentionDays(app),
-			"sso_groups_claim":       rec.GetString("sso_groups_claim"),
+			"id":                      rec.Id,
+			"timezone":                rec.GetString("timezone"),
+			"audit_retention_days":    audit.AuditRetentionDays(app),
+			"job_run_retention_days":  audit.JobRunRetentionDays(app),
+			"terminal_retention_days": termsession.RetentionDays(app),
+			"sso_groups_claim":        rec.GetString("sso_groups_claim"),
 		})
 	}).BindFunc(rbac.Require(rbac.CapManageSettings))
 }
 
-func validateRetentionDays(auditDays, jobRunDays *int) error {
+func validateRetentionDays(auditDays, jobRunDays, terminalDays *int) error {
 	if auditDays != nil && *auditDays < 1 {
 		return errors.New("Retention days must be at least 1")
 	}
 	if jobRunDays != nil && *jobRunDays < 1 {
+		return errors.New("Retention days must be at least 1")
+	}
+	if terminalDays != nil && *terminalDays < 1 {
 		return errors.New("Retention days must be at least 1")
 	}
 	return nil
