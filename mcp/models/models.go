@@ -21,8 +21,10 @@ type SyncLogsInput struct {
 // ContainerLogsInput is the input for the get_container_logs tool.
 type ContainerLogsInput struct {
 	StackID     string `json:"stack_id" jsonschema:"The wireops stack record id."`
-	ContainerID string `json:"container_id" jsonschema:"The Docker container id or name, as returned by get_stack_services."`
+	ContainerID string `json:"container_id,omitempty" jsonschema:"The Docker container id or name, as returned by get_stack_services. Required unless service_name is given."`
+	ServiceName string `json:"service_name,omitempty" jsonschema:"The compose service name to fetch logs for, resolved to a container id via get_stack_services. Alternative to container_id."`
 	Tail        string `json:"tail,omitempty" jsonschema:"Number of trailing log lines to fetch (default 100)."`
+	Pattern     string `json:"pattern,omitempty" jsonschema:"Regex pattern; only log lines matching it are returned. Useful for cutting noise in crash-loop logs."`
 }
 
 // ListJobsInput is the input for the list_jobs tool.

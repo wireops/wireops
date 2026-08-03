@@ -694,6 +694,109 @@ func TestGetContainerLogsOmitsTailQueryWhenUnset(t *testing.T) {
 	}
 }
 
+func TestGetContainerLogsFiltersByPattern(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"logs":"connecting to db\nERROR timeout\nretrying\nERROR timeout\nok"}`))
+	}))
+	defer srv.Close()
+
+	handler := getContainerLogs(client.New(srv.URL))
+	_, out, err := handler(ctxWithKey(), nil, models.ContainerLogsInput{StackID: "stack1", ContainerID: "web", Pattern: "ERROR"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	obj, ok := out.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected object output, got %T", out)
+	}
+	logs, ok := obj["logs"].(string)
+	if !ok {
+		t.Fatalf("expected logs string, got %#v", obj["logs"])
+	}
+	if logs != "ERROR timeout\nERROR timeout" {
+		t.Fatalf("unexpected filtered logs: %q", logs)
+	}
+}
+
+func TestGetContainerLogsInvalidPattern(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"logs":"line1"}`))
+	}))
+	defer srv.Close()
+
+	handler := getContainerLogs(client.New(srv.URL))
+	_, _, err := handler(ctxWithKey(), nil, models.ContainerLogsInput{StackID: "stack1", ContainerID: "web", Pattern: "("})
+	if err == nil {
+		t.Fatal("expected error for invalid regex pattern")
+	}
+}
+
+func TestGetContainerLogsResolvesServiceName(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/custom/stacks/stack1/services":
+			w.Write([]byte(`[{"service_name":"web","container_id":"c-web"},{"service_name":"db","container_id":"c-db"}]`))
+		default:
+			gotPath = r.URL.Path
+			w.Write([]byte(`{"logs":"hello"}`))
+		}
+	}))
+	defer srv.Close()
+
+	handler := getContainerLogs(client.New(srv.URL))
+	_, _, err := handler(ctxWithKey(), nil, models.ContainerLogsInput{StackID: "stack1", ServiceName: "web"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotPath != "/api/custom/stacks/stack1/container/c-web/logs" {
+		t.Fatalf("expected service_name resolved to container id in path, got %s", gotPath)
+	}
+}
+
+func TestGetContainerLogsServiceNameNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`[{"service_name":"web","container_id":"c-web"}]`))
+	}))
+	defer srv.Close()
+
+	handler := getContainerLogs(client.New(srv.URL))
+	_, _, err := handler(ctxWithKey(), nil, models.ContainerLogsInput{StackID: "stack1", ServiceName: "nonexistent"})
+	if err == nil {
+		t.Fatal("expected error when service_name does not match any service")
+	}
+}
+
+func TestGetContainerLogsServiceNameWithoutContainerID(t *testing.T) {
+	logsRequested := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/custom/stacks/stack1/services" {
+			w.Write([]byte(`[{"service_name":"web","container_id":""}]`))
+			return
+		}
+		logsRequested = true
+		w.Write([]byte(`{"logs":"hello"}`))
+	}))
+	defer srv.Close()
+
+	handler := getContainerLogs(client.New(srv.URL))
+	_, _, err := handler(ctxWithKey(), nil, models.ContainerLogsInput{StackID: "stack1", ServiceName: "web"})
+	if err == nil {
+		t.Fatal("expected error when matching service has no container_id")
+	}
+	if logsRequested {
+		t.Fatal("expected handler not to call the logs endpoint when container_id resolution fails")
+	}
+}
+
+func TestGetContainerLogsRequiresContainerIDOrServiceName(t *testing.T) {
+	handler := getContainerLogs(client.New("http://unused"))
+	_, _, err := handler(ctxWithKey(), nil, models.ContainerLogsInput{StackID: "stack1"})
+	if err == nil {
+		t.Fatal("expected error when neither container_id nor service_name is given")
+	}
+}
+
 func TestListJobsPath(t *testing.T) {
 	var gotPath, gotHeader string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

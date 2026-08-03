@@ -261,6 +261,77 @@ services:
 	}
 }
 
+func TestRendererWarnsOnUnescapedConfigInterpolation(t *testing.T) {
+	app, workDir, composePath := setupRendererTest(t)
+	composeContent := `
+name: config_warn_stack
+services:
+  web:
+    image: nginx:latest
+    annotations:
+      dev.wireops.config.nginx-conf: files/nginx.conf:/etc/nginx/nginx.conf
+`
+	writeTestComposeFile(t, composePath, composeContent)
+	// $uri is meant for nginx's own template engine at runtime, not docker
+	// compose — left bare like this, `docker compose config` interpolates it
+	// away before the container ever starts.
+	writeSourceFile(t, workDir, "files/nginx.conf", "location / { try_files $uri /index.html; }\n")
+
+	repo := createTestRepo(t, app, "Config Warn Repo", "main")
+	stack := createTestStack(t, app, repo.Id, "config_warn_stack")
+
+	renderer := sync.NewRenderer(app)
+	ctx := context.Background()
+
+	res, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitA", false, "", "embedded", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var match string
+	for _, w := range res.Warnings {
+		if contains(w, "compose/unescaped-config-interpolation") {
+			match = w
+			break
+		}
+	}
+	if match == "" {
+		t.Fatalf("expected a compose/unescaped-config-interpolation warning, got %+v", res.Warnings)
+	}
+	if !contains(match, "uri") {
+		t.Errorf("expected warning to mention the unescaped variable, got %q", match)
+	}
+}
+
+func TestRendererNoWarningsWhenConfigContentHasNoInterpolation(t *testing.T) {
+	app, workDir, composePath := setupRendererTest(t)
+	composeContent := `
+name: config_nowarn_stack
+services:
+  web:
+    image: nginx:latest
+    annotations:
+      dev.wireops.config.nginx-conf: files/nginx.conf:/etc/nginx/nginx.conf
+`
+	writeTestComposeFile(t, composePath, composeContent)
+	writeSourceFile(t, workDir, "files/nginx.conf", "server {}\n")
+
+	repo := createTestRepo(t, app, "Config No Warn Repo", "main")
+	stack := createTestStack(t, app, repo.Id, "config_nowarn_stack")
+
+	renderer := sync.NewRenderer(app)
+	ctx := context.Background()
+
+	res, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitA", false, "", "embedded", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, w := range res.Warnings {
+		if contains(w, "compose/unescaped-config-interpolation") {
+			t.Fatalf("expected no unescaped-config-interpolation warning, got %+v", res.Warnings)
+		}
+	}
+}
+
 func TestRendererConfigAnnotationOnMultipleServices(t *testing.T) {
 	app, workDir, composePath := setupRendererTest(t)
 	// Both services reference the same source file but mount it at different

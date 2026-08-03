@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"regexp"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"gopkg.in/yaml.v3"
@@ -87,7 +89,7 @@ func Register(server *mcp.Server, c *client.Client) {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_container_logs",
-		Description: "Fetch recent log lines from a specific container within a wireops stack.",
+		Description: "Fetch recent log lines from a specific container within a wireops stack. Identify the container with container_id or service_name (either works — service_name is resolved internally, saving a round trip through get_stack_services). Use pattern to filter to lines matching a regex, which cuts noise in crash-loop logs.",
 	}, getContainerLogs(c))
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -254,15 +256,49 @@ func getSyncLogs(c *client.Client) mcp.ToolHandlerFor[models.SyncLogsInput, any]
 	}
 }
 
+// fetchStackServices lists a stack's services, as returned by
+// GET /api/custom/stacks/{id}/services — each entry carries at least
+// service_name and container_id.
+func fetchStackServices(ctx context.Context, c *client.Client, apiKey, stackID string) ([]interface{}, error) {
+	var out []interface{}
+	path := "/api/custom/stacks/" + url.PathEscape(stackID) + "/services"
+	if err := c.Get(ctx, apiKey, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// resolveContainerIDByServiceName looks up a service's container id from the
+// stack's service list, for callers that only know the compose service name.
+func resolveContainerIDByServiceName(ctx context.Context, c *client.Client, apiKey, stackID, serviceName string) (string, error) {
+	services, err := fetchStackServices(ctx, c, apiKey, stackID)
+	if err != nil {
+		return "", err
+	}
+	for _, svc := range services {
+		m, ok := svc.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if name, _ := m["service_name"].(string); name == serviceName {
+			containerID, _ := m["container_id"].(string)
+			if containerID == "" {
+				return "", fmt.Errorf("service %q has no container_id yet (not running?)", serviceName)
+			}
+			return containerID, nil
+		}
+	}
+	return "", fmt.Errorf("no service named %q found for stack %q", serviceName, stackID)
+}
+
 func getStackServices(c *client.Client) mcp.ToolHandlerFor[models.StackIDInput, any] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in models.StackIDInput) (*mcp.CallToolResult, any, error) {
 		apiKey, err := apiKeyFrom(ctx)
 		if err != nil {
 			return nil, nil, err
 		}
-		var out []interface{}
-		path := "/api/custom/stacks/" + url.PathEscape(in.StackID) + "/services"
-		if err := c.Get(ctx, apiKey, path, nil, &out); err != nil {
+		out, err := fetchStackServices(ctx, c, apiKey, in.StackID)
+		if err != nil {
 			return nil, nil, err
 		}
 		return nil, map[string]interface{}{"services": out}, nil
@@ -503,17 +539,55 @@ func getContainerLogs(c *client.Client) mcp.ToolHandlerFor[models.ContainerLogsI
 		if err != nil {
 			return nil, nil, err
 		}
+
+		var re *regexp.Regexp
+		if in.Pattern != "" {
+			re, err = regexp.Compile(in.Pattern)
+			if err != nil {
+				return nil, nil, fmt.Errorf("invalid pattern: %w", err)
+			}
+		}
+
+		containerID := in.ContainerID
+		if containerID == "" {
+			if in.ServiceName == "" {
+				return nil, nil, fmt.Errorf("either container_id or service_name is required")
+			}
+			containerID, err = resolveContainerIDByServiceName(ctx, c, apiKey, in.StackID, in.ServiceName)
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+
 		var q url.Values
 		if in.Tail != "" {
 			q = url.Values{"tail": {in.Tail}}
 		}
-		var out any
-		path := "/api/custom/stacks/" + url.PathEscape(in.StackID) + "/container/" + url.PathEscape(in.ContainerID) + "/logs"
+		var out map[string]interface{}
+		path := "/api/custom/stacks/" + url.PathEscape(in.StackID) + "/container/" + url.PathEscape(containerID) + "/logs"
 		if err := c.Get(ctx, apiKey, path, q, &out); err != nil {
 			return nil, nil, err
 		}
+
+		if re != nil {
+			if logs, ok := out["logs"].(string); ok {
+				out["logs"] = filterLines(logs, re)
+			}
+		}
 		return nil, out, nil
 	}
+}
+
+// filterLines keeps only the lines of logs matching re, joined back with "\n".
+func filterLines(logs string, re *regexp.Regexp) string {
+	lines := strings.Split(logs, "\n")
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if re.MatchString(line) {
+			kept = append(kept, line)
+		}
+	}
+	return strings.Join(kept, "\n")
 }
 
 func listJobs(c *client.Client) mcp.ToolHandlerFor[models.ListJobsInput, any] {
