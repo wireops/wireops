@@ -97,3 +97,30 @@ func TestPendingBufferIsBounded(t *testing.T) {
 		t.Fatalf("expected pending buffer capped at %d, got %d", maxPendingEvents, got)
 	}
 }
+
+// TestPendingBufferFullBacklogReplaysWithoutLoss guards against the
+// subscriber channel being sized smaller than maxPendingEvents — Subscribe's
+// replay loop pushes the entire backlog into the new channel in one shot
+// before returning, and a channel smaller than that backlog would silently
+// drop the overflow (the buffered events would exist but never be received).
+func TestPendingBufferFullBacklogReplaysWithoutLoss(t *testing.T) {
+	b := New()
+
+	for i := 0; i < maxPendingEvents; i++ {
+		b.PublishOutput("sess-6", []byte{byte(i)})
+	}
+
+	ch, unsub := b.Subscribe("sess-6")
+	defer unsub()
+
+	for i := 0; i < maxPendingEvents; i++ {
+		select {
+		case ev := <-ch:
+			if len(ev.Data) != 1 || ev.Data[0] != byte(i) {
+				t.Fatalf("event %d: expected payload %d, got %v", i, byte(i), ev.Data)
+			}
+		default:
+			t.Fatalf("event %d: expected it to already be buffered in the subscriber channel after Subscribe returns", i)
+		}
+	}
+}

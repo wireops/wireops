@@ -298,6 +298,9 @@ func Execute() error {
 	workerServer.SetOnTerminalOutput(func(msg protocol.TerminalOutputMessage) {
 		data, err := base64.StdEncoding.DecodeString(msg.DataB64)
 		if err != nil {
+			// Log only the session ID, never msg.DataB64 — it's the raw
+			// (possibly secret-carrying) terminal output payload.
+			log.Printf("[terminal] failed to decode output for session %s: %v", msg.SessionID, err)
 			return
 		}
 		termBroker.PublishOutput(msg.SessionID, data)

@@ -1,11 +1,15 @@
 package routes
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/router"
 
@@ -150,6 +154,145 @@ func TestCountTerminalSessionsForWorker(t *testing.T) {
 	}
 	if got := countTerminalSessionsForWorker("worker-none"); got != 0 {
 		t.Fatalf("expected 0, got %d", got)
+	}
+}
+
+func TestReserveTerminalSessionEnforcesLimitSequentially(t *testing.T) {
+	const limit = 3
+	worker := "worker-reserve-seq"
+	var ids []string
+	defer func() {
+		for _, id := range ids {
+			forgetTerminalSession(id)
+		}
+	}()
+
+	for i := 0; i < limit; i++ {
+		id := fmt.Sprintf("sess-reserve-seq-%d", i)
+		ids = append(ids, id)
+		if !reserveTerminalSession(id, worker, limit, terminalSessionMeta{workerID: worker, actorID: "a"}) {
+			t.Fatalf("expected reservation %d to succeed under the limit", i)
+		}
+	}
+
+	if reserveTerminalSession("sess-reserve-seq-over", worker, limit, terminalSessionMeta{workerID: worker, actorID: "a"}) {
+		forgetTerminalSession("sess-reserve-seq-over")
+		t.Fatal("expected reservation at the limit to be rejected")
+	}
+}
+
+// TestReserveTerminalSessionEnforcesLimitConcurrently guards the fix for a
+// real check-then-act race: countTerminalSessionsForWorker and the map
+// insert used to be two separately-locked critical sections, so concurrent
+// opens against a worker near its limit could all pass the count check
+// before any of them inserted, exceeding the cap. reserveTerminalSession
+// does both under one lock — this drives enough concurrent callers at once
+// to make the old race fail reliably under -race if it ever regresses.
+func TestReserveTerminalSessionEnforcesLimitConcurrently(t *testing.T) {
+	const limit = 5
+	const attempts = 25
+	worker := "worker-reserve-concurrent"
+
+	var succeeded int64
+	ids := make([]string, attempts)
+	var wg sync.WaitGroup
+	wg.Add(attempts)
+	for i := 0; i < attempts; i++ {
+		id := fmt.Sprintf("sess-reserve-concurrent-%d", i)
+		ids[i] = id
+		go func(id string) {
+			defer wg.Done()
+			if reserveTerminalSession(id, worker, limit, terminalSessionMeta{workerID: worker, actorID: "a"}) {
+				atomic.AddInt64(&succeeded, 1)
+			}
+		}(id)
+	}
+	wg.Wait()
+
+	defer func() {
+		for _, id := range ids {
+			forgetTerminalSession(id)
+		}
+	}()
+
+	if succeeded != limit {
+		t.Fatalf("expected exactly %d reservations to succeed under concurrent load, got %d", limit, succeeded)
+	}
+	if got := countTerminalSessionsForWorker(worker); got != limit {
+		t.Fatalf("expected %d tracked sessions for worker after the race, got %d", limit, got)
+	}
+}
+
+func TestTerminalSessionFilters(t *testing.T) {
+	tests := []struct {
+		name        string
+		from, to    string
+		stackName   string
+		userEmail   string
+		serviceName string
+		status      string
+		wantFilter  string
+		wantWhere   string
+		wantParams  dbx.Params
+	}{
+		{
+			name:       "empty filters produce no clauses",
+			wantFilter: "",
+			wantWhere:  "",
+			wantParams: dbx.Params{},
+		},
+		{
+			name:       "date-only to is an exclusive next-day bound",
+			to:         "2026-01-15",
+			wantFilter: "started_at < {:to}",
+			wantWhere:  "started_at < {:to}",
+			wantParams: dbx.Params{"to": "2026-01-16"},
+		},
+		{
+			name:       "full timestamp to is an inclusive bound",
+			to:         "2026-01-15T10:00:00Z",
+			wantFilter: "started_at <= {:to}",
+			wantWhere:  "started_at <= {:to}",
+			wantParams: dbx.Params{"to": "2026-01-15T10:00:00Z"},
+		},
+		{
+			name:       "malformed date-only to falls back to inclusive bound",
+			to:         "2026-99-99",
+			wantFilter: "started_at <= {:to}",
+			wantWhere:  "started_at <= {:to}",
+			wantParams: dbx.Params{"to": "2026-99-99"},
+		},
+		{
+			name:        "from plus all name/status filters combine with &&",
+			from:        "2026-01-01T00:00:00Z",
+			stackName:   "my-stack",
+			userEmail:   "user@example.com",
+			serviceName: "web",
+			status:      "closed",
+			wantFilter:  "started_at >= {:from} && stack_name = {:stack_name} && user_email = {:user_email} && service_name = {:service_name} && status = {:status}",
+			wantWhere:   "started_at >= {:from} AND stack_name = {:stack_name} AND user_email = {:user_email} AND service_name = {:service_name} AND status = {:status}",
+			wantParams:  dbx.Params{"from": "2026-01-01T00:00:00Z", "stack_name": "my-stack", "user_email": "user@example.com", "service_name": "web", "status": "closed"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			filter, where, params := terminalSessionFilters(tc.from, tc.to, tc.stackName, tc.userEmail, tc.serviceName, tc.status)
+			if filter != tc.wantFilter {
+				t.Errorf("filter = %q, want %q", filter, tc.wantFilter)
+			}
+			if where != tc.wantWhere {
+				t.Errorf("where = %q, want %q", where, tc.wantWhere)
+			}
+			if len(params) != len(tc.wantParams) {
+				t.Fatalf("params = %+v, want %+v", params, tc.wantParams)
+			}
+			for k, v := range tc.wantParams {
+				if params[k] != v {
+					t.Errorf("params[%q] = %v, want %v", k, params[k], v)
+				}
+			}
+		})
 	}
 }
 
