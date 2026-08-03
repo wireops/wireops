@@ -323,20 +323,6 @@ func (rr routeRegistrar) registerTerminalRoutes() {
 			return e.JSON(http.StatusTooManyRequests, map[string]string{"error": fmt.Sprintf("worker already has %d open terminal sessions — close one before opening another", limit)})
 		}
 
-		if err := sender.SendMessage(workerID, protocol.MsgTerminalOpen, protocol.TerminalOpenCommand{
-			CommandID:   protocol.TerminalOpenCommandID(sessionID),
-			SessionID:   sessionID,
-			StackID:     stackID,
-			ProjectName: projectName,
-			ContainerID: body.ContainerID,
-			Shell:       body.Shell,
-			Rows:        body.Rows,
-			Cols:        body.Cols,
-		}); err != nil {
-			forgetTerminalSession(sessionID)
-			return e.JSON(http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
-		}
-
 		rows, cols := body.Rows, body.Cols
 		if rows == 0 {
 			rows = 24
@@ -344,6 +330,15 @@ func (rr routeRegistrar) registerTerminalRoutes() {
 		if cols == 0 {
 			cols = 80
 		}
+		// Create the record before dispatching, not after: SendMessage only
+		// writes to the worker's WebSocket, and a worker that's
+		// draining/overloaded can reply with a rejection (handled async by
+		// HandleTerminalOpenRejected, on a different goroutine than this
+		// request) fast enough to run before this handler would otherwise
+		// reach CreateRecord. That rejection's CloseRecord call would find
+		// no row yet and no-op, and the row CreateRecord creates afterward
+		// would then never get closed — stuck "open" until the 15-minute
+		// idle sweeper. Creating it first closes that window.
 		termsession.CreateRecord(rr.app, termsession.CreateRecordParams{
 			SessionID:      sessionID,
 			StackID:        stackID,
@@ -358,6 +353,21 @@ func (rr routeRegistrar) registerTerminalRoutes() {
 			Rows:           rows,
 			Cols:           cols,
 		})
+
+		if err := sender.SendMessage(workerID, protocol.MsgTerminalOpen, protocol.TerminalOpenCommand{
+			CommandID:   protocol.TerminalOpenCommandID(sessionID),
+			SessionID:   sessionID,
+			StackID:     stackID,
+			ProjectName: projectName,
+			ContainerID: body.ContainerID,
+			Shell:       body.Shell,
+			Rows:        body.Rows,
+			Cols:        body.Cols,
+		}); err != nil {
+			forgetTerminalSession(sessionID)
+			termsession.CloseRecord(rr.app, sessionID, -1)
+			return e.JSON(http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
+		}
 
 		audit.RecordRequest(rr.app, e, audit.Event{
 			Action:       "terminal.open",

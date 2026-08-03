@@ -10,6 +10,8 @@ import (
 	"github.com/pocketbase/pocketbase/tools/router"
 
 	"github.com/wireops/wireops/internal/rbac"
+	"github.com/wireops/wireops/internal/termsession"
+	"github.com/wireops/wireops/internal/termstream"
 )
 
 func newTerminalTestEvent(auth *core.Record) (*core.RequestEvent, *httptest.ResponseRecorder) {
@@ -172,5 +174,58 @@ func TestIdleTerminalSessions(t *testing.T) {
 	}
 	if _, ok := idle[fresh]; ok {
 		t.Fatal("expected the freshly-touched session to not be reported idle")
+	}
+}
+
+// TestHandleTerminalOpenRejectedClosesRecord guards the fix for a real race:
+// a worker rejecting MsgTerminalOpen (draining/overloaded) is handled async,
+// on a different goroutine than the POST handler. If the session record were
+// created after dispatch (as it used to be), that rejection could arrive and
+// no-op against a not-yet-existing row, and the row created moments later
+// would then never get closed until the 15-minute idle sweep. The POST
+// handler now creates the record before dispatching, so by the time any
+// rejection can possibly arrive, the row it needs to close already exists —
+// this test exercises HandleTerminalOpenRejected against that row directly.
+func TestHandleTerminalOpenRejectedClosesRecord(t *testing.T) {
+	app := newSetupTestApp(t)
+	t.Setenv("TERMINAL_SESSIONS_STORAGE_PATH", t.TempDir())
+	broker := termstream.New()
+
+	sessionID := "sess-open-rejected"
+	rememberTerminalSession(sessionID, terminalSessionMeta{workerID: "worker-x", actorID: "user-x", stackID: "stack-x"})
+
+	termsession.CreateRecord(app, termsession.CreateRecordParams{
+		SessionID:   sessionID,
+		ContainerID: "container-x",
+		Rows:        24,
+		Cols:        80,
+	})
+
+	HandleTerminalOpenRejected(app, broker, sessionID, "worker overloaded")
+
+	if _, ok := lookupTerminalSession(sessionID); ok {
+		t.Fatal("expected session to be forgotten from the in-memory routing map")
+	}
+
+	rec, err := app.FindFirstRecordByFilter("terminal_sessions", "session_id = {:id}", map[string]any{"id": sessionID})
+	if err != nil {
+		t.Fatalf("expected session record to still exist: %v", err)
+	}
+	if rec.GetString("status") != "closed" {
+		t.Fatalf("expected status closed, got %q", rec.GetString("status"))
+	}
+	if rec.GetInt("exit_code") != -1 {
+		t.Fatalf("expected exit_code -1, got %d", rec.GetInt("exit_code"))
+	}
+
+	sub, unsub := broker.Subscribe(sessionID)
+	defer unsub()
+	select {
+	case ev := <-sub:
+		if !ev.Closed || ev.Error != "worker overloaded" {
+			t.Fatalf("expected closed event with reason, got %+v", ev)
+		}
+	default:
+		t.Fatal("expected a buffered closed event for a subscriber connecting after the rejection")
 	}
 }

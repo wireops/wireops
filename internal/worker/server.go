@@ -951,12 +951,26 @@ func (s *WorkerServer) handleWebSocket(c *gin.Context) {
 			if jsonErr := json.Unmarshal(payloadBytes, &closed); jsonErr == nil {
 				sessionID := closed.SessionID
 				q := s.termSessionQueue(sessionID)
-				q.ch <- func() {
+				fn := func() {
 					if s.onTerminalClosed != nil {
 						s.onTerminalClosed(closed)
 					}
 					s.termQueues.Delete(sessionID)
 					q.closeDone.Do(func() { close(q.done) })
+				}
+				select {
+				case q.ch <- fn:
+				default:
+					// Same non-blocking policy as MsgTerminalOutput above: a
+					// full 256-deep queue means the drain goroutine itself is
+					// stuck, and blocking here would stall this worker's
+					// entire read loop (every session, plus heartbeats and
+					// unrelated command results) waiting on it. Dropping the
+					// close leaves the session's DB row open, but the idle
+					// sweeper in internal/routes/terminal.go reaps that within
+					// 15 minutes regardless — same backstop already relied on
+					// elsewhere for a worker that never acks at all.
+					logger.SafeLogf("[WORKER] terminal session %s closed-event queue full, dropping (idle sweep will reap it)", sessionID)
 				}
 			} else {
 				logger.SafeLogf("[WORKER] Failed to parse terminal_closed from %s: %v", workerID, jsonErr)
