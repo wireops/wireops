@@ -73,6 +73,11 @@ func ParseWireopsFile(repoWorkspace, repoID, filePath string) (*Definition, erro
 	if err != nil {
 		return nil, fmt.Errorf("invalid wireops_file path: %w", err)
 	}
+	// Enforce manifest filename contract ("wireops.yaml" or "wireops.yml"),
+	// regardless of which subdirectory the file lives in.
+	if !IsWireopsFile(filepath.Base(clean)) {
+		return nil, fmt.Errorf("invalid wireops_file path: must be wireops.yaml or wireops.yml, got %q", filePath)
+	}
 
 	base := filepath.Join(repoWorkspace, repoID)
 	baseAbs, err := filepath.Abs(base)
@@ -88,7 +93,7 @@ func ParseWireopsFile(repoWorkspace, repoID, filePath string) (*Definition, erro
 		return nil, fmt.Errorf("invalid wireops_file path: escapes repository directory: %q", filePath)
 	}
 
-	data, err := os.ReadFile(fullAbs) // lgtm[go/path-injection] -- fullAbs validated above: filepath.Rel(baseAbs, fullAbs) confirms containment within repository base
+	data, err := os.ReadFile(fullAbs)
 	if err != nil {
 		return nil, fmt.Errorf("cannot read wireops file %q: %w", filePath, err)
 	}

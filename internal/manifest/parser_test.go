@@ -150,14 +150,22 @@ name: api
 version: wireops.v1
 name: api2
 `
-	if err := os.WriteFile(filepath.Join(tmpDir, "multiple.yaml"), []byte(multipleContent), 0644); err != nil {
+	multipleDir := filepath.Join(tmpDir, "multiple")
+	if err := os.MkdirAll(multipleDir, 0755); err != nil {
+		t.Fatalf("failed to create multiple test dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(multipleDir, "wireops.yaml"), []byte(multipleContent), 0644); err != nil {
 		t.Fatalf("failed to create multiple test file: %v", err)
 	}
 
 	invalidContent := `
 name: api
 `
-	if err := os.WriteFile(filepath.Join(tmpDir, "invalid.yaml"), []byte(invalidContent), 0644); err != nil {
+	invalidDir := filepath.Join(tmpDir, "invalid")
+	if err := os.MkdirAll(invalidDir, 0755); err != nil {
+		t.Fatalf("failed to create invalid test dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(invalidDir, "wireops.yaml"), []byte(invalidContent), 0644); err != nil {
 		t.Fatalf("failed to create invalid test file: %v", err)
 	}
 
@@ -181,13 +189,13 @@ name: api
 		t.Errorf("expected worker.tags with 2 entries, got: %+v", def.Worker)
 	}
 
-	if _, err := ParseWireopsFile(tmpDir, "", "multiple.yaml"); err == nil {
+	if _, err := ParseWireopsFile(tmpDir, "", "multiple/wireops.yaml"); err == nil {
 		t.Errorf("expected error for multiple YAML documents, got nil")
 	} else if !strings.Contains(err.Error(), "multiple YAML documents (separated by '---') are not allowed") {
 		t.Errorf("expected error message to contain multiple documents warning, got: %v", err)
 	}
 
-	if _, err := ParseWireopsFile(tmpDir, "", "invalid.yaml"); err == nil {
+	if _, err := ParseWireopsFile(tmpDir, "", "invalid/wireops.yaml"); err == nil {
 		t.Errorf("expected error for missing version, got nil")
 	} else if !strings.Contains(err.Error(), "version is required") {
 		t.Errorf("expected error to mention missing version, got: %v", err)
