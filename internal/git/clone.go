@@ -31,7 +31,7 @@ func CloneOrFetchContext(ctx context.Context, repoID, gitURL, branch string, aut
 		return nil, fmt.Errorf("invalid repository path traversal: %s", repoID)
 	}
 
-	if _, err := os.Stat(filepath.Join(repoDir, ".git")); os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(repoDir, ".git")); os.IsNotExist(err) { // lgtm[go/path-injection] -- repoDir built from repoID validated above via filepath.Rel containment check
 		return cloneRepo(ctx, repoDir, gitURL, branch, auth)
 	}
 
