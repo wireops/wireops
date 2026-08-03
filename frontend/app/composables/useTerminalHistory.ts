@@ -11,7 +11,7 @@ export function useTerminalHistory() {
   }
 
   async function transcript(sessionId: string): Promise<string> {
-    const res = await fetch(`${$pb.baseURL}/api/custom/terminal/sessions/${sessionId}/transcript`, {
+    const res = await fetch(`${$pb.baseURL}/api/custom/terminal/sessions/${encodeURIComponent(sessionId)}/transcript`, {
       headers: authHeaders(),
     })
     if (!res.ok) throw new Error(`failed to load transcript: ${res.status}`)

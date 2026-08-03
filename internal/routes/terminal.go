@@ -185,6 +185,13 @@ func startTerminalIdleSweeper(app core.App, sender terminalSender, hasSender boo
 						_ = sender.SendMessage(meta.workerID, protocol.MsgTerminalClose, protocol.TerminalCloseCommand{SessionID: sessionID})
 					}
 					forgetTerminalSession(sessionID)
+					// Don't wait on the worker's MsgTerminalClosed ack to mark the
+					// row closed — if the worker is offline/unreachable (hasSender
+					// false, or SendMessage silently failed) that ack never
+					// arrives, and the session would sit "open" in the Sessions
+					// history forever with Replay permanently disabled. Idempotent
+					// against a later real ack (CloseRecord just re-saves).
+					termsession.CloseRecord(app, sessionID, -1)
 					audit.RecordSystem(app, "terminal.idle_close", "stack", meta.stackID, audit.StatusSuccess, "")
 				}
 			}
@@ -445,6 +452,9 @@ func (rr routeRegistrar) registerTerminalRoutes() {
 			_ = sender.SendMessage(meta.workerID, protocol.MsgTerminalClose, protocol.TerminalCloseCommand{SessionID: sessionID})
 		}
 		forgetTerminalSession(sessionID)
+		// Same reasoning as the idle sweeper: don't leave the session record
+		// stuck "open" if the worker never sends back MsgTerminalClosed.
+		termsession.CloseRecord(rr.app, sessionID, -1)
 
 		_, _, actorID := rbac.ResolveActor(e)
 		action := "terminal.close"

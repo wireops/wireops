@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref, watch } from 'vue'
+import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
@@ -83,10 +83,15 @@ async function connect() {
   })
   resizeObserver.observe(containerEl.value)
 
-  const shell = customShell.value.trim() || selectedShell.value
+  // A custom command may include arguments (e.g. "sh -c 'ls -la'"); split on
+  // whitespace so each becomes its own argv element instead of the whole
+  // string being passed as a single (nonexistent) executable path. The
+  // shell preset is always a single path with no arguments.
+  const custom = customShell.value.trim()
+  const shell = custom ? custom.split(/\s+/) : [selectedShell.value]
 
   try {
-    await session.open(props.stackId, props.containerId, term.rows, term.cols, [shell])
+    await session.open(props.stackId, props.containerId, term.rows, term.cols, shell)
   } catch (e: any) {
     toast.add({ title: 'Failed to open terminal', description: e?.message, color: 'error' })
     resetToSelect()
@@ -135,7 +140,7 @@ onBeforeUnmount(() => {
               title="Back to shell selection"
               @click="resetToSelect"
             />
-            <UButton icon="i-lucide-x" variant="ghost" color="neutral" size="xs" @click="closeModal" />
+            <UButton icon="i-lucide-x" variant="ghost" color="neutral" size="xs" aria-label="Close terminal" @click="closeModal" />
           </div>
         </div>
 

@@ -54,6 +54,15 @@ func checkTerminalExecAllowed(ctx context.Context, cli *docker.Client, container
 	if err != nil {
 		return err
 	}
+	// info.Mounts is a top-level field independent of HostConfig — check it
+	// unconditionally, before the HostConfig nil-guard below, so a container
+	// somehow inspected without a populated HostConfig doesn't skip the
+	// docker-socket check entirely.
+	for _, m := range info.Mounts {
+		if mountExposesDockerSocket(m.Source) {
+			return errors.New("container has the Docker socket mounted — terminal exec is blocked for containers with host Docker access")
+		}
+	}
 	if info.HostConfig == nil {
 		return nil
 	}
@@ -62,11 +71,6 @@ func checkTerminalExecAllowed(ctx context.Context, cli *docker.Client, container
 	}
 	if info.HostConfig.NetworkMode.IsHost() {
 		return errors.New("container uses host networking — terminal exec is blocked for host-network containers")
-	}
-	for _, m := range info.Mounts {
-		if mountExposesDockerSocket(m.Source) {
-			return errors.New("container has the Docker socket mounted — terminal exec is blocked for containers with host Docker access")
-		}
 	}
 	return nil
 }
@@ -84,6 +88,13 @@ type terminalSession struct {
 	// a new daemon connection (with its own connect + ping round trip) per
 	// event. Closed once, in OpenTerminal's cleanup goroutine.
 	cli *docker.Client
+	// writeMu serializes writes to hj.Conn. worker/transport dispatches each
+	// MsgTerminalInput on its own goroutine (`go handlers.HandleTerminalInput`),
+	// so fast typing or a pasted block split across multiple WS messages can
+	// reach WriteTerminal concurrently; without this, concurrent
+	// Conn.Write calls could interleave into a single write, corrupting
+	// what the shell receives.
+	writeMu sync.Mutex
 }
 
 var terminalSessions sync.Map // sessionID (string) -> *terminalSession
@@ -180,6 +191,8 @@ func WriteTerminal(sessionID string, data []byte) {
 		return
 	}
 	sess := v.(*terminalSession)
+	sess.writeMu.Lock()
+	defer sess.writeMu.Unlock()
 	if _, err := sess.hj.Conn.Write(data); err != nil {
 		log.Printf("[worker] terminal session %s write failed: %v", sessionID, err)
 	}

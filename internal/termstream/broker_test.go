@@ -59,17 +59,27 @@ func TestPendingBufferClearedAfterFirstSubscribe(t *testing.T) {
 	}
 }
 
-func TestPublishClosedClearsPendingForNeverSubscribedSession(t *testing.T) {
+// TestPublishClosedIsReplayedToLateSubscriber guards against the exact bug
+// this buffer exists for on the close path too: a session can fail (and
+// publish its closed event) before the browser's GET .../stream request has
+// subscribed — that closed event must not be dropped, or the SSE stream
+// hangs open forever with nothing ever delivered.
+func TestPublishClosedIsReplayedToLateSubscriber(t *testing.T) {
 	b := New()
 
 	b.PublishOutput("sess-4", []byte("orphaned"))
-	b.PublishClosed("sess-4", 0, "")
+	b.PublishClosed("sess-4", 7, "boom")
 
-	b.mu.Lock()
-	_, exists := b.pending["sess-4"]
-	b.mu.Unlock()
-	if exists {
-		t.Fatal("expected pending buffer to be cleared once the session closes, even with no subscriber ever attaching")
+	ch, unsub := b.Subscribe("sess-4")
+	defer unsub()
+
+	output := <-ch
+	if string(output.Data) != "orphaned" {
+		t.Fatalf("expected buffered output before close, got %q", output.Data)
+	}
+	closedEv := <-ch
+	if !closedEv.Closed || closedEv.ExitCode != 7 || closedEv.Error != "boom" {
+		t.Fatalf("expected closed event with exit code/error, got %+v", closedEv)
 	}
 }
 

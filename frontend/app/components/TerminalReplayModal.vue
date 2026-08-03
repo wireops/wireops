@@ -68,7 +68,15 @@ async function startReplay() {
     let lastT = 0
     let delay = 0
     for (let i = 1; i < lines.length; i++) {
-      const event = JSON.parse(lines[i]!) as [number, string, string]
+      // One corrupted line (e.g. a transcript file truncated mid-write by a
+      // server restart) shouldn't abort the whole replay — skip it and keep
+      // scheduling the rest.
+      let event: [number, string, string]
+      try {
+        event = JSON.parse(lines[i]!) as [number, string, string]
+      } catch {
+        continue
+      }
       const gap = Math.min(Math.max(event[0] - lastT, 0) * 1000, MAX_REPLAY_GAP_MS)
       lastT = event[0]
       delay += gap
@@ -103,7 +111,7 @@ watch(open, (isOpen) => {
     isReplaying.value = false
     teardownTerm()
   }
-})
+}, { immediate: true })
 
 onBeforeUnmount(() => {
   replayGeneration++
@@ -119,7 +127,7 @@ onBeforeUnmount(() => {
           <h3 class="font-semibold text-gray-900 dark:text-wire-200 text-sm">
             Replay — {{ label }}
           </h3>
-          <UButton icon="i-lucide-x" variant="ghost" color="neutral" size="xs" @click="closeModal" />
+          <UButton icon="i-lucide-x" variant="ghost" color="neutral" size="xs" aria-label="Close replay" @click="closeModal" />
         </div>
         <div ref="containerEl" class="h-96 bg-black rounded-md overflow-hidden p-1" />
       </div>

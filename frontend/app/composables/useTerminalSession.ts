@@ -51,7 +51,7 @@ export function useTerminalSession() {
 
     let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
     try {
-      const resp = await fetch(`${$pb.baseURL}/api/custom/terminal/sessions/${id}/stream`, {
+      const resp = await fetch(`${$pb.baseURL}/api/custom/terminal/sessions/${encodeURIComponent(id)}/stream`, {
         headers: authHeaders(),
         signal: controller.signal,
       })
@@ -118,6 +118,13 @@ export function useTerminalSession() {
   }
 
   async function open(stackId: string, containerId: string, rows: number, cols: number, shell?: string[]) {
+    // A prior session (if any) must be released — both its SSE stream and
+    // its server-side record — before starting a new one; otherwise calling
+    // open() twice without an intervening close() leaks the first session
+    // (its tail() stops via the generation bump below, but its backend
+    // /close was never called).
+    await close()
+
     error.value = null
     closed.value = false
     generation++
@@ -127,7 +134,7 @@ export function useTerminalSession() {
 
     let res: Response
     try {
-      res = await fetch(`${$pb.baseURL}/api/custom/stacks/${stackId}/terminal/sessions`, {
+      res = await fetch(`${$pb.baseURL}/api/custom/stacks/${encodeURIComponent(stackId)}/terminal/sessions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ container_id: containerId, rows, cols, shell }),
@@ -146,7 +153,7 @@ export function useTerminalSession() {
     // close it out from under the abandoned call instead of leaking it.
     if (myGeneration !== generation) {
       if (data?.session_id) {
-        fetch(`${$pb.baseURL}/api/custom/terminal/sessions/${data.session_id}/close`, {
+        fetch(`${$pb.baseURL}/api/custom/terminal/sessions/${encodeURIComponent(data.session_id)}/close`, {
           method: 'POST',
           headers: authHeaders(),
         }).catch(() => {})
@@ -164,20 +171,30 @@ export function useTerminalSession() {
 
   async function sendInput(text: string) {
     if (!sessionId.value) return
-    await fetch(`${$pb.baseURL}/api/custom/terminal/sessions/${sessionId.value}/input`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({ data: text }),
-    })
+    try {
+      const res = await fetch(`${$pb.baseURL}/api/custom/terminal/sessions/${encodeURIComponent(sessionId.value)}/input`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ data: text }),
+      })
+      if (!res.ok) error.value = `failed to send input: ${res.status}`
+    } catch (err: any) {
+      error.value = err?.message || 'failed to send input'
+    }
   }
 
   async function resize(rows: number, cols: number) {
     if (!sessionId.value) return
-    await fetch(`${$pb.baseURL}/api/custom/terminal/sessions/${sessionId.value}/resize`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({ rows, cols }),
-    })
+    try {
+      const res = await fetch(`${$pb.baseURL}/api/custom/terminal/sessions/${encodeURIComponent(sessionId.value)}/resize`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ rows, cols }),
+      })
+      if (!res.ok) error.value = `failed to resize terminal: ${res.status}`
+    } catch (err: any) {
+      error.value = err?.message || 'failed to resize terminal'
+    }
   }
 
   async function close() {
@@ -190,7 +207,7 @@ export function useTerminalSession() {
     const id = sessionId.value
     sessionId.value = null
     if (!id) return
-    await fetch(`${$pb.baseURL}/api/custom/terminal/sessions/${id}/close`, {
+    await fetch(`${$pb.baseURL}/api/custom/terminal/sessions/${encodeURIComponent(id)}/close`, {
       method: 'POST',
       headers: authHeaders(),
     }).catch(() => {})

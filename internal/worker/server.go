@@ -103,7 +103,7 @@ type WorkerServer struct {
 	onTerminalClosed func(protocol.TerminalClosedMessage)
 
 	// termQueues holds a per-session, single-consumer work queue (sessionID
-	// → chan func()) so terminal_output/terminal_closed callbacks for the
+	// → *termQueue) so terminal_output/terminal_closed callbacks for the
 	// same session run in the order they arrived on the WebSocket, even
 	// though different sessions still run concurrently. Without this, `go
 	// s.onTerminalOutput(...)` per message gave no ordering guarantee, so a
@@ -112,22 +112,41 @@ type WorkerServer struct {
 	termQueues sync.Map
 }
 
+// termQueue is one session's ordered work channel plus its own shutdown
+// signal. The shutdown signal is a separate channel from the work channel
+// deliberately: closing the work channel itself as the "done" signal would
+// race a send on it from a stray/duplicate message arriving for the same
+// sessionID after MsgTerminalClosed's cleanup func has already run (send on
+// a closed channel panics, taking the whole server process down with it).
+type termQueue struct {
+	ch   chan func()
+	done chan struct{}
+}
+
 // termSessionQueue returns sessionID's ordered work queue, starting its
-// single drain goroutine the first time the session is seen.
-func (s *WorkerServer) termSessionQueue(sessionID string) chan func() {
+// single drain goroutine the first time the session is seen. The goroutine
+// exits once the enqueued MsgTerminalClosed cleanup func closes q.done —
+// after that, termSessionQueue is called again (e.g. a stray late message)
+// simply starts a fresh, isolated queue rather than touching the retired one.
+func (s *WorkerServer) termSessionQueue(sessionID string) *termQueue {
 	if v, ok := s.termQueues.Load(sessionID); ok {
-		return v.(chan func())
+		return v.(*termQueue)
 	}
-	ch := make(chan func(), 256)
-	actual, loaded := s.termQueues.LoadOrStore(sessionID, ch)
+	q := &termQueue{ch: make(chan func(), 256), done: make(chan struct{})}
+	actual, loaded := s.termQueues.LoadOrStore(sessionID, q)
 	if !loaded {
 		go func() {
-			for fn := range ch {
-				fn()
+			for {
+				select {
+				case fn := <-q.ch:
+					fn()
+				case <-q.done:
+					return
+				}
 			}
 		}()
 	}
-	return actual.(chan func())
+	return actual.(*termQueue)
 }
 
 // MTLSServer is kept as an internal alias while the codebase finishes moving
@@ -873,9 +892,9 @@ func (s *WorkerServer) handleWebSocket(c *gin.Context) {
 			var out protocol.TerminalOutputMessage
 			if jsonErr := json.Unmarshal(payloadBytes, &out); jsonErr == nil {
 				if s.onTerminalOutput != nil {
-					ch := s.termSessionQueue(out.SessionID)
+					q := s.termSessionQueue(out.SessionID)
 					select {
-					case ch <- func() { s.onTerminalOutput(out) }:
+					case q.ch <- func() { s.onTerminalOutput(out) }:
 					default:
 						logger.SafeLogf("[WORKER] terminal session %s output queue full, dropping chunk seq=%d", out.SessionID, out.Seq)
 					}
@@ -889,13 +908,13 @@ func (s *WorkerServer) handleWebSocket(c *gin.Context) {
 			var closed protocol.TerminalClosedMessage
 			if jsonErr := json.Unmarshal(payloadBytes, &closed); jsonErr == nil {
 				sessionID := closed.SessionID
-				ch := s.termSessionQueue(sessionID)
-				ch <- func() {
+				q := s.termSessionQueue(sessionID)
+				q.ch <- func() {
 					if s.onTerminalClosed != nil {
 						s.onTerminalClosed(closed)
 					}
 					s.termQueues.Delete(sessionID)
-					close(ch)
+					close(q.done)
 				}
 			} else {
 				logger.SafeLogf("[WORKER] Failed to parse terminal_closed from %s: %v", workerID, jsonErr)

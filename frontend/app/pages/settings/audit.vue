@@ -497,8 +497,8 @@ onMounted(async () => {
           <AppSelectInput v-model="terminalFilters.status" :items="terminalStatusOptions" />
         </div>
         <div class="flex justify-end gap-1">
-          <UButton icon="i-lucide-x" variant="ghost" size="sm" @click="clearTerminalFilters" />
-          <UButton type="submit" icon="i-lucide-search" size="sm" />
+          <UButton icon="i-lucide-x" variant="ghost" size="sm" aria-label="Clear terminal session filters" @click="clearTerminalFilters" />
+          <UButton type="submit" icon="i-lucide-search" size="sm" aria-label="Search terminal sessions" />
         </div>
       </form>
 

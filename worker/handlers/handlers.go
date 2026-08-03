@@ -610,11 +610,6 @@ func HandleGetMetrics(sender Sender, payload interface{}) {
 	})
 }
 
-// terminalSeq tracks the next output sequence number per open session, so
-// HandleTerminalOpen's onOutput closure can stamp each chunk without the
-// executor package needing to know about envelope framing.
-var terminalSeq sync.Map // sessionID -> *int64
-
 // HandleTerminalOpen opens an interactive docker-exec session and streams
 // its output back as unsolicited MsgTerminalOutput envelopes until the
 // process exits or a MsgTerminalClose arrives for the same session.
@@ -624,8 +619,10 @@ func HandleTerminalOpen(sender Sender, payload interface{}) {
 		return
 	}
 
+	// seq is the per-session output sequence counter, captured directly by
+	// the onOutput closure below — no shared map needed since each open
+	// session gets its own closure over its own counter.
 	seq := new(int64)
-	terminalSeq.Store(cmd.SessionID, seq)
 
 	onOutput := func(data []byte) {
 		n := atomic.AddInt64(seq, 1)
@@ -639,7 +636,6 @@ func HandleTerminalOpen(sender Sender, payload interface{}) {
 		})
 	}
 	onClosed := func(exitCode int, errMsg string) {
-		terminalSeq.Delete(cmd.SessionID)
 		sender.SendEnvelope(protocol.Envelope{
 			Type: protocol.MsgTerminalClosed,
 			Payload: protocol.TerminalClosedMessage{

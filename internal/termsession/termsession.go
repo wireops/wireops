@@ -47,8 +47,14 @@ func StorageDir() string {
 	return config.GetTerminalSessionsStoragePath()
 }
 
+// transcriptPath maps sessionID to its .cast file under StorageDir().
+// sessionID is meant to be an opaque identifier (uuid.NewString(), assigned
+// once in internal/routes/terminal.go's open handler) but filepath.Base
+// defensively collapses it to a single path component regardless — any
+// separators or ".." a caller somehow passed in would resolve to at most
+// the last segment, never escaping StorageDir().
 func transcriptPath(sessionID string) string {
-	return filepath.Join(StorageDir(), sessionID+".cast")
+	return filepath.Join(StorageDir(), filepath.Base(sessionID)+".cast")
 }
 
 // RetentionDays returns the configured transcript retention window, falling
@@ -182,13 +188,22 @@ func AppendTranscript(sessionID string, data []byte) {
 	}
 	line = append(line, '\n')
 
+	// Hold filesMu across the lookup AND the write: CloseRecord can now run
+	// on a different goroutine than this call (idle sweeper / manual close
+	// eagerly close the record without waiting for the worker's ack) and
+	// closes+deletes the same file handle under this same mutex — without
+	// holding it through the write, a lookup-then-close-then-write race
+	// could write to (or double-close) a file handle CloseRecord just tore
+	// down.
 	filesMu.Lock()
+	defer filesMu.Unlock()
 	f, ok := files[sessionID]
-	filesMu.Unlock()
 	if !ok {
 		return
 	}
-	_, _ = f.Write(line)
+	if _, err := f.Write(line); err != nil {
+		log.Printf("[termsession] failed to write transcript chunk for %s: %v", sessionID, err)
+	}
 }
 
 // CloseRecord marks a session's terminal_sessions row as closed with its

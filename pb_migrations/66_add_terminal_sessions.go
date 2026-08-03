@@ -105,6 +105,8 @@ func init() {
 
 		col, err := app.FindCollectionByNameOrId("terminal_sessions")
 		if err != nil {
+			// Collection already gone — rollback has nothing left to undo,
+			// not a failure.
 			return nil
 		}
 		return app.Delete(col)

@@ -350,6 +350,7 @@ export function useApi() {
     timezone: string
     audit_retention_days: number
     job_run_retention_days: number
+    terminal_retention_days: number
   }
   const getAppSettings = async () => {
     try {

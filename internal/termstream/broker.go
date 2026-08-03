@@ -53,7 +53,11 @@ func New() *Broker {
 // events published for sessionID before this call (see pending) are
 // delivered first, in order, ahead of anything published afterward.
 func (b *Broker) Subscribe(sessionID string) (ch <-chan Event, unsubscribe func()) {
-	c := make(chan Event, 64)
+	// Sized to maxPendingEvents, not some smaller arbitrary buffer: the
+	// pending replay loop below pushes the entire backlog into c in one
+	// shot before returning, and a channel smaller than the backlog it must
+	// receive would silently drop the overflow.
+	c := make(chan Event, maxPendingEvents)
 
 	b.mu.Lock()
 	for _, ev := range b.pending[sessionID] {
@@ -93,12 +97,18 @@ func (b *Broker) PublishOutput(sessionID string, data []byte) {
 	b.publish(sessionID, Event{Data: data})
 }
 
-// PublishClosed notifies sessionID's subscribers that the session ended.
+// PublishClosed notifies sessionID's subscribers that the session ended. If
+// no subscriber has attached yet, the closed event (and anything published
+// before it) stays in the pending buffer — same as PublishOutput — so a
+// browser whose GET .../stream request is still in flight when the worker
+// fails fast still gets it. Subscribe already clears pending once a
+// subscriber actually shows up; deleting it here unconditionally used to
+// wipe the closed event out from under a subscriber that was about to
+// arrive, leaving its SSE stream hanging open forever with no event ever
+// delivered (a session that fails to open, e.g. a bad shell path, could
+// close before the browser's sequential POST-then-GET reaches this far).
 func (b *Broker) PublishClosed(sessionID string, exitCode int, errMsg string) {
 	b.publish(sessionID, Event{Closed: true, ExitCode: exitCode, Error: errMsg})
-	b.mu.Lock()
-	delete(b.pending, sessionID)
-	b.mu.Unlock()
 }
 
 func (b *Broker) publish(sessionID string, ev Event) {
