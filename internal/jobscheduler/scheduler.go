@@ -5,6 +5,7 @@ package jobscheduler
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"log"
 	"os"
@@ -22,6 +23,7 @@ import (
 	"github.com/robfig/cron/v3"
 
 	"github.com/wireops/wireops/internal/audit"
+	"github.com/wireops/wireops/internal/configfiles"
 	"github.com/wireops/wireops/internal/constants"
 	"github.com/wireops/wireops/internal/contextutil"
 	"github.com/wireops/wireops/internal/crypto"
@@ -43,12 +45,13 @@ type WorkerDispatcher interface {
 // jobRunParams bundles repository/job metadata needed by dispatchToWorker.
 // Grouping these avoids exceeding the per-function parameter limit.
 type jobRunParams struct {
-	repoID     string
-	repoBranch string
-	jobFile    string
-	commitSHA  string
-	def        *job.Definition
-	envMap     map[string]string
+	repoID      string
+	repoBranch  string
+	jobFile     string
+	commitSHA   string
+	def         *job.Definition
+	envMap      map[string]string
+	configFiles []protocol.ConfigFileSpec
 }
 
 // Scheduler manages cron entries for scheduled jobs and dispatches them to workers.
@@ -300,6 +303,19 @@ func (s *Scheduler) executeJob(jobID, trigger string, userID string) {
 		return
 	}
 
+	configFileSpecs, err := s.resolveJobConfigFiles(jobID, repoID, def.Configs)
+	if err != nil {
+		msg := fmt.Sprintf("cannot resolve config files for job %s: %v", jobID, err)
+		log.Printf("[jobscheduler] executeJob: %s", msg)
+		if _, saveErr := s.createJobRun(jobID, "", trigger, "error", msg); saveErr != nil {
+			log.Printf("[jobscheduler] executeJob: failed to persist config error job=%s: %v", jobID, saveErr)
+		}
+		if saveErr := s.setScheduledJobStatus(jobID, "error"); saveErr != nil {
+			log.Printf("[jobscheduler] executeJob: failed to mark job error job=%s: %v", jobID, saveErr)
+		}
+		return
+	}
+
 	repoBranch := func() string {
 		rec, _ := s.app.FindRecordById("repositories", repoID)
 		if rec != nil {
@@ -310,12 +326,13 @@ func (s *Scheduler) executeJob(jobID, trigger string, userID string) {
 	commitSHA := s.repoHeadSHA(repoID)
 
 	params := jobRunParams{
-		repoID:     repoID,
-		repoBranch: repoBranch,
-		jobFile:    jobFile,
-		commitSHA:  commitSHA,
-		def:        def,
-		envMap:     envMap,
+		repoID:      repoID,
+		repoBranch:  repoBranch,
+		jobFile:     jobFile,
+		commitSHA:   commitSHA,
+		def:         def,
+		envMap:      envMap,
+		configFiles: configFileSpecs,
 	}
 
 	switch def.Mode {
@@ -420,6 +437,7 @@ func (s *Scheduler) dispatchToWorker(ctx context.Context, jobID, trigger, worker
 		CPUs:             p.def.Resources.CPU,
 		MemoryLimit:      p.def.Resources.Memory,
 		TimeoutSeconds:   timeoutSecs,
+		ConfigFiles:      p.configFiles,
 		DispatchedAt:     dispatchStart.UnixMilli(),
 	}
 
@@ -884,6 +902,60 @@ func (s *Scheduler) loadEnvVars(ctx context.Context, jobID string) (map[string]s
 	loadCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	return envvars.LoadJob(loadCtx, s.app, s.secretsRegistry, jobID)
+}
+
+// resolveJobConfigFiles resolves job.yaml `configs:` entries from the
+// repository checkout and converts them into RunJobCommand-ready specs. The
+// worker has no repo access, so full plaintext content travels in the
+// command (unlike stacks, where content is baked into the rendered compose
+// YAML by the renderer). Also refreshes the job_config_files tracking rows
+// (best-effort — a tracking failure is logged, not treated as fatal).
+func (s *Scheduler) resolveJobConfigFiles(jobID, repoID string, entries []job.ConfigEntry) ([]protocol.ConfigFileSpec, error) {
+	if len(entries) == 0 {
+		return nil, nil
+	}
+
+	sources := make([]configfiles.Source, len(entries))
+	targetByName := make(map[string]job.ConfigEntry, len(entries))
+	for i, c := range entries {
+		sources[i] = configfiles.Source{Name: c.Name, Path: c.Path}
+		targetByName[c.Name] = c
+	}
+
+	workDir := filepath.Join(s.repoWorkspace, repoID)
+	resolved, err := configfiles.Resolve(workDir, sources)
+	if err != nil {
+		return nil, err
+	}
+
+	specs := make([]protocol.ConfigFileSpec, 0, len(resolved))
+	tracked := make([]configfiles.TrackedFile, 0, len(resolved))
+	for _, rf := range resolved {
+		c := targetByName[rf.Name]
+		trackName, target := rf.Name, c.Target
+		if rf.RelPath != "" {
+			trackName = rf.Name + "/" + rf.RelPath
+		}
+		specs = append(specs, protocol.ConfigFileSpec{
+			Name:       rf.Name,
+			RelPath:    rf.RelPath,
+			Target:     target,
+			Mode:       c.Mode,
+			ContentB64: base64.StdEncoding.EncodeToString(rf.Content),
+		})
+		tracked = append(tracked, configfiles.TrackedFile{
+			Name:       trackName,
+			SourcePath: rf.SourcePath,
+			Target:     target,
+			Checksum:   rf.Checksum,
+		})
+	}
+
+	if err := configfiles.UpsertJobConfigFiles(s.app, jobID, tracked); err != nil {
+		log.Printf("[jobscheduler] warning: failed to update job_config_files tracking for %s: %v", jobID, err)
+	}
+
+	return specs, nil
 }
 
 // repoHeadSHA returns the local HEAD commit SHA for the given repository.

@@ -82,6 +82,38 @@ func ValidateHostPath(p string) error {
 	return nil
 }
 
+// ValidateConfigName checks that a config entry name is a bare identifier
+// safe to use as a Docker Compose `configs:` key and as a directory entry
+// name on the worker filesystem (job config staging).
+func ValidateConfigName(name string) error {
+	if name == "" {
+		return fmt.Errorf("config name cannot be empty")
+	}
+	if strings.ContainsAny(name, "/\\") {
+		return fmt.Errorf("config name must not contain path separators: %q", name)
+	}
+	if name == "." || name == ".." || strings.HasPrefix(name, ".") {
+		return fmt.Errorf("config name must not start with '.': %q", name)
+	}
+	return nil
+}
+
+// ValidateContainerMountPath checks that an in-container mount target is a
+// clean absolute path (no traversal), used for job.yaml config targets.
+func ValidateContainerMountPath(target string) error {
+	if target == "" {
+		return fmt.Errorf("mount target cannot be empty")
+	}
+	if !filepath.IsAbs(target) {
+		return fmt.Errorf("mount target must be absolute: %q", target)
+	}
+	cleaned := filepath.Clean(target)
+	if cleaned != target || cleaned == "/" {
+		return fmt.Errorf("mount target is not a clean absolute path: %q", target)
+	}
+	return nil
+}
+
 // CleanRelativePath validates that a path is relative and does not contain traversal,
 // returning the cleaned path or an error.
 func CleanRelativePath(p string) (string, error) {

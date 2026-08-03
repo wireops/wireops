@@ -130,3 +130,72 @@ func TestCleanRelativePath(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateConfigName(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		wantErr   bool
+		errSubstr string
+	}{
+		{name: "valid", input: "nginx-conf"},
+		{name: "valid with underscore", input: "app_settings"},
+		{name: "empty", input: "", wantErr: true, errSubstr: "cannot be empty"},
+		{name: "slash", input: "foo/bar", wantErr: true, errSubstr: "path separators"},
+		{name: "backslash", input: "foo\\bar", wantErr: true, errSubstr: "path separators"},
+		{name: "dot", input: ".", wantErr: true, errSubstr: "start with"},
+		{name: "dotdot", input: "..", wantErr: true, errSubstr: "start with"},
+		{name: "leading dot", input: ".hidden", wantErr: true, errSubstr: "start with"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateConfigName(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("ValidateConfigName(%q) expected error, got nil", tt.input)
+					return
+				}
+				if tt.errSubstr != "" && !strings.Contains(err.Error(), tt.errSubstr) {
+					t.Errorf("ValidateConfigName(%q) error = %q, want to contain %q", tt.input, err.Error(), tt.errSubstr)
+				}
+			} else if err != nil {
+				t.Errorf("ValidateConfigName(%q) unexpected error: %v", tt.input, err)
+			}
+		})
+	}
+}
+
+func TestValidateContainerMountPath(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		wantErr   bool
+		errSubstr string
+	}{
+		{name: "valid absolute", input: "/etc/nginx/nginx.conf"},
+		{name: "valid root child", input: "/config"},
+		{name: "empty", input: "", wantErr: true, errSubstr: "cannot be empty"},
+		{name: "relative", input: "etc/nginx.conf", wantErr: true, errSubstr: "must be absolute"},
+		{name: "traversal", input: "/etc/../../secret", wantErr: true, errSubstr: "not a clean absolute path"},
+		{name: "root itself", input: "/", wantErr: true, errSubstr: "not a clean absolute path"},
+		{name: "trailing slash", input: "/etc/nginx/", wantErr: true, errSubstr: "not a clean absolute path"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateContainerMountPath(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("ValidateContainerMountPath(%q) expected error, got nil", tt.input)
+					return
+				}
+				if tt.errSubstr != "" && !strings.Contains(err.Error(), tt.errSubstr) {
+					t.Errorf("ValidateContainerMountPath(%q) error = %q, want to contain %q", tt.input, err.Error(), tt.errSubstr)
+				}
+			} else if err != nil {
+				t.Errorf("ValidateContainerMountPath(%q) unexpected error: %v", tt.input, err)
+			}
+		})
+	}
+}

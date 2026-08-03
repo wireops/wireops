@@ -333,6 +333,29 @@ type RunJobCommand struct {
 
 	// TimeoutSeconds is the time limit for the container run (in seconds).
 	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
+
+	// ConfigFiles are job.yaml `configs:` entries, resolved server-side from
+	// the git repository and shipped plain so the worker (which has no repo
+	// access) can materialize them to disk and bind-mount them read-only.
+	// Unlike DeployCommand's compose stacks (which embed content directly
+	// into the rendered compose YAML's native `configs:` element), `docker
+	// run` has no equivalent, so the full spec travels here.
+	ConfigFiles []ConfigFileSpec `json:"config_files,omitempty"`
+}
+
+// ConfigFileSpec is a single resolved config file for a RunJobCommand.
+// Target is always the base target declared in job.yaml (never pre-joined
+// with RelPath) — when a job.yaml entry's source is a directory, every file
+// under it arrives as one ConfigFileSpec sharing Name and Target, each with
+// its own RelPath; the worker groups specs by Name and, when any RelPath is
+// set, bind-mounts the whole materialized directory at Target once instead
+// of mounting each file individually.
+type ConfigFileSpec struct {
+	Name       string `json:"name"`
+	RelPath    string `json:"rel_path,omitempty"`
+	Target     string `json:"target"`
+	Mode       string `json:"mode,omitempty"`
+	ContentB64 string `json:"content_b64"`
 }
 
 // BuildDockerRunArgs assembles the docker run argument list for this job command.

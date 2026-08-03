@@ -218,6 +218,256 @@ services:
 	}
 }
 
+func TestRendererInjectsConfigContentFromAnnotation(t *testing.T) {
+	app, workDir, composePath := setupRendererTest(t)
+	// User's raw compose file never declares `configs:` itself — just an
+	// annotation mapping "<source path in repo>:<in-container target>".
+	// No wireops.yaml involvement at all: source is resolved straight from
+	// workDir (the repo checkout).
+	composeContent := `
+name: config_stack
+services:
+  web:
+    image: nginx:latest
+    annotations:
+      dev.wireops.config.nginx-conf: files/nginx.conf:/etc/nginx/nginx.conf
+`
+	writeTestComposeFile(t, composePath, composeContent)
+	writeSourceFile(t, workDir, "files/nginx.conf", "server {}\n")
+
+	repo := createTestRepo(t, app, "Config Repo", "main")
+	stack := createTestStack(t, app, repo.Id, "config_stack")
+
+	renderer := sync.NewRenderer(app)
+	ctx := context.Background()
+
+	res, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitA", false, "", "embedded", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(res.ConfigFiles) != 1 || res.ConfigFiles[0].Target != "/etc/nginx/nginx.conf" {
+		t.Fatalf("expected one tracked config with target /etc/nginx/nginx.conf, got %+v", res.ConfigFiles)
+	}
+
+	contentStr := readRenderedFile(t, renderer, stack.Id, res.Version)
+	if !contains(contentStr, "server {}") {
+		t.Errorf("expected resolved config content to be embedded, got:\n%s", contentStr)
+	}
+	if !contains(contentStr, "target: /etc/nginx/nginx.conf") {
+		t.Errorf("expected synthesized service-level configs: entry, got:\n%s", contentStr)
+	}
+	if contains(contentStr, "dev.wireops.config.nginx-conf") {
+		t.Errorf("expected directive annotation to be stripped from rendered output, got:\n%s", contentStr)
+	}
+}
+
+func TestRendererConfigAnnotationOnMultipleServices(t *testing.T) {
+	app, workDir, composePath := setupRendererTest(t)
+	// Both services reference the same source file but mount it at different
+	// targets — content is shared, each service controls its own mount path.
+	composeContent := `
+name: config_multi_stack
+services:
+  web:
+    image: nginx:latest
+    annotations:
+      dev.wireops.config.app-cert: files/cert.pem:/etc/ssl/web-cert.pem
+  api:
+    image: alpine:latest
+    annotations:
+      dev.wireops.config.app-cert: files/cert.pem:/etc/ssl/api-cert.pem
+`
+	writeTestComposeFile(t, composePath, composeContent)
+	writeSourceFile(t, workDir, "files/cert.pem", "CERT")
+
+	repo := createTestRepo(t, app, "Config Multi Repo", "main")
+	stack := createTestStack(t, app, repo.Id, "config_multi_stack")
+
+	renderer := sync.NewRenderer(app)
+	ctx := context.Background()
+
+	res, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitA", false, "", "embedded", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(res.ConfigFiles) != 2 {
+		t.Fatalf("expected 2 tracked configs (one per service), got %d: %+v", len(res.ConfigFiles), res.ConfigFiles)
+	}
+	// web and api both annotate the friendly name "app-cert" for unrelated
+	// mount points — TrackedFile.Name must be service-qualified (not the
+	// bare annotation name) or the two rows collide on stack_config_files'
+	// (stack, name) unique index and the tracking upsert fails outright.
+	if res.ConfigFiles[0].Name == res.ConfigFiles[1].Name {
+		t.Errorf("expected distinct tracked config names for web/api sharing the app-cert annotation, got both %q", res.ConfigFiles[0].Name)
+	}
+
+	contentStr := readRenderedFile(t, renderer, stack.Id, res.Version)
+	if !contains(contentStr, "target: /etc/ssl/web-cert.pem") {
+		t.Errorf("expected web target in rendered output, got:\n%s", contentStr)
+	}
+	if !contains(contentStr, "target: /etc/ssl/api-cert.pem") {
+		t.Errorf("expected api target in rendered output, got:\n%s", contentStr)
+	}
+}
+
+func TestRendererConfigAnnotationMissingSourceErrors(t *testing.T) {
+	app, workDir, composePath := setupRendererTest(t)
+	composeContent := `
+name: config_missing_stack
+services:
+  web:
+    image: nginx:latest
+    annotations:
+      dev.wireops.config.missing: files/does-not-exist.conf:/etc/nginx/nginx.conf
+`
+	writeTestComposeFile(t, composePath, composeContent)
+
+	repo := createTestRepo(t, app, "Config Missing Repo", "main")
+	stack := createTestStack(t, app, repo.Id, "config_missing_stack")
+
+	renderer := sync.NewRenderer(app)
+	ctx := context.Background()
+
+	_, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitA", false, "", "embedded", nil)
+	if err == nil {
+		t.Fatal("expected error for annotation referencing a source file that doesn't exist")
+	}
+}
+
+func TestRendererConfigAnnotationMalformedValueErrors(t *testing.T) {
+	app, workDir, composePath := setupRendererTest(t)
+	composeContent := `
+name: config_malformed_stack
+services:
+  web:
+    image: nginx:latest
+    annotations:
+      dev.wireops.config.bad: no-colon-here
+`
+	writeTestComposeFile(t, composePath, composeContent)
+
+	repo := createTestRepo(t, app, "Config Malformed Repo", "main")
+	stack := createTestStack(t, app, repo.Id, "config_malformed_stack")
+
+	renderer := sync.NewRenderer(app)
+	ctx := context.Background()
+
+	_, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitA", false, "", "embedded", nil)
+	if err == nil {
+		t.Fatal("expected error for malformed annotation value")
+	}
+}
+
+func TestRendererUnannotatedServiceIsIgnored(t *testing.T) {
+	app, workDir, composePath := setupRendererTest(t)
+	composeContent := `
+name: config_unused_stack
+services:
+  web:
+    image: nginx:latest
+`
+	writeTestComposeFile(t, composePath, composeContent)
+
+	repo := createTestRepo(t, app, "Config Unused Repo", "main")
+	stack := createTestStack(t, app, repo.Id, "config_unused_stack")
+
+	renderer := sync.NewRenderer(app)
+	ctx := context.Background()
+
+	res, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitA", false, "", "embedded", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(res.ConfigFiles) != 0 {
+		t.Errorf("expected no tracked configs, got %v", res.ConfigFiles)
+	}
+}
+
+func TestRendererConfigAnnotationDirectoryExpandsRecursively(t *testing.T) {
+	app, workDir, composePath := setupRendererTest(t)
+	composeContent := `
+name: config_dir_stack
+services:
+  web:
+    image: nginx:latest
+    annotations:
+      dev.wireops.config.confd: files/confd:/etc/app/conf.d
+`
+	writeTestComposeFile(t, composePath, composeContent)
+	writeSourceFile(t, workDir, "files/confd/a.conf", "A")
+	writeSourceFile(t, workDir, "files/confd/nested/b.conf", "B")
+
+	repo := createTestRepo(t, app, "Config Dir Repo", "main")
+	stack := createTestStack(t, app, repo.Id, "config_dir_stack")
+
+	renderer := sync.NewRenderer(app)
+	ctx := context.Background()
+
+	res, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitA", false, "", "embedded", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(res.ConfigFiles) != 2 {
+		t.Fatalf("expected 2 tracked configs from directory expansion, got %d: %+v", len(res.ConfigFiles), res.ConfigFiles)
+	}
+
+	contentStr := readRenderedFile(t, renderer, stack.Id, res.Version)
+	if !contains(contentStr, "target: /etc/app/conf.d/a.conf") {
+		t.Errorf("expected a.conf target in rendered output, got:\n%s", contentStr)
+	}
+	if !contains(contentStr, "target: /etc/app/conf.d/nested/b.conf") {
+		t.Errorf("expected nested/b.conf target in rendered output, got:\n%s", contentStr)
+	}
+	if !contains(contentStr, "content: A") {
+		t.Errorf("expected a.conf content in rendered output, got:\n%s", contentStr)
+	}
+	if !contains(contentStr, "content: B") {
+		t.Errorf("expected b.conf content in rendered output, got:\n%s", contentStr)
+	}
+}
+
+func TestRendererConfigContentChangeTriggersVersionBump(t *testing.T) {
+	app, workDir, composePath := setupRendererTest(t)
+	composeContent := `
+name: config_bump_stack
+services:
+  web:
+    image: nginx:latest
+    annotations:
+      dev.wireops.config.nginx-conf: files/nginx.conf:/etc/nginx/nginx.conf
+`
+	writeTestComposeFile(t, composePath, composeContent)
+	writeSourceFile(t, workDir, "files/nginx.conf", "v1")
+
+	repo := createTestRepo(t, app, "Config Bump Repo", "main")
+	stack := createTestStack(t, app, repo.Id, "config_bump_stack")
+
+	renderer := sync.NewRenderer(app)
+	ctx := context.Background()
+
+	res1, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitA", false, "", "embedded", nil)
+	if err != nil {
+		t.Fatalf("unexpected error on first render: %v", err)
+	}
+	if res1.Version != 1 {
+		t.Fatalf("expected version 1, got %d", res1.Version)
+	}
+
+	stack, _ = app.FindRecordById("stacks", stack.Id)
+	writeSourceFile(t, workDir, "files/nginx.conf", "v2")
+
+	res2, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitA", false, "", "embedded", nil)
+	if err != nil {
+		t.Fatalf("unexpected error on second render: %v", err)
+	}
+	if res2.Version != 2 {
+		t.Errorf("expected config content change to bump version to 2, got %d", res2.Version)
+	}
+	if res2.Checksum == res1.Checksum {
+		t.Errorf("expected checksum to change when config content changes")
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && bytesContains([]byte(s), []byte(substr))
 }
@@ -262,6 +512,20 @@ func writeTestComposeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf(errWriteComposeFile, err)
+	}
+}
+
+// writeSourceFile writes content to relPath under workDir, creating parent
+// directories as needed — used to simulate a git-committed config source
+// file that a dev.wireops.config.* annotation points at.
+func writeSourceFile(t *testing.T, workDir, relPath, content string) {
+	t.Helper()
+	full := filepath.Join(workDir, relPath)
+	if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+		t.Fatalf("failed to create source file dir: %v", err)
+	}
+	if err := os.WriteFile(full, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write source file: %v", err)
 	}
 }
 

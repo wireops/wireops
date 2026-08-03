@@ -281,6 +281,15 @@ func ensureJobSchedulerCollections(t *testing.T, app core.App) {
 	integrations.Fields.Add(&core.BoolField{Name: "enabled"})
 	integrations.Fields.Add(&core.JSONField{Name: "config"})
 	mustSaveCollection(t, app, integrations)
+
+	jobConfigFiles := core.NewBaseCollection("job_config_files")
+	jobConfigFiles.Fields.Add(&core.RelationField{Name: "job", CollectionId: jobs.Id, Required: true, MaxSelect: 1})
+	jobConfigFiles.Fields.Add(&core.TextField{Name: "name", Required: true})
+	jobConfigFiles.Fields.Add(&core.TextField{Name: "source_path", Required: true})
+	jobConfigFiles.Fields.Add(&core.TextField{Name: "target", Required: true})
+	jobConfigFiles.Fields.Add(&core.TextField{Name: "checksum", Required: true})
+	jobConfigFiles.AddIndex("idx_job_config_files_unique", true, "job, name", "")
+	mustSaveCollection(t, app, jobConfigFiles)
 }
 
 func createJobRepoRecord(t *testing.T, app core.App) *core.Record {

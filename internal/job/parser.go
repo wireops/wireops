@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,19 +31,31 @@ type Resources struct {
 	Timeout string `yaml:"timeout" json:"timeout"`
 }
 
+// ConfigEntry declares a git-committed file to be resolved server-side and
+// bind-mounted read-only into the job's container at Target. Unlike stacks
+// (which express target/mode via the compose file's own native `configs:`
+// element), jobs have no compose file, so target/mode are explicit here.
+type ConfigEntry struct {
+	Name   string `yaml:"name"   json:"name"`
+	Path   string `yaml:"path"   json:"path"`
+	Target string `yaml:"target" json:"target"`
+	Mode   string `yaml:"mode,omitempty" json:"mode,omitempty"`
+}
+
 // Definition holds all fields parsed from a job.yaml file.
 type Definition struct {
-	Name        string    `yaml:"name"        json:"name"`
-	Description string    `yaml:"description" json:"description"`
-	Cron        string    `yaml:"cron"        json:"cron"`
-	Tags        []string  `yaml:"tags"        json:"tags"`
-	Group       string    `yaml:"group"       json:"group,omitempty"`
-	Mode        Mode      `yaml:"mode"        json:"mode"`
-	Image       string    `yaml:"image"       json:"image"`
-	Command     Command   `yaml:"command"     json:"command"`
-	Volumes     []string  `yaml:"volumes"     json:"volumes"`
-	Network     string    `yaml:"network"     json:"network"`
-	Resources   Resources `yaml:"resources"   json:"resources"`
+	Name        string        `yaml:"name"        json:"name"`
+	Description string        `yaml:"description" json:"description"`
+	Cron        string        `yaml:"cron"        json:"cron"`
+	Tags        []string      `yaml:"tags"        json:"tags"`
+	Group       string        `yaml:"group"       json:"group,omitempty"`
+	Mode        Mode          `yaml:"mode"        json:"mode"`
+	Image       string        `yaml:"image"       json:"image"`
+	Command     Command       `yaml:"command"     json:"command"`
+	Volumes     []string      `yaml:"volumes"     json:"volumes"`
+	Network     string        `yaml:"network"     json:"network"`
+	Resources   Resources     `yaml:"resources"   json:"resources"`
+	Configs     []ConfigEntry `yaml:"configs"     json:"configs,omitempty"`
 }
 
 // Command accepts both a single string and a string array in YAML.
@@ -164,6 +177,33 @@ func (d *Definition) Validate() error {
 		// Validate timeout duration format
 		if _, err := time.ParseDuration(d.Resources.Timeout); err != nil {
 			errs = append(errs, fmt.Sprintf("resources.timeout is invalid: %v", err))
+		}
+	}
+
+	seenConfigNames := make(map[string]bool, len(d.Configs))
+	seenTargets := make(map[string]bool, len(d.Configs))
+	for i, c := range d.Configs {
+		if err := safepath.ValidateConfigName(c.Name); err != nil {
+			errs = append(errs, fmt.Sprintf("configs[%d].name is invalid: %v", i, err))
+		} else if seenConfigNames[c.Name] {
+			errs = append(errs, fmt.Sprintf("configs[%d].name %q is duplicated", i, c.Name))
+		} else {
+			seenConfigNames[c.Name] = true
+		}
+		if _, err := safepath.CleanRelativePath(c.Path); err != nil {
+			errs = append(errs, fmt.Sprintf("configs[%d].path is invalid: %v", i, err))
+		}
+		if err := safepath.ValidateContainerMountPath(c.Target); err != nil {
+			errs = append(errs, fmt.Sprintf("configs[%d].target is invalid: %v", i, err))
+		} else if seenTargets[c.Target] {
+			errs = append(errs, fmt.Sprintf("configs[%d].target %q is duplicated", i, c.Target))
+		} else {
+			seenTargets[c.Target] = true
+		}
+		if c.Mode != "" {
+			if _, err := strconv.ParseUint(c.Mode, 8, 32); err != nil {
+				errs = append(errs, fmt.Sprintf("configs[%d].mode is invalid octal: %q", i, c.Mode))
+			}
 		}
 	}
 

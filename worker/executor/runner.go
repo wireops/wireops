@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -562,6 +563,24 @@ func RunJob(ctx context.Context, cmd protocol.RunJobCommand) protocol.JobComplet
 		}
 	}
 
+	configVolumes, cleanupConfigs, err := prepareJobConfigFiles(cmd.JobRunID, cmd.ConfigFiles)
+	if err != nil {
+		errMsg := fmt.Sprintf("failed to stage config files, %v", err)
+		log.Printf("[executor] run_job config staging error: %s", errMsg)
+		return protocol.JobCompletedMessage{
+			JobRunID: cmd.JobRunID,
+			Success:  false,
+			Output:   errMsg,
+		}
+	}
+	defer cleanupConfigs()
+	// Config bind mounts are worker-materialized paths from server-resolved,
+	// git-sourced content — not user-supplied host paths — so they bypass the
+	// server-side volume allowlist (policy.ValidateVolumes) the same way
+	// cmd.Volumes was already checked against above; they're appended after
+	// that check runs.
+	cmd.Volumes = append(cmd.Volumes, configVolumes...)
+
 	timeout := 10 * time.Minute
 	if cmd.TimeoutSeconds > 0 {
 		timeout = time.Duration(cmd.TimeoutSeconds) * time.Second
@@ -714,6 +733,126 @@ func prepareComposeFile(stackID, commandID, b64Content string) (string, string, 
 		log.Printf("[executor] cleaned compose workdir stack=%s command=%s dir=%s", stackID, commandID, dir)
 	}
 	return dir, filename, cleanup, nil
+}
+
+// prepareJobConfigFiles decodes each job.yaml `configs:` entry and writes it
+// to a job-scoped directory under stackDir/jobs/<jobRunID>/configs/<name>,
+// returning the "-v hostPath:target:ro" docker run flags to bind-mount them.
+// Every path component sourced from the dispatch payload (job run ID,
+// config name, rel path) is validated with safepath *before* it is used to
+// build a filesystem path — reject-on-invalid, not sanitize-and-continue —
+// matching the pattern used elsewhere in this file (e.g. ValidateHostPath).
+func prepareJobConfigFiles(jobRunID string, files []protocol.ConfigFileSpec) ([]string, func(), error) {
+	noop := func() {}
+	if len(files) == 0 {
+		return nil, noop, nil
+	}
+
+	if err := safepath.ValidateConfigName(jobRunID); err != nil {
+		return nil, noop, fmt.Errorf("invalid job run id: %w", err)
+	}
+
+	// Directory-source binds (groupDir below) are mounted directly into the
+	// job container, and RunJob never forces --user root — the container's
+	// image may run as an arbitrary non-root UID. That UID needs at least
+	// read+execute on every directory in the bind path to traverse it, so
+	// these are 0755, not 0700 (files themselves stay locked down by
+	// configFileMode, default 0444 world-readable, which is what actually
+	// gates content access here).
+	dir := filepath.Join(stackDir, "jobs", jobRunID, "configs")
+	if err := os.MkdirAll(dir, 0755); err != nil { // lgtm[go/path-injection] -- jobRunID validated above via safepath.ValidateConfigName (rejects '/', '\\', '.', leading '.')
+		return nil, noop, fmt.Errorf("failed to create job config dir: %w", err)
+	}
+	cleanup := func() {
+		if keepWorkerWorkDir() {
+			log.Printf("[executor] keeping job config dir for debugging job_run=%s dir=%s", jobRunID, dir)
+			return
+		}
+		if err := os.RemoveAll(dir); err != nil {
+			log.Printf("[executor] failed to clean job config dir job_run=%s dir=%s error=%v", jobRunID, dir, err)
+		}
+	}
+
+	// Group by Name: a job.yaml entry whose source was a single file yields
+	// exactly one spec with RelPath=="" (bind-mounted as a single file at
+	// Target); one whose source was a directory yields multiple specs
+	// sharing Name and Target, each with its own RelPath (written under
+	// configs/<name>/<relpath> and bind-mounted once as a directory at
+	// Target, instead of one bind per file).
+	var order []string
+	grouped := map[string][]protocol.ConfigFileSpec{}
+	for _, f := range files {
+		if err := safepath.ValidateConfigName(f.Name); err != nil {
+			return nil, noop, fmt.Errorf("invalid config name %q: %w", f.Name, err)
+		}
+		if f.RelPath != "" {
+			if _, err := safepath.CleanRelativePath(f.RelPath); err != nil {
+				return nil, noop, fmt.Errorf("invalid config %q rel_path %q: %w", f.Name, f.RelPath, err)
+			}
+		}
+		if _, seen := grouped[f.Name]; !seen {
+			order = append(order, f.Name)
+		}
+		grouped[f.Name] = append(grouped[f.Name], f)
+	}
+
+	volumes := make([]string, 0, len(order))
+	for _, name := range order {
+		specs := grouped[name]
+
+		if len(specs) == 1 && specs[0].RelPath == "" {
+			f := specs[0]
+			content, err := base64.StdEncoding.DecodeString(f.ContentB64)
+			if err != nil {
+				cleanup()
+				return nil, noop, fmt.Errorf("failed to decode config %q: %w", f.Name, err)
+			}
+			path := filepath.Join(dir, name)
+			if err := os.WriteFile(path, content, configFileMode(f.Mode)); err != nil { // lgtm[go/path-injection] -- name validated above via safepath.ValidateConfigName
+				cleanup()
+				return nil, noop, fmt.Errorf("failed to write config %q: %w", f.Name, err)
+			}
+			volumes = append(volumes, path+":"+f.Target+":ro")
+			continue
+		}
+
+		groupDir := filepath.Join(dir, name)
+		if err := os.MkdirAll(groupDir, 0755); err != nil { // lgtm[go/path-injection] -- name validated above via safepath.ValidateConfigName
+			cleanup()
+			return nil, noop, fmt.Errorf("failed to create config dir %q: %w", name, err)
+		}
+		for _, f := range specs {
+			content, err := base64.StdEncoding.DecodeString(f.ContentB64)
+			if err != nil {
+				cleanup()
+				return nil, noop, fmt.Errorf("failed to decode config %q: %w", f.Name, err)
+			}
+			path := filepath.Join(groupDir, filepath.FromSlash(f.RelPath))
+			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil { // lgtm[go/path-injection] -- f.RelPath validated above via safepath.CleanRelativePath (rejects '..' and absolute paths)
+				cleanup()
+				return nil, noop, fmt.Errorf("failed to create config dir for %q: %w", f.Name, err)
+			}
+			if err := os.WriteFile(path, content, configFileMode(f.Mode)); err != nil { // lgtm[go/path-injection] -- f.RelPath validated above via safepath.CleanRelativePath
+				cleanup()
+				return nil, noop, fmt.Errorf("failed to write config %q: %w", f.Name, err)
+			}
+		}
+		volumes = append(volumes, groupDir+":"+specs[0].Target+":ro")
+	}
+
+	return volumes, cleanup, nil
+}
+
+func configFileMode(modeStr string) os.FileMode {
+	mode := os.FileMode(0444)
+	if modeStr != "" {
+		if parsed, err := strconv.ParseUint(modeStr, 8, 32); err == nil {
+			mode = os.FileMode(parsed)
+		} else {
+			log.Printf("[executor] invalid config file mode %q, falling back to 0444: %v", modeStr, err)
+		}
+	}
+	return mode
 }
 
 func keepWorkerWorkDir() bool {
