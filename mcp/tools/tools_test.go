@@ -767,6 +767,28 @@ func TestGetContainerLogsServiceNameNotFound(t *testing.T) {
 	}
 }
 
+func TestGetContainerLogsServiceNameWithoutContainerID(t *testing.T) {
+	logsRequested := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/custom/stacks/stack1/services" {
+			w.Write([]byte(`[{"service_name":"web","container_id":""}]`))
+			return
+		}
+		logsRequested = true
+		w.Write([]byte(`{"logs":"hello"}`))
+	}))
+	defer srv.Close()
+
+	handler := getContainerLogs(client.New(srv.URL))
+	_, _, err := handler(ctxWithKey(), nil, models.ContainerLogsInput{StackID: "stack1", ServiceName: "web"})
+	if err == nil {
+		t.Fatal("expected error when matching service has no container_id")
+	}
+	if logsRequested {
+		t.Fatal("expected handler not to call the logs endpoint when container_id resolution fails")
+	}
+}
+
 func TestGetContainerLogsRequiresContainerIDOrServiceName(t *testing.T) {
 	handler := getContainerLogs(client.New("http://unused"))
 	_, _, err := handler(ctxWithKey(), nil, models.ContainerLogsInput{StackID: "stack1"})
