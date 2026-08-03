@@ -21,17 +21,23 @@ func CloneOrFetchContext(ctx context.Context, repoID, gitURL, branch string, aut
 		return nil, err
 	}
 
+	absWorkspace, err := filepath.Abs(workspace)
+	if err != nil {
+		return nil, fmt.Errorf("invalid workspace path: %w", err)
+	}
+
 	cleaned := filepath.Clean(repoID)
-	if filepath.IsAbs(cleaned) || strings.Contains(repoID, "..") || strings.Contains(repoID, string(os.PathSeparator)) {
+	if cleaned == "." || cleaned == "" || filepath.IsAbs(cleaned) || filepath.Base(cleaned) != cleaned || strings.Contains(cleaned, "..") {
 		return nil, fmt.Errorf("invalid repository ID: %s", repoID)
 	}
 
-	repoDir := filepath.Join(workspace, cleaned)
-	if rel, err := filepath.Rel(workspace, repoDir); err != nil || strings.HasPrefix(rel, "..") {
+	repoDir := filepath.Join(absWorkspace, cleaned)
+	rel, err := filepath.Rel(absWorkspace, repoDir)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
 		return nil, fmt.Errorf("invalid repository path traversal: %s", repoID)
 	}
 
-	if _, err := os.Stat(filepath.Join(repoDir, ".git")); os.IsNotExist(err) { // lgtm[go/path-injection] -- repoDir built from repoID validated above via filepath.Rel containment check
+	if _, err := os.Stat(filepath.Join(repoDir, ".git")); os.IsNotExist(err) { // lgtm[go/path-injection] -- repoDir is constrained to absWorkspace with single-component repoID validation
 		return cloneRepo(ctx, repoDir, gitURL, branch, auth)
 	}
 

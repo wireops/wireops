@@ -295,7 +295,7 @@ func (rr routeRegistrar) repoFilesSetupByIDContext(e *core.RequestEvent, ctx con
 		_ = e.JSON(http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("failed to sync repository: %v", err)})
 		return "", false
 	}
-	return filepath.Join(workspace, repoID), true
+	return filepath.Join(workspace, filepath.Clean(repoID)), true
 }
 
 func (rr routeRegistrar) registerStreamRoutes() {
