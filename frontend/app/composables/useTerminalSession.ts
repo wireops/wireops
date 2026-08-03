@@ -51,6 +51,7 @@ export function useTerminalSession() {
 
     let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
     try {
+      // lgtm[js/request-forgery] -- $pb.baseURL is the app's own fixed PocketBase origin (not user input); only the path segment is interpolated, and it's encodeURIComponent'd
       const resp = await fetch(`${$pb.baseURL}/api/custom/terminal/sessions/${encodeURIComponent(id)}/stream`, {
         headers: authHeaders(),
         signal: controller.signal,
@@ -134,6 +135,7 @@ export function useTerminalSession() {
 
     let res: Response
     try {
+      // lgtm[js/request-forgery] -- $pb.baseURL is the app's own fixed PocketBase origin (not user input); only the path segment is interpolated, and it's encodeURIComponent'd
       res = await fetch(`${$pb.baseURL}/api/custom/stacks/${encodeURIComponent(stackId)}/terminal/sessions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
@@ -153,6 +155,7 @@ export function useTerminalSession() {
     // close it out from under the abandoned call instead of leaking it.
     if (myGeneration !== generation) {
       if (data?.session_id) {
+        // lgtm[js/request-forgery] -- $pb.baseURL is the app's own fixed PocketBase origin (not user input); only the path segment is interpolated, and it's encodeURIComponent'd
         fetch(`${$pb.baseURL}/api/custom/terminal/sessions/${encodeURIComponent(data.session_id)}/close`, {
           method: 'POST',
           headers: authHeaders(),
@@ -172,6 +175,7 @@ export function useTerminalSession() {
   async function sendInput(text: string) {
     if (!sessionId.value) return
     try {
+      // lgtm[js/request-forgery] -- $pb.baseURL is the app's own fixed PocketBase origin (not user input); only the path segment is interpolated, and it's encodeURIComponent'd
       const res = await fetch(`${$pb.baseURL}/api/custom/terminal/sessions/${encodeURIComponent(sessionId.value)}/input`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
@@ -186,6 +190,7 @@ export function useTerminalSession() {
   async function resize(rows: number, cols: number) {
     if (!sessionId.value) return
     try {
+      // lgtm[js/request-forgery] -- $pb.baseURL is the app's own fixed PocketBase origin (not user input); only the path segment is interpolated, and it's encodeURIComponent'd
       const res = await fetch(`${$pb.baseURL}/api/custom/terminal/sessions/${encodeURIComponent(sessionId.value)}/resize`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
@@ -207,6 +212,7 @@ export function useTerminalSession() {
     const id = sessionId.value
     sessionId.value = null
     if (!id) return
+    // lgtm[js/request-forgery] -- $pb.baseURL is the app's own fixed PocketBase origin (not user input); only the path segment is interpolated, and it's encodeURIComponent'd
     await fetch(`${$pb.baseURL}/api/custom/terminal/sessions/${encodeURIComponent(id)}/close`, {
       method: 'POST',
       headers: authHeaders(),

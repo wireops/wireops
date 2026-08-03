@@ -123,7 +123,7 @@ func CreateRecord(app core.App, p CreateRecordParams) {
 	line, err := json.Marshal(header)
 	if err == nil {
 		line = append(line, '\n')
-		f, ferr := os.OpenFile(transcriptPath(sessionID), os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+		f, ferr := os.OpenFile(transcriptPath(sessionID), os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600) // lgtm[go/path-injection] -- transcriptPath runs sessionID through filepath.Base, collapsing any separators/".." to a single filename component
 		if ferr != nil {
 			log.Printf("[termsession] failed to open transcript file for %s: %v", sessionID, ferr)
 		} else if _, werr := f.Write(line); werr != nil {
