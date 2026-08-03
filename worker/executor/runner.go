@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -735,6 +736,26 @@ func prepareComposeFile(stackID, commandID, b64Content string) (string, string, 
 	return dir, filename, cleanup, nil
 }
 
+// jobConfigNamePattern is an allowlist for job run IDs and config names: bare
+// identifiers only, no path separators or traversal sequences.
+var jobConfigNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+
+// jobConfigRelPathPattern is an allowlist for a config's rel_path once it has
+// been cleaned by safepath.CleanRelativePath: relative path segments only.
+var jobConfigRelPathPattern = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
+
+// validateJobConfigIdent checks value against the bare-identifier allowlist,
+// additionally rejecting "." / ".." explicitly since both match the charset.
+func validateJobConfigIdent(kind, value string) error {
+	if value == "" || value == "." || value == ".." || strings.Contains(value, "..") {
+		return fmt.Errorf("invalid %s: %q", kind, value)
+	}
+	if !jobConfigNamePattern.MatchString(value) {
+		return fmt.Errorf("invalid %s: %q", kind, value)
+	}
+	return nil
+}
+
 // prepareJobConfigFiles decodes each job.yaml `configs:` entry and writes it
 // to a job-scoped directory under stackDir/jobs/<jobRunID>/configs/<name>,
 // returning the "-v hostPath:target:ro" docker run flags to bind-mount them.
@@ -751,6 +772,9 @@ func prepareJobConfigFiles(jobRunID string, files []protocol.ConfigFileSpec) ([]
 	if err := safepath.ValidateConfigName(jobRunID); err != nil {
 		return nil, noop, fmt.Errorf("invalid job run id: %w", err)
 	}
+	if err := validateJobConfigIdent("job run id", jobRunID); err != nil {
+		return nil, noop, err
+	}
 
 	// Directory-source binds (groupDir below) are mounted directly into the
 	// job container, and RunJob never forces --user root — the container's
@@ -760,7 +784,7 @@ func prepareJobConfigFiles(jobRunID string, files []protocol.ConfigFileSpec) ([]
 	// configFileMode, default 0444 world-readable, which is what actually
 	// gates content access here).
 	dir := filepath.Join(stackDir, "jobs", jobRunID, "configs")
-	if err := os.MkdirAll(dir, 0755); err != nil { // lgtm[go/path-injection] -- jobRunID validated above via safepath.ValidateConfigName (rejects '/', '\\', '.', leading '.')
+	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, noop, fmt.Errorf("failed to create job config dir: %w", err)
 	}
 	cleanup := func() {
@@ -785,10 +809,18 @@ func prepareJobConfigFiles(jobRunID string, files []protocol.ConfigFileSpec) ([]
 		if err := safepath.ValidateConfigName(f.Name); err != nil {
 			return nil, noop, fmt.Errorf("invalid config name %q: %w", f.Name, err)
 		}
+		if err := validateJobConfigIdent("config name", f.Name); err != nil {
+			return nil, noop, err
+		}
 		if f.RelPath != "" {
-			if _, err := safepath.CleanRelativePath(f.RelPath); err != nil {
+			cleanedRelPath, err := safepath.CleanRelativePath(f.RelPath)
+			if err != nil {
 				return nil, noop, fmt.Errorf("invalid config %q rel_path %q: %w", f.Name, f.RelPath, err)
 			}
+			if !jobConfigRelPathPattern.MatchString(cleanedRelPath) {
+				return nil, noop, fmt.Errorf("invalid config %q rel_path %q: contains disallowed characters", f.Name, f.RelPath)
+			}
+			f.RelPath = cleanedRelPath
 		}
 		if _, seen := grouped[f.Name]; !seen {
 			order = append(order, f.Name)
@@ -808,7 +840,7 @@ func prepareJobConfigFiles(jobRunID string, files []protocol.ConfigFileSpec) ([]
 				return nil, noop, fmt.Errorf("failed to decode config %q: %w", f.Name, err)
 			}
 			path := filepath.Join(dir, name)
-			if err := os.WriteFile(path, content, configFileMode(f.Mode)); err != nil { // lgtm[go/path-injection] -- name validated above via safepath.ValidateConfigName
+			if err := os.WriteFile(path, content, configFileMode(f.Mode)); err != nil {
 				cleanup()
 				return nil, noop, fmt.Errorf("failed to write config %q: %w", f.Name, err)
 			}
@@ -817,7 +849,7 @@ func prepareJobConfigFiles(jobRunID string, files []protocol.ConfigFileSpec) ([]
 		}
 
 		groupDir := filepath.Join(dir, name)
-		if err := os.MkdirAll(groupDir, 0755); err != nil { // lgtm[go/path-injection] -- name validated above via safepath.ValidateConfigName
+		if err := os.MkdirAll(groupDir, 0755); err != nil {
 			cleanup()
 			return nil, noop, fmt.Errorf("failed to create config dir %q: %w", name, err)
 		}
@@ -828,11 +860,11 @@ func prepareJobConfigFiles(jobRunID string, files []protocol.ConfigFileSpec) ([]
 				return nil, noop, fmt.Errorf("failed to decode config %q: %w", f.Name, err)
 			}
 			path := filepath.Join(groupDir, filepath.FromSlash(f.RelPath))
-			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil { // lgtm[go/path-injection] -- f.RelPath validated above via safepath.CleanRelativePath (rejects '..' and absolute paths)
+			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 				cleanup()
 				return nil, noop, fmt.Errorf("failed to create config dir for %q: %w", f.Name, err)
 			}
-			if err := os.WriteFile(path, content, configFileMode(f.Mode)); err != nil { // lgtm[go/path-injection] -- f.RelPath validated above via safepath.CleanRelativePath
+			if err := os.WriteFile(path, content, configFileMode(f.Mode)); err != nil {
 				cleanup()
 				return nil, noop, fmt.Errorf("failed to write config %q: %w", f.Name, err)
 			}
