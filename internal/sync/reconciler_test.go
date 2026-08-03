@@ -38,6 +38,64 @@ func TestUpdateSyncLogPersistsSuccessStatus(t *testing.T) {
 	}
 }
 
+func TestEffectivePrevStatusRestoresActiveAfterOfflineQueueMarker(t *testing.T) {
+	app, stack := newReconcilerPhase1TestApp(t)
+
+	// Simulate the queue-time write done when a worker is offline
+	// (reconciler.go queuePendingReconcile callers): status flips to
+	// "pending" while the real prior state ("active", already synced) is
+	// only recoverable via last_synced_at.
+	stack.Set("status", "pending")
+	stack.Set("last_synced_at", time.Now().UTC().Format(time.RFC3339))
+	if err := app.Save(stack); err != nil {
+		t.Fatalf("failed to save stack: %v", err)
+	}
+
+	if got := effectivePrevStatus(stack); got != "active" {
+		t.Fatalf("effectivePrevStatus = %q, want active", got)
+	}
+}
+
+func TestEffectivePrevStatusKeepsPendingForNeverSyncedStack(t *testing.T) {
+	app, stack := newReconcilerPhase1TestApp(t)
+
+	stack.Set("status", "pending")
+	stack.Set("last_synced_at", "")
+	if err := app.Save(stack); err != nil {
+		t.Fatalf("failed to save stack: %v", err)
+	}
+
+	if got := effectivePrevStatus(stack); got != "pending" {
+		t.Fatalf("effectivePrevStatus = %q, want pending", got)
+	}
+}
+
+func TestShouldMarkPendingOnQueueSkipsErrorStatus(t *testing.T) {
+	app, stack := newReconcilerPhase1TestApp(t)
+
+	stack.Set("status", "error")
+	if err := app.Save(stack); err != nil {
+		t.Fatalf("failed to save stack: %v", err)
+	}
+
+	if shouldMarkPendingOnQueue(stack) {
+		t.Fatalf("shouldMarkPendingOnQueue = true, want false for status=error")
+	}
+}
+
+func TestShouldMarkPendingOnQueueAllowsActiveStatus(t *testing.T) {
+	app, stack := newReconcilerPhase1TestApp(t)
+
+	stack.Set("status", "active")
+	if err := app.Save(stack); err != nil {
+		t.Fatalf("failed to save stack: %v", err)
+	}
+
+	if !shouldMarkPendingOnQueue(stack) {
+		t.Fatalf("shouldMarkPendingOnQueue = false, want true for status=active")
+	}
+}
+
 func TestQueuePendingReconcilePersistsRecordAndQueuedLog(t *testing.T) {
 	app, stack := newReconcilerPhase1TestApp(t)
 	r := &Reconciler{app: app}
@@ -346,6 +404,7 @@ func newReconcilerPhase1TestApp(t *testing.T) (*tests.TestApp, *core.Record) {
 	stacks := core.NewBaseCollection("stacks")
 	stacks.Fields.Add(&core.TextField{Name: "name", Required: true})
 	stacks.Fields.Add(&core.SelectField{Name: "status", Values: []string{"active", "syncing", "paused", "error", "pending"}})
+	stacks.Fields.Add(&core.DateField{Name: "last_synced_at"})
 	if err := app.Save(stacks); err != nil {
 		t.Fatalf("failed to create stacks collection: %v", err)
 	}

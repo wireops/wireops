@@ -132,7 +132,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		return err
 	}
 
-	prevStatus := stack.GetString("status")
+	prevStatus := effectivePrevStatus(stack)
 	if err := r.saveRecordStatus(stack, "stacks", "syncing", fmt.Sprintf("start reconcile trigger=%s", trigger)); err != nil {
 		return err
 	}
@@ -223,8 +223,10 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 				_ = r.markSyncError(stack, err.Error())
 				return err
 			}
-			if err := r.saveRecordStatus(stack, "stacks", "pending", "mark stack pending after offline queue"); err != nil {
-				return err
+			if shouldMarkPendingOnQueue(stack) {
+				if err := r.saveRecordStatus(stack, "stacks", "pending", "mark stack pending after offline queue"); err != nil {
+					return err
+				}
 			}
 			return nil
 		}
@@ -1109,13 +1111,15 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 			_ = r.markSyncError(stack, err.Error())
 			return err
 		}
-		if err := r.saveRecordStatus(stack, "stacks", "pending", "mark local stack pending after offline queue"); err != nil {
-			return err
+		if shouldMarkPendingOnQueue(stack) {
+			if err := r.saveRecordStatus(stack, "stacks", "pending", "mark local stack pending after offline queue"); err != nil {
+				return err
+			}
 		}
 		return nil
 	}
 
-	prevStatus := stack.GetString("status")
+	prevStatus := effectivePrevStatus(stack)
 	if err := r.saveRecordStatus(stack, "stacks", "syncing", fmt.Sprintf("start local reconcile trigger=%s", trigger)); err != nil {
 		return err
 	}
@@ -1776,6 +1780,32 @@ func (r *Reconciler) saveRecord(rec *core.Record, collection, op string) error {
 func (r *Reconciler) saveRecordStatus(rec *core.Record, collection, status, op string) error {
 	rec.Set("status", status)
 	return r.saveRecord(rec, collection, op)
+}
+
+// effectivePrevStatus returns the status a reconcile's skip paths should
+// restore on early return. "pending" is overloaded: it's both the initial
+// state of a never-synced stack and the marker set while a reconcile is
+// queued for replay (offline worker). If a stack was previously deployed
+// (last_synced_at set) and its current status is still "pending", that
+// value is the leftover queue marker, not a real prior state — restoring it
+// verbatim would freeze the UI on "queued" forever even after a successful
+// no-op skip. In that case fall back to "active".
+func effectivePrevStatus(stack *core.Record) string {
+	status := stack.GetString("status")
+	if status == "pending" && stack.GetString("last_synced_at") != "" {
+		return "active"
+	}
+	return status
+}
+
+// shouldMarkPendingOnQueue reports whether a stack's status should be
+// overwritten to "pending" when its reconcile is queued for replay because
+// the worker is offline. "error" is left untouched: it's already meaningful,
+// and clobbering it with "pending" would let effectivePrevStatus mistake the
+// stack for healthy (since it was previously synced) once the worker
+// reconnects and the queued reconcile replays into a no-op skip.
+func shouldMarkPendingOnQueue(stack *core.Record) bool {
+	return stack.GetString("status") != "error"
 }
 
 func (r *Reconciler) markError(rec *core.Record, collection string) error {
