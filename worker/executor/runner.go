@@ -853,6 +853,11 @@ func prepareJobConfigFiles(jobRunID string, files []protocol.ConfigFileSpec) ([]
 			cleanup()
 			return nil, noop, fmt.Errorf("failed to create config dir %q: %w", name, err)
 		}
+		canonicalGroupDir, err := filepath.EvalSymlinks(groupDir)
+		if err != nil {
+			cleanup()
+			return nil, noop, fmt.Errorf("failed to resolve config dir %q: %w", groupDir, err)
+		}
 		for _, f := range specs {
 			content, err := base64.StdEncoding.DecodeString(f.ContentB64)
 			if err != nil {
@@ -862,26 +867,34 @@ func prepareJobConfigFiles(jobRunID string, files []protocol.ConfigFileSpec) ([]
 			relPath := filepath.FromSlash(f.RelPath)
 			candidatePath := filepath.Join(groupDir, relPath)
 
-			absGroupDir, err := filepath.Abs(groupDir)
-			if err != nil {
-				cleanup()
-				return nil, noop, fmt.Errorf("failed to resolve config dir %q: %w", groupDir, err)
-			}
 			absCandidatePath, err := filepath.Abs(candidatePath)
 			if err != nil {
 				cleanup()
 				return nil, noop, fmt.Errorf("failed to resolve config path %q for %q: %w", f.RelPath, f.Name, err)
 			}
 
-			if absCandidatePath != absGroupDir && !strings.HasPrefix(absCandidatePath, absGroupDir+string(os.PathSeparator)) {
-				cleanup()
-				return nil, noop, fmt.Errorf("invalid config relative path %q for %q", f.RelPath, f.Name)
-			}
-			if err := os.MkdirAll(filepath.Dir(absCandidatePath), 0755); err != nil {
+			parentDir := filepath.Dir(absCandidatePath)
+			if err := os.MkdirAll(parentDir, 0755); err != nil {
 				cleanup()
 				return nil, noop, fmt.Errorf("failed to create config dir for %q: %w", f.Name, err)
 			}
-			if err := os.WriteFile(absCandidatePath, content, configFileMode(f.Mode)); err != nil {
+			canonicalParentDir, err := filepath.EvalSymlinks(parentDir)
+			if err != nil {
+				cleanup()
+				return nil, noop, fmt.Errorf("failed to resolve config dir for %q: %w", f.Name, err)
+			}
+			finalPath := filepath.Join(canonicalParentDir, filepath.Base(absCandidatePath))
+
+			if canonicalParentDir != canonicalGroupDir && !strings.HasPrefix(canonicalParentDir, canonicalGroupDir+string(os.PathSeparator)) {
+				cleanup()
+				return nil, noop, fmt.Errorf("invalid config relative path %q for %q", f.RelPath, f.Name)
+			}
+			if finalPath != canonicalGroupDir && !strings.HasPrefix(finalPath, canonicalGroupDir+string(os.PathSeparator)) {
+				cleanup()
+				return nil, noop, fmt.Errorf("invalid config relative path %q for %q", f.RelPath, f.Name)
+			}
+
+			if err := os.WriteFile(finalPath, content, configFileMode(f.Mode)); err != nil {
 				cleanup()
 				return nil, noop, fmt.Errorf("failed to write config %q: %w", f.Name, err)
 			}
