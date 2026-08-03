@@ -39,7 +39,7 @@ func CloneOrFetchContext(ctx context.Context, repoID, gitURL, branch string, aut
 }
 
 func cloneRepo(ctx context.Context, dir, gitURL, branch string, auth transport.AuthMethod) (*gogit.Repository, error) {
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0755); err != nil { // lgtm[go/path-injection] -- dir built from repoID validated in CloneOrFetchContext via filepath.Rel containment check
 		return nil, fmt.Errorf("failed to create repo dir: %w", err)
 	}
 
