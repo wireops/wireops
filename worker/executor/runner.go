@@ -864,13 +864,21 @@ func prepareJobConfigFiles(jobRunID string, files []protocol.ConfigFileSpec) ([]
 				cleanup()
 				return nil, noop, fmt.Errorf("failed to decode config %q: %w", f.Name, err)
 			}
-			relPath := filepath.FromSlash(f.RelPath)
+			relPath := filepath.Clean(filepath.FromSlash(f.RelPath))
+			if filepath.IsAbs(relPath) || relPath == ".." || strings.HasPrefix(relPath, ".."+string(os.PathSeparator)) {
+				cleanup()
+				return nil, noop, fmt.Errorf("invalid config relative path %q for %q", f.RelPath, f.Name)
+			}
 			candidatePath := filepath.Join(groupDir, relPath)
 
 			absCandidatePath, err := filepath.Abs(candidatePath)
 			if err != nil {
 				cleanup()
 				return nil, noop, fmt.Errorf("failed to resolve config path %q for %q: %w", f.RelPath, f.Name, err)
+			}
+			if absCandidatePath != canonicalGroupDir && !strings.HasPrefix(absCandidatePath, canonicalGroupDir+string(os.PathSeparator)) {
+				cleanup()
+				return nil, noop, fmt.Errorf("invalid config relative path %q for %q", f.RelPath, f.Name)
 			}
 
 			parentDir := filepath.Dir(absCandidatePath)
