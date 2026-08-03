@@ -37,6 +37,12 @@ type RenderResult struct {
 	// revision. Used by the caller to populate the stack_config_files
 	// tracking table.
 	ConfigFiles []configfiles.TrackedFile
+
+	// Warnings holds warning-severity lint findings from this render's lint
+	// pass ("<rule>: <message>"). Unlike error-severity findings, these never
+	// block the deploy — the caller folds them into the render phase's
+	// sync_log_phases detail, purely advisory.
+	Warnings []string
 }
 
 // ServiceOverride holds render-time (not committed to git) overrides for a single
@@ -212,6 +218,12 @@ func (r *Renderer) GenerateRevision(
 		}
 		return nil, fmt.Errorf("compose file failed static checks: %s", strings.Join(msgs, "; "))
 	}
+	var renderWarnings []string
+	for _, f := range lintReport.Findings {
+		if f.Severity == lint.SeverityWarning {
+			renderWarnings = append(renderWarnings, fmt.Sprintf("%s: %s", f.Rule, f.Message))
+		}
+	}
 
 	// Determine version number
 	currentVersion := stack.GetInt("current_version")
@@ -318,6 +330,7 @@ func (r *Renderer) GenerateRevision(
 			Checksum:     checksum,
 			RenderedPath: fmt.Sprintf("v%d.yml", currentVersion),
 			ConfigFiles:  trackedConfigs,
+			Warnings:     renderWarnings,
 		}, nil
 	}
 
@@ -362,6 +375,7 @@ func (r *Renderer) GenerateRevision(
 		Checksum:     checksum,
 		RenderedPath: fileName,
 		ConfigFiles:  trackedConfigs,
+		Warnings:     renderWarnings,
 	}, nil
 }
 

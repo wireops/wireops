@@ -173,6 +173,48 @@ func TestRunOnlyFlagsVariablesNothingDefines(t *testing.T) {
 	}
 }
 
+func TestRunFlagsUnescapedConfigInterpolation(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    []string
+	}{
+		{"bare var", `server { proxy_pass http://x:$PORT; }`, []string{"PORT"}},
+		{"braced var", `server { proxy_pass http://x:${PORT}; }`, []string{"PORT"}},
+		{"braced var with default", `server { listen ${PORT:-8080}; }`, []string{"PORT"}},
+		{"nginx var, not compose var", `location / { try_files $uri /index.html; }`, []string{"uri"}},
+		{"escaped dollar", `location / { try_files $$uri /index.html; }`, nil},
+		{"no dollar at all", `server { listen 80; }`, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			raw := map[string]interface{}{
+				"services": map[string]interface{}{
+					"web": map[string]interface{}{"image": "nginx:1.25.3"},
+				},
+				"configs": map[string]interface{}{
+					"nginx-conf": map[string]interface{}{"content": tt.content},
+				},
+			}
+			got := findingsFor(lint.Run(raw, lint.Context{}), "compose/unescaped-config-interpolation")
+			if len(tt.want) == 0 {
+				if len(got) != 0 {
+					t.Fatalf("expected no findings, got %v", got)
+				}
+				return
+			}
+			if len(got) != 1 {
+				t.Fatalf("expected 1 finding, got %d: %v", len(got), got)
+			}
+			for _, name := range tt.want {
+				if !strings.Contains(got[0], name) {
+					t.Errorf("finding %q does not mention variable %q", got[0], name)
+				}
+			}
+		})
+	}
+}
+
 func TestRunFlagsUndeclaredNetworksAndVolumes(t *testing.T) {
 	cfg := mustConfig(t, `{
 		"services": {

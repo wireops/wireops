@@ -63,6 +63,7 @@ func init() {
 	Register(RuleUndeclaredVolume, ruleUndeclaredVolume)
 	Register(RuleUnresolvedVariable, ruleUnresolvedVariable)
 	Register(RuleObsoleteVersionKey, ruleObsoleteVersionKey)
+	Register(RuleUnescapedConfigInterpolation, ruleUnescapedConfigInterpolation)
 }
 
 // ruleNoServices catches a compose file that parses but deploys nothing.
@@ -213,6 +214,57 @@ func ruleObsoleteVersionKey(cfg *Config, _ Context) []Finding {
 		Message:  "top-level `version:` key is obsolete",
 		Hint:     "remove it — Compose ignores it and warns about it on every run",
 	}}
+}
+
+// ruleUnescapedConfigInterpolation catches a `configs:` content block (as
+// synthesized from dev.wireops.config.* annotations, or declared directly)
+// containing a `${VAR}`/`$VAR` reference. `docker compose config` interpolates
+// the *entire* rendered file, including embedded config content, before the
+// container ever starts — so a template file that legitimately uses shell/nginx
+// `$var` syntax gets silently mangled unless the author escapes it as `$$`.
+func ruleUnescapedConfigInterpolation(cfg *Config, _ Context) []Finding {
+	configs, ok := cfg.Raw["configs"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	names := make([]string, 0, len(configs))
+	for name := range configs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var out []Finding
+	for _, name := range names {
+		entry, ok := configs[name].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		content, ok := entry["content"].(string)
+		if !ok || content == "" {
+			continue
+		}
+		refs := parseInterpolations(content)
+		if len(refs) == 0 {
+			continue
+		}
+		seen := map[string]bool{}
+		var vars []string
+		for _, ref := range refs {
+			if !seen[ref.Name] {
+				seen[ref.Name] = true
+				vars = append(vars, ref.Name)
+			}
+		}
+		sort.Strings(vars)
+		out = append(out, Finding{
+			Severity: SeverityWarning,
+			Path:     fmt.Sprintf("configs.%s.content", name),
+			Message: fmt.Sprintf("config %q content contains unescaped interpolation reference(s): %s",
+				name, strings.Join(vars, ", ")),
+			Hint: "docker compose interpolates the whole rendered file, including embedded config content, before the container starts — escape a literal $ as $$ if it is not meant to be a compose variable",
+		})
+	}
+	return out
 }
 
 // collectInterpolations walks an arbitrary decoded-JSON value and records the

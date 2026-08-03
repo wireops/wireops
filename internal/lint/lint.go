@@ -53,23 +53,24 @@ const (
 // the two from drifting apart — a typo in a raw string literal on either side
 // would otherwise silently produce an untitled or duplicate rule.
 const (
-	RuleLatestTag                  = "compose/latest-tag"
-	RuleNoRestartPolicy            = "compose/no-restart-policy"
-	RuleNoHealthcheck              = "compose/no-healthcheck"
-	RuleNoResourceLimits           = "compose/no-resource-limits"
-	RulePublishedPortAllInterfaces = "compose/published-port-all-interfaces"
-	RulePlaintextSecret            = "compose/plaintext-secret"
-	RuleRelativeBindMount          = "compose/relative-bind-mount"
-	RulePrivileged                 = "compose/privileged"
-	RuleHostNamespace              = "compose/host-namespace"
-	RuleDockerSocket               = "compose/docker-socket"
-	RuleNoServices                 = "compose/no-services"
-	RuleMissingImage               = "compose/missing-image"
-	RuleUndeclaredNetwork          = "compose/undeclared-network"
-	RuleUndeclaredVolume           = "compose/undeclared-volume"
-	RuleUnresolvedVariable         = "compose/unresolved-variable"
-	RuleObsoleteVersionKey         = "compose/obsolete-version-key"
-	RulePolicyWorkerPolicy         = "policy/worker-policy"
+	RuleLatestTag                    = "compose/latest-tag"
+	RuleNoRestartPolicy              = "compose/no-restart-policy"
+	RuleNoHealthcheck                = "compose/no-healthcheck"
+	RuleNoResourceLimits             = "compose/no-resource-limits"
+	RulePublishedPortAllInterfaces   = "compose/published-port-all-interfaces"
+	RulePlaintextSecret              = "compose/plaintext-secret"
+	RuleRelativeBindMount            = "compose/relative-bind-mount"
+	RulePrivileged                   = "compose/privileged"
+	RuleHostNamespace                = "compose/host-namespace"
+	RuleDockerSocket                 = "compose/docker-socket"
+	RuleNoServices                   = "compose/no-services"
+	RuleMissingImage                 = "compose/missing-image"
+	RuleUndeclaredNetwork            = "compose/undeclared-network"
+	RuleUndeclaredVolume             = "compose/undeclared-volume"
+	RuleUnresolvedVariable           = "compose/unresolved-variable"
+	RuleObsoleteVersionKey           = "compose/obsolete-version-key"
+	RuleUnescapedConfigInterpolation = "compose/unescaped-config-interpolation"
+	RulePolicyWorkerPolicy           = "policy/worker-policy"
 )
 
 // Finding is a single problem found in a compose config.
@@ -294,6 +295,7 @@ var ruleTitles = map[string]string{
 	RuleUndeclaredVolume:                "Undeclared volume",
 	RuleUnresolvedVariable:              "Unresolved variable",
 	RuleObsoleteVersionKey:              "Obsolete version key",
+	RuleUnescapedConfigInterpolation:    "Unescaped config interpolation",
 	"policy/" + policyCheckImages:       "Image blocked by policy",
 	"policy/" + policyCheckVolumes:      "Volume blocked by policy",
 	"policy/" + policyCheckNetworks:     "Network blocked by policy",

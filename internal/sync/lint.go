@@ -2,7 +2,9 @@ package sync
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/wireops/wireops/internal/compose"
@@ -47,6 +49,18 @@ func recordLintPhase(pt *phaseTracker, res lintResult) {
 		return
 	}
 	_ = pt.recordCompleted(constants.PhaseLint, constants.PhaseStatusSuccess, res.started, res.duration, res.detail())
+}
+
+// renderPhaseDetail builds the PhaseRender detail string, folding in any
+// warning-severity lint findings from GenerateRevision's own lint pass
+// (advisory only — they never block the deploy, unlike error-severity
+// findings, which fail the render before a RenderResult even exists).
+func renderPhaseDetail(renderRes *RenderResult) string {
+	detail := fmt.Sprintf("checksum=%s version=%d", renderRes.Checksum, renderRes.Version)
+	if len(renderRes.Warnings) > 0 {
+		detail += "; warnings=" + strings.Join(renderRes.Warnings, "; ")
+	}
+	return detail
 }
 
 // lintCompose runs the static compose checks for a stack about to be

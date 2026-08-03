@@ -392,7 +392,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	if reusedSyncLog == nil {
 		_ = pt.recordSkipped(constants.PhasePolicyCheck, "no wait needed")
 	}
-	_ = pt.recordCompleted(constants.PhaseRender, constants.PhaseStatusSuccess, renderStart, renderDuration, fmt.Sprintf("checksum=%s version=%d", renderRes.Checksum, renderRes.Version))
+	_ = pt.recordCompleted(constants.PhaseRender, constants.PhaseStatusSuccess, renderStart, renderDuration, renderPhaseDetail(renderRes))
 
 	r.notifier.Dispatch(ctx, notify.Payload{
 		Event:     notify.SyncStarted,
@@ -678,7 +678,7 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 	_ = pt.recordCompleted(constants.PhaseGitFetch, constants.PhaseStatusSuccess, gitFetchStart, gitFetchDuration, "")
 	_ = pt.recordSkipped(constants.PhaseLint, "n/a: rollback deploys an already-linted revision")
 	_ = pt.recordSkipped(constants.PhasePolicyCheck, "n/a: rollback")
-	_ = pt.recordCompleted(constants.PhaseRender, constants.PhaseStatusSuccess, renderStart, renderDuration, fmt.Sprintf("checksum=%s version=%d", renderRes.Checksum, renderRes.Version))
+	_ = pt.recordCompleted(constants.PhaseRender, constants.PhaseStatusSuccess, renderStart, renderDuration, renderPhaseDetail(renderRes))
 
 	r.notifier.Dispatch(ctx, notify.Payload{
 		Event:     notify.SyncStarted,
@@ -961,7 +961,7 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 	if err != nil {
 		return failRedeploy(err.Error(), time.Since(start).Milliseconds(), "sync")
 	}
-	_ = pt.finish(constants.PhaseRender, constants.PhaseStatusSuccess, fmt.Sprintf("checksum=%s version=%d", renderRes.Checksum, renderRes.Version))
+	_ = pt.finish(constants.PhaseRender, constants.PhaseStatusSuccess, renderPhaseDetail(renderRes))
 	_ = pt.start(constants.PhaseDispatch)
 	dispatchStart := time.Now()
 	var composeUpMs int64
@@ -1242,7 +1242,7 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 	_ = pt.recordCompleted(constants.PhaseGitFetch, constants.PhaseStatusSuccess, fetchStart, fetchDuration, "")
 	_ = pt.recordSkipped(constants.PhaseLint, "n/a: local stack compose comes from the worker, not git")
 	_ = pt.recordSkipped(constants.PhasePolicyCheck, "n/a: local stack sync")
-	_ = pt.recordCompleted(constants.PhaseRender, constants.PhaseStatusSuccess, renderStart, renderDuration, fmt.Sprintf("checksum=%s version=%d", renderRes.Checksum, renderRes.Version))
+	_ = pt.recordCompleted(constants.PhaseRender, constants.PhaseStatusSuccess, renderStart, renderDuration, renderPhaseDetail(renderRes))
 
 	renderedFilePath := r.renderer.GetRevisionFilePath(stackID, renderRes.Version)
 	recreateContainers := neverSynced
