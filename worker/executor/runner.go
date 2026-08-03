@@ -860,17 +860,28 @@ func prepareJobConfigFiles(jobRunID string, files []protocol.ConfigFileSpec) ([]
 				return nil, noop, fmt.Errorf("failed to decode config %q: %w", f.Name, err)
 			}
 			relPath := filepath.FromSlash(f.RelPath)
-			path := filepath.Clean(filepath.Join(groupDir, relPath))
-			cleanGroupDir := filepath.Clean(groupDir)
-			if path != cleanGroupDir && !strings.HasPrefix(path, cleanGroupDir+string(os.PathSeparator)) {
+			candidatePath := filepath.Join(groupDir, relPath)
+
+			absGroupDir, err := filepath.Abs(groupDir)
+			if err != nil {
+				cleanup()
+				return nil, noop, fmt.Errorf("failed to resolve config dir %q: %w", groupDir, err)
+			}
+			absCandidatePath, err := filepath.Abs(candidatePath)
+			if err != nil {
+				cleanup()
+				return nil, noop, fmt.Errorf("failed to resolve config path %q for %q: %w", f.RelPath, f.Name, err)
+			}
+
+			if absCandidatePath != absGroupDir && !strings.HasPrefix(absCandidatePath, absGroupDir+string(os.PathSeparator)) {
 				cleanup()
 				return nil, noop, fmt.Errorf("invalid config relative path %q for %q", f.RelPath, f.Name)
 			}
-			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(absCandidatePath), 0755); err != nil {
 				cleanup()
 				return nil, noop, fmt.Errorf("failed to create config dir for %q: %w", f.Name, err)
 			}
-			if err := os.WriteFile(path, content, configFileMode(f.Mode)); err != nil {
+			if err := os.WriteFile(absCandidatePath, content, configFileMode(f.Mode)); err != nil {
 				cleanup()
 				return nil, noop, fmt.Errorf("failed to write config %q: %w", f.Name, err)
 			}
