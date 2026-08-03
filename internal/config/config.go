@@ -52,13 +52,16 @@ func GetStacksStoragePath() string {
 }
 
 // GetTerminalSessionsStoragePath returns the directory used for recorded
-// interactive terminal session transcripts (see docs/TERMINAL.md).
+// interactive terminal session transcripts (see docs/TERMINAL.md). Nested
+// under the PocketBase data dir (not DATA_DIR directly) so transcripts ride
+// along with pb_data in backups/volume mounts instead of being a second,
+// easy-to-forget top-level directory to include.
 func GetTerminalSessionsStoragePath() string {
 	if p := strings.TrimSpace(os.Getenv("TERMINAL_SESSIONS_STORAGE_PATH")); p != "" {
 		return p
 	}
 
-	return filepath.Join(GetDataDir(), "terminal_sessions")
+	return filepath.Join(GetPocketBaseDataDir(), "terminal_sessions")
 }
 
 // GetAppURL returns the configured APP_URL or constructs a default based on the bind address
