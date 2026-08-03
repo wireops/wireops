@@ -88,7 +88,7 @@ func ParseWireopsFile(repoWorkspace, repoID, filePath string) (*Definition, erro
 		return nil, fmt.Errorf("invalid wireops_file path: escapes repository directory: %q", filePath)
 	}
 
-	data, err := os.ReadFile(fullAbs)
+	data, err := os.ReadFile(fullAbs) // lgtm[go/path-injection] -- fullAbs validated above: filepath.Rel(baseAbs, fullAbs) confirms containment within repository base
 	if err != nil {
 		return nil, fmt.Errorf("cannot read wireops file %q: %w", filePath, err)
 	}
