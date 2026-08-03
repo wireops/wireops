@@ -73,6 +73,13 @@ func ParseWireopsFile(repoWorkspace, repoID, filePath string) (*Definition, erro
 	if err != nil {
 		return nil, fmt.Errorf("invalid wireops_file path: %w", err)
 	}
+	// Enforce the filename contract documented on this package: the manifest
+	// is matched by exact basename, in whichever subdirectory it lives. The
+	// listing endpoint already filters candidates with IsWireopsFile, so this
+	// only rejects hand-built API calls.
+	if !IsWireopsFile(filepath.Base(clean)) {
+		return nil, fmt.Errorf("invalid wireops_file path: must be wireops.yaml or wireops.yml, got %q", filePath)
+	}
 
 	base := filepath.Join(repoWorkspace, repoID)
 	baseAbs, err := filepath.Abs(base)

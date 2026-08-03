@@ -21,13 +21,21 @@ func CloneOrFetchContext(ctx context.Context, repoID, gitURL, branch string, aut
 		return nil, err
 	}
 
+	// A repository ID must resolve to exactly one directory entry directly
+	// under workspace. Checking the *cleaned* value (rather than the raw
+	// input) is what catches an empty or "." ID, which would otherwise slip
+	// through every separator/traversal check and make repoDir the workspace
+	// root itself. Once the ID is known to be a single component already in
+	// clean form, the only traversal-capable value left is exactly ".." —
+	// consecutive dots elsewhere in a name (e.g. "repo..mirror") are just
+	// characters in a directory entry.
 	cleaned := filepath.Clean(repoID)
-	if filepath.IsAbs(cleaned) || strings.Contains(repoID, "..") || strings.Contains(repoID, string(os.PathSeparator)) {
+	if cleaned != repoID || cleaned == "." || cleaned == ".." || filepath.IsAbs(cleaned) || filepath.Base(cleaned) != cleaned {
 		return nil, fmt.Errorf("invalid repository ID: %s", repoID)
 	}
 
 	repoDir := filepath.Join(workspace, cleaned)
-	if rel, err := filepath.Rel(workspace, repoDir); err != nil || strings.HasPrefix(rel, "..") {
+	if rel, err := filepath.Rel(workspace, repoDir); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
 		return nil, fmt.Errorf("invalid repository path traversal: %s", repoID)
 	}
 
