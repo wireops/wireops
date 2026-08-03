@@ -876,7 +876,8 @@ func prepareJobConfigFiles(jobRunID string, files []protocol.ConfigFileSpec) ([]
 				cleanup()
 				return nil, noop, fmt.Errorf("failed to resolve config path %q for %q: %w", f.RelPath, f.Name, err)
 			}
-			if absCandidatePath != canonicalGroupDir && !strings.HasPrefix(absCandidatePath, canonicalGroupDir+string(os.PathSeparator)) {
+			relToGroup, err := filepath.Rel(canonicalGroupDir, absCandidatePath)
+			if err != nil || relToGroup == ".." || strings.HasPrefix(relToGroup, ".."+string(os.PathSeparator)) || filepath.IsAbs(relToGroup) {
 				cleanup()
 				return nil, noop, fmt.Errorf("invalid config relative path %q for %q", f.RelPath, f.Name)
 			}
@@ -891,13 +892,17 @@ func prepareJobConfigFiles(jobRunID string, files []protocol.ConfigFileSpec) ([]
 				cleanup()
 				return nil, noop, fmt.Errorf("failed to resolve config dir for %q: %w", f.Name, err)
 			}
-			finalPath := filepath.Join(canonicalParentDir, filepath.Base(absCandidatePath))
-
-			if canonicalParentDir != canonicalGroupDir && !strings.HasPrefix(canonicalParentDir, canonicalGroupDir+string(os.PathSeparator)) {
+			parentRel, err := filepath.Rel(canonicalGroupDir, canonicalParentDir)
+			if err != nil || parentRel == ".." || strings.HasPrefix(parentRel, ".."+string(os.PathSeparator)) || filepath.IsAbs(parentRel) {
 				cleanup()
 				return nil, noop, fmt.Errorf("invalid config relative path %q for %q", f.RelPath, f.Name)
 			}
-			if finalPath != canonicalGroupDir && !strings.HasPrefix(finalPath, canonicalGroupDir+string(os.PathSeparator)) {
+			if parentRel == "." {
+				parentRel = ""
+			}
+			finalPath := filepath.Join(canonicalGroupDir, parentRel, filepath.Base(relToGroup))
+			finalRel, err := filepath.Rel(canonicalGroupDir, finalPath)
+			if err != nil || finalRel == ".." || strings.HasPrefix(finalRel, ".."+string(os.PathSeparator)) || filepath.IsAbs(finalRel) {
 				cleanup()
 				return nil, noop, fmt.Errorf("invalid config relative path %q for %q", f.RelPath, f.Name)
 			}
