@@ -149,12 +149,27 @@ func OpenTerminal(sessionID, containerID, projectName string, shell []string, ro
 	}
 
 	sess := &terminalSession{execID: execResp.ID, hj: hj, cancel: cancel, cli: cli}
-	terminalSessions.Store(sessionID, sess)
+	// Swap, not Store: sessionID is a fresh UUID per open request and
+	// MsgTerminalOpen isn't a durable/redelivered command (see
+	// isDurableCommand in internal/worker/server.go), so this shouldn't
+	// ever find a prior entry in practice — but if it somehow did, Store
+	// would silently orphan the old session's hj/cli (never closed) while
+	// its own cleanup goroutine later deletes *this* new entry out of the
+	// registry. Swap+close makes that scenario safe instead of silent.
+	if prev, loaded := terminalSessions.Swap(sessionID, sess); loaded {
+		if old, ok := prev.(*terminalSession); ok {
+			old.hj.Close()
+			old.cancel()
+		}
+	}
 
 	go func() {
 		defer func() {
 			hj.Close()
-			terminalSessions.Delete(sessionID)
+			// Only remove the entry if it's still this goroutine's own
+			// session — a newer OpenTerminal call for the same sessionID
+			// (see the Swap above) may have already replaced it.
+			terminalSessions.CompareAndDelete(sessionID, sess)
 			cancel()
 
 			exitCode := -1
