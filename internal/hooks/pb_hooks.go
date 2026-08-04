@@ -763,7 +763,13 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 			e.Record.GetString("repository_key") != original.GetString("repository_key")) {
 			triggerRepositoryBackgroundClone(app, e.Record.Id, e.Record.GetString("git_url"), e.Record.GetString("branch"))
 		}
-		scheduler.RegisterRepo(e.Record)
+		// Only restart the repo-level fetch ticker when its own cadence
+		// changed. Every fetch (including FetchRepo's own state-persist
+		// writes below) saves this record too; re-registering unconditionally
+		// here would restart the ticker on every single tick.
+		if original == nil || e.Record.GetInt("sync_interval_seconds") != original.GetInt("sync_interval_seconds") {
+			scheduler.RegisterRepo(e.Record)
+		}
 		return e.Next()
 	})
 

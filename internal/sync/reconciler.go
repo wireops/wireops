@@ -233,6 +233,14 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		return nil
 	}
 
+	// From here on we read commit objects and compose/env files out of the
+	// repo's shared working tree (workspace/<repoID>). Hold the read lock for
+	// the rest of the reconcile so a concurrent fetch/reset (repo ticker or
+	// another trigger) can't rewrite those files out from under us mid-read.
+	repoRLock := r.repoMutex(repoID)
+	repoRLock.RLock()
+	defer repoRLock.RUnlock()
+
 	commitMsg := ""
 	if obj, err := gitRepo.CommitObject(mustParseHash(remoteSHA)); err == nil {
 		commitMsg = obj.Message
@@ -1053,9 +1061,14 @@ func (r *Reconciler) stackMutex(stackID string) *sync.Mutex {
 	return mu.(*sync.Mutex)
 }
 
-func (r *Reconciler) repoMutex(repoID string) *sync.Mutex {
-	mu, _ := r.repoMu.LoadOrStore(repoID, &sync.Mutex{})
-	return mu.(*sync.Mutex)
+// repoMutex guards a repository's on-disk working tree at
+// workspace/<repoID>: writers (FetchRepo, RollbackStack) take the write lock
+// while they clone/fetch/reset it; readers (ReconcileStack, once it starts
+// reading commit objects and compose/env files out of that same directory)
+// take the read lock so they never observe a torn checkout mid-fetch.
+func (r *Reconciler) repoMutex(repoID string) *sync.RWMutex {
+	mu, _ := r.repoMu.LoadOrStore(repoID, &sync.RWMutex{})
+	return mu.(*sync.RWMutex)
 }
 
 // FetchRepo clones or fetches the given repository's working tree and persists
