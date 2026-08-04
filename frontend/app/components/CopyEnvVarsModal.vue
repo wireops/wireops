@@ -94,7 +94,7 @@ function toggleKey(key: string) {
 }
 
 const canProceedToKeys = computed(() =>
-  !!sourceStackId.value && !(isCrossRepository.value && sourceHasSops.value)
+  !!sourceStackId.value && !sopsChecking.value && !(isCrossRepository.value && sourceHasSops.value)
 )
 
 function goToStep2() {

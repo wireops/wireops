@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { ENV_VAR_TEMPLATES } from '../utils/envVarTemplates'
 import { serializeEnvLines } from '../utils/envFileParser'
+import { isInternalSecret } from '../utils/envVarSecrets'
 
 type TargetType = 'stack' | 'job'
 
@@ -50,6 +51,10 @@ async function loadSopsEnvVars() {
 
 const viewMode = ref<'rows' | 'bulk'>('rows')
 const importContent = ref<string | undefined>(undefined)
+// Keys inserted from a template that should default to secret=true in the
+// bulk editor — the KEY=VALUE textarea format has no way to carry that flag
+// itself, so it's passed alongside as a separate hint.
+const templateSecretKeys = ref<Set<string>>(new Set())
 const fileInput = ref<HTMLInputElement | null>(null)
 const showCopyModal = ref(false)
 
@@ -72,10 +77,12 @@ function insertTemplate(label: string) {
   const template = ENV_VAR_TEMPLATES.find(t => t.label === label)
   if (!template) return
   const existingKeys = new Set(envVars.value.map(env => env.key))
+  const newVars = template.vars.filter(v => !existingKeys.has(v.key))
   const lines = [
     ...envVars.value.map(env => ({ key: env.key, value: isInternalSecret(env) ? '' : (env.value ?? '') })),
-    ...template.vars.filter(v => !existingKeys.has(v.key)).map(v => ({ key: v.key, value: v.value ?? '' })),
+    ...newVars.map(v => ({ key: v.key, value: v.value ?? '' })),
   ]
+  templateSecretKeys.value = new Set(newVars.filter(v => v.secret).map(v => v.key))
   importContent.value = serializeEnvLines(lines)
   viewMode.value = 'bulk'
   toast.add({ title: `Inserted ${template.label} template`, description: 'Review values and secret status before saving.', color: 'info' })
@@ -90,11 +97,13 @@ watch(selectedTemplateLabel, (label) => {
 
 function openBulkEdit() {
   importContent.value = undefined
+  templateSecretKeys.value = new Set()
   viewMode.value = 'bulk'
 }
 
 function closeBulkEdit() {
   importContent.value = undefined
+  templateSecretKeys.value = new Set()
   viewMode.value = 'rows'
 }
 
@@ -113,6 +122,7 @@ function onImportFileSelected(e: Event) {
   const reader = new FileReader()
   reader.onload = () => {
     importContent.value = String(reader.result || '')
+    templateSecretKeys.value = new Set()
     viewMode.value = 'bulk'
   }
   reader.readAsText(file)
@@ -136,13 +146,6 @@ const editEnvKey = ref('')
 const editEnvValue = ref('')
 const editEnvSecret = ref(false)
 const editEnvProvider = ref('internal')
-
-// vault/infisical "value" is just a reference to where the secret lives
-// (e.g. "mount/data/path#field") — not the secret itself — so it isn't
-// sensitive and shouldn't be masked/hidden like an internal-provider secret.
-function isInternalSecret(env: any) {
-  return env.secret && (!env.secret_provider || env.secret_provider === 'internal')
-}
 
 function providerOf(env: any) {
   return env.secret_provider || 'internal'
@@ -321,6 +324,7 @@ watch(showCreateModal, (open) => {
               size="xs"
               variant="outline"
               color="neutral"
+              :disabled="viewMode !== 'bulk' && (showCreateModal || creating)"
               @click="viewMode === 'bulk' ? closeBulkEdit() : openBulkEdit()"
             />
             <UButton icon="i-lucide-upload" label="Import" size="xs" variant="outline" color="neutral" class="hidden sm:inline-flex" @click="triggerImport" />
@@ -356,6 +360,7 @@ watch(showCreateModal, (open) => {
         :target-id="targetId"
         :env-vars="envVars"
         :import-content="importContent"
+        :default-secret-keys="templateSecretKeys"
         @saved="onBulkSaved"
         @cancel="closeBulkEdit"
       />

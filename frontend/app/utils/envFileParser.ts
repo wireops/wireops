@@ -26,7 +26,18 @@ function unquote(value: string): string {
   if (trimmed.length >= 2) {
     const first = trimmed[0]
     const last = trimmed[trimmed.length - 1]
-    if ((first === '"' && last === '"') || (first === '\'' && last === '\'')) {
+    // Double-quoted values are serialized via JSON.stringify (so escapes
+    // like a literal newline become `\n`) — decode with JSON.parse to
+    // reverse that, not a plain slice, or escape sequences round-trip as
+    // literal backslash text instead of the original character.
+    if (first === '"' && last === '"') {
+      try {
+        return JSON.parse(trimmed)
+      } catch {
+        return trimmed.slice(1, -1)
+      }
+    }
+    if (first === '\'' && last === '\'') {
       return trimmed.slice(1, -1)
     }
   }

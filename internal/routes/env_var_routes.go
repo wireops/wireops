@@ -239,7 +239,11 @@ func (rr routeRegistrar) copyStackEnvVars(e *core.RequestEvent) error {
 			if secret && (provider == "" || provider == "internal") {
 				plaintext, err := crypto.Decrypt(value, secretKey)
 				if err != nil {
-					return err
+					// A source row with an empty/corrupt ciphertext must not
+					// abort the whole batch — skip just this key so the rest
+					// of the requested copy still succeeds.
+					skipped = append(skipped, key)
+					continue
 				}
 				// Re-encrypt explicitly here rather than leaning solely on
 				// the stack_env_vars OnRecordCreate/OnRecordUpdate hook

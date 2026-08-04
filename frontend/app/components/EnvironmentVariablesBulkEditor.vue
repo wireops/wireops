@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { parseEnvFileContent, serializeEnvLines, type ParsedEnvLine } from '../utils/envFileParser'
+import { isInternalSecret } from '../utils/envVarSecrets'
 
 type TargetType = 'stack' | 'job'
 
@@ -12,6 +13,11 @@ const props = defineProps<{
   // (the .env import flow) and shows a "Replace all" toggle defaulting to
   // off (append/update only) rather than always replacing the full set.
   importContent?: string
+  // Keys that should default to secret=true when saved (e.g. inserted from
+  // a template) — the KEY=VALUE textarea has no way to carry that flag, so
+  // it's passed alongside separately. Only applies to keys with no existing
+  // record yet.
+  defaultSecretKeys?: Set<string>
 }>()
 
 const emit = defineEmits<{
@@ -22,10 +28,6 @@ const emit = defineEmits<{
 const { customPost } = useApi()
 const toast = useToast()
 
-function isInternalSecret(env: any) {
-  return env.secret && (!env.secret_provider || env.secret_provider === 'internal')
-}
-
 function buildInitialContent(): string {
   if (props.importContent !== undefined) return props.importContent
   const lines: ParsedEnvLine[] = props.envVars.map(env => ({
@@ -35,12 +37,20 @@ function buildInitialContent(): string {
   return serializeEnvLines(lines)
 }
 
-const text = ref(buildInitialContent())
+const initialContent = ref(buildInitialContent())
+const text = ref(initialContent.value)
 const replaceAll = ref(props.importContent === undefined)
 const saving = ref(false)
 
+// Only refresh the textarea from incoming props (e.g. a realtime update to
+// envVars from another tab) when the user hasn't started editing — otherwise
+// an in-progress, unsaved edit would be silently overwritten.
 watch(() => [props.envVars, props.importContent], () => {
-  text.value = buildInitialContent()
+  const next = buildInitialContent()
+  if (text.value === initialContent.value) {
+    text.value = next
+  }
+  initialContent.value = next
 })
 
 const parsed = computed(() => parseEnvFileContent(text.value))
@@ -57,8 +67,8 @@ async function submit() {
   try {
     const vars = parsed.value.vars.map(({ key, value }) => {
       const existing = existingByKey.value.get(key)
-      const secret = existing?.secret ?? false
-      const secretProvider = existing?.secret_provider ?? ''
+      const secret = existing?.secret ?? props.defaultSecretKeys?.has(key) ?? false
+      const secretProvider = existing?.secret_provider ?? (secret ? 'internal' : '')
       // A blank value for an existing internal-provider secret means
       // "unchanged" — the browser never receives the decrypted value to
       // round-trip, so an empty line for that key must not wipe it.
