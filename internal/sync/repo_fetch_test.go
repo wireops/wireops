@@ -4,6 +4,8 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -194,5 +196,104 @@ func TestEnsureRepoFetchedCronBootstrapsWhenNeverFetched(t *testing.T) {
 	_, _, err := r.ensureRepoFetched(context.Background(), repo, "cron")
 	if err == nil {
 		t.Fatal("ensureRepoFetched succeeded, want error: a never-fetched repo must attempt a bootstrap fetch instead of stalling forever")
+	}
+}
+
+// TestEnsureRepoFetchedCronBootstrapWaitsForInFlightFetch covers the bootstrap
+// lock race: with no cached last_commit_sha to fall back on, a cron tick that
+// loses the race against the repo ticker must block on the lock instead of
+// skipping and reporting "has not been fetched yet", which would flip the
+// stack into a false error state until its next tick.
+func TestEnsureRepoFetchedCronBootstrapWaitsForInFlightFetch(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv("REPOS_WORKSPACE", workspace)
+
+	app, repos := newRepoFetchTestApp(t)
+	repo := core.NewRecord(repos)
+	repo.Set("name", "repo")
+	repo.Set("git_url", "not-a-real-remote")
+	// Never fetched: no last_fetched_at, no working tree on disk.
+	if err := app.Save(repo); err != nil {
+		t.Fatalf("failed to create repository: %v", err)
+	}
+
+	r := &Reconciler{app: app}
+
+	// Stand in for the repo ticker's fetch already being in flight.
+	mu := r.repoMutex(repo.Id)
+	mu.Lock()
+
+	var fetchDone atomic.Bool
+	go func() {
+		defer mu.Unlock()
+		time.Sleep(50 * time.Millisecond)
+		fetchDone.Store(true)
+	}()
+
+	_, _, err := r.ensureRepoFetched(context.Background(), repo, "cron")
+
+	if !fetchDone.Load() {
+		t.Fatal("ensureRepoFetched returned while a fetch was still in flight; the bootstrap path must block on the repo lock")
+	}
+	// The bogus git_url makes the bootstrap fetch itself fail, which is fine -
+	// what must not happen is the misleading "never fetched" error produced by
+	// silently skipping the locked fetch.
+	if err != nil && strings.Contains(err.Error(), "has not been fetched yet") {
+		t.Fatalf("ensureRepoFetched reported the repo as never fetched after losing the lock race: %v", err)
+	}
+}
+
+func TestRemoveRepoWorkspaceDeletesTreeAndDropsMutex(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv("REPOS_WORKSPACE", workspace)
+
+	r := &Reconciler{}
+	repoID := "repo-to-remove"
+	repoDir := filepath.Join(workspace, repoID)
+	localGitRepo(t, repoDir)
+
+	if err := r.RemoveRepoWorkspace(repoID); err != nil {
+		t.Fatalf("RemoveRepoWorkspace returned error: %v", err)
+	}
+	if _, err := os.Stat(repoDir); !os.IsNotExist(err) {
+		t.Fatalf("repo directory still present after RemoveRepoWorkspace (stat err = %v)", err)
+	}
+	if _, ok := r.repoMu.Load(repoID); ok {
+		t.Fatal("RemoveRepoWorkspace left the per-repo mutex in the map")
+	}
+
+	// Removing a repo that was never fetched must not be an error.
+	if err := r.RemoveRepoWorkspace("never-existed"); err != nil {
+		t.Fatalf("RemoveRepoWorkspace on a missing directory returned error: %v", err)
+	}
+}
+
+// TestRemoveRepoWorkspaceWaitsForInFlightFetch is the point of routing deletion
+// through the reconciler: cancelling a repo's ticker only stops future ticks, so
+// the removal itself has to wait on the same per-repo lock a running fetch holds
+// before it deletes the working tree out from under it.
+func TestRemoveRepoWorkspaceWaitsForInFlightFetch(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv("REPOS_WORKSPACE", workspace)
+
+	r := &Reconciler{}
+	repoID := "repo-busy-remove"
+	localGitRepo(t, filepath.Join(workspace, repoID))
+
+	mu := r.repoMutex(repoID)
+	mu.Lock()
+
+	var fetchDone atomic.Bool
+	go func() {
+		defer mu.Unlock()
+		time.Sleep(50 * time.Millisecond)
+		fetchDone.Store(true)
+	}()
+
+	if err := r.RemoveRepoWorkspace(repoID); err != nil {
+		t.Fatalf("RemoveRepoWorkspace returned error: %v", err)
+	}
+	if !fetchDone.Load() {
+		t.Fatal("RemoveRepoWorkspace deleted the working tree before the in-flight fetch finished")
 	}
 }

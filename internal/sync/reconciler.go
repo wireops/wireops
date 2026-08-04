@@ -1071,6 +1071,26 @@ func (r *Reconciler) repoMutex(repoID string) *sync.RWMutex {
 	return mu.(*sync.RWMutex)
 }
 
+// RemoveRepoWorkspace deletes a repository's on-disk working tree through the
+// same per-repo lock that FetchRepo/RollbackStack hold, so the directory is
+// never yanked out from under an in-flight clone/fetch/reset. Callers should
+// stop the repo's fetch ticker first (Scheduler.RemoveRepoWorkspace does).
+//
+// Any fetch still queued behind the lock re-reads the repositories record
+// before touching disk, so it fails fast once the record is gone instead of
+// recreating the directory we just removed.
+func (r *Reconciler) RemoveRepoWorkspace(repoID string) error {
+	mu := r.repoMutex(repoID)
+	mu.Lock()
+	defer mu.Unlock()
+
+	if err := os.RemoveAll(filepath.Join(r.reposWorkspace(), repoID)); err != nil {
+		return err
+	}
+	r.repoMu.Delete(repoID)
+	return nil
+}
+
 // FetchRepo clones or fetches the given repository's working tree and persists
 // its last_commit_sha/last_fetched_at/status. It is the single place that
 // touches a repository's on-disk clone, coordinated via a per-repo mutex so
@@ -1082,15 +1102,25 @@ func (r *Reconciler) repoMutex(repoID string) *sync.RWMutex {
 // acquire the lock, so a user-initiated sync deterministically waits for a
 // fresh pull instead of racing with a concurrent fetch.
 func (r *Reconciler) FetchRepo(ctx context.Context, repoID, trigger string) (changed bool, remoteSHA string, err error) {
+	return r.fetchRepo(ctx, repoID, trigger != "cron")
+}
+
+// fetchRepo is FetchRepo with the lock policy stated explicitly: blocking
+// callers wait for an in-flight fetch and observe its result, non-blocking
+// ones skip quietly. Callers that have no cached repository state to fall
+// back on (the bootstrap path in ensureRepoFetched) must block even on a
+// cron tick, otherwise they mistake a healthy concurrent fetch for a repo
+// that was never fetched.
+func (r *Reconciler) fetchRepo(ctx context.Context, repoID string, blocking bool) (changed bool, remoteSHA string, err error) {
 	mu := r.repoMutex(repoID)
-	if trigger == "cron" {
+	if blocking {
+		mu.Lock()
+		defer mu.Unlock()
+	} else {
 		if !mu.TryLock() {
 			log.Printf("[reconciler] repo %s already fetching, skipping", repoID)
 			return false, "", nil
 		}
-		defer mu.Unlock()
-	} else {
-		mu.Lock()
 		defer mu.Unlock()
 	}
 
@@ -1153,7 +1183,11 @@ func (r *Reconciler) ensureRepoFetched(ctx context.Context, repo *core.Record, t
 	neverFetched := repo.GetString("last_fetched_at") == "" || os.IsNotExist(statErr)
 
 	if trigger != "cron" || neverFetched {
-		if _, sha, fetchErr := r.FetchRepo(ctx, repoID, trigger); fetchErr != nil {
+		// A never-fetched repo has no cached last_commit_sha to fall back on,
+		// so it has to wait for whatever fetch is in flight rather than skip
+		// it — skipping would surface as a false "has not been fetched yet"
+		// sync error while a healthy fetch is still running.
+		if _, sha, fetchErr := r.fetchRepo(ctx, repoID, true); fetchErr != nil {
 			return "", nil, fetchErr
 		} else if sha != "" {
 			remoteSHA = sha

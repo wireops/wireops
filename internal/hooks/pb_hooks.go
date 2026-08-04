@@ -497,10 +497,11 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 	})
 
 	app.OnRecordAfterDeleteSuccess("repositories").BindFunc(func(e *core.RecordEvent) error {
-		scheduler.UnregisterRepo(e.Record.Id)
-		repoDir := filepath.Join(config.GetReposWorkspace(), e.Record.Id)
-		if err := os.RemoveAll(repoDir); err != nil {
-			log.Printf("[hooks] failed to remove repo directory %s: %v", repoDir, err)
+		// Stops the fetch ticker and waits for any in-flight fetch on this
+		// repo before deleting its working tree, so the directory is not
+		// removed from under a running clone/fetch.
+		if err := scheduler.RemoveRepoWorkspace(e.Record.Id); err != nil {
+			log.Printf("[hooks] failed to remove repo directory for %s: %v", e.Record.Id, err)
 		}
 		return e.Next()
 	})

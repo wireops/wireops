@@ -736,7 +736,10 @@ func (rr routeRegistrar) registerSystemRoutes() {
 			}
 		}
 
-		if err := os.RemoveAll(dirPath); err != nil {
+		// An orphan directory is named after a repository ID, so purge it
+		// through the scheduler: that stops any fetch ticker still pointed at
+		// it and waits for an in-flight fetch before deleting the tree.
+		if err := rr.scheduler.RemoveRepoWorkspace(dirName); err != nil {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("failed to remove directory: %v", err)})
 		}
 		return e.JSON(http.StatusOK, map[string]string{"status": "purged"})
