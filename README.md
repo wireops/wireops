@@ -35,6 +35,7 @@ Targets developers, homelabs, and self-hosters running plain `docker compose` st
 - [Tech Stack](#tech-stack)
 - [Quick Start](#quick-start)
 - [Usage](#usage)
+- [Configuration](#configuration)
 - [Customization](#customization)
 - [Development](#development)
 - [Known Limitations](#known-limitations)
@@ -42,7 +43,7 @@ Targets developers, homelabs, and self-hosters running plain `docker compose` st
 - [License](#license)
 - [Contributing](#contributing)
 
-Deeper technical docs (moved to the [Wiki](https://github.com/wireops/wireops/wiki)): [Architecture](https://github.com/wireops/wireops/wiki/Architecture) · [Data Model](https://github.com/wireops/wireops/wiki/Data-Model) · [API Reference](https://github.com/wireops/wireops/wiki/API-Reference) · [Environment Variables](https://github.com/wireops/wireops/wiki/Environment-Variables) · [Observability](https://github.com/wireops/wireops/wiki/Observability) · [MCP Server](https://github.com/wireops/wireops/wiki/MCP-Server) · [Disaster Recovery](https://github.com/wireops/wireops/wiki/Disaster-Recovery) · [Integrations](https://github.com/wireops/wireops/wiki/Integrations)
+Deeper technical docs (moved to the [Wiki](https://github.com/wireops/wireops/wiki)): [Architecture](https://github.com/wireops/wireops/wiki/Architecture) · [Stack and Job Configuration](https://github.com/wireops/wireops/wiki/Stack-and-Job-Configuration) · [Data Model](https://github.com/wireops/wireops/wiki/Data-Model) · [API Reference](https://github.com/wireops/wireops/wiki/API-Reference) · [Environment Variables](https://github.com/wireops/wireops/wiki/Environment-Variables) · [Observability](https://github.com/wireops/wireops/wiki/Observability) · [MCP Server](https://github.com/wireops/wireops/wiki/MCP-Server) · [Disaster Recovery](https://github.com/wireops/wireops/wiki/Disaster-Recovery) · [Integrations](https://github.com/wireops/wireops/wiki/Integrations)
 
 ## Features
 
@@ -154,7 +155,7 @@ WORKER_TOKEN=paste-the-token-here WORKER_TAGS=prod,eu-west-1 docker compose up -
 
 The worker connects out to the server, registers with that token, and starts polling for stacks/jobs to run. Check **Workers** in the UI — it should flip to `ACTIVE` within a few seconds.
 
-`WORKER_TAGS` labels what a worker is for (e.g. `prod`, `eu-west-1`) — required, comma-separated, set on the worker itself, not in the UI. Stacks and jobs can require specific tags in their `wireops.yaml`/`job.yaml`, so only matching workers show up as valid targets.
+`WORKER_TAGS` labels what a worker is for (e.g. `prod`, `eu-west-1`) — required, comma-separated, set on the worker itself, not in the UI. A `job.yaml` can require tags to pick its target worker, and a `wireops.yaml` can suggest them to narrow the worker picker — see [Configuration](#configuration).
 
 ## Usage
 
@@ -163,30 +164,98 @@ The worker connects out to the server, registers with that token, and starts pol
 3. **Configure**: Set environment variables, poll interval, and sync options
 4. **Deploy**: Stacks auto-sync on interval or trigger manually/via webhook
 
-### Scheduled Jobs
+## Configuration
 
-wireops supports cron-based execution of one-shot Docker containers. A job is configured via a `job.yaml` file committed to a Git repository.
+Two config files live in your Git repo and describe *what* wireops should run. Everything else — env vars, secrets bindings, render overrides — is stored in wireops itself, not in the repo.
 
-The `job.yaml` configuration is the single source of truth for the job and requires a `resources` block with `cpu`, `memory`, and `timeout` settings.
+| File | Describes | Discovered by | Re-read after changes? |
+| --- | --- | --- | --- |
+| `wireops.yaml` (or `.yml`) | One Compose stack | Exact filename, any subdirectory | ❌ Read once, when the stack is created |
+| `job.yaml` (any filename) | One cron-scheduled job | Content sniffing: has `name`, `image`, and `cron` | ✅ Re-read on every repo sync and every run |
 
-**Example `job.yaml`:**
+Both are optional: you can also create a stack by picking a compose file in the UI (`config_source: manual`), which leaves every deploy setting editable there.
+
+### Stacks — `wireops.yaml`
+
+Committing a `wireops.yaml` next to your compose file lets the repo, rather than the UI, own the stack's deploy settings. Point **Stacks → New Stack → From wireops.yaml** at it and wireops parses the file server-side and creates the stack from it. The compose file is found automatically: it must be the *only* compose file in that same directory.
 
 ```yaml
-title: "Database Backup"
-description: "Nightly backup of the postgres database"
-cron: "0 2 * * *"
-image: "postgres:15-alpine"
-command: ["pg_dump", "-h", "db", "-U", "postgres", "mydb"]
-tags: ["backup", "prod"]
-mode: "once" # once or once_all
+version: wireops.v1        # required, must be exactly "wireops.v1"
+name: "my-app"             # required — becomes the stack name
+group: "production"        # optional — UI grouping
+timeout: "10m"             # optional — deploy timeout, Go duration, min 1s
+compose:
+  remove_orphans: true     # optional, default true
+  force_pull: false        # optional, default false
+jobs:
+  wait_running: true       # optional, default false — hold deploys while a job
+                           # from the same repo is running
+worker:
+  tags: ["prod", "eu-west-1"]  # optional — filters the worker picker in the UI
+sync:
+  interval: "60s"          # optional — poll interval for this stack; falls back
+                           # to the global SCAN_PERIOD when unset
+```
+
+Every field above is copied into the stack record at creation time and then **locked**: fields sourced from `wireops.yaml` are rejected on update, so the file stays the single source of truth. Editing the file later does *not* update an existing stack — delete the stack and recreate it from the updated file.
+
+### Jobs — `job.yaml`
+
+Cron-scheduled one-shot Docker containers. The file is the single source of truth (there's no separate UI config to drift from it), and unlike `wireops.yaml` it *is* re-read continuously: schedule changes are picked up on the next repo sync, and image/command/resources on the next run.
+
+```yaml
+name: "database-backup"    # required
+description: "Nightly backup of the postgres database"  # required
+cron: "0 2 * * *"          # required
+image: "postgres:15-alpine"  # required
+command: ["pg_dump", "-h", "db", "-U", "postgres", "mydb"]  # string or list
+tags: ["backup", "prod"]   # dispatch filter — a worker must carry ALL of these
+group: "maintenance"       # optional — UI grouping
+mode: "once"               # "once" (one worker) or "once_all" (every match)
 volumes:
   - "/opt/backups:/backups"
 network: "prod_network"
-resources:
-  cpu: "0.5"        # Mandatory: CPU limit (e.g., "0.5" or "2")
-  memory: "512m"    # Mandatory: Memory limit (e.g., "256m" or "1g")
-  timeout: "15m"    # Mandatory: Job timeout duration (e.g., "10m", "1h")
+resources:                 # required block — all three keys mandatory
+  cpu: "0.5"               # CPU limit (e.g. "0.5" or "2")
+  memory: "512m"           # Memory limit (e.g. "256m" or "1g")
+  timeout: "15m"           # Run timeout, Go duration (e.g. "10m", "1h")
+configs:                   # optional — mount git-committed files, read-only
+  - name: pgpass
+    path: "config/pgpass"  # repo-relative file or directory
+    target: "/root/.pgpass"  # absolute in-container path
+    mode: "0600"           # optional, octal
 ```
+
+`resources` is mandatory by design, so a runaway job can't quietly eat a host.
+
+> ⚠️ `tags` on a job is a **hard** dispatch filter — a worker must carry every listed tag or the run is marked stalled. `worker.tags` in `wireops.yaml` is only an advisory filter on the worker dropdown at stack creation.
+
+### Environment variables and secrets
+
+Stack and job env vars are managed in the UI, not in these files, and resolve in this order (later wins):
+
+1. **Global env vars** bound to the stack/job
+2. **Stack-local / job-local env vars** — values marked secret are AES-GCM encrypted at rest, or resolved on demand from Vault/Infisical
+3. **SOPS `secrets.yaml`** — stacks only: a `secrets.yaml`/`secrets.yml` sitting next to the stack's compose file, auto-decrypted with the repository's age key
+
+For stacks the result is written to a `.env` file (mode `0600`) alongside the compose file at deploy time, so `${VAR}` in your compose file resolves normally; jobs receive theirs as `-e` flags on `docker run`.
+
+### Mounting config files into stacks
+
+Stacks have no `configs:` block in `wireops.yaml` — they use a per-service compose annotation instead, so the compose file stays the place where service-level intent lives:
+
+```yaml
+services:
+  app:
+    image: nginx:latest
+    annotations:
+      dev.wireops.config.nginx: "config/nginx.conf:/etc/nginx/nginx.conf"
+      #                          ^ repo-relative source : in-container target
+```
+
+wireops reads the file at render time and embeds its contents into the rendered compose revision — the worker never needs repo access. A directory source is expanded recursively. Files are capped at 1MB each and 5MB total per deploy, and symlinks are rejected.
+
+📚 Full field-by-field reference, defaults, validation rules, and troubleshooting: **[Stack and Job Configuration wiki page](https://github.com/wireops/wireops/wiki/Stack-and-Job-Configuration)**.
 
 ## Customization
 

@@ -199,7 +199,7 @@ repositories ─── 1:N ──→ scheduled_jobs ─── 1:N ──→ job_
 
 ### Scheduled Jobs
 1. A `scheduled_jobs` record points to a `job.yaml` file inside a repository.
-2. `job.yaml` specifies: `title`, `cron`, `image`, `command`, `tags`, `mode` (once / once_all), `volumes`, `network`, and a mandatory `resources` block containing `cpu`, `memory`, and `timeout`.
+2. `job.yaml` specifies: `name`, `description`, `cron`, `image` (all four required), plus optional `command`, `tags`, `group`, `mode` (once / once_all), `volumes`, `network`, `configs`, and a mandatory `resources` block containing `cpu`, `memory`, and `timeout`.
 3. `jobscheduler/scheduler.go` registers a cron entry for each enabled job.
 4. On tick: resolves matching workers by tags, creates a `job_runs` record, dispatches `RunJobCommand` via WebSocket.
 5. Worker runs `docker run --rm` asynchronously, then pushes `MsgJobCompleted` with exit code and output.
