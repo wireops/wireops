@@ -98,6 +98,22 @@ describe('EnvironmentVariablesCard', () => {
         return () => h('div', { class: 'vault-picker', onClick: () => emit('update:modelValue', 'secret/data/myapp#DB_PASS') }, 'vault-picker')
       },
     },
+    CloseButton: {
+      setup(_props: unknown, { attrs, emit }: { attrs: Record<string, unknown>, emit: (e: string) => void }) {
+        return () => h('button', { type: 'button', 'aria-label': attrs['aria-label'], onClick: () => emit('click') })
+      },
+    },
+    CancelButton: {
+      setup(_props: unknown, { emit }: { emit: (e: string) => void }) {
+        return () => h('button', { type: 'button', onClick: () => emit('click') }, 'Cancel')
+      },
+    },
+    EnvironmentVariablesBulkEditor: {
+      props: ['targetType', 'targetId', 'envVars', 'importContent'],
+      setup() {
+        return () => h('div', { class: 'bulk-editor-stub' })
+      },
+    },
   }
 
   it('defaults new secret env vars to the internal provider and shows a provider select', async () => {
@@ -125,12 +141,12 @@ describe('EnvironmentVariablesCard', () => {
     const addButtons = wrapper.findAll('button').filter(b => b.text() === 'Add')
     await addButtons[1]!.trigger('click')
 
-    await wrapper.find('.u-select').setValue('vault')
+    await wrapper.find('.u-select:not(.template-picker)').setValue('vault')
     expect(wrapper.find('.vault-picker').exists()).toBe(true)
 
     await wrapper.find('.vault-picker').trigger('click')
 
-    const keyInput = wrapper.find('input')
+    const keyInput = wrapper.find('input:not([type="file"])')
     await keyInput.setValue('DB_PASS')
 
     await wrapper.find('form').trigger('submit')
@@ -190,9 +206,9 @@ describe('EnvironmentVariablesCard', () => {
     const secretToggle = wrapper.find('button[aria-label="Set as plain text"]')
     await secretToggle.trigger('click')
 
-    expect(wrapper.find('.u-select').exists()).toBe(false)
+    expect(wrapper.find('.u-select:not(.template-picker)').exists()).toBe(false)
 
-    const keyInput = wrapper.find('input')
+    const keyInput = wrapper.find('input:not([type="file"])')
     await keyInput.setValue('PLAIN_KEY')
 
     await wrapper.find('form').trigger('submit')
@@ -267,5 +283,76 @@ describe('EnvironmentVariablesCard', () => {
     await Promise.resolve()
 
     expect(wrapper.text()).toContain('SOPS: Could not load SOPS override information')
+  })
+
+  it('swaps the row list for the bulk editor when Bulk edit is clicked, and back on cancel', async () => {
+    const wrapper = mount(EnvironmentVariablesCard, {
+      props: { targetType: 'stack', targetId: 'stack-1' },
+      global: { stubs },
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(wrapper.find('.bulk-editor-stub').exists()).toBe(false)
+
+    const bulkButton = wrapper.findAll('button').find(b => b.text() === 'Bulk edit')
+    expect(bulkButton).toBeTruthy()
+    await bulkButton!.trigger('click')
+
+    expect(wrapper.find('.bulk-editor-stub').exists()).toBe(true)
+    expect(wrapper.findAll('button').some(b => b.text() === 'Rows')).toBe(true)
+
+    const rowsButton = wrapper.findAll('button').find(b => b.text() === 'Rows')
+    await rowsButton!.trigger('click')
+
+    expect(wrapper.find('.bulk-editor-stub').exists()).toBe(false)
+  })
+
+  it('does not render Bulk edit/Import for job targets', async () => {
+    const wrapper = mount(EnvironmentVariablesCard, {
+      props: { targetType: 'job', targetId: 'job-1' },
+      global: { stubs },
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(wrapper.findAll('button').some(b => b.text() === 'Bulk edit')).toBe(false)
+    expect(wrapper.findAll('button').some(b => b.text() === 'Import')).toBe(false)
+  })
+
+  it('opens the file picker when Import is clicked', async () => {
+    const wrapper = mount(EnvironmentVariablesCard, {
+      props: { targetType: 'stack', targetId: 'stack-1' },
+      global: { stubs },
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    const fileInput = wrapper.find('input[type="file"]')
+    expect(fileInput.exists()).toBe(true)
+    const clickSpy = vi.spyOn(fileInput.element as HTMLInputElement, 'click')
+
+    const importButton = wrapper.findAll('button').find(b => b.text() === 'Import')
+    await importButton!.trigger('click')
+
+    expect(clickSpy).toHaveBeenCalled()
+  })
+
+  it('opens the bulk editor pre-filled when a template is selected', async () => {
+    const wrapper = mount(EnvironmentVariablesCard, {
+      props: { targetType: 'stack', targetId: 'stack-1' },
+      global: { stubs },
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(wrapper.find('.bulk-editor-stub').exists()).toBe(false)
+
+    await wrapper.find('.template-picker').setValue('Redis')
+    await Promise.resolve()
+
+    expect(wrapper.find('.bulk-editor-stub').exists()).toBe(true)
+    const bulkEditorProps = (wrapper.findComponent('.bulk-editor-stub') as unknown as { props: () => { importContent?: string } }).props()
+    expect(bulkEditorProps.importContent).toContain('REDIS_PASSWORD=')
   })
 })

@@ -17,7 +17,7 @@
 
 **Push to Git. wireops ships it.** A self-hosted GitOps controller that watches your repos and rolls out `docker compose` changes across every host you own — no Kubernetes, no YAML sprawl, no manual SSH-and-pray deploys. Think Flux/ArgoCD, but for plain Compose stacks.
 
-> **Project status**: pre-1.0 (releases `v0.1.x`), now in a maintenance phase — only point bugfixes, no active feature development. Core GitOps sync, worker security policies, RBAC, and external secret providers (Vault, Infisical) are in daily use; the audited web terminal is intentionally not started yet — see [Known Limitations](#known-limitations).
+> **Project status**: pre-1.0 (releases `v0.1.x`), now in a maintenance phase — only point bugfixes, no active feature development. Core GitOps sync, worker security policies, RBAC, external secret providers (Vault, Infisical), and the audited web terminal are in daily use.
 
 📚 **Full technical docs** (architecture, data model, API reference, env vars, MCP server, disaster recovery, integrations) live in the **[Wiki](https://github.com/wireops/wireops/wiki)**.
 
@@ -46,19 +46,19 @@ Deeper technical docs (moved to the [Wiki](https://github.com/wireops/wireops/wi
 
 ## Features
 
-- 🔄 Automatic synchronization from Git repositories
 - 🐳 Docker Compose stack management
-- 📊 Real-time container monitoring (with worker runtime info and container ports)
-- 🔐 Encrypted credentials and environment variables (SSH keys, passwords, secrets) with pluggable integrations (internal AES-GCM, SOPS+age, HashiCorp Vault, Infisical)
-- 🎛️ Optional render-time stack overrides (image/ports/networks) for one-off validation testing, without a git commit
-- 🛡️ Strong policy and RBAC system, with audit logging
-- 🚧 Worker-side deploy security policies (block privileged/host-network/docker.sock/host-PID/host-IPC)
+- 🔄 Automatic synchronization from Git repositories
+- 📊 Real-time container monitoring
+- 🔐 Share secrets to your Stack/Job with SOPS+age, HashiCorp Vault, Infisical integrations
+- 🛡️ Strong Policy and RBAC system, with audit logging
 - 🔑 SSO login via any OIDC provider
 - 🌐 Webhook, Discord, Slack, and ntfy notifications
-- 🔄 Rollback to previous commits
 - 🚀 Force redeploy with recreate options
-- 🗓️ Cron-scheduled one-shot Docker jobs (`job.yaml`)
-- 🐙 Native GitHub OAuth connect (Gitea/Forgejo/GitLab ready)
+- 🗓️ Cron-scheduled one-shot Docker jobs
+- 🔄 Rollback to previous commits
+- 🐙 Native GitHub OAuth connect
+- 💻 Audited web terminal, RBAC-gated
+- 🎛️ Optional render-time stack overrides (image/ports/networks) for one-off validation testing, without a git commit
 
 ## Screenshots
 
@@ -247,7 +247,6 @@ npm run dev
 
 ## Known Limitations
 
-- **Audited web terminal**: intentionally not started — requires the RBAC system to be fully wired first to avoid shipping a high-risk feature half-done.
 - No OCI-artifact source, Docker Swarm/multi-node, or canary/preview deploys yet (tracked as strategic backlog with no ETA).
 
 ## Backlog / Future Enhancements
@@ -281,7 +280,6 @@ npm run dev
 
 ### 🔒 Security & Ops (strategic)
 - Git auth hardening, deploy metrics/alerts
-- Audited web terminal (blocked on RBAC completeness)
 - docker-run → compose converter, OCI artifact sources, Swarm/multi-node, canary deploys
 
 ---

@@ -99,6 +99,10 @@ type Finding struct {
 	Message string `json:"message"`
 	// Hint is an optional suggested fix.
 	Hint string `json:"hint,omitempty"`
+	// Vars lists variable names the finding is about (currently populated
+	// only by RuleUnresolvedVariable, with the compose-referenced-but-missing
+	// keys), for callers that want the raw names rather than parsing Message.
+	Vars []string `json:"vars,omitempty"`
 }
 
 // Report is the result of a lint run.

@@ -19,6 +19,9 @@ export type LintFinding = {
   line?: number
   message: string
   hint?: string
+  /** Variable names the finding is about — currently only set by the
+   * compose/unresolved-variable rule (the referenced-but-missing keys). */
+  vars?: string[]
 }
 
 export type LintReport = {

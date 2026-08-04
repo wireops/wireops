@@ -1009,7 +1009,16 @@ onMounted(() => {
 
     <!-- Variables -->
     <div v-if="activeTab === 'env'" class="space-y-4">
-      <EnvironmentVariablesCard target-type="stack" :target-id="stackId" @keys-changed="localEnvKeys = $event" />
+      <RequiredEnvVarsBanner
+        v-if="stack?.repository"
+        :stack-id="stackId"
+        :repository="stack.repository"
+        :compose-path="stack.compose_path || ''"
+        :compose-file="stack.compose_file || ''"
+        :env-keys="localEnvKeys"
+      />
+
+      <EnvironmentVariablesCard target-type="stack" :target-id="stackId" :stack-repository="stack?.repository" @keys-changed="localEnvKeys = $event" />
 
       <GlobalVariablesExporter target-type="stack" :target-id="stackId" :local-keys="localEnvKeys" />
     </div>
