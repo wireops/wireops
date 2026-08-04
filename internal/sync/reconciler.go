@@ -44,6 +44,7 @@ type WorkerDispatcher interface {
 type Reconciler struct {
 	app             core.App
 	mu              sync.Map
+	repoMu          sync.Map
 	notifier        *notify.Notifier
 	renderer        *Renderer
 	dispatcher      WorkerDispatcher
@@ -149,53 +150,30 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		return fmt.Errorf("%s: %w", errMsg, err)
 	}
 
-	gitAuth, err := r.resolveGitAuth(repoID)
+	// The repo-level ticker (or a concurrent manual/webhook trigger) owns the
+	// actual git fetch; cron ticks here just read its already-fetched state.
+	remoteSHA, gitRepo, err := r.ensureRepoFetched(ctx, repo, trigger)
 	if err != nil {
-		log.Printf("[reconciler] failed to resolve auth for repo %s; continuing without auth", repoID)
-	}
-
-	workspace := r.reposWorkspace()
-	gitURL := repo.GetString("git_url")
-	branch := repo.GetString("branch")
-	if branch == "" {
-		branch = "main"
-	}
-
-	repoDir := filepath.Join(workspace, repoID)
-	if _, statErr := os.Stat(filepath.Join(repoDir, ".git")); os.IsNotExist(statErr) {
-		_ = os.RemoveAll(repoDir)
-		log.Printf("[reconciler] repo dir missing for %s, will clone fresh", repoID)
-	}
-
-	gitRepo, err := r.cloneOrFetchWithRetry(ctx, repoID, gitURL, branch, gitAuth, workspace)
-	if err != nil {
-		errMsg := fmt.Sprintf("git operation failed for repo %s (%s): %v", repo.GetString("name"), gitURL, err)
+		errMsg := fmt.Sprintf("git fetch failed for repo %s: %v", repoID, err)
 		r.logFailureWithPhase(stackID, trigger, "", errMsg, constants.PhaseGitFetch, gitFetchStart)
-		r.markError(repo, "repositories")
 		r.markSyncError(stack, errMsg)
 		return fmt.Errorf("git operation failed: %w", err)
 	}
-
-	remoteSHA, err := gitpkg.LocalHeadSHA(gitRepo)
+	// Reload the repo record: ensureRepoFetched may have refreshed
+	// last_commit_sha/status via a fetch this call or another goroutine triggered.
+	repo, err = r.app.FindRecordById("repositories", repoID)
 	if err != nil {
-		errMsg := fmt.Sprintf("failed to get local SHA after fetching branch %s: %v", branch, err)
-		_ = r.logFailureWithPhase(stackID, trigger, "", errMsg, constants.PhaseGitFetch, gitFetchStart)
-		if saveErr := r.saveRecordStatus(stack, "stacks", prevStatus, "restore status after local SHA failure"); saveErr != nil {
-			return saveErr
-		}
-		return fmt.Errorf("failed to get local SHA: %w", err)
+		errMsg := fmt.Sprintf("repository %s vanished mid-reconcile for stack %s", repoID, stackID)
+		r.logFailureWithPhase(stackID, trigger, remoteSHA, errMsg, constants.PhaseGitFetch, gitFetchStart)
+		r.markSyncError(stack, errMsg)
+		return fmt.Errorf("%s: %w", errMsg, err)
 	}
 
-	lastSHA := repo.GetString("last_commit_sha")
-
-	repo.Set("last_commit_sha", remoteSHA)
-	repo.Set("last_fetched_at", time.Now().UTC().Format(time.RFC3339))
-	repo.Set("status", "connected")
-	if err := r.saveRecord(repo, "repositories", "persist fetched repository state"); err != nil {
-		_ = r.logFailureWithPhase(stackID, trigger, remoteSHA, err.Error(), constants.PhaseGitFetch, gitFetchStart)
-		_ = r.markSyncError(stack, err.Error())
-		return err
-	}
+	// lastSHA is this stack's own last deployed commit (not the repo's prior
+	// fetch state, since the repo fetch cadence is now decoupled from this
+	// stack's tick): a stack has "changes to pick up" when the repo's current
+	// known commit differs from what it last deployed.
+	lastSHA := stack.GetString("deployed_commit")
 
 	workerID, workerFingerprint, err := r.resolveWorker(stack)
 	if err != nil {
@@ -579,27 +557,34 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 	workspace := r.reposWorkspace()
 	repoDir := filepath.Join(workspace, repoID)
 
-	gogitRepo, err := gogit.PlainOpen(repoDir)
-	if err != nil {
-		errMsg := fmt.Sprintf("failed to open local repo directory: %s", repoDir)
+	// Serialize against the repo-level fetch ticker (and any other concurrent
+	// fetch/reset) so this reset never races a concurrent clone/fetch on the
+	// same working tree.
+	repoMu := r.repoMutex(repoID)
+	repoMu.Lock()
+	resetErr := func() error {
+		defer repoMu.Unlock()
+
+		gogitRepo, err := gogit.PlainOpen(repoDir)
+		if err != nil {
+			return fmt.Errorf("failed to open local repo directory: %s: %w", repoDir, err)
+		}
+
+		wt, err := gogitRepo.Worktree()
+		if err != nil {
+			return fmt.Errorf("failed to get worktree: %w", err)
+		}
+
+		return wt.Reset(&gogit.ResetOptions{
+			Commit: mustParseHash(commitSHA),
+			Mode:   gogit.HardReset,
+		})
+	}()
+	if resetErr != nil {
+		errMsg := fmt.Sprintf("git reset to %s failed: %v", commitSHA, resetErr)
 		r.logFailureWithPhase(stackID, "manual", commitSHA, errMsg, constants.PhaseGitFetch, gitFetchStart)
 		r.markSyncError(stack, errMsg)
-		return fmt.Errorf("failed to open repo: %w", err)
-	}
-
-	wt, err := gogitRepo.Worktree()
-	if err != nil {
-		return fmt.Errorf("failed to get worktree: %w", err)
-	}
-
-	if err := wt.Reset(&gogit.ResetOptions{
-		Commit: mustParseHash(commitSHA),
-		Mode:   gogit.HardReset,
-	}); err != nil {
-		errMsg := fmt.Sprintf("git reset to %s failed: %v", commitSHA, err)
-		r.logFailureWithPhase(stackID, "manual", commitSHA, errMsg, constants.PhaseGitFetch, gitFetchStart)
-		r.markSyncError(stack, errMsg)
-		return fmt.Errorf("git reset failed: %w", err)
+		return fmt.Errorf("git reset failed: %w", resetErr)
 	}
 	gitFetchDuration := time.Since(gitFetchStart).Milliseconds()
 
@@ -1066,6 +1051,120 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 func (r *Reconciler) stackMutex(stackID string) *sync.Mutex {
 	mu, _ := r.mu.LoadOrStore(stackID, &sync.Mutex{})
 	return mu.(*sync.Mutex)
+}
+
+func (r *Reconciler) repoMutex(repoID string) *sync.Mutex {
+	mu, _ := r.repoMu.LoadOrStore(repoID, &sync.Mutex{})
+	return mu.(*sync.Mutex)
+}
+
+// FetchRepo clones or fetches the given repository's working tree and persists
+// its last_commit_sha/last_fetched_at/status. It is the single place that
+// touches a repository's on-disk clone, coordinated via a per-repo mutex so
+// stacks sharing a repository never race on the same working directory.
+//
+// For trigger=="cron" (the repo's own background ticker) it uses a
+// non-blocking TryLock and skips quietly if a fetch is already in flight.
+// Any other trigger (manual/webhook/redeploy-initiated) blocks until it can
+// acquire the lock, so a user-initiated sync deterministically waits for a
+// fresh pull instead of racing with a concurrent fetch.
+func (r *Reconciler) FetchRepo(ctx context.Context, repoID, trigger string) (changed bool, remoteSHA string, err error) {
+	mu := r.repoMutex(repoID)
+	if trigger == "cron" {
+		if !mu.TryLock() {
+			log.Printf("[reconciler] repo %s already fetching, skipping", repoID)
+			return false, "", nil
+		}
+		defer mu.Unlock()
+	} else {
+		mu.Lock()
+		defer mu.Unlock()
+	}
+
+	repo, err := r.app.FindRecordById("repositories", repoID)
+	if err != nil {
+		return false, "", fmt.Errorf("repository %s not found: %w", repoID, err)
+	}
+
+	gitAuth, authErr := r.resolveGitAuth(repoID)
+	if authErr != nil {
+		log.Printf("[reconciler] failed to resolve auth for repo %s; continuing without auth", repoID)
+	}
+
+	workspace := r.reposWorkspace()
+	gitURL := repo.GetString("git_url")
+	branch := repo.GetString("branch")
+	if branch == "" {
+		branch = "main"
+	}
+
+	repoDir := filepath.Join(workspace, repoID)
+	if _, statErr := os.Stat(filepath.Join(repoDir, ".git")); os.IsNotExist(statErr) {
+		_ = os.RemoveAll(repoDir)
+		log.Printf("[reconciler] repo dir missing for %s, will clone fresh", repoID)
+	}
+
+	gitRepo, err := r.cloneOrFetchWithRetry(ctx, repoID, gitURL, branch, gitAuth, workspace)
+	if err != nil {
+		r.markError(repo, "repositories")
+		return false, "", fmt.Errorf("git operation failed for repo %s (%s): %w", repo.GetString("name"), gitURL, err)
+	}
+
+	remoteSHA, err = gitpkg.LocalHeadSHA(gitRepo)
+	if err != nil {
+		return false, "", fmt.Errorf("failed to get local SHA after fetching branch %s: %w", branch, err)
+	}
+
+	lastSHA := repo.GetString("last_commit_sha")
+	changed = gitpkg.HasChanged(remoteSHA, lastSHA)
+
+	repo.Set("last_commit_sha", remoteSHA)
+	repo.Set("last_fetched_at", time.Now().UTC().Format(time.RFC3339))
+	repo.Set("status", "connected")
+	if err := r.saveRecord(repo, "repositories", "persist fetched repository state"); err != nil {
+		return changed, remoteSHA, err
+	}
+
+	return changed, remoteSHA, nil
+}
+
+// ensureRepoFetched returns the repository's current remote HEAD SHA and an
+// open handle to its working tree, without necessarily performing a git
+// fetch itself. cron ticks read the state the repo's own ticker already
+// keeps fresh; any other trigger forces an immediate fetch so a
+// user-initiated sync is guaranteed up to date.
+func (r *Reconciler) ensureRepoFetched(ctx context.Context, repo *core.Record, trigger string) (remoteSHA string, gitRepo *gogit.Repository, err error) {
+	repoID := repo.Id
+	repoDir := filepath.Join(r.reposWorkspace(), repoID)
+	_, statErr := os.Stat(filepath.Join(repoDir, ".git"))
+	neverFetched := repo.GetString("last_fetched_at") == "" || os.IsNotExist(statErr)
+
+	if trigger != "cron" || neverFetched {
+		if _, sha, fetchErr := r.FetchRepo(ctx, repoID, trigger); fetchErr != nil {
+			return "", nil, fetchErr
+		} else if sha != "" {
+			remoteSHA = sha
+		}
+	}
+
+	// Reload the repo record in case FetchRepo (this call or a concurrent
+	// repo-ticker fetch) updated last_commit_sha since it was loaded.
+	fresh, err := r.app.FindRecordById("repositories", repoID)
+	if err != nil {
+		return "", nil, fmt.Errorf("repository %s not found: %w", repoID, err)
+	}
+	if remoteSHA == "" {
+		remoteSHA = fresh.GetString("last_commit_sha")
+	}
+	if remoteSHA == "" {
+		return "", nil, fmt.Errorf("repository %s has not been fetched yet", repoID)
+	}
+
+	gitRepo, err = gogit.PlainOpen(repoDir)
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to open local repo directory: %s: %w", repoDir, err)
+	}
+	return remoteSHA, gitRepo, nil
 }
 
 func (r *Reconciler) stackWorkDir(stack *core.Record, repoID string) (string, error) {

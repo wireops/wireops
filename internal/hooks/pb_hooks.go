@@ -484,6 +484,7 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 		gitURL := e.Record.GetString("git_url")
 		branch := e.Record.GetString("branch")
 		triggerRepositoryBackgroundClone(app, repoID, gitURL, branch)
+		scheduler.RegisterRepo(e.Record)
 		return e.Next()
 	})
 
@@ -496,6 +497,7 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 	})
 
 	app.OnRecordAfterDeleteSuccess("repositories").BindFunc(func(e *core.RecordEvent) error {
+		scheduler.UnregisterRepo(e.Record.Id)
 		repoDir := filepath.Join(config.GetReposWorkspace(), e.Record.Id)
 		if err := os.RemoveAll(repoDir); err != nil {
 			log.Printf("[hooks] failed to remove repo directory %s: %v", repoDir, err)
@@ -761,6 +763,7 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 			e.Record.GetString("repository_key") != original.GetString("repository_key")) {
 			triggerRepositoryBackgroundClone(app, e.Record.Id, e.Record.GetString("git_url"), e.Record.GetString("branch"))
 		}
+		scheduler.RegisterRepo(e.Record)
 		return e.Next()
 	})
 

@@ -19,6 +19,7 @@ import (
 type Scheduler struct {
 	mu         sync.Mutex
 	jobs       map[string]context.CancelFunc // keyed by stack ID
+	repoJobs   map[string]context.CancelFunc // keyed by repository ID
 	reconciler *Reconciler
 	app        core.App
 
@@ -43,6 +44,7 @@ func NewScheduler(app core.App, dispatcher WorkerDispatcher) *Scheduler {
 
 	return &Scheduler{
 		jobs:          make(map[string]context.CancelFunc),
+		repoJobs:      make(map[string]context.CancelFunc),
 		reconciler:    NewReconciler(app, notifier, dispatcher),
 		app:           app,
 		rootCtx:       rootCtx,
@@ -88,6 +90,14 @@ func (s *Scheduler) Start() error {
 			s.startJob(stack)
 		}
 	}
+
+	repos, err := s.app.FindAllRecords("repositories")
+	if err != nil {
+		return err
+	}
+	for _, repo := range repos {
+		s.startRepoJob(repo)
+	}
 	return nil
 }
 
@@ -110,6 +120,26 @@ func (s *Scheduler) UnregisterStack(stackID string) {
 	if cancel, ok := s.jobs[stackID]; ok {
 		cancel()
 		delete(s.jobs, stackID)
+	}
+}
+
+// RegisterRepo (re)starts the repo-level fetch ticker for repo, replacing
+// any previously running one (e.g. after a sync_interval_seconds change).
+func (s *Scheduler) RegisterRepo(repo *core.Record) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if cancel, ok := s.repoJobs[repo.Id]; ok {
+		cancel()
+	}
+	s.startRepoJobLocked(repo)
+}
+
+func (s *Scheduler) UnregisterRepo(repoID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if cancel, ok := s.repoJobs[repoID]; ok {
+		cancel()
+		delete(s.repoJobs, repoID)
 	}
 }
 
@@ -250,6 +280,15 @@ func resolveSyncInterval(stack *core.Record) time.Duration {
 	return config.GetScanPeriod()
 }
 
+// resolveRepoSyncInterval returns the git fetch interval for a repository:
+// its own sync_interval_seconds overrides the global SCAN_PERIOD.
+func resolveRepoSyncInterval(repo *core.Record) time.Duration {
+	if seconds := repo.GetInt("sync_interval_seconds"); seconds > 0 {
+		return time.Duration(seconds) * time.Second
+	}
+	return config.GetScanPeriod()
+}
+
 func (s *Scheduler) startJobLocked(stack *core.Record) {
 	stackID := stack.Id
 	interval := resolveSyncInterval(stack)
@@ -284,6 +323,50 @@ func (s *Scheduler) startJobLocked(stack *core.Record) {
 						return reconcileCtx.Err()
 					}
 					return s.reconciler.ReconcileStack(reconcileCtx, stackID, "cron", 0)
+				})
+			}
+		}
+	}()
+}
+
+func (s *Scheduler) startRepoJob(repo *core.Record) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.startRepoJobLocked(repo)
+}
+
+// startRepoJobLocked runs the repo-level fetch ticker: periodically pulls the
+// repository's git state so stacks sharing it never need to fetch themselves.
+func (s *Scheduler) startRepoJobLocked(repo *core.Record) {
+	repoID := repo.Id
+	interval := resolveRepoSyncInterval(repo)
+
+	jobCtx, jobCancel := context.WithCancel(s.rootCtx)
+	s.repoJobs[repoID] = jobCancel
+
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-jobCtx.Done():
+				return
+			case <-ticker.C:
+				if jobCtx.Err() != nil {
+					return
+				}
+				reconcileCtx, cancel := context.WithTimeout(s.rootCtx, 10*time.Minute)
+				s.safeRun(reconcileCtx, fmt.Sprintf("repo-cron[%s]", repoID), func() error {
+					defer cancel()
+					select {
+					case s.syncSemaphore <- struct{}{}:
+						defer func() { <-s.syncSemaphore }()
+					case <-reconcileCtx.Done():
+						return reconcileCtx.Err()
+					}
+					_, _, err := s.reconciler.FetchRepo(reconcileCtx, repoID, "cron")
+					return err
 				})
 			}
 		}
