@@ -33,7 +33,7 @@ const copyError = ref('')
 onMounted(async () => {
   try {
     stacks.value = await $pb.collection('stacks').getFullList({
-      filter: `id != "${props.targetId}"`,
+      filter: $pb.filter('id != {:id}', { id: props.targetId }),
       sort: 'name',
       expand: 'repository',
     })
@@ -54,7 +54,13 @@ const isCrossRepository = computed(() =>
   !!sourceStack.value && sourceStack.value.repository !== props.targetRepository
 )
 
+// Guards against a stale response landing after a newer selection: each
+// watcher run gets a token, and results are only applied if it's still the
+// most recent run when they resolve.
+let sourceRequestToken = 0
+
 watch(sourceStackId, async () => {
+  const token = ++sourceRequestToken
   sourceVars.value = []
   selectedKeys.value = new Set()
   sourceHasSops.value = false
@@ -62,26 +68,31 @@ watch(sourceStackId, async () => {
 
   loadingVars.value = true
   try {
-    sourceVars.value = await $pb.collection('stack_env_vars').getFullList({
-      filter: `stack = "${sourceStackId.value}"`,
+    const vars = await $pb.collection('stack_env_vars').getFullList({
+      filter: $pb.filter('stack = {:stack}', { stack: sourceStackId.value }),
       sort: 'key',
       fields: 'id,key,secret,secret_provider',
     })
+    if (token !== sourceRequestToken) return
+    sourceVars.value = vars
   } catch {
+    if (token !== sourceRequestToken) return
     sourceVars.value = []
   } finally {
-    loadingVars.value = false
+    if (token === sourceRequestToken) loadingVars.value = false
   }
 
   if (isCrossRepository.value) {
     sopsChecking.value = true
     try {
       const res = await customGet<{ available: boolean }>(`/api/custom/stacks/${sourceStackId.value}/sops-env-vars`)
+      if (token !== sourceRequestToken) return
       sourceHasSops.value = res.available
     } catch {
+      if (token !== sourceRequestToken) return
       sourceHasSops.value = false
     } finally {
-      sopsChecking.value = false
+      if (token === sourceRequestToken) sopsChecking.value = false
     }
   }
 })
@@ -116,7 +127,12 @@ async function confirmCopy() {
       `/api/custom/stacks/${props.targetId}/env-vars/copy-from`,
       { source_stack: sourceStackId.value, keys: Array.from(selectedKeys.value), overwrite: overwrite.value }
     )
-    toast.add({ title: `Copied ${res.copied} variable(s)`, color: 'success' })
+    const skippedCount = res.skipped?.length ?? 0
+    toast.add({
+      title: `Copied ${res.copied} variable(s)`,
+      description: skippedCount ? `Skipped ${skippedCount}: ${res.skipped!.join(', ')}` : undefined,
+      color: 'success',
+    })
     emit('copied')
   } catch (error: any) {
     copyError.value = error?.data?.error || error?.message || 'Failed to copy variables'

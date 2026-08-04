@@ -89,7 +89,10 @@ export function parseEnvFileContent(content: string): EnvFileParseResult {
 // newline, or a `#` that could be mistaken for a comment start).
 export function serializeEnvLines(vars: ParsedEnvLine[]): string {
   return vars.map(({ key, value }) => {
-    const needsQuotes = value !== value.trim() || value.includes('\n') || value.includes('#')
+    const startsOrEndsQuoted = value.length >= 1 && (
+      value[0] === '"' || value[0] === '\'' || value[value.length - 1] === '"' || value[value.length - 1] === '\''
+    )
+    const needsQuotes = value !== value.trim() || value.includes('\n') || value.includes('#') || startsOrEndsQuoted
     return `${key}=${needsQuotes ? JSON.stringify(value) : value}`
   }).join('\n')
 }

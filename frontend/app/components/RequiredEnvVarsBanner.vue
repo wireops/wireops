@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, onMounted } from 'vue'
+import { ref, watch, onMounted, onUnmounted } from 'vue'
 
 const props = defineProps<{
   stackId: string
@@ -19,8 +19,13 @@ const missing = ref<string[]>([])
 const checking = ref(false)
 
 let debounceTimer: ReturnType<typeof setTimeout> | undefined
+// Bumped on every check() call — a response is only applied if it's still
+// the most recent one when it resolves, so a slow stale lint response can't
+// clobber the result of a newer one.
+let checkRevision = 0
 
 async function check() {
+  const revision = ++checkRevision
   if (!props.repository) {
     missing.value = []
     return
@@ -33,6 +38,7 @@ async function check() {
       compose_file: props.composeFile,
       stack: props.stackId,
     })
+    if (revision !== checkRevision) return
     const keys = new Set<string>()
     for (const finding of res.report?.findings || []) {
       if (finding.rule !== 'compose/unresolved-variable') continue
@@ -42,9 +48,9 @@ async function check() {
   } catch {
     // Best-effort — a lint failure here shouldn't block the env vars page,
     // it just means the banner stays silent until the next successful check.
-    missing.value = []
+    if (revision === checkRevision) missing.value = []
   } finally {
-    checking.value = false
+    if (revision === checkRevision) checking.value = false
   }
 }
 
@@ -56,6 +62,9 @@ function scheduleCheck() {
 onMounted(check)
 watch(() => props.envKeys, scheduleCheck)
 watch(() => [props.repository, props.composePath, props.composeFile], scheduleCheck)
+onUnmounted(() => {
+  if (debounceTimer) clearTimeout(debounceTimer)
+})
 
 function copyAsEnvLines() {
   copy(missing.value.map(key => `${key}=`).join('\n'), 'Missing variables')

@@ -64,4 +64,25 @@ describe('serializeEnvLines', () => {
     expect(errors).toEqual([])
     expect(vars).toEqual([{ key: 'FOO', value: '  spaced  ' }])
   })
+
+  it('round-trips a value containing a newline', () => {
+    const content = serializeEnvLines([{ key: 'FOO', value: 'line1\nline2' }])
+    const { vars, errors } = parseEnvFileContent(content)
+    expect(errors).toEqual([])
+    expect(vars).toEqual([{ key: 'FOO', value: 'line1\nline2' }])
+  })
+
+  it('round-trips a value containing a #', () => {
+    const content = serializeEnvLines([{ key: 'FOO', value: 'a#b' }])
+    const { vars, errors } = parseEnvFileContent(content)
+    expect(errors).toEqual([])
+    expect(vars).toEqual([{ key: 'FOO', value: 'a#b' }])
+  })
+
+  it('round-trips a value that already starts/ends with a quote character', () => {
+    const content = serializeEnvLines([{ key: 'FOO', value: '"quoted"' }])
+    const { vars, errors } = parseEnvFileContent(content)
+    expect(errors).toEqual([])
+    expect(vars).toEqual([{ key: 'FOO', value: '"quoted"' }])
+  })
 })

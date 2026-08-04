@@ -327,7 +327,7 @@ watch(showCreateModal, (open) => {
               :disabled="viewMode !== 'bulk' && (showCreateModal || creating)"
               @click="viewMode === 'bulk' ? closeBulkEdit() : openBulkEdit()"
             />
-            <UButton icon="i-lucide-upload" label="Import" size="xs" variant="outline" color="neutral" class="hidden sm:inline-flex" @click="triggerImport" />
+            <UButton icon="i-lucide-upload" label="Import" size="xs" variant="outline" color="neutral" class="hidden sm:inline-flex" :disabled="showCreateModal || creating" @click="triggerImport" />
             <UButton
               v-if="stackRepository"
               icon="i-lucide-copy"
@@ -344,6 +344,7 @@ watch(showCreateModal, (open) => {
               placeholder="Insert template"
               :searchable="false"
               content-width
+              :disabled="showCreateModal || creating"
               class="template-picker hidden sm:inline-flex font-mono shrink-0"
             />
           </template>

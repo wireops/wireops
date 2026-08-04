@@ -53,6 +53,14 @@ watch(() => [props.envVars, props.importContent], () => {
   initialContent.value = next
 })
 
+// The parent can hand the bulk editor fresh importContent without
+// remounting it (e.g. picking a template while already in bulk-edit view) —
+// re-derive the save mode default for that new content instead of keeping
+// whatever replaceAll was set to for the previous content.
+watch(() => props.importContent, () => {
+  replaceAll.value = props.importContent === undefined
+})
+
 const parsed = computed(() => parseEnvFileContent(text.value))
 
 const existingByKey = computed(() => {

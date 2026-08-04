@@ -1,10 +1,13 @@
 package routes
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -19,6 +22,11 @@ import (
 	"github.com/wireops/wireops/internal/safepath"
 	"github.com/wireops/wireops/internal/secrets"
 )
+
+// envVarKeyPattern mirrors the frontend's envFileParser.ts KEY_PATTERN — the
+// bulk route is also reachable directly (not just through the textarea
+// parser), so it needs to enforce the same shape server-side.
+var envVarKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // envVarsBulkMaxBytes caps the bulk-upsert request body. A textarea paste or
 // an imported .env is plain text, so anything past this is either a mistake
@@ -78,6 +86,9 @@ func (rr routeRegistrar) bulkUpsertStackEnvVars(e *core.RequestEvent) error {
 		if key == "" {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "variable keys cannot be empty"})
 		}
+		if !envVarKeyPattern.MatchString(key) {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid key: " + key})
+		}
 		if seen[key] {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "duplicate key in payload: " + key})
 		}
@@ -100,6 +111,10 @@ func (rr routeRegistrar) bulkUpsertStackEnvVars(e *core.RequestEvent) error {
 
 	var created, updated, deleted int
 	txErr := rr.app.RunInTransaction(func(txApp core.App) error {
+		// RunInTransaction may retry the callback (e.g. on a busy-DB
+		// conflict) — reset counters each attempt so a retried run doesn't
+		// double-count against the response.
+		created, updated, deleted = 0, 0, 0
 		for _, v := range body.Vars {
 			key := strings.TrimSpace(v.Key)
 			rec, isExisting := byKey[key]
@@ -117,8 +132,12 @@ func (rr routeRegistrar) bulkUpsertStackEnvVars(e *core.RequestEvent) error {
 			// round-trip) — leave the stored ciphertext alone. Mirrors the
 			// single-row edit rule in EnvironmentVariablesCard.vue's
 			// saveEditEnv, and the same guard the record hooks apply
-			// independently in internal/hooks/pb_hooks.go.
-			skipValue := isExisting && v.Value == "" && rec.GetBool("secret") &&
+			// independently in internal/hooks/pb_hooks.go. Only applies when
+			// the row is staying secret — a downgrade to non-secret with a
+			// blank value must clear the stored ciphertext, not leave it
+			// sitting under secret=false where the UI would show it as
+			// plaintext.
+			skipValue := isExisting && v.Value == "" && v.Secret && rec.GetBool("secret") &&
 				(rec.GetString("secret_provider") == "" || rec.GetString("secret_provider") == "internal")
 			if !skipValue {
 				rec.Set("value", v.Value)
@@ -221,6 +240,8 @@ func (rr routeRegistrar) copyStackEnvVars(e *core.RequestEvent) error {
 	var copied int
 	var skipped []string
 	txErr := rr.app.RunInTransaction(func(txApp core.App) error {
+		copied = 0
+		skipped = nil
 		for _, key := range body.Keys {
 			src, ok := sourceByKey[key]
 			if !ok {
@@ -315,7 +336,10 @@ func stackHasSopsSecretsFile(app core.App, stack *core.Record) (bool, error) {
 		return false, nil
 	}
 	if _, err := app.FindRecordById("repositories", repoID); err != nil {
-		return false, nil
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
 	}
 
 	composePath := stack.GetString("compose_path")

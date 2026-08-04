@@ -59,11 +59,22 @@ function setupApiMocks({ sopsAvailable = false }: { sopsAvailable?: boolean } = 
 }
 
 function setupPbMocks(stacks: any[], envVars: any[]) {
+  // Emulates PocketBase's $pb.filter('id != {:id}', { id }) binding closely
+  // enough to exercise real exclusion behavior instead of trusting whatever
+  // list the mock is handed.
+  const pbFilter = (template: string, params: Record<string, string>) =>
+    template.replace(/\{:(\w+)\}/g, (_, key) => `"${params[key]}"`)
   ;(globalThis as any).useNuxtApp = () => ({
     $pb: {
+      filter: pbFilter,
       collection: (name: string) => {
         if (name === 'stacks') {
-          return { getFullList: vi.fn().mockResolvedValue(stacks) }
+          return {
+            getFullList: vi.fn((opts: { filter?: string }) => {
+              const excludedId = opts?.filter?.match(/id\s*!=\s*"([^"]+)"/)?.[1]
+              return Promise.resolve(excludedId ? stacks.filter(s => s.id !== excludedId) : stacks)
+            }),
+          }
         }
         return { getFullList: vi.fn().mockResolvedValue(envVars) }
       },
@@ -79,7 +90,10 @@ describe('CopyEnvVarsModal', () => {
   it('lists stacks excluding the target and lets the user pick one', async () => {
     setupApiMocks()
     setupPbMocks(
-      [{ id: 'source-1', name: 'source-stack', repository: 'repo-a', expand: { repository: { name: 'repo-a' } } }],
+      [
+        { id: 'target-1', name: 'target-stack', repository: 'repo-a', expand: { repository: { name: 'repo-a' } } },
+        { id: 'source-1', name: 'source-stack', repository: 'repo-a', expand: { repository: { name: 'repo-a' } } },
+      ],
       [{ id: 'env-1', key: 'FOO', secret: false, secret_provider: '' }],
     )
 
@@ -114,6 +128,47 @@ describe('CopyEnvVarsModal', () => {
 
     const continueButton = wrapper.findAll('button').find(b => b.text() === 'Continue')
     expect(continueButton!.attributes('disabled')).toBeDefined()
+  })
+
+  it('ignores a stale SOPS check response from a since-abandoned source selection', async () => {
+    // source-1's check resolves after source-2's, even though source-1 was
+    // selected first — the final state must reflect source-2 (the latest
+    // selection), not whichever response happened to land last.
+    const deferred = new Map<string, { resolve: (v: { available: boolean }) => void }>()
+    const customGet = vi.fn((url: string) => new Promise((resolve) => {
+      const id = url.match(/stacks\/([^/]+)\//)?.[1] as string
+      deferred.set(id, { resolve })
+    }))
+    ;(globalThis as any).useApi = () => ({ customGet, customPost: vi.fn() })
+    ;(globalThis as any).useToast = () => ({ add: vi.fn() })
+    setupPbMocks(
+      [
+        { id: 'source-1', name: 'stale-source', repository: 'repo-b', expand: { repository: { name: 'repo-b' } } },
+        { id: 'source-2', name: 'fresh-source', repository: 'repo-b', expand: { repository: { name: 'repo-b' } } },
+      ],
+      [],
+    )
+
+    const wrapper = mount(CopyEnvVarsModal, {
+      props: { targetId: 'target-1', targetRepository: 'repo-a' },
+      global: { stubs },
+    })
+    await flushPromises()
+
+    await wrapper.find('.source-select').setValue('source-1')
+    await flushPromises()
+    await wrapper.find('.source-select').setValue('source-2')
+    await flushPromises()
+
+    // Resolve out of selection order: source-1 (stale, blocked) after
+    // source-2 (fresh, clean).
+    deferred.get('source-2')!.resolve({ available: false })
+    await flushPromises()
+    deferred.get('source-1')!.resolve({ available: true })
+    await flushPromises()
+
+    const continueButton = wrapper.findAll('button').find(b => b.text() === 'Continue')
+    expect(continueButton!.attributes('disabled')).toBeUndefined()
   })
 
   it('allows a cross-repository copy when the source has no SOPS secrets', async () => {

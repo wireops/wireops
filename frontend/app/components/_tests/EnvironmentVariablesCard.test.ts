@@ -109,7 +109,7 @@ describe('EnvironmentVariablesCard', () => {
       },
     },
     EnvironmentVariablesBulkEditor: {
-      props: ['targetType', 'targetId', 'envVars', 'importContent'],
+      props: ['targetType', 'targetId', 'envVars', 'importContent', 'defaultSecretKeys'],
       setup() {
         return () => h('div', { class: 'bulk-editor-stub' })
       },
@@ -352,7 +352,8 @@ describe('EnvironmentVariablesCard', () => {
     await Promise.resolve()
 
     expect(wrapper.find('.bulk-editor-stub').exists()).toBe(true)
-    const bulkEditorProps = (wrapper.findComponent('.bulk-editor-stub') as unknown as { props: () => { importContent?: string } }).props()
+    const bulkEditorProps = (wrapper.findComponent('.bulk-editor-stub') as unknown as { props: () => { importContent?: string, defaultSecretKeys?: Set<string> } }).props()
     expect(bulkEditorProps.importContent).toContain('REDIS_PASSWORD=')
+    expect(bulkEditorProps.defaultSecretKeys?.has('REDIS_PASSWORD')).toBe(true)
   })
 })

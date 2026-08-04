@@ -157,4 +157,47 @@ describe('EnvironmentVariablesBulkEditor', () => {
       vars: [{ key: 'FOO', value: 'bar', secret: false, secret_provider: '' }],
     })
   })
+
+  it('marks a defaultSecretKeys key as secret/internal on save', async () => {
+    const wrapper = mount(EnvironmentVariablesBulkEditor, {
+      props: {
+        targetType: 'stack',
+        targetId: 'stack-1',
+        envVars: [],
+        importContent: 'POSTGRES_PASSWORD=hunter2',
+        defaultSecretKeys: new Set(['POSTGRES_PASSWORD']),
+      },
+      global: { stubs },
+    })
+
+    await wrapper.findAll('button').find(b => b.text() === 'Save')!.trigger('click')
+    await Promise.resolve()
+
+    expect(customPost).toHaveBeenCalledWith('/api/custom/stacks/stack-1/env-vars/bulk', {
+      mode: 'append',
+      vars: [{ key: 'POSTGRES_PASSWORD', value: 'hunter2', secret: true, secret_provider: 'internal' }],
+    })
+  })
+
+  it('resets to append mode when importContent changes while mounted', async () => {
+    const wrapper = mount(EnvironmentVariablesBulkEditor, {
+      props: { targetType: 'stack', targetId: 'stack-1', envVars: [], importContent: undefined },
+      global: { stubs },
+    })
+
+    // Plain bulk-edit (no importContent) defaults replaceAll to true and
+    // hides the toggle; switching to import content mid-mount (e.g. a
+    // template picked while already in bulk view) must reset the mode to
+    // append/update rather than keeping the previous "replace all" default.
+    await wrapper.setProps({ importContent: 'FOO=bar' })
+    await Promise.resolve()
+
+    await wrapper.findAll('button').find(b => b.text() === 'Save')!.trigger('click')
+    await Promise.resolve()
+
+    expect(customPost).toHaveBeenCalledWith('/api/custom/stacks/stack-1/env-vars/bulk', {
+      mode: 'append',
+      vars: [{ key: 'FOO', value: 'bar', secret: false, secret_provider: '' }],
+    })
+  })
 })

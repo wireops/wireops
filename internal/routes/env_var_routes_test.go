@@ -204,6 +204,60 @@ func TestBulkUpsertEnvVars_RejectsDuplicateKeysInPayload(t *testing.T) {
 	}
 }
 
+func TestBulkUpsertEnvVars_RejectsInvalidKey(t *testing.T) {
+	app, operator := envVarTestApp(t)
+	repo := createEnvVarTestRepo(t, app, "bulk-invalid-key-repo")
+	stack := createEnvVarTestStack(t, app, "bulk-invalid-key-stack", repo.Id)
+	mux := envVarRoutesMux(t, app, operator)
+
+	body := map[string]any{
+		"mode": "replace",
+		"vars": []map[string]any{
+			{"key": "1-not-an-identifier", "value": "1"},
+		},
+	}
+	rec := doJSONRequest(t, mux, http.MethodPost, "/api/custom/stacks/"+stack.Id+"/env-vars/bulk", body)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestBulkUpsertEnvVars_DowngradeToNonSecretClearsValue(t *testing.T) {
+	app, operator := envVarTestApp(t)
+	repo := createEnvVarTestRepo(t, app, "bulk-downgrade-repo")
+	stack := createEnvVarTestStack(t, app, "bulk-downgrade-stack", repo.Id)
+
+	secretKey := crypto.NormalizeSecretKey(testSecretBackendKey)
+	ciphertext, err := crypto.Encrypt([]byte("s3cr3t"), secretKey)
+	if err != nil {
+		t.Fatalf("crypto.Encrypt: %v", err)
+	}
+	createEnvVarRow(t, app, stack.Id, "TOKEN", ciphertext, true, "internal")
+	mux := envVarRoutesMux(t, app, operator)
+
+	// Downgrading an internal secret to non-secret with a blank value must
+	// clear the stored ciphertext, not preserve it under secret=false where
+	// the UI would render it as plaintext.
+	body := map[string]any{
+		"mode": "replace",
+		"vars": []map[string]any{
+			{"key": "TOKEN", "value": "", "secret": false, "secret_provider": ""},
+		},
+	}
+	rec := doJSONRequest(t, mux, http.MethodPost, "/api/custom/stacks/"+stack.Id+"/env-vars/bulk", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	rows, err := app.FindAllRecords("stack_env_vars", dbx.HashExp{"stack": stack.Id})
+	if err != nil {
+		t.Fatalf("find rows: %v", err)
+	}
+	if len(rows) != 1 || rows[0].GetBool("secret") || rows[0].GetString("value") != "" {
+		t.Fatalf("expected TOKEN downgraded and cleared, got rows=%+v", rows)
+	}
+}
+
 func TestBulkUpsertEnvVars_RejectsEmptyKey(t *testing.T) {
 	app, operator := envVarTestApp(t)
 	repo := createEnvVarTestRepo(t, app, "bulk-empty-repo")
