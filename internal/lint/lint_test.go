@@ -171,6 +171,62 @@ func TestRunOnlyFlagsVariablesNothingDefines(t *testing.T) {
 			t.Errorf("finding = %q, should not name %s", msgs[0], unwanted)
 		}
 	}
+
+	var found *lint.Finding
+	for i := range report.Findings {
+		if report.Findings[i].Rule == "compose/unresolved-variable" {
+			found = &report.Findings[i]
+		}
+	}
+	if found == nil {
+		t.Fatal("expected an unresolved-variable finding")
+	}
+	if len(found.Vars) != 1 || found.Vars[0] != "MISSING_VAR" {
+		t.Fatalf("Finding.Vars = %v, want [MISSING_VAR]", found.Vars)
+	}
+}
+
+// TestRunUnresolvedVariableVarsListsEveryMissingKeyInOrder covers a service
+// with more than one missing variable: Vars must match Message's contents
+// exactly (sorted, deduplicated), not just carry the first one.
+func TestRunUnresolvedVariableVarsListsEveryMissingKeyInOrder(t *testing.T) {
+	cfg := mustConfig(t, `{
+		"services": {
+			"web": {
+				"image": "nginx:latest",
+				"environment": {
+					"A": "${ZETA_VAR}",
+					"B": "${ALPHA_VAR}",
+					"C": "${ALPHA_VAR}"
+				}
+			}
+		}
+	}`)
+
+	report := lint.Run(cfg, lint.Context{EnvKeys: lint.EnvKeysFromPairs(nil)})
+	msgs := findingsFor(report, "compose/unresolved-variable")
+	if len(msgs) != 1 {
+		t.Fatalf("expected exactly 1 unresolved-variable finding, got %d: %v", len(msgs), msgs)
+	}
+
+	var found *lint.Finding
+	for i := range report.Findings {
+		if report.Findings[i].Rule == "compose/unresolved-variable" {
+			found = &report.Findings[i]
+		}
+	}
+	if found == nil {
+		t.Fatal("expected an unresolved-variable finding")
+	}
+	want := []string{"ALPHA_VAR", "ZETA_VAR"}
+	if len(found.Vars) != len(want) {
+		t.Fatalf("Finding.Vars = %v, want %v", found.Vars, want)
+	}
+	for i, v := range want {
+		if found.Vars[i] != v {
+			t.Fatalf("Finding.Vars = %v, want %v", found.Vars, want)
+		}
+	}
 }
 
 func TestRunFlagsUnescapedConfigInterpolation(t *testing.T) {

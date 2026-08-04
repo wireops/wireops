@@ -197,6 +197,7 @@ func ruleUnresolvedVariable(cfg *Config, ctx Context) []Finding {
 			Message: fmt.Sprintf("service %q references variable(s) nothing defines: %s",
 				svc.Name, strings.Join(missing, ", ")),
 			Hint: "add them as stack environment variables, as global variables, or give them a default with ${VAR:-fallback}",
+			Vars: missing,
 		})
 	}
 	return out

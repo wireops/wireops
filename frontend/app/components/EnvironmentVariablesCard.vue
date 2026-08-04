@@ -1,11 +1,18 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
+import { ENV_VAR_TEMPLATES } from '../utils/envVarTemplates'
+import { serializeEnvLines } from '../utils/envFileParser'
+import { isInternalSecret } from '../utils/envVarSecrets'
 
 type TargetType = 'stack' | 'job'
 
 const props = defineProps<{
   targetType: TargetType
   targetId: string
+  // Repository ID the stack belongs to — needed by CopyEnvVarsModal to
+  // decide whether a copy is cross-repository. Only meaningful (and
+  // required for the Copy button to render) when targetType === 'stack'.
+  stackRepository?: string
 }>()
 
 const emit = defineEmits<{
@@ -42,6 +49,86 @@ async function loadSopsEnvVars() {
   }
 }
 
+const viewMode = ref<'rows' | 'bulk'>('rows')
+const importContent = ref<string | undefined>(undefined)
+// Keys inserted from a template that should default to secret=true in the
+// bulk editor — the KEY=VALUE textarea format has no way to carry that flag
+// itself, so it's passed alongside as a separate hint.
+const templateSecretKeys = ref<Set<string>>(new Set())
+const fileInput = ref<HTMLInputElement | null>(null)
+const showCopyModal = ref(false)
+
+function openCopyModal() {
+  showCopyModal.value = true
+}
+
+async function onCopied() {
+  showCopyModal.value = false
+  await load()
+}
+
+const templateOptions = computed(() => ENV_VAR_TEMPLATES.map(t => ({ label: t.label, value: t.label })))
+
+// Merges a template's vars into the current set (existing keys are left
+// untouched — a template never overwrites a value the user already has) and
+// opens the bulk editor pre-filled so the user reviews/fills in real values
+// (e.g. a password) and picks secret status per row before saving.
+function insertTemplate(label: string) {
+  const template = ENV_VAR_TEMPLATES.find(t => t.label === label)
+  if (!template) return
+  const existingKeys = new Set(envVars.value.map(env => env.key))
+  const newVars = template.vars.filter(v => !existingKeys.has(v.key))
+  const lines = [
+    ...envVars.value.map(env => ({ key: env.key, value: isInternalSecret(env) ? '' : (env.value ?? '') })),
+    ...newVars.map(v => ({ key: v.key, value: v.value ?? '' })),
+  ]
+  templateSecretKeys.value = new Set(newVars.filter(v => v.secret).map(v => v.key))
+  importContent.value = serializeEnvLines(lines)
+  viewMode.value = 'bulk'
+  toast.add({ title: `Inserted ${template.label} template`, description: 'Review values and secret status before saving.', color: 'info' })
+}
+
+const selectedTemplateLabel = ref('')
+watch(selectedTemplateLabel, (label) => {
+  if (!label) return
+  insertTemplate(label)
+  selectedTemplateLabel.value = ''
+})
+
+function openBulkEdit() {
+  importContent.value = undefined
+  templateSecretKeys.value = new Set()
+  viewMode.value = 'bulk'
+}
+
+function closeBulkEdit() {
+  importContent.value = undefined
+  templateSecretKeys.value = new Set()
+  viewMode.value = 'rows'
+}
+
+async function onBulkSaved() {
+  closeBulkEdit()
+  await load()
+}
+
+function triggerImport() {
+  fileInput.value?.click()
+}
+
+function onImportFileSelected(e: Event) {
+  const file = (e.target as HTMLInputElement).files?.[0]
+  if (!file) return
+  const reader = new FileReader()
+  reader.onload = () => {
+    importContent.value = String(reader.result || '')
+    templateSecretKeys.value = new Set()
+    viewMode.value = 'bulk'
+  }
+  reader.readAsText(file)
+  ;(e.target as HTMLInputElement).value = ''
+}
+
 const envVars = ref<any[]>([])
 const loading = ref(false)
 const saving = ref(false)
@@ -59,13 +146,6 @@ const editEnvKey = ref('')
 const editEnvValue = ref('')
 const editEnvSecret = ref(false)
 const editEnvProvider = ref('internal')
-
-// vault/infisical "value" is just a reference to where the secret lives
-// (e.g. "mount/data/path#field") — not the secret itself — so it isn't
-// sensitive and shouldn't be masked/hidden like an internal-provider secret.
-function isInternalSecret(env: any) {
-  return env.secret && (!env.secret_provider || env.secret_provider === 'internal')
-}
 
 function providerOf(env: any) {
   return env.secret_provider || 'internal'
@@ -236,14 +316,57 @@ watch(showCreateModal, (open) => {
         </div>
         <div class="flex items-center gap-2">
           <UBadge :label="`${envVars.length}`" color="neutral" variant="subtle" />
-          <UButton icon="i-lucide-plus" label="Add" size="xs" class="sm:hidden" :disabled="showCreateModal" @click="openCreateEnvModal" />
-          <UButton icon="i-lucide-plus" label="Add" size="xs" class="hidden sm:inline-flex" :disabled="creating" @click="startCreateEnv" />
+          <template v-if="targetType === 'stack'">
+            <input ref="fileInput" type="file" accept=".env,text/plain" class="hidden" @change="onImportFileSelected">
+            <UButton
+              :icon="viewMode === 'bulk' ? 'i-lucide-list' : 'i-lucide-text-cursor-input'"
+              :label="viewMode === 'bulk' ? 'Rows' : 'Bulk edit'"
+              size="xs"
+              variant="outline"
+              color="neutral"
+              :disabled="viewMode !== 'bulk' && (showCreateModal || creating)"
+              @click="viewMode === 'bulk' ? closeBulkEdit() : openBulkEdit()"
+            />
+            <UButton icon="i-lucide-upload" label="Import" size="xs" variant="outline" color="neutral" class="hidden sm:inline-flex" :disabled="showCreateModal || creating" @click="triggerImport" />
+            <UButton
+              v-if="stackRepository"
+              icon="i-lucide-copy"
+              label="Copy from stack"
+              size="xs"
+              variant="outline"
+              color="neutral"
+              class="hidden sm:inline-flex"
+              @click="openCopyModal"
+            />
+            <AppSelectInput
+              v-model="selectedTemplateLabel"
+              :items="templateOptions"
+              placeholder="Insert template"
+              :searchable="false"
+              content-width
+              :disabled="showCreateModal || creating"
+              class="template-picker hidden sm:inline-flex font-mono shrink-0"
+            />
+          </template>
+          <UButton icon="i-lucide-plus" label="Add" size="xs" class="sm:hidden" :disabled="showCreateModal || viewMode === 'bulk'" @click="openCreateEnvModal" />
+          <UButton icon="i-lucide-plus" label="Add" size="xs" class="hidden sm:inline-flex" :disabled="creating || viewMode === 'bulk'" @click="startCreateEnv" />
           <UButton icon="i-lucide-refresh-cw" variant="ghost" color="neutral" size="xs" :loading="loading" @click="load(); loadSopsEnvVars()" />
         </div>
       </div>
     </template>
 
-    <div>
+    <div v-if="viewMode === 'bulk'">
+      <EnvironmentVariablesBulkEditor
+        :target-type="targetType"
+        :target-id="targetId"
+        :env-vars="envVars"
+        :import-content="importContent"
+        :default-secret-keys="templateSecretKeys"
+        @saved="onBulkSaved"
+        @cancel="closeBulkEdit"
+      />
+    </div>
+    <div v-else>
       <p v-if="sopsError" class="flex items-center gap-1.5 py-1 text-xs text-amber-600 dark:text-amber-400">
         <UIcon name="i-lucide-triangle-alert" class="h-3.5 w-3.5 shrink-0" />
         SOPS: {{ sopsError }}
@@ -483,6 +606,17 @@ watch(showCreateModal, (open) => {
             </div>
           </template>
         </UCard>
+      </template>
+    </UModal>
+
+    <UModal v-if="stackRepository" v-model:open="showCopyModal" title="Copy Environment Variables" description="Copy environment variables from another stack">
+      <template #body>
+        <CopyEnvVarsModal
+          :target-id="targetId"
+          :target-repository="stackRepository"
+          @copied="onCopied"
+          @cancel="showCopyModal = false"
+        />
       </template>
     </UModal>
   </UCard>

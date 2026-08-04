@@ -36,6 +36,7 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 	registrar.registerStackRevisionRoute()
 	registrar.registerStackDependencyGraphRoute()
 	registrar.registerSopsRoutes()
+	registrar.registerEnvVarRoutes()
 	registrar.registerContainerActionRoutes()
 	registrar.registerStackDeleteRoute()
 	registrar.registerStackTransferRoute()
