@@ -33,6 +33,7 @@ import (
 	"github.com/wireops/wireops/internal/notify"
 	"github.com/wireops/wireops/internal/protocol"
 	"github.com/wireops/wireops/internal/rbac"
+	"github.com/wireops/wireops/internal/safepath"
 	"github.com/wireops/wireops/internal/sync"
 	"github.com/wireops/wireops/internal/termstream"
 )
@@ -714,7 +715,7 @@ func (rr routeRegistrar) registerSystemRoutes() {
 
 	rr.r.DELETE("/api/custom/orphans/{dirName}", func(e *core.RequestEvent) error {
 		dirName := e.Request.PathValue("dirName")
-		if dirName == "" || strings.Contains(dirName, "..") || strings.Contains(dirName, "/") {
+		if err := safepath.ValidateConfigName(dirName); err != nil {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid directory name"})
 		}
 
@@ -736,7 +737,10 @@ func (rr routeRegistrar) registerSystemRoutes() {
 			}
 		}
 
-		if err := os.RemoveAll(dirPath); err != nil {
+		// An orphan directory is named after a repository ID, so purge it
+		// through the scheduler: that stops any fetch ticker still pointed at
+		// it and waits for an in-flight fetch before deleting the tree.
+		if err := rr.scheduler.RemoveRepoWorkspace(dirName); err != nil {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("failed to remove directory: %v", err)})
 		}
 		return e.JSON(http.StatusOK, map[string]string{"status": "purged"})

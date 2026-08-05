@@ -484,6 +484,7 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 		gitURL := e.Record.GetString("git_url")
 		branch := e.Record.GetString("branch")
 		triggerRepositoryBackgroundClone(app, repoID, gitURL, branch)
+		scheduler.RegisterRepo(e.Record)
 		return e.Next()
 	})
 
@@ -496,9 +497,11 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 	})
 
 	app.OnRecordAfterDeleteSuccess("repositories").BindFunc(func(e *core.RecordEvent) error {
-		repoDir := filepath.Join(config.GetReposWorkspace(), e.Record.Id)
-		if err := os.RemoveAll(repoDir); err != nil {
-			log.Printf("[hooks] failed to remove repo directory %s: %v", repoDir, err)
+		// Stops the fetch ticker and waits for any in-flight fetch on this
+		// repo before deleting its working tree, so the directory is not
+		// removed from under a running clone/fetch.
+		if err := scheduler.RemoveRepoWorkspace(e.Record.Id); err != nil {
+			log.Printf("[hooks] failed to remove repo directory for %s: %v", e.Record.Id, err)
 		}
 		return e.Next()
 	})
@@ -760,6 +763,13 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 			e.Record.GetString("branch") != original.GetString("branch") ||
 			e.Record.GetString("repository_key") != original.GetString("repository_key")) {
 			triggerRepositoryBackgroundClone(app, e.Record.Id, e.Record.GetString("git_url"), e.Record.GetString("branch"))
+		}
+		// Only restart the repo-level fetch ticker when its own cadence
+		// changed. Every fetch (including FetchRepo's own state-persist
+		// writes below) saves this record too; re-registering unconditionally
+		// here would restart the ticker on every single tick.
+		if original == nil || e.Record.GetInt("sync_interval_seconds") != original.GetInt("sync_interval_seconds") {
+			scheduler.RegisterRepo(e.Record)
 		}
 		return e.Next()
 	})
