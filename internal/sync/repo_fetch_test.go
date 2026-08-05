@@ -296,4 +296,7 @@ func TestRemoveRepoWorkspaceWaitsForInFlightFetch(t *testing.T) {
 	if !fetchDone.Load() {
 		t.Fatal("RemoveRepoWorkspace deleted the working tree before the in-flight fetch finished")
 	}
+	if _, err := os.Stat(filepath.Join(workspace, repoID)); !os.IsNotExist(err) {
+		t.Fatalf("repo directory still present after RemoveRepoWorkspace (stat err = %v)", err)
+	}
 }
