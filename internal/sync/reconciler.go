@@ -45,6 +45,7 @@ type Reconciler struct {
 	app             core.App
 	mu              sync.Map
 	repoMu          sync.Map
+	workDirMu       sync.Map
 	notifier        *notify.Notifier
 	renderer        *Renderer
 	dispatcher      WorkerDispatcher
@@ -241,6 +242,20 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	repoRLock.RLock()
 	defer repoRLock.RUnlock()
 
+	// The fetch above ran (and released its lock) before we got here, so a
+	// concurrent fetch/reset could have moved the working tree past the SHA
+	// captured earlier. Reload under the read lock so the SHA we render and
+	// record as deployed_commit matches the checked-out files we're about to
+	// read.
+	if fresh, ferr := r.app.FindRecordById("repositories", repoID); ferr == nil {
+		if sha := fresh.GetString("last_commit_sha"); sha != "" {
+			remoteSHA = sha
+		}
+	}
+	if reopened, oerr := gogit.PlainOpen(filepath.Join(r.reposWorkspace(), repoID)); oerr == nil {
+		gitRepo = reopened
+	}
+
 	commitMsg := ""
 	if obj, err := gitRepo.CommitObject(mustParseHash(remoteSHA)); err == nil {
 		commitMsg = obj.Message
@@ -261,6 +276,11 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		r.markSyncError(stack, errMsg)
 		return fmt.Errorf("%s", errMsg)
 	}
+	// Other stacks pointed at this same compose_path (same repo) would
+	// otherwise race on the .env/.gitignore writes below; serialize them.
+	workDirLock := r.workDirMutex(workDir)
+	workDirLock.Lock()
+	defer workDirLock.Unlock()
 
 	composeFile, err := r.resolveComposeFile(stack, workDir, stackID, trigger, remoteSHA)
 	if err != nil {
@@ -1089,6 +1109,16 @@ func (r *Reconciler) RemoveRepoWorkspace(repoID string) error {
 	}
 	r.repoMu.Delete(repoID)
 	return nil
+}
+
+// workDirMutex returns a mutex scoped to a single stack's compose working
+// directory (workspace/<repoID>[/<compose_path>]). Stacks in the same repo
+// that share a compose_path share this directory too; this mutex serializes
+// their .env/.gitignore writes and the render that reads them so concurrent
+// reconciles can't corrupt each other's files.
+func (r *Reconciler) workDirMutex(workDir string) *sync.Mutex {
+	mu, _ := r.workDirMu.LoadOrStore(workDir, &sync.Mutex{})
+	return mu.(*sync.Mutex)
 }
 
 // FetchRepo clones or fetches the given repository's working tree and persists
