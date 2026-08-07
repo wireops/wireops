@@ -131,6 +131,17 @@ func (rr routeRegistrar) registerStackTriggerRoutes() {
 	})
 }
 
+// forceRedeployBody is the decoded POST /force-redeploy request body.
+// PauseAfter defaults to true (preset before Decode) so a caller that omits
+// pause_after_redeploy entirely keeps the historical "always pause after a
+// successful redeploy" behavior; only an explicit false opts out.
+type forceRedeployBody struct {
+	RecreateContainers bool `json:"recreate_containers"`
+	RecreateVolumes    bool `json:"recreate_volumes"`
+	RecreateNetworks   bool `json:"recreate_networks"`
+	PauseAfter         bool `json:"pause_after_redeploy"`
+}
+
 func (rr routeRegistrar) registerStackInspectionRoutes() {
 	rr.r.POST("/api/custom/stacks/{id}/force-redeploy", func(e *core.RequestEvent) error {
 		stackID := e.Request.PathValue("id")
@@ -140,12 +151,7 @@ func (rr routeRegistrar) registerStackInspectionRoutes() {
 		if !rr.workerOnline(e, stackID) {
 			return nil
 		}
-		body := struct {
-			RecreateContainers bool `json:"recreate_containers"`
-			RecreateVolumes    bool `json:"recreate_volumes"`
-			RecreateNetworks   bool `json:"recreate_networks"`
-			PauseAfter         bool `json:"pause_after_redeploy"`
-		}{PauseAfter: true}
+		body := forceRedeployBody{PauseAfter: true}
 		if err := json.NewDecoder(e.Request.Body).Decode(&body); err != nil {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid body"})
 		}

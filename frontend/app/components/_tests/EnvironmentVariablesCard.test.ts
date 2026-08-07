@@ -53,9 +53,10 @@ describe('EnvironmentVariablesCard', () => {
     AppButtonInput: {
       props: ['icon', 'label', 'disabled', 'ariaLabel'],
       emits: ['click'],
-      setup(props: { label?: string, ariaLabel?: string }, { emit, slots }: { emit: (e: string, ...a: unknown[]) => void, slots: Slots }) {
+      setup(props: { label?: string, ariaLabel?: string, disabled?: boolean }, { emit, slots }: { emit: (e: string, ...a: unknown[]) => void, slots: Slots }) {
         return () => h('button', {
           type: 'button',
+          disabled: props.disabled,
           'aria-label': props.ariaLabel,
           onClick: () => emit('click'),
         }, props.label ?? slots.default?.())
@@ -383,10 +384,11 @@ describe('EnvironmentVariablesCard', () => {
     const file = new File(['FOO=bar'], name, { type: 'text/plain' })
     Object.defineProperty(fileInput.element, 'files', { value: [file] })
     await fileInput.trigger('change')
-    await new Promise(resolve => setTimeout(resolve, 20))
-    await wrapper.vm.$nextTick()
 
-    expect(wrapper.find('.bulk-editor-stub').exists()).toBe(true)
+    await vi.waitFor(async () => {
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.bulk-editor-stub').exists()).toBe(true)
+    })
   })
 
   it('opens the bulk editor pre-filled when a template is selected', async () => {
