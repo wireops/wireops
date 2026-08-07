@@ -262,13 +262,6 @@ npm run dev
 - Bulk actions: "Sync All", "Pause All", "Resume All"
 - Progress tracking for batch operations
 
-### 🌍 Environment Variables Management
-- Bulk edit mode (text editor format KEY=VALUE)
-- Import/export .env files
-- Copy env vars between stacks
-- Templates for common variables
-- Detect required variables from compose file
-
 ### 🐳 Container Management
 - "Restart All" / "Stop All" buttons per service
 - Bulk container operations
