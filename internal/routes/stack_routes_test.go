@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -189,6 +190,29 @@ func TestWebhookRejectsMalformedPayload(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestForceRedeployBodyDefaultsPauseAfterToTrueWhenOmitted(t *testing.T) {
+	cases := []struct {
+		name string
+		json string
+		want bool
+	}{
+		{"field omitted keeps the true default", `{"recreate_containers":true}`, true},
+		{"explicit false is respected", `{"recreate_containers":true,"pause_after_redeploy":false}`, false},
+		{"explicit true is respected", `{"pause_after_redeploy":true}`, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			body := forceRedeployBody{PauseAfter: true}
+			if err := json.NewDecoder(strings.NewReader(c.json)).Decode(&body); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if body.PauseAfter != c.want {
+				t.Fatalf("PauseAfter = %v, want %v", body.PauseAfter, c.want)
+			}
+		})
 	}
 }
 

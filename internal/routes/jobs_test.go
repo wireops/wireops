@@ -76,6 +76,32 @@ func TestListJobsPaginates(t *testing.T) {
 	}
 }
 
+func TestListJobsOrderedAlphabeticallyByName(t *testing.T) {
+	app := newSetupTestApp(t)
+	repo := createTestRepository(t, app, "repo-a")
+	// Insert out of alphabetical order so a "-created" style sort would fail
+	// this assertion but a "name" sort would not.
+	createTestScheduledJob(t, app, repo.Id, "zeta-job", "active")
+	createTestScheduledJob(t, app, repo.Id, "alpha-job", "active")
+	createTestScheduledJob(t, app, repo.Id, "mid-job", "active")
+
+	rec := callHandler(t, app, http.MethodGet, "/api/custom/jobs", nil, handleListJobs(app))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	resp := decodeJobListResponse(t, rec.Body.Bytes())
+	if len(resp.Items) != 3 {
+		t.Fatalf("expected 3 items, got %d", len(resp.Items))
+	}
+	got := []string{resp.Items[0].Name, resp.Items[1].Name, resp.Items[2].Name}
+	want := []string{"alpha-job", "mid-job", "zeta-job"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("job order = %v, want %v", got, want)
+		}
+	}
+}
+
 func TestListJobsFiltersByStatus(t *testing.T) {
 	app := newSetupTestApp(t)
 	repo := createTestRepository(t, app, "repo-a")

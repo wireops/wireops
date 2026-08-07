@@ -17,7 +17,7 @@ const route = useRoute()
 const searchQuery = ref('')
 const searchInputRef = ref<{ $el?: HTMLElement } | HTMLElement | null>(null)
 const statusFilter = ref('all')
-const sortBy = ref('updated')
+const sortBy = ref('name')
 
 function groupQueryToFilterValue(val: unknown): string {
   if (typeof val !== 'string' || val === '') return GROUP_ALL
@@ -268,6 +268,13 @@ function handleSlashShortcut(event: KeyboardEvent) {
   announce('Stack search focused')
 }
 
+const stackActionItems = [
+  [
+    { label: 'Import', icon: 'i-lucide-package-plus', onSelect: () => { showImport.value = true } },
+    { label: 'Manage Orphans', icon: 'i-lucide-package-search', color: 'warning', onSelect: () => openOrphans() },
+  ],
+]
+
 const showImport = ref(false)
 
 function onImported(_stackId: string) {
@@ -324,8 +331,10 @@ async function handlePurge(dirName: string) {
       </div>
       <div v-if="!isViewer" class="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
         <ActionButton icon="i-lucide-plus" label="Add Stack" class="w-full justify-center sm:w-auto" @click="openCreate()" />
-        <UButton icon="i-lucide-package-plus" label="Import" variant="outline" class="w-full justify-center sm:w-auto" @click="showImport = true" />
         <UButton icon="i-lucide-wrench" label="Stack Builder" variant="outline" class="w-full justify-center sm:w-auto" @click="showBuilder = true" />
+        <UDropdownMenu :items="stackActionItems" :content="{ align: 'end' }">
+          <UButton icon="i-lucide-ellipsis-vertical" label="Options" variant="outline" class="w-full justify-center sm:w-auto" aria-label="Stack options" />
+        </UDropdownMenu>
       </div>
     </div>
 
@@ -337,7 +346,6 @@ async function handlePurge(dirName: string) {
             <span v-if="totalStacks" class="ml-1.5 text-yellow-400">({{ totalStacks }})</span>
           </h3>
           <div class="flex items-center gap-3">
-            <UButton v-if="!isViewer" icon="i-lucide-package-search" label="Manage Orphans" variant="outline" color="warning" size="xs" class="hidden sm:inline-flex" @click="openOrphans" />
             <RefreshButton @click="refreshList()" />
           </div>
         </div>

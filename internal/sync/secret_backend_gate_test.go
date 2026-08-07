@@ -160,7 +160,7 @@ func TestForceRedeployStackBlockedByDisabledSecretBackend(t *testing.T) {
 	app, stack := newSecretBackendGateTestApp(t)
 	r := &Reconciler{app: app}
 
-	err := r.ForceRedeployStack(context.Background(), stack.Id, false, false, false)
+	err := r.ForceRedeployStack(context.Background(), stack.Id, false, false, false, false)
 
 	assertBlockedBySecretBackendGate(t, app, stack, err, "redeploy")
 }

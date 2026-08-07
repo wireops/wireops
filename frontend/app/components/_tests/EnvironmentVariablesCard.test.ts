@@ -50,6 +50,18 @@ describe('EnvironmentVariablesCard', () => {
         }, props.label ?? slots.default?.())
       },
     },
+    AppButtonInput: {
+      props: ['icon', 'label', 'disabled', 'ariaLabel'],
+      emits: ['click'],
+      setup(props: { label?: string, ariaLabel?: string, disabled?: boolean }, { emit, slots }: { emit: (e: string, ...a: unknown[]) => void, slots: Slots }) {
+        return () => h('button', {
+          type: 'button',
+          disabled: props.disabled,
+          'aria-label': props.ariaLabel,
+          onClick: () => emit('click'),
+        }, props.label ?? slots.default?.())
+      },
+    },
     AppTextInput: {
       props: ['modelValue', 'placeholder', 'type', 'disabled'],
       emits: ['update:modelValue'],
@@ -336,6 +348,47 @@ describe('EnvironmentVariablesCard', () => {
     await importButton!.trigger('click')
 
     expect(clickSpy).toHaveBeenCalled()
+  })
+
+  it('rejects disallowed file types on import with a toast, and does not open the bulk editor', async () => {
+    const addSpy = vi.fn()
+    ;(globalThis as any).useToast = () => ({ add: addSpy })
+
+    const wrapper = mount(EnvironmentVariablesCard, {
+      props: { targetType: 'stack', targetId: 'stack-1' },
+      global: { stubs },
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    const fileInput = wrapper.find('input[type="file"]')
+    expect(fileInput.attributes('accept')).toBeUndefined()
+
+    const file = new File(['not an env file'], 'logo.png', { type: 'image/png' })
+    Object.defineProperty(fileInput.element, 'files', { value: [file] })
+    await fileInput.trigger('change')
+
+    expect(addSpy).toHaveBeenCalledWith(expect.objectContaining({ title: 'Unsupported file', color: 'error' }))
+    expect(wrapper.find('.bulk-editor-stub').exists()).toBe(false)
+  })
+
+  it.each(['.env', '.env.local', 'backup.txt'])('accepts %s files on import and opens the bulk editor', async (name) => {
+    const wrapper = mount(EnvironmentVariablesCard, {
+      props: { targetType: 'stack', targetId: 'stack-1' },
+      global: { stubs },
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    const fileInput = wrapper.find('input[type="file"]')
+    const file = new File(['FOO=bar'], name, { type: 'text/plain' })
+    Object.defineProperty(fileInput.element, 'files', { value: [file] })
+    await fileInput.trigger('change')
+
+    await vi.waitFor(async () => {
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.bulk-editor-stub').exists()).toBe(true)
+    })
   })
 
   it('opens the bulk editor pre-filled when a template is selected', async () => {

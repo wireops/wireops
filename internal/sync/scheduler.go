@@ -187,7 +187,7 @@ func (s *Scheduler) TriggerRollback(stackID, commitSHA string, userID string) {
 // TriggerForceRedeploy runs a force redeploy with the given recreate options.
 // Any render_overrides persisted on the stack record are reapplied automatically
 // by ForceRedeployStack, same as every other reconcile path.
-func (s *Scheduler) TriggerForceRedeploy(stackID string, recreateContainers, recreateVolumes, recreateNetworks bool, userID string) {
+func (s *Scheduler) TriggerForceRedeploy(stackID string, recreateContainers, recreateVolumes, recreateNetworks, pauseAfter bool, userID string) {
 	ctx := contextutil.WithUserID(s.rootCtx, userID)
 	go s.safeRun(ctx, fmt.Sprintf("force-redeploy[%s]", stackID), func() error {
 		select {
@@ -196,7 +196,7 @@ func (s *Scheduler) TriggerForceRedeploy(stackID string, recreateContainers, rec
 		case <-ctx.Done():
 			return ctx.Err()
 		}
-		return s.reconciler.ForceRedeployStack(ctx, stackID, recreateContainers, recreateVolumes, recreateNetworks)
+		return s.reconciler.ForceRedeployStack(ctx, stackID, recreateContainers, recreateVolumes, recreateNetworks, pauseAfter)
 	})
 }
 
