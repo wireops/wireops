@@ -116,9 +116,21 @@ function triggerImport() {
   fileInput.value?.click()
 }
 
+// Allowlist enforced in JS, not via the input's `accept` attribute: on macOS,
+// `accept` makes the native file picker filter out dotfiles (including
+// `.env` itself), so it can't be used here without breaking the picker.
+function isAllowedImportFile(name: string) {
+  return /(^|\/)\.env(\..+)?$/i.test(name) || /\.(env|txt)$/i.test(name)
+}
+
 function onImportFileSelected(e: Event) {
   const file = (e.target as HTMLInputElement).files?.[0]
   if (!file) return
+  if (!isAllowedImportFile(file.name)) {
+    toast.add({ title: 'Unsupported file', description: 'Only .env and .txt files can be imported.', color: 'error' })
+    ;(e.target as HTMLInputElement).value = ''
+    return
+  }
   const reader = new FileReader()
   reader.onload = () => {
     importContent.value = String(reader.result || '')
@@ -317,24 +329,18 @@ watch(showCreateModal, (open) => {
         <div class="flex items-center gap-2">
           <UBadge :label="`${envVars.length}`" color="neutral" variant="subtle" />
           <template v-if="targetType === 'stack'">
-            <input ref="fileInput" type="file" accept=".env,text/plain" class="hidden" @change="onImportFileSelected">
-            <UButton
+            <input ref="fileInput" type="file" class="hidden" @change="onImportFileSelected">
+            <AppButtonInput
               :icon="viewMode === 'bulk' ? 'i-lucide-list' : 'i-lucide-text-cursor-input'"
               :label="viewMode === 'bulk' ? 'Rows' : 'Bulk edit'"
-              size="xs"
-              variant="outline"
-              color="neutral"
               :disabled="viewMode !== 'bulk' && (showCreateModal || creating)"
               @click="viewMode === 'bulk' ? closeBulkEdit() : openBulkEdit()"
             />
-            <UButton icon="i-lucide-upload" label="Import" size="xs" variant="outline" color="neutral" class="hidden sm:inline-flex" :disabled="showCreateModal || creating" @click="triggerImport" />
-            <UButton
+            <AppButtonInput icon="i-lucide-upload" label="Import" class="hidden sm:inline-flex" :disabled="showCreateModal || creating" @click="triggerImport" />
+            <AppButtonInput
               v-if="stackRepository"
               icon="i-lucide-copy"
               label="Copy from stack"
-              size="xs"
-              variant="outline"
-              color="neutral"
               class="hidden sm:inline-flex"
               @click="openCopyModal"
             />

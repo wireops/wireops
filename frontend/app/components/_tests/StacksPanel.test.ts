@@ -139,4 +139,71 @@ describe('StacksPanel', () => {
     expect(wrapper.find('[title="Git: Up to date"]').exists()).toBe(true)
     expect(wrapper.find('.badge-status').text()).toBe('active')
   })
+
+  it('defaults to sorting stacks alphabetically by name', async () => {
+    const getList = vi.fn().mockResolvedValue({ items: [stackFixture], totalItems: 1 })
+    ;(globalThis as any).useNuxtApp = () => ({
+      $pb: {
+        filter: (raw: string) => raw,
+        collection: () => ({
+          getFullList: vi.fn().mockResolvedValue([stackFixture]),
+          getList,
+        }),
+      },
+    })
+    ;(globalThis as any).useApi = () => ({
+      getWorkers: vi.fn(),
+      listOrphans: vi.fn(),
+      purgeOrphan: vi.fn(),
+    })
+    ;(globalThis as any).useRealtime = () => ({ subscribe: vi.fn() })
+    ;(globalThis as any).useToast = () => ({ add: vi.fn() })
+    ;(globalThis as any).useA11yAnnouncer = () => ({ announce: vi.fn() })
+    ;(globalThis as any).usePermissions = () => ({ isViewer: ref(false) })
+    ;(globalThis as any).useRepositoryPlatform = () => ({ platformIconUrl: vi.fn() })
+    ;(globalThis as any).useRoute = () => ({ query: {} })
+    ;(globalThis as any).useAsyncData = (key: string) => ({
+      data: ref(key === 'stack_card_workers' ? [] : [stackFixture]),
+      refresh: vi.fn(),
+    })
+
+    mount(StacksPanel, {
+      global: {
+        components: { StackCard, GitProviderBadge, RepositoryIcon, GithubIcon, GenericIcon },
+        stubs: {
+          BadgeStatus: { props: ['status'], setup(props) { return () => h('span', props.status) } },
+          UCard: { setup(_props, { slots }) { return () => h('section', [slots.header?.(), slots.default?.()]) } },
+          UButton: {
+            props: ['label', 'icon', 'ariaLabel'],
+            setup(props, { attrs, slots }) {
+              return () => h('button', attrs, [props.label, slots.default?.()])
+            },
+          },
+          AppTextInput: { setup() { return () => h('div', [h('input')]) } },
+          AppSelectInput: { setup() { return () => h('select') } },
+          UTooltip: { setup(_props, { slots }) { return () => h('div', slots.default?.()) } },
+          UIcon: { setup() { return () => h('span') } },
+          NuxtLink: {
+            props: ['to'],
+            setup(props, { attrs, slots }) {
+              return () => h('a', { href: props.to, ...attrs }, slots.default?.())
+            },
+          },
+          CreateStackModal: true,
+          BadgeLabel: true,
+          DeleteStackModal: true,
+          ImportStackModal: true,
+          StackContainersList: true,
+          UModal: { setup(_props, { slots }) { return () => h('div', slots.body?.()) } },
+          UPagination: { setup() { return () => h('div') } },
+          UDropdownMenu: { setup(_props, { slots }) { return () => h('div', slots.default?.()) } },
+        },
+      },
+    })
+
+    await flushPromises()
+
+    expect(getList).toHaveBeenCalled()
+    expect(getList.mock.calls[0]![2]).toMatchObject({ sort: 'name' })
+  })
 })

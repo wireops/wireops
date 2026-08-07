@@ -324,11 +324,34 @@ func TestIsTransientGitError(t *testing.T) {
 	}
 }
 
+func TestResolvePostDeployStatus(t *testing.T) {
+	cases := []struct {
+		name        string
+		checkStatus string
+		pauseAfter  bool
+		want        string
+	}{
+		{"active without pause request stays active", "active", false, "active"},
+		{"active with pause request ends paused", "active", true, "paused"},
+		{"error ignores pause request", "error", true, "error"},
+		{"error without pause request stays error", "error", false, "error"},
+		{"degraded ignores pause request", "degraded", true, "degraded"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := resolvePostDeployStatus(c.checkStatus, c.pauseAfter); got != c.want {
+				t.Fatalf("resolvePostDeployStatus(%q, %v) = %q, want %q", c.checkStatus, c.pauseAfter, got, c.want)
+			}
+		})
+	}
+}
+
 func TestForceRedeployStackAllowsNilNotifierOnEarlyFailure(t *testing.T) {
 	app, stack := newForceRedeployNilNotifierTestApp(t)
 	r := &Reconciler{app: app}
 
-	err := r.ForceRedeployStack(context.Background(), stack.Id, true, false, false)
+	err := r.ForceRedeployStack(context.Background(), stack.Id, true, false, false, false)
 	if err == nil {
 		t.Fatal("ForceRedeployStack succeeded, want invalid compose_path error")
 	}
@@ -370,7 +393,7 @@ func TestForceRedeployStackEarlyFailureLeavesDeployedStateUntouched(t *testing.T
 	app, stack := newForceRedeployNilNotifierTestApp(t)
 	r := &Reconciler{app: app}
 
-	err := r.ForceRedeployStack(context.Background(), stack.Id, true, false, false)
+	err := r.ForceRedeployStack(context.Background(), stack.Id, true, false, false, false)
 	if err == nil {
 		t.Fatal("ForceRedeployStack succeeded, want invalid compose_path error")
 	}

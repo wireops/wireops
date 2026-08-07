@@ -173,7 +173,7 @@ func handleListJobs(app core.App) func(*core.RequestEvent) error {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
 
-		records, err := app.FindRecordsByFilter("scheduled_jobs", filter, "-created", perPage, (page-1)*perPage, params)
+		records, err := app.FindRecordsByFilter("scheduled_jobs", filter, "name", perPage, (page-1)*perPage, params)
 		if err != nil {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}

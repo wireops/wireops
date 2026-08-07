@@ -110,7 +110,7 @@ func TestForceRedeployStackSopsDecryptFailureBlocksDeploy(t *testing.T) {
 	app, stack, _ := newSopsForceRedeployTestApp(t)
 	r := &Reconciler{app: app}
 
-	err := r.ForceRedeployStack(context.Background(), stack.Id, false, false, false)
+	err := r.ForceRedeployStack(context.Background(), stack.Id, false, false, false, false)
 	if err == nil {
 		t.Fatal("ForceRedeployStack succeeded, want SOPS decrypt failure")
 	}

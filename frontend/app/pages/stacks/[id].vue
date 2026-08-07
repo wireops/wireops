@@ -393,6 +393,19 @@ async function handleRollback() {
   }
 }
 
+const stackMoreActionItems = computed(() => [
+  [
+    {
+      label: stack.value?.status === 'paused' ? 'Resume' : 'Pause',
+      icon: stack.value?.status === 'paused' ? 'i-lucide-play' : 'i-lucide-pause',
+      color: stack.value?.status === 'paused' ? 'success' : 'primary',
+      onSelect: () => togglePause(),
+    },
+    { label: 'Redeploy', icon: 'i-lucide-recycle', onSelect: () => { showForceRedeploy.value = true } },
+    { label: 'Overrides', icon: 'i-lucide-sliders-horizontal', onSelect: () => openOverridesModal() },
+  ],
+])
+
 // Pause / Resume
 const showPauseModal = ref(false)
 
@@ -414,13 +427,15 @@ async function confirmPause() {
 // Force redeploy
 const showForceRedeploy = ref(false)
 const forceOpts = ref({ recreate_containers: true, recreate_volumes: false, recreate_networks: false })
+const pauseAfterRedeploy = ref(true)
 async function handleForceRedeploy() {
   try {
-    await forceRedeploy(stackId, forceOpts.value)
+    await forceRedeploy(stackId, { ...forceOpts.value, pause_after_redeploy: pauseAfterRedeploy.value })
     showForceRedeploy.value = false
     activeTab.value = 'logs'
     toast.add({ title: 'Force redeploy triggered', color: 'info' })
     forceOpts.value = { recreate_containers: true, recreate_volumes: false, recreate_networks: false }
+    pauseAfterRedeploy.value = true
     refreshLogs()
     setTimeout(() => { refreshStack(); refreshLogs(); servicesCard.value?.refresh() }, 5000)
   } catch (e: any) {
@@ -722,21 +737,14 @@ onMounted(() => {
         </div>
       </div>
       <div class="grid grid-cols-2 sm:flex sm:items-center gap-2 sm:shrink-0">
-        <UButton
-          :icon="stack?.status === 'paused' ? 'i-lucide-play' : 'i-lucide-pause'"
-          :label="stack?.status === 'paused' ? 'Resume' : 'Pause'"
-          :color="stack?.status === 'paused' ? 'success' : 'primary'"
-          variant="outline"
-          block
-          @click="togglePause"
-        />
-        <UButton icon="i-lucide-recycle" label="Redeploy" variant="outline" block @click="showForceRedeploy = true" />
-        <UButton icon="i-lucide-sliders-horizontal" label="Overrides" variant="outline" block @click="openOverridesModal" />
         <StackSyncButton
           :can-sync="canSyncDeploy"
           :disabled-reason="syncDisabledReason"
           @click="openSyncModal"
         />
+        <UDropdownMenu :items="stackMoreActionItems" :content="{ align: 'end' }">
+          <UButton icon="i-lucide-ellipsis-vertical" label="More" variant="outline" block aria-label="More stack actions" />
+        </UDropdownMenu>
       </div>
     </div>
 
@@ -1205,6 +1213,13 @@ onMounted(() => {
                 <p class="text-xs text-gray-400">Tear down and recreate all networks (requires full down/up)</p>
               </div>
               <USwitch v-model="forceOpts.recreate_networks" />
+            </div>
+            <div class="flex items-center justify-between">
+              <div>
+                <p class="text-sm font-medium">Pause Stack</p>
+                <p class="text-xs text-gray-400">Pause auto-sync while the redeploy runs, so a scheduled reconcile can't race it</p>
+              </div>
+              <USwitch v-model="pauseAfterRedeploy" />
             </div>
           </div>
           <UButton label="Force Redeploy" color="info" block @click="handleForceRedeploy" />

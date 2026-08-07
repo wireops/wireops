@@ -787,10 +787,7 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 	// Rollback's terminal success state is historically "paused" (to avoid
 	// GitOps re-syncing it back to HEAD), not "active" — only remap it when
 	// the post-check found a real problem.
-	rollbackStatus := "paused"
-	if check.Status != "active" {
-		rollbackStatus = check.Status
-	}
+	rollbackStatus := resolvePostDeployStatus(check.Status, true)
 
 	stack.Set("last_synced_at", time.Now().UTC().Format(time.RFC3339))
 	stack.Set("status", rollbackStatus)
@@ -833,10 +830,22 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 	return nil
 }
 
-// ForceRedeployStack runs a force redeploy with recreate options, logs it, and pauses the stack.
+// resolvePostDeployStatus mirrors the normal reconcile path (status set
+// straight from the post-deploy check) except that on a successful deploy the
+// caller can opt into leaving the stack paused, e.g. to keep the scheduler
+// from racing a follow-up reconcile against a redeploy or rollback the
+// operator triggered by hand.
+func resolvePostDeployStatus(checkStatus string, pauseAfter bool) string {
+	if checkStatus == "active" && pauseAfter {
+		return "paused"
+	}
+	return checkStatus
+}
+
+// ForceRedeployStack runs a force redeploy with recreate options and logs it.
 // Like every other reconcile path, it reapplies whatever render_overrides are persisted
 // on the stack record — a plain force redeploy must not silently drop active overrides.
-func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, recreateContainers, recreateVolumes, recreateNetworks bool) error {
+func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, recreateContainers, recreateVolumes, recreateNetworks, pauseAfter bool) error {
 	mu := r.stackMutex(stackID)
 	if !mu.TryLock() {
 		return fmt.Errorf("stack %s already syncing", stackID)
@@ -1026,10 +1035,7 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 	}
 	_ = pt.finish(constants.PhasePostCheck, postCheckStatus, check.Detail)
 
-	redeployStatus := "paused"
-	if check.Status != "active" {
-		redeployStatus = check.Status
-	}
+	redeployStatus := resolvePostDeployStatus(check.Status, pauseAfter)
 
 	stack.Set("last_synced_at", time.Now().UTC().Format(time.RFC3339))
 	stack.Set("status", redeployStatus)

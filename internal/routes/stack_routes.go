@@ -140,11 +140,12 @@ func (rr routeRegistrar) registerStackInspectionRoutes() {
 		if !rr.workerOnline(e, stackID) {
 			return nil
 		}
-		var body struct {
+		body := struct {
 			RecreateContainers bool `json:"recreate_containers"`
 			RecreateVolumes    bool `json:"recreate_volumes"`
 			RecreateNetworks   bool `json:"recreate_networks"`
-		}
+			PauseAfter         bool `json:"pause_after_redeploy"`
+		}{PauseAfter: true}
 		if err := json.NewDecoder(e.Request.Body).Decode(&body); err != nil {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid body"})
 		}
@@ -155,7 +156,7 @@ func (rr routeRegistrar) registerStackInspectionRoutes() {
 		// Any persisted render_overrides are reapplied automatically by
 		// ForceRedeployStack, same as every other reconcile path — no need to
 		// load and pass them explicitly here.
-		rr.scheduler.TriggerForceRedeploy(stackID, body.RecreateContainers, body.RecreateVolumes, body.RecreateNetworks, userID)
+		rr.scheduler.TriggerForceRedeploy(stackID, body.RecreateContainers, body.RecreateVolumes, body.RecreateNetworks, body.PauseAfter, userID)
 		return e.JSON(http.StatusOK, map[string]string{"status": "triggered"})
 	}).BindFunc(rbac.Require(rbac.CapOperateStacks))
 
@@ -304,8 +305,9 @@ func (rr routeRegistrar) registerStackInspectionRoutes() {
 		}
 		// Applying overrides always changes the service definition (image/ports/networks),
 		// so force-recreate the containers rather than relying on docker compose's own
-		// diffing to notice the change.
-		rr.scheduler.TriggerForceRedeploy(stackID, true, false, false, userID)
+		// diffing to notice the change. Pause after, same as every other reconcile path,
+		// so a scheduled reconcile can't immediately race the override just applied.
+		rr.scheduler.TriggerForceRedeploy(stackID, true, false, false, true, userID)
 		return e.JSON(http.StatusOK, map[string]string{"status": "triggered"})
 	}).BindFunc(rbac.Require(rbac.CapOperateStacks))
 
@@ -332,8 +334,10 @@ func (rr routeRegistrar) registerStackInspectionRoutes() {
 			userID = e.Auth.Id
 		}
 		// Reverting to Git state changes the service definition back, same as applying
-		// overrides — force-recreate so the revert is guaranteed to take effect.
-		rr.scheduler.TriggerForceRedeploy(stackID, true, false, false, userID)
+		// overrides — force-recreate so the revert is guaranteed to take effect. Pause
+		// after, same as every other reconcile path, so a scheduled reconcile can't
+		// immediately race the revert just applied.
+		rr.scheduler.TriggerForceRedeploy(stackID, true, false, false, true, userID)
 		return e.JSON(http.StatusOK, map[string]string{"status": "triggered"})
 	}).BindFunc(rbac.Require(rbac.CapOperateStacks))
 

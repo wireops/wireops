@@ -101,7 +101,7 @@ export function useApi() {
     customGet<{ cpu_percent: number; mem_usage: number; mem_limit: number; started_at: string }>(`/api/custom/stacks/${stackId}/container/${containerId}/stats`)
   const getContainerLogs = (stackId: string, containerId: string, tail = 100) =>
     customGet<{ logs: string }>(`/api/custom/stacks/${stackId}/container/${containerId}/logs?tail=${tail}`)
-  const forceRedeploy = (stackId: string, options: { recreate_containers: boolean; recreate_volumes: boolean; recreate_networks: boolean }) =>
+  const forceRedeploy = (stackId: string, options: { recreate_containers: boolean; recreate_volumes: boolean; recreate_networks: boolean; pause_after_redeploy?: boolean }) =>
     customPost(`/api/custom/stacks/${stackId}/force-redeploy`, options)
   type ServiceOverride = { image?: string; ports?: string[]; networks?: string[] }
   const setRenderOverrides = (stackId: string, overrides: Record<string, ServiceOverride>) =>
