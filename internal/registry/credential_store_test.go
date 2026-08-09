@@ -115,6 +115,7 @@ func TestNormalizeRegistryHost(t *testing.T) {
 		"https://registry.example.com:5000": "registry.example.com:5000",
 		"docker.io":                         "docker.io",
 		"registry.example.com/":             "registry.example.com",
+		"registry.example.com/v2":           "registry.example.com",
 	}
 	for input, want := range cases {
 		if got := NormalizeRegistryHost(input); got != want {

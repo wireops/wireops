@@ -614,14 +614,14 @@ func RunJob(ctx context.Context, cmd protocol.RunJobCommand) protocol.JobComplet
 	cmd.Volumes = append(cmd.Volumes, configVolumes...)
 
 	if err := preflightInsecureRegistries(cmd.InsecureRegistries); err != nil {
-		return protocol.JobCompletedMessage{JobRunID: cmd.JobRunID, Success: false, Output: err.Error()}
+		return protocol.JobCompletedMessage{JobRunID: cmd.JobRunID, Success: false, Output: "failed to start job, " + err.Error()}
 	}
 	if err := validateRegistryAuth(cmd.RegistryAuthB64, cmd.InsecureRegistries); err != nil {
-		return protocol.JobCompletedMessage{JobRunID: cmd.JobRunID, Success: false, Output: err.Error()}
+		return protocol.JobCompletedMessage{JobRunID: cmd.JobRunID, Success: false, Output: "failed to start job, " + err.Error()}
 	}
 	dockerConfigDir, cleanupAuth, err := prepareRegistryAuth(cmd.JobRunID, cmd.CommandID, cmd.RegistryAuthB64)
 	if err != nil {
-		return protocol.JobCompletedMessage{JobRunID: cmd.JobRunID, Success: false, Output: err.Error()}
+		return protocol.JobCompletedMessage{JobRunID: cmd.JobRunID, Success: false, Output: "failed to start job, " + err.Error()}
 	}
 	defer cleanupAuth()
 

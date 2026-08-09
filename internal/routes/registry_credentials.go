@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,11 @@ import (
 	"github.com/wireops/wireops/internal/registry"
 )
 
+// maxRegistryCredentialTestBodyBytes bounds the request body for the test
+// endpoint. A GCP service-account JSON key is the largest realistic payload
+// (a few KB); 1MB leaves generous headroom without being unbounded.
+const maxRegistryCredentialTestBodyBytes = 1 << 20
+
 func (rr routeRegistrar) registerRegistryCredentialRoutes() {
 	rr.r.POST("/api/custom/registry-credentials/test", func(e *core.RequestEvent) error {
 		var body struct {
@@ -21,8 +27,14 @@ func (rr routeRegistrar) registerRegistryCredentialRoutes() {
 			AuthType     string `json:"auth_type"`
 			Username     string `json:"username"`
 			Password     string `json:"password"`
-			Insecure     bool   `json:"insecure"`
+			// Insecure is a pointer so omission can be distinguished from an
+			// explicit `false` — otherwise merging with a saved credential
+			// below would treat "explicitly disabling insecure" the same as
+			// "field not provided" and silently re-enable it from the saved
+			// value.
+			Insecure *bool `json:"insecure"`
 		}
+		e.Request.Body = http.MaxBytesReader(e.Response, e.Request.Body, maxRegistryCredentialTestBodyBytes)
 		if err := json.NewDecoder(e.Request.Body).Decode(&body); err != nil {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid body"})
 		}
@@ -44,10 +56,11 @@ func (rr routeRegistrar) registerRegistryCredentialRoutes() {
 			if body.RegistryURL == "" {
 				body.RegistryURL = saved.RegistryURL
 			}
-			if !body.Insecure {
-				body.Insecure = saved.Insecure
+			if body.Insecure == nil {
+				body.Insecure = &saved.Insecure
 			}
 		}
+		insecure := body.Insecure != nil && *body.Insecure
 
 		host := registry.NormalizeRegistryHost(body.RegistryURL)
 		if host == "" {
@@ -59,7 +72,7 @@ func (rr routeRegistrar) registerRegistryCredentialRoutes() {
 			result["warning"] = "Service account key is not valid JSON"
 		}
 
-		if err := testRegistryConnection(host, body.Username, body.Password, body.Insecure); err != nil {
+		if err := testRegistryConnection(e.Request.Context(), host, body.Username, body.Password, insecure); err != nil {
 			result["success"] = false
 			result["error"] = err.Error()
 			return e.JSON(http.StatusOK, result)
@@ -73,15 +86,15 @@ func (rr routeRegistrar) registerRegistryCredentialRoutes() {
 // HTTP Basic auth — the same check the worker itself runs before a pull
 // (worker/executor/registry_auth.go: checkRegistryAuth) — so a bad
 // credential is caught at save time, not at the next deploy.
-func testRegistryConnection(host, username, password string, insecure bool) error {
+func testRegistryConnection(ctx context.Context, host, username, password string, insecure bool) error {
 	client := &http.Client{Timeout: 5 * time.Second}
 	if insecure {
-		client.Transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+		client.Transport = &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: true}}
 	}
 
-	resp, err := doRegistryTestRequest(client, "https://"+host+"/v2/", username, password)
+	resp, err := doRegistryTestRequest(ctx, client, "https://"+host+"/v2/", username, password)
 	if err != nil && insecure {
-		resp, err = doRegistryTestRequest(client, "http://"+host+"/v2/", username, password)
+		resp, err = doRegistryTestRequest(ctx, client, "http://"+host+"/v2/", username, password)
 	}
 	if err != nil {
 		return err
@@ -98,8 +111,8 @@ func testRegistryConnection(host, username, password string, insecure bool) erro
 	}
 }
 
-func doRegistryTestRequest(client *http.Client, url, username, password string) (*http.Response, error) {
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+func doRegistryTestRequest(ctx context.Context, client *http.Client, url, username, password string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}

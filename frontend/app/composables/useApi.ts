@@ -129,7 +129,7 @@ export function useApi() {
     customPost<{ id: string; name: string; status: string }>('/api/custom/stacks/from-wireops', body)
   const testCredentials = (body: any) => customPost('/api/custom/credentials/test', body)
   const keyscan = (host: string, port = 22) => customPost('/api/custom/credentials/keyscan', { host, port })
-  const testRegistryCredential = (body: any) => customPost('/api/custom/registry-credentials/test', body)
+  const testRegistryCredential = (body: any) => customPost<{ success: boolean, error?: string, warning?: string }>('/api/custom/registry-credentials/test', body)
   const listGitProviders = () =>
     customGet<{ slug: string; name: string; configured: boolean; connected: boolean; account_login?: string; key_id?: string }[]>('/api/custom/git-providers')
   const getGitProviderAuthorizeUrl = (slug: string) =>

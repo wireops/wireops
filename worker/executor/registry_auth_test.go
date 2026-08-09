@@ -63,6 +63,28 @@ func TestPrepareRegistryAuthInvalidBase64(t *testing.T) {
 	}
 }
 
+func TestPrepareRegistryAuthRejectsPathTraversal(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldStackDir := stackDir
+	stackDir = tmpDir
+	defer func() { stackDir = oldStackDir }()
+
+	content := `{"auths":{}}`
+	authB64 := base64.StdEncoding.EncodeToString([]byte(content))
+
+	cases := []struct{ stackID, commandID string }{
+		{"..", "cmd-1"},
+		{"stack-1", ".."},
+		{"../../etc", "cmd-1"},
+		{"stack-1", "cmd/../1"},
+	}
+	for _, tc := range cases {
+		if _, _, err := prepareRegistryAuth(tc.stackID, tc.commandID, authB64); err == nil {
+			t.Errorf("expected error for stackID=%q commandID=%q, got nil", tc.stackID, tc.commandID)
+		}
+	}
+}
+
 func TestValidateRegistryAuthEmptyIsNoop(t *testing.T) {
 	if err := validateRegistryAuth("", nil); err != nil {
 		t.Fatalf("expected no error for empty authB64, got %v", err)

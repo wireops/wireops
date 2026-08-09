@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
@@ -10,8 +11,24 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"time"
 )
+
+// dockerInfoTimeout bounds the `docker info` subprocess run by
+// preflightInsecureRegistries so an unresponsive daemon can't hang command
+// processing indefinitely.
+const dockerInfoTimeout = 10 * time.Second
+
+// safePathSegmentRE matches IDs safe to use as a single path component —
+// PocketBase record IDs and "job-<id>" command IDs both fit this — and
+// rejects anything else, including "." and "..", before it reaches
+// filepath.Join.
+var safePathSegmentRE = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+func isSafePathSegment(s string) bool {
+	return safePathSegmentRE.MatchString(s)
+}
 
 // prepareRegistryAuth decodes a dispatched command's RegistryAuthB64 (a
 // docker config.json built server-side from the stack's registry_credential,
@@ -24,6 +41,9 @@ func prepareRegistryAuth(stackID, commandID, authB64 string) (dir string, cleanu
 	noop := func() {}
 	if authB64 == "" {
 		return "", noop, nil
+	}
+	if !isSafePathSegment(stackID) || !isSafePathSegment(commandID) {
+		return "", noop, fmt.Errorf("invalid stack/command id for registry auth dir")
 	}
 
 	content, err := base64.StdEncoding.DecodeString(authB64)
@@ -149,7 +169,9 @@ func preflightInsecureRegistries(hosts []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to find docker binary: %w", err)
 	}
-	cmd := exec.Command(dockerPath, "info", "--format", "{{json .RegistryConfig}}")
+	ctx, cancel := context.WithTimeout(context.Background(), dockerInfoTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, dockerPath, "info", "--format", "{{json .RegistryConfig}}")
 	cmd.Env = safeEnv()
 	out, err := cmd.Output()
 	if err != nil {

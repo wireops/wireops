@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { isValidRegistryUrl } from '../utils/registryUrl'
 
 const AUTH_TYPE = {
   BASIC: 'basic',
@@ -23,6 +24,7 @@ const emit = defineEmits<{
 const isEditMode = computed(() => !!props.credential)
 const saving = ref(false)
 const testing = ref(false)
+const inFlight = computed(() => saving.value || testing.value)
 const jsonHint = ref('')
 const form = ref({
   name: '',
@@ -36,13 +38,14 @@ const form = ref({
 watch(isOpen, (open) => {
   if (!open) return
   const cred = props.credential
+  const isGCP = cred?.auth_type === AUTH_TYPE.GCP_SERVICE_ACCOUNT
   form.value = {
     name: cred?.name || '',
     registry_url: cred?.registry_url || '',
     auth_type: cred?.auth_type || AUTH_TYPE.BASIC,
-    username: cred?.auth_type === AUTH_TYPE.GCP_SERVICE_ACCOUNT ? '_json_key' : (cred?.username || ''),
+    username: isGCP ? '_json_key' : (cred?.username || ''),
     password: '',
-    insecure: cred?.insecure || false,
+    insecure: isGCP ? false : (cred?.insecure || false),
   }
   jsonHint.value = ''
 })
@@ -50,6 +53,9 @@ watch(isOpen, (open) => {
 watch(() => form.value.auth_type, (type) => {
   if (type === AUTH_TYPE.GCP_SERVICE_ACCOUNT) {
     form.value.username = '_json_key'
+    // GCP credentials always authenticate over HTTPS to a Google-operated
+    // registry — insecure/self-signed never applies, so force it off.
+    form.value.insecure = false
   } else if (form.value.username === '_json_key') {
     form.value.username = ''
   }
@@ -83,6 +89,7 @@ function validationError(): string {
   const needsNewSecret = !isEditMode.value
   if (!form.value.name.trim()) return 'Name is required'
   if (!form.value.registry_url.trim()) return 'Registry URL is required'
+  if (!isValidRegistryUrl(form.value.registry_url)) return 'Registry URL is not valid'
   if (form.value.auth_type !== AUTH_TYPE.GCP_SERVICE_ACCOUNT && !form.value.username.trim())
     return 'Username is required'
   if (needsNewSecret && !form.value.password)
@@ -115,7 +122,7 @@ async function testConnection() {
       ...buildPayload(),
     })
     if (result.success) {
-      toast.add({ title: 'Connection successful', color: 'success' })
+      toast.add({ title: 'Connection successful', description: result.warning, color: result.warning ? 'warning' : 'success' })
     } else {
       toast.add({ title: 'Connection failed', description: result.error, color: 'error' })
     }
@@ -212,7 +219,7 @@ async function submit() {
             </UFormField>
           </template>
 
-          <UFormField label="Insecure registry" description="Plain HTTP or self-signed TLS certificate. The worker's own Docker daemon must already trust this registry via insecure-registries in daemon.json — this toggle does not configure that for you.">
+          <UFormField v-if="form.auth_type !== AUTH_TYPE.GCP_SERVICE_ACCOUNT" label="Insecure registry" description="Plain HTTP or self-signed TLS certificate. The worker's own Docker daemon must already trust this registry via insecure-registries in daemon.json — this toggle does not configure that for you.">
             <USwitch v-model="form.insecure" />
           </UFormField>
 
@@ -223,11 +230,12 @@ async function submit() {
               variant="outline"
               color="neutral"
               :loading="testing"
+              :disabled="inFlight"
               @click="testConnection"
             />
             <div class="flex gap-2">
-              <CancelButton @click="isOpen = false" />
-              <UButton type="submit" :label="isEditMode ? 'Save' : 'Create Credential'" :loading="saving" />
+              <CancelButton :disabled="inFlight" @click="isOpen = false" />
+              <UButton type="submit" :label="isEditMode ? 'Save' : 'Create Credential'" :loading="saving" :disabled="inFlight" />
             </div>
           </div>
         </form>

@@ -217,3 +217,78 @@ func TestRegistryCredentialTestConnectionWarnsOnInvalidJSON(t *testing.T) {
 		t.Fatalf("expected success=true despite the JSON warning, got %#v", resp)
 	}
 }
+
+func TestRegistryCredentialTestConnectionRequiresRegistryURL(t *testing.T) {
+	app, operator := registryCredentialTestApp(t)
+	mux := registryCredentialRoutesMux(t, app, operator)
+
+	body := map[string]any{"auth_type": "basic", "username": "deploy", "password": "hunter2"}
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/custom/registry-credentials/test", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	var resp map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["success"] != false || resp["error"] != "registry_url is required" {
+		t.Fatalf("expected registry_url validation error, got %#v", resp)
+	}
+}
+
+func TestRegistryCredentialTestConnectionUnknownCredentialID(t *testing.T) {
+	app, operator := registryCredentialTestApp(t)
+	mux := registryCredentialRoutesMux(t, app, operator)
+
+	body := map[string]any{"credential_id": "does-not-exist"}
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/custom/registry-credentials/test", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	var resp map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["success"] != false || resp["error"] == nil || resp["error"] == "" {
+		t.Fatalf("expected a credential load error, got %#v", resp)
+	}
+}
+
+// TestRegistryCredentialTestConnectionExplicitFalseOverridesSavedInsecure
+// pins the *bool merge semantics: an explicit `"insecure": false` in the
+// request body must NOT be overwritten by a saved credential's
+// `insecure: true` — only omitting the field entirely should inherit the
+// saved value. Before this was a plain bool, false (the zero value) was
+// indistinguishable from "not provided" and got silently overridden.
+func TestRegistryCredentialTestConnectionExplicitFalseOverridesSavedInsecure(t *testing.T) {
+	// TLS server so InsecureSkipVerify is required — if the explicit
+	// `insecure: false` were (bugged) overridden back to true by the saved
+	// credential, the request would still incorrectly succeed.
+	registryServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer registryServer.Close()
+
+	app, operator := registryCredentialTestApp(t)
+	cred := createRegistryCredentialRow(t, app, "Saved", registryServer.URL, "basic", "deploy", "saved-secret", true)
+	mux := registryCredentialRoutesMux(t, app, operator)
+
+	body := map[string]any{"credential_id": cred.Id, "insecure": false}
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/custom/registry-credentials/test", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	var resp map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["success"] != false {
+		t.Fatalf("expected the explicit insecure=false to be honored (self-signed cert rejected), got %#v", resp)
+	}
+}

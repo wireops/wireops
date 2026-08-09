@@ -75,13 +75,21 @@ func LoadCredentialByID(app core.App, id string) (*Credential, error) {
 
 // NormalizeRegistryHost strips scheme/path so the result matches the host
 // key docker's config.json and the registry HTTP API expect, e.g.
-// "https://ghcr.io/" -> "ghcr.io", "registry.example.com:5000" unchanged.
+// "https://ghcr.io/" -> "ghcr.io", "registry.example.com:5000" unchanged,
+// "registry.example.com/v2" -> "registry.example.com" (schemeless input with
+// a path: prepend "//" so url.Parse treats it as an authority, not a bare
+// relative path — otherwise the whole string, path included, would leak
+// into the host key and break auth lookups keyed by host).
 func NormalizeRegistryHost(registryURL string) string {
 	trimmed := strings.TrimSpace(registryURL)
 	if trimmed == "" {
 		return ""
 	}
-	if u, err := url.Parse(trimmed); err == nil && u.Host != "" {
+	parseable := trimmed
+	if !strings.Contains(parseable, "://") {
+		parseable = "//" + parseable
+	}
+	if u, err := url.Parse(parseable); err == nil && u.Host != "" {
 		return u.Host
 	}
 	return strings.TrimRight(trimmed, "/")

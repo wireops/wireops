@@ -46,10 +46,12 @@ describe('RegistryCredentialModal', () => {
     })
     await flushPromises()
 
+    ;(wrapper.vm as any).form.insecure = true
     ;(wrapper.vm as any).form.auth_type = 'gcp_service_account'
     await flushPromises()
 
     expect((wrapper.vm as any).form.username).toBe('_json_key')
+    expect((wrapper.vm as any).form.insecure).toBe(false)
   })
 
   it('switching away from GCP service account clears the auto-filled username', async () => {
@@ -141,6 +143,33 @@ describe('RegistryCredentialModal', () => {
     }))
   })
 
+  it('shows a failure toast when the connection test resolves with success: false', async () => {
+    const { addToast } = setupGlobals({
+      testRegistryCredential: vi.fn().mockResolvedValue({ success: false, error: 'registry unreachable' }),
+    })
+    const wrapper = mount(RegistryCredentialModal, {
+      props: { open: true },
+      shallow: true,
+    })
+    await flushPromises()
+
+    Object.assign((wrapper.vm as any).form, {
+      name: 'GHCR',
+      registry_url: 'ghcr.io',
+      auth_type: 'basic',
+      username: 'deploy',
+      password: 'hunter2',
+    })
+    await (wrapper.vm as any).testConnection()
+    await flushPromises()
+
+    expect(addToast).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Connection failed',
+      description: 'registry unreachable',
+      color: 'error',
+    }))
+  })
+
   it('does not test the connection when required fields are missing', async () => {
     const { addToast, testRegistryCredential } = setupGlobals()
     const wrapper = mount(RegistryCredentialModal, {
@@ -154,6 +183,32 @@ describe('RegistryCredentialModal', () => {
 
     expect(testRegistryCredential).not.toHaveBeenCalled()
     expect(addToast).toHaveBeenCalledWith(expect.objectContaining({ title: 'Invalid credential', color: 'error' }))
+  })
+
+  it('does not test the connection when the registry url is not valid', async () => {
+    const { addToast, testRegistryCredential } = setupGlobals()
+    const wrapper = mount(RegistryCredentialModal, {
+      props: { open: true },
+      shallow: true,
+    })
+    await flushPromises()
+
+    Object.assign((wrapper.vm as any).form, {
+      name: 'GHCR',
+      registry_url: 'not a valid url',
+      auth_type: 'basic',
+      username: 'deploy',
+      password: 'hunter2',
+    })
+    await (wrapper.vm as any).testConnection()
+    await flushPromises()
+
+    expect(testRegistryCredential).not.toHaveBeenCalled()
+    expect(addToast).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Invalid credential',
+      description: 'Registry URL is not valid',
+      color: 'error',
+    }))
   })
 
   it('creates a new credential and emits saved', async () => {

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { computed, nextTick, onMounted, ref } from 'vue'
+
 const { $pb } = useNuxtApp()
 const { canManageRepos } = usePermissions()
 const { subscribe } = useRealtime()
@@ -156,6 +158,7 @@ defineExpose({
                 variant="ghost"
                 :color="usage[credential.id] ? 'neutral' : 'error'"
                 aria-label="Delete credential"
+                :title="usage[credential.id] ? 'Remove this credential from its stacks before deleting it' : 'Delete credential'"
                 :disabled="!!usage[credential.id]"
                 @click="requestDelete(credential)"
               />

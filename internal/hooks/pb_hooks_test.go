@@ -749,3 +749,74 @@ func TestEnsureRepositorySopsKeypairEncryptFailure(t *testing.T) {
 		t.Fatalf("sops_age_public_key should remain unset after an encrypt failure, got %q", repository.GetString("sops_age_public_key"))
 	}
 }
+
+// TestRegistryCredentialPasswordEncryptedOnCreateAndUpdate exercises the
+// OnRecordCreate/OnRecordUpdate hooks registered for registry_credentials
+// (mirroring repository_keys' git_password/ssh_private_key handling): the
+// password must never be persisted in plaintext, on either create or a
+// later update. Not testing the OnRecordEnrich hide-on-read hook here — no
+// collection in this codebase (including the original repository_keys it
+// was copied from) has enrich-hook test coverage, since it only fires
+// through the full HTTP-served request pipeline rather than app.Save();
+// building that harness is out of scope for this fix.
+func TestRegistryCredentialPasswordEncryptedOnCreateAndUpdate(t *testing.T) {
+	secret := "12345678901234567890123456789012"
+	t.Setenv("SECRET_KEY", secret)
+
+	app, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatalf("new test app: %v", err)
+	}
+	t.Cleanup(func() { app.Cleanup() })
+
+	credentials := core.NewBaseCollection("registry_credentials")
+	credentials.Fields.Add(&core.TextField{Name: "name"})
+	credentials.Fields.Add(&core.TextField{Name: "registry_url"})
+	credentials.Fields.Add(&core.TextField{Name: "auth_type"})
+	credentials.Fields.Add(&core.TextField{Name: "username"})
+	credentials.Fields.Add(&core.TextField{Name: "password"})
+	credentials.Fields.Add(&core.BoolField{Name: "insecure"})
+	if err := app.Save(credentials); err != nil {
+		t.Fatalf("save registry_credentials collection: %v", err)
+	}
+
+	Register(app, nil, nil, logstream.New())
+
+	cred := core.NewRecord(credentials)
+	cred.Set("name", "GHCR")
+	cred.Set("registry_url", "ghcr.io")
+	cred.Set("auth_type", "basic")
+	cred.Set("username", "deploy")
+	cred.Set("password", "hunter2")
+	if err := app.Save(cred); err != nil {
+		t.Fatalf("save credential: %v", err)
+	}
+
+	stored := cred.GetString("password")
+	if stored == "hunter2" || stored == "" {
+		t.Fatalf("expected password to be encrypted at rest after create, got %q", stored)
+	}
+	plain, err := crypto.Decrypt(stored, []byte(secret))
+	if err != nil {
+		t.Fatalf("decrypt stored password: %v", err)
+	}
+	if string(plain) != "hunter2" {
+		t.Fatalf("decrypted password = %q, want %q", plain, "hunter2")
+	}
+
+	cred.Set("password", "rotated-secret")
+	if err := app.Save(cred); err != nil {
+		t.Fatalf("update credential: %v", err)
+	}
+	updatedStored := cred.GetString("password")
+	if updatedStored == "rotated-secret" || updatedStored == "" {
+		t.Fatalf("expected password to be encrypted at rest after update, got %q", updatedStored)
+	}
+	updatedPlain, err := crypto.Decrypt(updatedStored, []byte(secret))
+	if err != nil {
+		t.Fatalf("decrypt updated password: %v", err)
+	}
+	if string(updatedPlain) != "rotated-secret" {
+		t.Fatalf("decrypted updated password = %q, want %q", updatedPlain, "rotated-secret")
+	}
+}

@@ -1,12 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import * as vue from 'vue'
 import { h, ref } from 'vue'
 import RegistryCredentialsPanel from '../RegistryCredentialsPanel.vue'
-
-for (const key of ['ref', 'computed', 'watch', 'watchEffect', 'onMounted', 'onUnmounted', 'onBeforeUnmount', 'nextTick', 'reactive']) {
-  (globalThis as any)[key] = (vue as any)[key]
-}
 
 const credentialFixture = {
   id: 'cred-1',
@@ -134,8 +129,6 @@ describe('RegistryCredentialsPanel', () => {
     await flushPromises()
 
     expect(wrapper.find('.registry-modal-stub').exists()).toBe(false)
-    await wrapper.find('button[aria-label="Add Credential"], button').trigger('click')
-    // "Add Credential" is the header button; find it explicitly by label text.
     const addButton = wrapper.findAll('button').find(b => b.text() === 'Add Credential')!
     await addButton.trigger('click')
     await flushPromises()
