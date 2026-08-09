@@ -13,7 +13,7 @@ const UStepperStub = {
 
 const stubs = {
   UModal: { template: '<div><slot name="content" /></div>' },
-  UCard: { template: '<div><slot name="header" /><slot /><slot name="footer" /></div>' },
+  AppPanelCard: { template: '<div><slot name="header" /><slot /><slot name="footer" /></div>' },
   UStepper: UStepperStub,
   UFormField: { props: ['label', 'error', 'required'], template: '<div><label>{{ label }}</label><slot /></div>' },
   AppTextInput: {

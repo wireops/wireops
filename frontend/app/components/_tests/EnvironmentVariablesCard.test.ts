@@ -34,7 +34,7 @@ describe('EnvironmentVariablesCard', () => {
   })
 
   const stubs = {
-    UCard: {
+    AppPanelCard: {
       setup(_props: unknown, { slots }: { slots: Slots }) {
         return () => h('div', [slots.header?.(), slots.default?.()])
       },
@@ -124,6 +124,19 @@ describe('EnvironmentVariablesCard', () => {
       props: ['targetType', 'targetId', 'envVars', 'importContent', 'defaultSecretKeys'],
       setup() {
         return () => h('div', { class: 'bulk-editor-stub' })
+      },
+    },
+    IntegrationsInfisicalReferencePicker: {
+      props: ['modelValue'],
+      emits: ['update:modelValue'],
+      setup(_props: unknown, { emit }: { emit: (e: string, v: string) => void }) {
+        return () => h('div', { class: 'infisical-picker', onClick: () => emit('update:modelValue', 'my-project#DB_PASS') }, 'infisical-picker')
+      },
+    },
+    CopyEnvVarsModal: {
+      props: ['open', 'targetType', 'targetId', 'repositoryId'],
+      setup() {
+        return () => null
       },
     },
   }

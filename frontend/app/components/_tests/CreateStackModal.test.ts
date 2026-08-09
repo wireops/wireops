@@ -59,7 +59,7 @@ function setupGlobals() {
 
 const stubs = {
   UModal: { template: '<div><slot name="content" /></div>' },
-  UCard: { template: '<div><slot name="header" /><slot /><slot name="footer" /></div>' },
+  AppPanelCard: { template: '<div><slot name="header" /><slot /><slot name="footer" /></div>' },
   UStepper: { props: ['modelValue', 'items'], template: '<div />' },
   UFormField: { props: ['label', 'error', 'required'], template: '<div><label>{{ label }}</label><slot /><div class="field-error">{{ error }}</div></div>' },
   AppTextInput: {
@@ -86,6 +86,18 @@ const stubs = {
   UAlert: { props: ['title', 'description', 'color'], template: '<div class="alert"><div>{{ title }}</div><div><slot name="description">{{ description }}</slot></div></div>' },
   UBadge: { props: ['label'], template: '<span class="badge">{{ label }}</span>' },
   UIcon: { template: '<span />' },
+  CloseButton: {
+    emits: ['click'],
+    setup(_props: unknown, { emit }: { emit: (e: 'click') => void }) {
+      return () => h('button', { type: 'button', onClick: () => emit('click') }, 'Close')
+    },
+  },
+  CancelButton: {
+    emits: ['click'],
+    setup(_props: unknown, { emit }: { emit: (e: 'click') => void }) {
+      return () => h('button', { type: 'button', onClick: () => emit('click') }, 'Cancel')
+    },
+  },
   // Rendered via h() rather than a template string — Codacy flags inline
   // HTML-string stubs as XSS even in tests.
   LintFindings: {
