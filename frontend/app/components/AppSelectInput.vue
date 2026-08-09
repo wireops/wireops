@@ -7,6 +7,7 @@ interface SelectItem {
   value: string
   icon?: string
   avatar?: { src: string }
+  description?: string
 }
 
 const props = withDefaults(
@@ -162,7 +163,10 @@ watch(query, () => { activeIndex.value = 0 })
                 <UIcon v-if="item.icon" :name="item.icon" class="w-4 h-4 shrink-0 text-gray-400 dark:text-wire-200/30" />
                 <img v-else-if="item.avatar" :src="item.avatar.src" class="w-4 h-4 shrink-0 object-contain">
               </slot>
-              <span class="truncate">{{ item.label }}</span>
+              <span class="flex flex-col min-w-0 truncate">
+                <span class="truncate">{{ item.label }}</span>
+                <span v-if="item.description" class="truncate text-xs text-gray-400 dark:text-wire-200/40">{{ item.description }}</span>
+              </span>
             </span>
             <UIcon v-if="item.value === modelValue" name="i-lucide-check" class="w-3.5 h-3.5 text-yellow-500 shrink-0" />
           </li>

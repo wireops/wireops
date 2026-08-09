@@ -588,11 +588,11 @@ async function handleKeySaved(key: Record<string, any>) {
                   variant="outline"
                   color="neutral"
                   :loading="testingConnection"
-                  :disabled="!form.git_url.trim()"
+                  :disabled="!form.git_url.trim() || saving"
                   @click="testConnection"
                 />
-                <CancelButton @click="isOpen = false" />
-                <UButton v-if="step === 'form'" type="submit" :label="isEditMode ? 'Save' : 'Create'" :loading="saving" />
+                <CancelButton :disabled="testingConnection || saving" @click="isOpen = false" />
+                <UButton v-if="step === 'form'" type="submit" :label="isEditMode ? 'Save' : 'Create'" :loading="saving" :disabled="testingConnection" />
               </div>
             </div>
           </template>

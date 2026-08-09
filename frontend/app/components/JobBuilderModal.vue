@@ -442,7 +442,7 @@ function handleImportYaml() {
             <div v-show="formTab === 'required'" class="space-y-3">
             <!-- Basic Info Card -->
             <div class="space-y-3 border border-gray-300 dark:border-carbon-800/60 rounded-lg p-3 bg-gray-50/50 dark:bg-carbon-900/10">
-              <div class="flex items-center gap-1.5 border-b border-gray-150 dark:border-carbon-800/30 pb-1.5 mb-1">
+              <div class="flex items-center gap-1.5 border-b border-gray-200 dark:border-carbon-800/30 pb-1.5 mb-1">
                 <UIcon name="i-lucide-info" class="w-4 h-4 text-yellow-400 shrink-0" />
                 <span class="text-xs uppercase tracking-wider font-bold text-gray-500 dark:text-wire-200/50">Basic Info</span>
               </div>
@@ -456,7 +456,7 @@ function handleImportYaml() {
 
             <!-- Execution Config Card -->
             <div class="space-y-3 border border-gray-300 dark:border-carbon-800/60 rounded-lg p-3 bg-gray-50/50 dark:bg-carbon-900/10">
-              <div class="flex items-center gap-1.5 border-b border-gray-150 dark:border-carbon-800/30 pb-1.5 mb-1">
+              <div class="flex items-center gap-1.5 border-b border-gray-200 dark:border-carbon-800/30 pb-1.5 mb-1">
                 <UIcon name="i-lucide-settings" class="w-4 h-4 text-yellow-400 shrink-0" />
                 <span class="text-xs uppercase tracking-wider font-bold text-gray-500 dark:text-wire-200/50">Execution Config</span>
               </div>
@@ -469,7 +469,7 @@ function handleImportYaml() {
 
             <!-- Trigger Card -->
             <div class="space-y-3 border border-gray-300 dark:border-carbon-800/60 rounded-lg p-3 bg-gray-50/50 dark:bg-carbon-900/10">
-              <div class="flex items-center gap-1.5 border-b border-gray-150 dark:border-carbon-800/30 pb-1.5 mb-1">
+              <div class="flex items-center gap-1.5 border-b border-gray-200 dark:border-carbon-800/30 pb-1.5 mb-1">
                 <UIcon name="i-lucide-calendar-clock" class="w-4 h-4 text-yellow-400 shrink-0" />
                 <span class="text-xs uppercase tracking-wider font-bold text-gray-500 dark:text-wire-200/50">Trigger</span>
               </div>
@@ -524,7 +524,7 @@ function handleImportYaml() {
 
             <!-- Resources Card -->
             <div class="space-y-3 border border-gray-300 dark:border-carbon-800/60 rounded-lg p-3 bg-gray-50/50 dark:bg-carbon-900/10">
-              <div class="flex items-center gap-1.5 border-b border-gray-150 dark:border-carbon-800/30 pb-1.5 mb-1">
+              <div class="flex items-center gap-1.5 border-b border-gray-200 dark:border-carbon-800/30 pb-1.5 mb-1">
                 <UIcon name="i-lucide-cpu" class="w-4 h-4 text-yellow-400 shrink-0" />
                 <span class="text-xs uppercase tracking-wider font-bold text-gray-500 dark:text-wire-200/50">Resources</span>
               </div>
@@ -557,7 +557,7 @@ function handleImportYaml() {
             <div v-show="formTab === 'optional'" class="space-y-3">
             <!-- Mode Card -->
             <div class="space-y-3 border border-gray-300 dark:border-carbon-800/60 rounded-lg p-3 bg-gray-50/50 dark:bg-carbon-900/10">
-              <div class="flex items-center gap-1.5 border-b border-gray-150 dark:border-carbon-800/30 pb-1.5 mb-1">
+              <div class="flex items-center gap-1.5 border-b border-gray-200 dark:border-carbon-800/30 pb-1.5 mb-1">
                 <UIcon name="i-lucide-git-fork" class="w-4 h-4 text-yellow-400 shrink-0" />
                 <span class="text-xs uppercase tracking-wider font-bold text-gray-500 dark:text-wire-200/50">Mode</span>
               </div>
@@ -576,7 +576,7 @@ function handleImportYaml() {
 
             <!-- Command Card -->
             <div class="space-y-3 border border-gray-300 dark:border-carbon-800/60 rounded-lg p-3 bg-gray-50/50 dark:bg-carbon-900/10">
-              <div class="flex items-center gap-1.5 border-b border-gray-150 dark:border-carbon-800/30 pb-1.5 mb-1">
+              <div class="flex items-center gap-1.5 border-b border-gray-200 dark:border-carbon-800/30 pb-1.5 mb-1">
                 <UIcon name="i-lucide-terminal" class="w-4 h-4 text-yellow-400 shrink-0" />
                 <span class="text-xs uppercase tracking-wider font-bold text-gray-500 dark:text-wire-200/50">Command</span>
               </div>
@@ -620,7 +620,7 @@ function handleImportYaml() {
 
             <!-- Worker Config Card -->
             <div class="space-y-3 border border-gray-300 dark:border-carbon-800/60 rounded-lg p-3 bg-gray-50/50 dark:bg-carbon-900/10">
-              <div class="flex items-center gap-1.5 border-b border-gray-150 dark:border-carbon-800/30 pb-1.5 mb-1">
+              <div class="flex items-center gap-1.5 border-b border-gray-200 dark:border-carbon-800/30 pb-1.5 mb-1">
                 <UIcon name="i-lucide-server" class="w-4 h-4 text-yellow-400 shrink-0" />
                 <span class="text-xs uppercase tracking-wider font-bold text-gray-500 dark:text-wire-200/50">Worker Config</span>
               </div>
@@ -698,7 +698,7 @@ function handleImportYaml() {
 
             <!-- Volumes & Network Card -->
             <div class="space-y-3 border border-gray-300 dark:border-carbon-800/60 rounded-lg p-3 bg-gray-50/50 dark:bg-carbon-900/10">
-              <div class="flex items-center justify-between border-b border-gray-150 dark:border-carbon-800/30 pb-1.5 mb-1">
+              <div class="flex items-center justify-between border-b border-gray-200 dark:border-carbon-800/30 pb-1.5 mb-1">
                 <div class="flex items-center gap-1.5">
                   <UIcon name="i-lucide-layers" class="w-4 h-4 text-yellow-400 shrink-0" />
                   <span class="text-xs uppercase tracking-wider font-bold text-gray-500 dark:text-wire-200/50">Volumes & Network</span>

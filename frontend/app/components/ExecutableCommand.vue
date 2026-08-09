@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 
 const props = withDefaults(defineProps<{
   label: string
@@ -17,6 +17,8 @@ const props = withDefaults(defineProps<{
 
 const revealed = ref(false)
 const displayContent = computed(() => props.masked && !revealed.value ? '•'.repeat(Math.min(props.content.length, 40)) : props.content)
+
+watch([() => props.content, () => props.masked], () => { revealed.value = false })
 
 const toast = useToast()
 

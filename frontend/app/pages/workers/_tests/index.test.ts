@@ -18,6 +18,7 @@ function setupGlobals(createWorkerToken = vi.fn().mockResolvedValue({ token: 'to
 
   ;(globalThis as any).navigateTo = vi.fn()
   ;(globalThis as any).useRoute = () => ({ query: {} })
+  ;(globalThis as any).useRouter = () => ({ replace: vi.fn() })
   ;(globalThis as any).useToast = () => ({ add: vi.fn() })
   ;(globalThis as any).usePermissions = () => ({ isViewer: ref(false) })
   ;(globalThis as any).useApi = () => ({

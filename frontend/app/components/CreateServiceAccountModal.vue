@@ -12,6 +12,8 @@ const form = ref({
   role: 'viewer'
 })
 
+const errors = ref({ name: '', description: '' })
+
 const roleOptions = [
   { label: 'Viewer', value: 'viewer' },
   { label: 'Operator', value: 'operator' },
@@ -19,9 +21,15 @@ const roleOptions = [
 
 function reset() {
   form.value = { name: '', description: '', role: 'viewer' }
+  errors.value = { name: '', description: '' }
 }
 
 function handleSubmit() {
+  errors.value = {
+    name: form.value.name.trim() ? '' : 'Name is required',
+    description: form.value.description.trim() ? '' : 'Description is required',
+  }
+  if (errors.value.name || errors.value.description) return
   emit('submit', { ...form.value })
 }
 
@@ -46,11 +54,11 @@ defineExpose({ reset })
     </template>
 
     <form class="space-y-4" @submit.prevent="handleSubmit">
-      <UFormField label="Name" required>
+      <UFormField label="Name" required :error="errors.name">
         <AppTextInput v-model="form.name" placeholder="e.g. CI-CD-deployer" />
       </UFormField>
 
-      <UFormField label="Description" required>
+      <UFormField label="Description" required :error="errors.description">
         <AppTextInput v-model="form.description" placeholder="What is this service account for?" />
       </UFormField>
 

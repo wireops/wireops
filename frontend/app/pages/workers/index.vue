@@ -3,6 +3,7 @@ const { getWorkers, createWorkerToken } = useApi()
 const toast = useToast()
 const { isViewer } = usePermissions()
 const route = useRoute()
+const router = useRouter()
 
 if (isViewer.value) {
   navigateTo('/')
@@ -81,7 +82,8 @@ function formatRelative(dateStr: string) {
 
 function formatDuration(dateStr: string) {
   if (!dateStr) return ''
-  const diff = Math.abs(new Date(dateStr).getTime() - Date.now())
+  const diff = new Date(dateStr).getTime() - Date.now()
+  if (diff <= 0) return 'expired'
   if (diff < 60_000) return `${Math.floor(diff / 1000)}s`
   if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m`
   if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h`
@@ -134,7 +136,11 @@ onMounted(() => {
   refreshInterval = setInterval(() => {
     if (!isAutoRefreshPaused.value) refresh()
   }, 10000)
-  if (route.query.generate && !isViewer.value) generateToken()
+  if (route.query.generate === '1' && !isViewer.value) {
+    const { generate, ...rest } = route.query
+    router.replace({ query: rest })
+    generateToken()
+  }
 })
 
 onUnmounted(() => {
