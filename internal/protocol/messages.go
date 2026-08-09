@@ -95,6 +95,23 @@ type DeployCommand struct {
 	// `docker compose up`. Defaults to true to preserve pre-existing
 	// behavior; only false when a stack's wireops.yaml explicitly opts out.
 	RemoveOrphans bool `json:"remove_orphans,omitempty"`
+
+	// RegistryAuthB64 is a base64-encoded docker config.json
+	// ({"auths":{"<host>":{"auth":"base64(user:pass)"}}}) built server-side
+	// from the stack's registry_credential. The worker writes it to a
+	// per-command DOCKER_CONFIG dir so `docker compose pull`/`up` can
+	// authenticate against a private registry without touching the host's
+	// global docker credential store. Empty when the stack has no registry
+	// credential assigned.
+	RegistryAuthB64 string `json:"registry_auth_b64,omitempty"`
+
+	// InsecureRegistries lists the registry hosts (from RegistryAuthB64)
+	// whose credential was marked "insecure" (plain HTTP or a self-signed
+	// TLS cert). The worker uses this to preflight-check the host's own
+	// Docker daemon already trusts them (via insecure-registries in
+	// daemon.json) before attempting a pull, and to relax its own
+	// validation handshake for these hosts.
+	InsecureRegistries []string `json:"insecure_registries,omitempty"`
 }
 
 // RedeployCommand extends DeployCommand with force-recreate options.
@@ -432,6 +449,11 @@ type RunJobCommand struct {
 	// into the rendered compose YAML's native `configs:` element), `docker
 	// run` has no equivalent, so the full spec travels here.
 	ConfigFiles []ConfigFileSpec `json:"config_files,omitempty"`
+
+	// RegistryAuthB64 and InsecureRegistries mirror DeployCommand's fields
+	// of the same name — see DeployCommand for details.
+	RegistryAuthB64    string   `json:"registry_auth_b64,omitempty"`
+	InsecureRegistries []string `json:"insecure_registries,omitempty"`
 }
 
 // ConfigFileSpec is a single resolved config file for a RunJobCommand.
