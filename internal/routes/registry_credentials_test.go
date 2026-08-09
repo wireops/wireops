@@ -38,6 +38,10 @@ func registryCredentialRoutesMux(t *testing.T, app core.App, auth *core.Record) 
 func registryCredentialTestApp(t *testing.T) (core.App, *core.Record) {
 	t.Helper()
 	t.Setenv("SECRET_KEY", testSecretBackendKey)
+	// Test registries are httptest servers on 127.0.0.1, which the SSRF
+	// guard (validatePublicHost) rejects by default — allowlist loopback
+	// here the same way an operator would opt in a real internal registry.
+	t.Setenv("ALLOWED_PRIVATE_IP_RANGES", "127.0.0.1/32")
 	app := newSetupTestApp(t)
 	clearAllUsers(t, app)
 	operator := createTestUser(t, app, "registry-operator@example.com", "Password1!", rbac.RoleOperator)
@@ -215,6 +219,47 @@ func TestRegistryCredentialTestConnectionWarnsOnInvalidJSON(t *testing.T) {
 	// from still reporting success.
 	if resp["success"] != true {
 		t.Fatalf("expected success=true despite the JSON warning, got %#v", resp)
+	}
+}
+
+// TestRegistryCredentialTestConnectionBlocksPrivateHost pins the SSRF
+// guard: without an explicit ALLOWED_PRIVATE_IP_RANGES opt-in, a
+// registry_url resolving to a loopback/private address must be rejected
+// before the server ever dials it — otherwise an authenticated operator
+// could point this endpoint at internal services (or cloud metadata
+// endpoints) and have the server make the request on their behalf.
+func TestRegistryCredentialTestConnectionBlocksPrivateHost(t *testing.T) {
+	registryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer registryServer.Close()
+
+	app, operator := registryCredentialTestApp(t)
+	t.Setenv("ALLOWED_PRIVATE_IP_RANGES", "")
+	mux := registryCredentialRoutesMux(t, app, operator)
+
+	body := map[string]any{
+		"registry_url": registryServer.URL,
+		"auth_type":    "basic",
+		"username":     "deploy",
+		"password":     "hunter2",
+		"insecure":     true,
+	}
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/custom/registry-credentials/test", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	var resp map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["success"] != false {
+		t.Fatalf("expected the private-host request to be rejected, got %#v", resp)
+	}
+	if resp["error"] != "connecting to private or loopback addresses is not allowed" {
+		t.Fatalf("unexpected error message: %#v", resp)
 	}
 }
 

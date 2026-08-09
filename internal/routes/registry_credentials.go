@@ -66,6 +66,12 @@ func (rr routeRegistrar) registerRegistryCredentialRoutes() {
 		if host == "" {
 			return e.JSON(http.StatusOK, map[string]any{"success": false, "error": "registry_url is required"})
 		}
+		// The resolved host feeds a server-initiated outbound request below —
+		// guard against SSRF into the server's own private network before
+		// dialing it (see validatePublicHost).
+		if err := validatePublicHost(host); err != nil {
+			return e.JSON(http.StatusOK, map[string]any{"success": false, "error": err.Error()})
+		}
 
 		result := map[string]any{}
 		if body.AuthType == "gcp_service_account" && !json.Valid([]byte(body.Password)) {
