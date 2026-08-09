@@ -196,7 +196,7 @@ async function toggleEnabled() {
         </div>
       </div>
 
-      <UCard v-else-if="definition">
+      <AppPanelCard v-else-if="definition">
         <template #header>
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-2">
@@ -222,7 +222,7 @@ async function toggleEnabled() {
               <UIcon name="i-lucide-calendar" class="w-4 h-4 text-yellow-400" />
               Scheduling & Dispatch
             </h3>
-            <div class="grid grid-cols-1 sm:grid-cols-4 gap-4 text-sm bg-gray-50 dark:bg-carbon-900/20 p-4 rounded-xl border border-gray-200 dark:border-carbon-800">
+            <div class="grid grid-cols-1 sm:grid-cols-4 gap-4 text-sm bg-gray-50 dark:bg-carbon-900/20 p-4 rounded-xl border border-gray-300 dark:border-carbon-800">
               <div class="space-y-1">
                 <p class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-wire-200/40 flex items-center gap-1.5">
                   <UIcon name="i-lucide-calendar-days" class="w-3.5 h-3.5 text-gray-400 dark:text-wire-200/40 shrink-0" />
@@ -264,7 +264,7 @@ async function toggleEnabled() {
               <UIcon name="i-lucide-box" class="w-4 h-4 text-yellow-400" />
               Container Configuration
             </h3>
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm bg-gray-50 dark:bg-carbon-900/20 p-4 rounded-xl border border-gray-200 dark:border-carbon-800">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm bg-gray-50 dark:bg-carbon-900/20 p-4 rounded-xl border border-gray-300 dark:border-carbon-800">
               <div class="space-y-1 sm:col-span-2">
                 <p class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-wire-200/40 flex items-center gap-1.5">
                   <UIcon name="i-lucide-box" class="w-3.5 h-3.5 text-gray-400 dark:text-wire-200/40 shrink-0" />
@@ -306,7 +306,7 @@ async function toggleEnabled() {
               <UIcon name="i-lucide-cpu" class="w-4 h-4 text-yellow-400" />
               Resource Limits & Timeout
             </h3>
-            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm bg-gray-50 dark:bg-carbon-900/20 p-4 rounded-xl border border-gray-200 dark:border-carbon-800">
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm bg-gray-50 dark:bg-carbon-900/20 p-4 rounded-xl border border-gray-300 dark:border-carbon-800">
               <div class="space-y-1">
                 <p class="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-wire-200/40 flex items-center gap-1.5">
                   <UIcon name="i-lucide-cpu" class="w-3.5 h-3.5 text-gray-400 dark:text-wire-200/40 shrink-0" />
@@ -331,7 +331,7 @@ async function toggleEnabled() {
             </div>
           </div>
         </div>
-      </UCard>
+      </AppPanelCard>
 
       <div v-else class="text-center py-10">
         <USkeleton class="h-40 w-full rounded-xl" />
@@ -344,7 +344,7 @@ async function toggleEnabled() {
     <!-- YAML File Modal -->
     <UModal v-model:open="showYamlModal">
       <template #content>
-        <UCard class="w-full max-w-4xl max-h-[85vh] flex flex-col">
+        <AppPanelCard class="w-full max-w-4xl max-h-[85vh] flex flex-col">
           <template #header>
             <div class="flex items-center justify-between">
               <h3 class="font-semibold text-sm">{{ yamlFilename }}</h3>
@@ -358,7 +358,7 @@ async function toggleEnabled() {
           <div class="overflow-y-auto max-h-[60vh] -mx-6 -my-4 p-6 bg-gray-950 text-gray-100 font-mono text-xs select-text">
             <YamlHighlighter :code="yamlContent" />
           </div>
-        </UCard>
+        </AppPanelCard>
       </template>
     </UModal>
 

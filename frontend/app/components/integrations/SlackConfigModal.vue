@@ -157,7 +157,7 @@ async function handleTest() {
 
 <template>
   <UModal
-    v-model:open="isOpen"
+    v-model:open="isOpen" :ui="{ content: 'bg-gray-50 dark:bg-(--ui-bg)' }"
     title="Configure Slack Integration"
     description="Configure and test Slack sync notifications."
   >

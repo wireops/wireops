@@ -83,7 +83,7 @@ function truncatePath(path: string): string {
     </div>
 
     <!-- System Info -->
-    <UCard>
+    <AppPanelCard>
       <template #header>
         <div class="flex items-center justify-between">
           <h3 class="font-semibold text-wire-200">System Information</h3>
@@ -115,7 +115,7 @@ function truncatePath(path: string): string {
       <div v-else class="flex items-center justify-center py-8 text-wire-400">
         <UIcon name="i-lucide-loader-2" class="w-6 h-6 animate-spin" />
       </div>
-    </UCard>
+    </AppPanelCard>
 
     <div class="text-center text-sm text-wire-200/30">
       <p>Made with ❤️ by wireops</p>

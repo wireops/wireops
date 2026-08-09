@@ -62,7 +62,7 @@ async function handleSave() {
 
 <template>
   <UModal
-    v-model:open="isOpen"
+    v-model:open="isOpen" :ui="{ content: 'bg-gray-50 dark:bg-(--ui-bg)' }"
     title="Configure Caddy Integration"
     description="Set up URL generation for Caddy Docker Proxy labels."
   >

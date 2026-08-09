@@ -115,7 +115,7 @@ defineExpose({
       <div
         v-for="run in runs"
         :key="run.id"
-        class="rounded-xl border border-gray-200 dark:border-carbon-700 bg-gray-50 dark:bg-carbon-800/40 overflow-hidden"
+        class="rounded-xl border border-gray-300 dark:border-carbon-700 bg-gray-50 dark:bg-carbon-800/40 overflow-hidden"
       >
         <div
           class="flex items-center justify-between px-4 py-3 cursor-pointer select-none"
@@ -170,7 +170,7 @@ defineExpose({
             />
           </div>
         </div>
-        <div v-if="expandedRun === run.id" class="border-t border-gray-200 dark:border-carbon-700">
+        <div v-if="expandedRun === run.id" class="border-t border-gray-300 dark:border-carbon-700">
           <div class="flex flex-col md:flex-row md:items-center justify-between gap-y-2 px-4 py-2 bg-gray-50/60 dark:bg-carbon-800/60 text-xs font-mono">
             <div class="flex flex-wrap gap-x-6 gap-y-1">
               <span v-if="run.container_name" class="flex items-center gap-1.5 text-gray-500 dark:text-wire-200/50">
@@ -182,7 +182,7 @@ defineExpose({
                 <span class="text-gray-700 dark:text-wire-200 select-all">{{ run.commit_sha.slice(0, 12) }}</span>
               </span>
             </div>
-            <div class="flex flex-wrap gap-x-6 gap-y-1 md:border-l md:border-gray-200 md:dark:border-carbon-700 md:pl-6">
+            <div class="flex flex-wrap gap-x-6 gap-y-1 md:border-l md:border-gray-300 md:dark:border-carbon-700 md:pl-6">
               <span class="flex items-center gap-1.5 text-gray-500 dark:text-wire-200/50">
                 <UTooltip text="Queue Time">
                   <span class="flex items-center gap-1">
@@ -228,7 +228,7 @@ defineExpose({
     </div>
 
     <!-- Delete Modal -->
-    <UModal v-model:open="isDeleteModalOpen">
+    <UModal v-model:open="isDeleteModalOpen" :ui="{ content: 'bg-gray-50 dark:bg-(--ui-bg)' }">
       <template #content>
         <JobsDeleteJobRunModal
           v-if="runToDelete"

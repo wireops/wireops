@@ -319,7 +319,7 @@ watch(showCreateModal, (open) => {
 </script>
 
 <template>
-  <UCard>
+  <AppPanelCard>
     <template #header>
       <div class="flex items-center justify-between gap-3">
         <div>
@@ -532,7 +532,7 @@ watch(showCreateModal, (open) => {
 
     <UModal v-model:open="showCreateModal" :ui="{ content: 'w-full sm:max-w-md' }">
       <template #content>
-        <UCard>
+        <AppPanelCard>
           <template #header>
             <div class="flex items-center gap-2">
               <UIcon name="i-lucide-variable" class="h-5 w-5 text-yellow-400" />
@@ -581,13 +581,13 @@ watch(showCreateModal, (open) => {
               <UButton type="submit" label="Create" icon="i-lucide-check" color="success" block :loading="saving" :disabled="!newEnvKey.trim()" />
             </div>
           </form>
-        </UCard>
+        </AppPanelCard>
       </template>
     </UModal>
 
     <UModal :open="!!envToDelete" @update:open="value => { if (!value) cancelDeleteEnv() }">
       <template #content>
-        <UCard>
+        <AppPanelCard>
           <template #header>
             <div class="flex items-center gap-2 text-red-600">
               <UIcon name="i-lucide-alert-triangle" class="h-5 w-5" />
@@ -611,7 +611,7 @@ watch(showCreateModal, (open) => {
               />
             </div>
           </template>
-        </UCard>
+        </AppPanelCard>
       </template>
     </UModal>
 
@@ -625,5 +625,5 @@ watch(showCreateModal, (open) => {
         />
       </template>
     </UModal>
-  </UCard>
+  </AppPanelCard>
 </template>

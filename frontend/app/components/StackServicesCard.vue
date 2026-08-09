@@ -145,7 +145,7 @@ watch(() => props.stackId, refreshResources, { immediate: true })
 </script>
 
 <template>
-  <UCard>
+  <AppPanelCard>
     <template #header>
       <div class="flex justify-between items-center">
         <h3 class="font-semibold">Services & Resources</h3>
@@ -183,7 +183,7 @@ watch(() => props.stackId, refreshResources, { immediate: true })
             <div
               v-for="container in svc.containers"
               :key="container.container_id"
-              class="rounded-lg border border-gray-200 dark:border-gray-700/60 overflow-hidden"
+              class="rounded-lg border border-gray-300 dark:border-gray-700/60 overflow-hidden"
             >
               <!-- Accordion Header -->
               <button
@@ -197,7 +197,7 @@ watch(() => props.stackId, refreshResources, { immediate: true })
                 <ContainerIcon
                   :name="container.service_name"
                   :slug="getContainerSlug(container)"
-                  wrapper-class="w-6 h-6 flex shrink-0 items-center justify-center rounded bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 overflow-hidden"
+                  wrapper-class="w-6 h-6 flex shrink-0 items-center justify-center rounded bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 overflow-hidden"
                   icon-class="w-4 h-4 object-contain"
                 />
 
@@ -281,7 +281,7 @@ watch(() => props.stackId, refreshResources, { immediate: true })
               <!-- Accordion Body -->
               <div
                 v-if="openContainers[container.container_id]"
-                class="px-3 pb-3 pt-2.5 border-t border-gray-200 dark:border-gray-700/60 bg-gray-50/50 dark:bg-gray-800/20"
+                class="px-3 pb-3 pt-2.5 border-t border-gray-300 dark:border-gray-700/60 bg-gray-50/50 dark:bg-gray-800/20"
               >
                 <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
                   <template v-if="containerStats[container.container_id]">
@@ -368,7 +368,7 @@ watch(() => props.stackId, refreshResources, { immediate: true })
         <p v-else class="text-sm text-gray-500 py-2 text-center">No services found. Run a sync first.</p>
       </section>
 
-      <hr class="border-gray-200 dark:border-carbon-800 my-4">
+      <hr class="border-gray-300 dark:border-carbon-800 my-4">
 
       <!-- Volumes section -->
       <section class="space-y-3">
@@ -385,14 +385,14 @@ watch(() => props.stackId, refreshResources, { immediate: true })
         <div v-if="volumes.length" class="space-y-4">
           <div v-for="vol in volumes" :key="vol.name">
             <div class="flex items-center gap-2 py-1">
-              <div class="w-7 h-7 flex flex-shrink-0 items-center justify-center rounded bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 overflow-hidden">
+              <div class="w-7 h-7 flex flex-shrink-0 items-center justify-center rounded bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 overflow-hidden">
                 <UIcon name="i-lucide-database" class="w-4 h-4 text-gray-500 dark:text-gray-400" />
               </div>
               <span class="font-semibold text-sm">{{ vol.name }}</span>
               <UBadge :label="vol.driver" variant="subtle" size="xs" />
               <UBadge :label="vol.scope" variant="outline" size="xs" color="neutral" />
             </div>
-            <div v-if="vol.mountpoint" class="ml-[14px] border-l border-gray-200 dark:border-gray-700 pl-[22px] py-1">
+            <div v-if="vol.mountpoint" class="ml-[14px] border-l border-gray-300 dark:border-gray-700 pl-[22px] py-1">
               <p class="text-xs text-gray-400 font-mono truncate" :title="vol.mountpoint">
                 {{ vol.mountpoint }}
               </p>
@@ -402,7 +402,7 @@ watch(() => props.stackId, refreshResources, { immediate: true })
         <p v-else class="text-sm text-gray-500 py-2 text-center">No volumes found. Run a sync first.</p>
       </section>
 
-      <hr class="border-gray-200 dark:border-carbon-800 my-4">
+      <hr class="border-gray-300 dark:border-carbon-800 my-4">
 
       <!-- Networks section -->
       <section class="space-y-3">
@@ -419,14 +419,14 @@ watch(() => props.stackId, refreshResources, { immediate: true })
         <div v-if="networks.length" class="space-y-4">
           <div v-for="net in networks" :key="net.name">
             <div class="flex items-center gap-2 py-1">
-              <div class="w-7 h-7 flex flex-shrink-0 items-center justify-center rounded bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 overflow-hidden">
+              <div class="w-7 h-7 flex flex-shrink-0 items-center justify-center rounded bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 overflow-hidden">
                 <UIcon name="i-lucide-waypoints" class="w-4 h-4 text-gray-500 dark:text-gray-400" />
               </div>
               <span class="font-semibold text-sm">{{ net.name }}</span>
               <UBadge :label="net.driver" variant="subtle" size="xs" />
               <UBadge :label="net.scope" variant="outline" size="xs" color="neutral" />
             </div>
-            <div v-if="net.subnet || net.gateway" class="ml-[14px] border-l border-gray-200 dark:border-gray-700 pl-[22px] py-1">
+            <div v-if="net.subnet || net.gateway" class="ml-[14px] border-l border-gray-300 dark:border-gray-700 pl-[22px] py-1">
               <p class="text-xs text-gray-400 font-mono">
                 <span v-if="net.subnet">{{ net.subnet }}</span>
                 <span v-if="net.subnet && net.gateway"> · </span>
@@ -438,5 +438,5 @@ watch(() => props.stackId, refreshResources, { immediate: true })
         <p v-else class="text-sm text-gray-500 py-2 text-center">No networks found. Run a sync first.</p>
       </section>
     </div>
-  </UCard>
+  </AppPanelCard>
 </template>

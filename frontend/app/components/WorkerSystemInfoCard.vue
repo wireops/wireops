@@ -75,7 +75,7 @@ const usageRows = computed(() => [
       />
     </div>
 
-    <div class="pt-4 border-t border-gray-200 dark:border-carbon-700">
+    <div class="pt-4 border-t border-gray-300 dark:border-carbon-700">
       <span class="text-xs text-gray-500 dark:text-wire-200/50 uppercase tracking-wide font-semibold block mb-3">Resource Usage</span>
 
       <p v-if="!hasInfo" class="text-sm text-gray-400 dark:text-wire-200/40">No telemetry reported yet.</p>

@@ -132,7 +132,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <UCard>
+  <AppPanelCard>
     <template #header>
       <div class="flex items-center justify-between gap-3">
         <div>
@@ -202,7 +202,7 @@ onMounted(() => {
 
     <UModal v-model:open="showAddModal">
       <template #content>
-        <UCard>
+        <AppPanelCard>
           <template #header>
             <div class="flex items-center justify-between gap-3">
               <div>
@@ -243,13 +243,13 @@ onMounted(() => {
             </div>
             <p v-else class="py-6 text-center text-sm text-gray-500">No available global variables</p>
           </div>
-        </UCard>
+        </AppPanelCard>
       </template>
     </UModal>
 
     <UModal :open="!!variableToDetach" @update:open="value => { if (!value) cancelDetach() }">
       <template #content>
-        <UCard>
+        <AppPanelCard>
           <template #header>
             <div class="flex items-center gap-2 text-amber-600">
               <UIcon name="i-lucide-unlink" class="h-5 w-5" />
@@ -273,8 +273,8 @@ onMounted(() => {
               />
             </div>
           </template>
-        </UCard>
+        </AppPanelCard>
       </template>
     </UModal>
-  </UCard>
+  </AppPanelCard>
 </template>

@@ -416,7 +416,7 @@ async function handleKeySaved(key: Record<string, any>) {
   <UModal v-model:open="isOpen" scrollable :ui="{ content: 'sm:max-w-2xl w-full' }">
     <template #content>
       <form class="w-full" @submit.prevent="submit">
-        <UCard class="sm:min-w-[640px] w-full" :ui="{ body: { base: 'p-6' }, header: { base: 'px-6 py-4' }, footer: { base: 'px-6 py-4' } }">
+        <AppPanelCard class="sm:min-w-[640px] w-full" :ui="{ body: { base: 'p-6' }, header: { base: 'px-6 py-4' }, footer: { base: 'px-6 py-4' } }">
           <template #header>
             <div class="space-y-4">
               <div class="flex items-center gap-2">
@@ -435,7 +435,7 @@ async function handleKeySaved(key: Record<string, any>) {
                   v-for="provider in availableProviders"
                   :key="provider.slug"
                   type="button"
-                  class="flex flex-col items-center justify-center gap-3 rounded-lg border border-gray-200 dark:border-gray-800 p-6 text-center cursor-pointer hover:border-primary-500 hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors disabled:opacity-60 disabled:cursor-wait"
+                  class="flex flex-col items-center justify-center gap-3 rounded-lg border border-gray-300 dark:border-gray-800 p-6 text-center cursor-pointer hover:border-primary-500 hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors disabled:opacity-60 disabled:cursor-wait"
                   :disabled="!!connectingSlug"
                   @click="selectProvider(provider.slug)"
                 >
@@ -448,7 +448,7 @@ async function handleKeySaved(key: Record<string, any>) {
 
                 <button
                   type="button"
-                  class="flex flex-col items-center justify-center gap-3 rounded-lg border border-gray-200 dark:border-gray-800 p-6 text-center cursor-pointer hover:border-primary-500 hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors disabled:opacity-60 disabled:cursor-wait"
+                  class="flex flex-col items-center justify-center gap-3 rounded-lg border border-gray-300 dark:border-gray-800 p-6 text-center cursor-pointer hover:border-primary-500 hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors disabled:opacity-60 disabled:cursor-wait"
                   :disabled="!!connectingSlug"
                   @click="selectGeneric"
                 >
@@ -478,14 +478,16 @@ async function handleKeySaved(key: Record<string, any>) {
 
               <div v-if="!connectedProviderSlug" class="flex items-end gap-3">
                 <UFormField label="Platform" required class="flex-1">
-                  <USelectMenu v-model="form.platform" :items="PLATFORM_OPTIONS" value-key="value" class="w-full" :search-input="false">
-                    <template #leading>
-                      <img v-if="platformIconUrl(form.platform)" :src="platformIconUrl(form.platform)!" class="w-4 h-4 object-contain" alt="">
+                  <AppSelectInput v-model="form.platform" :items="PLATFORM_OPTIONS" :searchable="false">
+                    <template #leading="{ item }">
+                      <GithubIcon v-if="item?.value === 'github'" icon-class="w-4 h-4 text-gray-700 dark:text-white" />
+                      <img v-else-if="platformIconUrl(item?.value)" :src="platformIconUrl(item?.value)!" class="w-4 h-4 object-contain" alt="">
                     </template>
                     <template #item-leading="{ item }">
-                      <img v-if="platformIconUrl(item.value)" :src="platformIconUrl(item.value)!" class="w-4 h-4 object-contain" alt="">
+                      <GithubIcon v-if="item.value === 'github'" icon-class="w-4 h-4 text-gray-700 dark:text-white" />
+                      <img v-else-if="platformIconUrl(item.value)" :src="platformIconUrl(item.value)!" class="w-4 h-4 object-contain" alt="">
                     </template>
-                  </USelectMenu>
+                  </AppSelectInput>
                 </UFormField>
                 <UFormField label="Protocol">
                   <URadioGroup
@@ -546,19 +548,17 @@ async function handleKeySaved(key: Record<string, any>) {
 
               <div v-if="(urlScheme === 'ssh' || isPrivate) && !connectedProviderSlug" class="flex items-end gap-2">
                 <UFormField label="Repository Key" required class="flex-1">
-                  <USelectMenu
+                  <AppSelectInput
                     v-model="form.repository_key"
                     :items="keyOptions"
-                    value-key="value"
                     placeholder="Select a reusable key"
-                    class="w-full"
                   />
                 </UFormField>
-                <UButton
+                <ActionButton
                   label="New Key"
                   icon="i-lucide-plus"
                   variant="outline"
-                  color="neutral"
+                  color="primary"
                   @click="showCreateKey = true"
                 />
               </div>
@@ -570,11 +570,12 @@ async function handleKeySaved(key: Record<string, any>) {
 
           <template #footer>
             <div class="flex justify-between items-center w-full gap-2">
-              <UButton
+              <CloseButton
                 v-if="step === 'form' && !isEditMode"
                 label="Back"
                 variant="outline"
                 icon="i-lucide-arrow-left"
+                aria-label="Back"
                 @click="backToProviderSelect"
               />
               <div v-else/>
@@ -587,14 +588,15 @@ async function handleKeySaved(key: Record<string, any>) {
                   variant="outline"
                   color="neutral"
                   :loading="testingConnection"
+                  :disabled="!form.git_url.trim() || saving"
                   @click="testConnection"
                 />
-                <CancelButton @click="isOpen = false" />
-                <UButton v-if="step === 'form'" type="submit" :label="isEditMode ? 'Save' : 'Create'" :loading="saving" />
+                <CancelButton :disabled="testingConnection || saving" @click="isOpen = false" />
+                <UButton v-if="step === 'form'" type="submit" :label="isEditMode ? 'Save' : 'Create'" :loading="saving" :disabled="testingConnection" />
               </div>
             </div>
           </template>
-        </UCard>
+        </AppPanelCard>
       </form>
     </template>
   </UModal>

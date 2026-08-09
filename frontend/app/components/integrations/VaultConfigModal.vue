@@ -93,7 +93,7 @@ async function testConnection() {
 
 <template>
   <UModal
-    v-model:open="isOpen"
+    v-model:open="isOpen" :ui="{ content: 'bg-gray-50 dark:bg-(--ui-bg)' }"
     title="Configure HashiCorp Vault"
     description="Connect to a Vault instance to resolve secret env vars via KV v2."
   >

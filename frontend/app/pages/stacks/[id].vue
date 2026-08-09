@@ -765,7 +765,7 @@ onMounted(() => {
 
     <!-- Overview -->
     <div v-if="activeTab === 'overview'" class="space-y-4">
-      <UCard v-if="stack">
+      <AppPanelCard v-if="stack">
         <template #header>
           <h3 class="font-semibold">Status</h3>
         </template>
@@ -784,9 +784,9 @@ onMounted(() => {
             :tooltip="stack?.expand?.worker?.hostname || 'Unknown worker'"
           />
         </div>
-      </UCard>
+      </AppPanelCard>
 
-      <UCard
+      <AppPanelCard
         v-if="lastError"
         class="cursor-pointer transition-colors hover:bg-gray-50 dark:hover:bg-carbon-800/40"
         role="button"
@@ -822,9 +822,9 @@ onMounted(() => {
         <p v-if="lastError.at" class="mt-2 text-xs text-gray-500">
           {{ new Date(lastError.at).toLocaleString() }}
         </p>
-      </UCard>
+      </AppPanelCard>
 
-      <UCard>
+      <AppPanelCard>
         <template #header>
           <div class="flex justify-between items-center">
             <h3 class="font-semibold">Configuration</h3>
@@ -883,9 +883,9 @@ onMounted(() => {
             <UButton type="submit" label="Save" />
           </div>
         </form>
-      </UCard>
+      </AppPanelCard>
 
-      <UCard v-if="stackHasRenderOverrides(stack)">
+      <AppPanelCard v-if="stackHasRenderOverrides(stack)">
         <template #header>
           <div class="flex justify-between items-center">
             <div class="flex items-center gap-2">
@@ -913,7 +913,7 @@ onMounted(() => {
             'text-gray-700 dark:text-wire-200/80': line.type === 'context',
           }"
         >{{ line.text }}</span></pre>
-      </UCard>
+      </AppPanelCard>
 
       <StackServicesCard
         ref="servicesCard"
@@ -1038,7 +1038,7 @@ onMounted(() => {
 
     <!-- Sync Logs -->
     <div v-if="activeTab === 'logs'">
-      <UCard>
+      <AppPanelCard>
         <template #header>
           <div class="flex justify-between items-center">
             <h3 class="font-semibold">Sync History</h3>
@@ -1112,11 +1112,11 @@ onMounted(() => {
           </div>
         </div>
         <p v-else class="text-sm text-gray-500 py-4 text-center">No sync logs yet</p>
-      </UCard>
+      </AppPanelCard>
     </div>
 
     <!-- Pause Confirmation Modal -->
-    <UModal v-model:open="showPauseModal">
+    <UModal v-model:open="showPauseModal" :ui="{ content: 'bg-gray-50 dark:bg-(--ui-bg)' }">
       <template #content>
         <div class="p-6 space-y-5">
           <div class="flex items-start gap-4">
@@ -1139,7 +1139,7 @@ onMounted(() => {
     </UModal>
 
     <!-- Compose File Modal -->
-    <UModal v-model:open="showComposeModal">
+    <UModal v-model:open="showComposeModal" :ui="{ content: 'bg-gray-50 dark:bg-(--ui-bg)' }">
       <template #content>
         <div class="p-4 space-y-3">
           <div class="flex items-center justify-between">
@@ -1184,7 +1184,7 @@ onMounted(() => {
     </USlideover>
 
     <!-- Force Redeploy Modal -->
-    <UModal v-model:open="showForceRedeploy">
+    <UModal v-model:open="showForceRedeploy" :ui="{ content: 'bg-gray-50 dark:bg-(--ui-bg)' }">
       <template #content>
         <div class="p-4 space-y-4">
           <div class="flex items-center justify-between">
@@ -1228,7 +1228,7 @@ onMounted(() => {
     </UModal>
 
     <!-- Render Overrides Modal -->
-    <UModal v-model:open="showOverridesModal">
+    <UModal v-model:open="showOverridesModal" :ui="{ content: 'bg-gray-50 dark:bg-(--ui-bg)' }">
       <template #content>
         <div class="p-4 space-y-4">
           <div class="flex items-center justify-between">
@@ -1242,12 +1242,12 @@ onMounted(() => {
             No services detected yet — load the stack's services before setting overrides.
           </p>
           <div v-else class="space-y-4 max-h-96 overflow-y-auto">
-            <div v-for="name in overrideServiceNames" :key="name" class="space-y-2 border border-gray-200 dark:border-carbon-700 rounded-md p-3">
+            <div v-for="name in overrideServiceNames" :key="name" class="space-y-2 border border-gray-300 dark:border-carbon-700 rounded-md p-3">
               <div class="flex items-center gap-2">
                 <ContainerIcon
                   :name="name"
                   :slug="getOverrideServiceSlug(name)"
-                  wrapper-class="w-6 h-6 flex shrink-0 items-center justify-center rounded bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 overflow-hidden"
+                  wrapper-class="w-6 h-6 flex shrink-0 items-center justify-center rounded bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 overflow-hidden"
                   icon-class="w-4 h-4 object-contain"
                 />
                 <p class="text-sm font-medium">{{ name }}</p>
@@ -1288,7 +1288,7 @@ onMounted(() => {
     />
 
     <!-- Rollback Modal (git stacks only) -->
-    <UModal v-model:open="showRollbackModal">
+    <UModal v-model:open="showRollbackModal" :ui="{ content: 'bg-gray-50 dark:bg-(--ui-bg)' }">
       <template #content>
         <div class="p-4 space-y-4">
           <div class="flex items-center justify-between">
@@ -1304,9 +1304,9 @@ onMounted(() => {
           <div class="space-y-3">
             <div v-if="repoCommits.length" class="space-y-1">
               <p class="text-xs text-gray-500 font-medium">Recent commits</p>
-              <div class="border border-gray-200 dark:border-gray-800 rounded-md overflow-hidden">
+              <div class="border border-gray-300 dark:border-gray-800 rounded-md overflow-hidden">
                 <table class="w-full text-xs">
-                  <thead class="bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800">
+                  <thead class="bg-gray-50 dark:bg-gray-900 border-b border-gray-300 dark:border-gray-800">
                     <tr>
                       <th class="text-left px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Date/Time</th>
                       <th class="text-left px-3 py-2 font-medium text-gray-600 dark:text-gray-400">SHA</th>
@@ -1353,7 +1353,7 @@ onMounted(() => {
       </template>
     </UModal>
     <!-- Transfer stack modal -->
-    <UModal v-model:open="showTransferModal">
+    <UModal v-model:open="showTransferModal" :ui="{ content: 'bg-gray-50 dark:bg-(--ui-bg)' }">
       <template #content>
         <StackTransferModal
           v-if="stack"
@@ -1364,7 +1364,7 @@ onMounted(() => {
       </template>
     </UModal>
     <!-- Delete stack modal -->
-    <UModal v-model:open="showDeleteModal">
+    <UModal v-model:open="showDeleteModal" :ui="{ content: 'bg-gray-50 dark:bg-(--ui-bg)' }">
       <template #content>
         <DeleteStackModal
           v-if="showDeleteModal"
@@ -1394,7 +1394,7 @@ onMounted(() => {
     />
 
     <!-- Bulk container action confirm modal -->
-    <UModal v-model:open="showBulkActionModal">
+    <UModal v-model:open="showBulkActionModal" :ui="{ content: 'bg-gray-50 dark:bg-(--ui-bg)' }">
       <template #content>
         <div class="p-6 space-y-5">
           <!-- Header -->
@@ -1420,7 +1420,7 @@ onMounted(() => {
           </div>
 
           <!-- Container list -->
-          <div class="rounded-lg border border-gray-200 dark:border-gray-700 divide-y divide-gray-100 dark:divide-gray-700/60 max-h-64 overflow-y-auto">
+          <div class="rounded-lg border border-gray-300 dark:border-gray-700 divide-y divide-gray-100 dark:divide-gray-700/60 max-h-64 overflow-y-auto">
             <div
               v-for="c in bulkActionState.containers"
               :key="c.containerId"

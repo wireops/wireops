@@ -173,7 +173,7 @@ const statusColor = (s: string) => {
       </div>
     </div>
 
-    <UCard>
+    <AppPanelCard>
       <template #header>
         <div class="flex items-center justify-between">
           <h3 class="font-semibold text-gray-900 dark:text-wire-200">
@@ -228,10 +228,10 @@ const statusColor = (s: string) => {
           <div
             v-for="repo in filteredRepos"
             :key="repo.id"
-            class="flex items-center justify-between p-4 bg-gray-50 dark:bg-carbon-800/40 rounded-xl border border-gray-200 dark:border-carbon-700 hover:shadow-[0_0_0_2px_rgba(255,198,0,0.35),0_0_20px_rgba(255,198,0,0.12)] transition-all"
+            class="flex items-center justify-between p-4 bg-gray-50 dark:bg-carbon-800/40 rounded-xl border border-gray-300 dark:border-carbon-700 hover:shadow-[0_0_0_2px_rgba(255,198,0,0.35),0_0_20px_rgba(255,198,0,0.12)] transition-all"
           >
             <!-- Platform icon — left, separated -->
-            <div class="mr-2 border-r border-gray-200 dark:border-carbon-700 pr-4 flex items-center">
+            <div class="mr-2 border-r border-gray-300 dark:border-carbon-700 pr-4 flex items-center">
               <RepositoryIcon :repository="repo" icon-class="w-5 h-5 object-contain" />
             </div>
 
@@ -268,7 +268,7 @@ const statusColor = (s: string) => {
         :cta-label="canManageRepos ? 'Add Repository' : undefined"
         @cta="showCreate = true"
       />
-    </UCard>
+    </AppPanelCard>
 
     <RepositoryCreateModal v-model:open="showCreate" @created="refreshRepositories" />
   </div>

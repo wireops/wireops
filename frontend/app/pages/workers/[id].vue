@@ -444,7 +444,7 @@ onUnmounted(() => {
             </div>
 
             <!-- Tags -->
-            <div v-if="worker.tags?.length" class="mt-4 pt-4 border-t border-gray-200 dark:border-carbon-700">
+            <div v-if="worker.tags?.length" class="mt-4 pt-4 border-t border-gray-300 dark:border-carbon-700">
               <span class="text-xs text-gray-500 dark:text-wire-200/50 uppercase tracking-wide font-semibold block mb-2">Tags</span>
               <div class="flex flex-wrap gap-1.5">
                 <UBadge
@@ -467,7 +467,7 @@ onUnmounted(() => {
 
       <!-- ==================== STACKS ==================== -->
       <div v-if="activeTab === 'stacks'" class="space-y-4">
-        <UCard>
+        <AppPanelCard>
           <template #header>
             <div class="flex items-center justify-between">
               <h3 class="font-semibold">
@@ -508,12 +508,12 @@ onUnmounted(() => {
               <UIcon name="i-lucide-chevron-right" class="w-4 h-4 text-gray-300 dark:text-carbon-600 group-hover:text-yellow-400 transition-colors shrink-0 ml-3" />
             </NuxtLink>
           </div>
-        </UCard>
+        </AppPanelCard>
       </div>
 
       <!-- ==================== JOBS ==================== -->
       <div v-if="activeTab === 'jobs'" class="space-y-4">
-        <UCard>
+        <AppPanelCard>
           <template #header>
             <div class="flex items-center justify-between">
               <h3 class="font-semibold">
@@ -554,12 +554,12 @@ onUnmounted(() => {
               <UIcon name="i-lucide-chevron-right" class="w-4 h-4 text-gray-300 dark:text-carbon-600 group-hover:text-yellow-400 transition-colors shrink-0 ml-3" />
             </NuxtLink>
           </div>
-        </UCard>
+        </AppPanelCard>
       </div>
 
       <!-- ==================== POLICY ==================== -->
       <div v-if="activeTab === 'policy'" class="space-y-4">
-        <div v-if="policyLoading" class="py-10 text-center bg-white dark:bg-carbon-900 rounded-xl border border-gray-200 dark:border-carbon-800">
+        <div v-if="policyLoading" class="py-10 text-center bg-white dark:bg-carbon-900 rounded-xl border border-gray-300 dark:border-carbon-800">
           <UIcon name="i-lucide-loader-circle" class="w-6 h-6 text-gray-400 animate-spin mx-auto" />
           <p class="text-sm text-gray-400 mt-2">Loading policy…</p>
         </div>
@@ -629,7 +629,7 @@ onUnmounted(() => {
     <!-- Revoke Confirmation Modal -->
     <UModal v-model:open="showRevokeModal">
       <template #content>
-        <UCard>
+        <AppPanelCard>
           <template #header>
             <div class="flex items-center gap-2">
               <UIcon name="i-lucide-ban" class="w-5 h-5 text-red-500" />
@@ -656,7 +656,7 @@ onUnmounted(() => {
               />
             </div>
           </template>
-        </UCard>
+        </AppPanelCard>
       </template>
     </UModal>
   </div>

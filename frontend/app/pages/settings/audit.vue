@@ -342,7 +342,7 @@ onMounted(async () => {
   <div class="space-y-6">
     <UTabs v-model="activeTab" :items="tabs" />
 
-    <UCard v-if="activeTab === 'events'">
+    <AppPanelCard v-if="activeTab === 'events'">
       <template #header>
         <div class="flex items-center justify-between gap-3">
           <div>
@@ -409,7 +409,7 @@ onMounted(async () => {
       <div v-else-if="auditLogs.length === 0" class="text-sm text-gray-500 py-2">No audit events found.</div>
       <div v-else class="overflow-x-auto">
         <table class="w-full text-sm">
-          <thead class="text-left text-xs uppercase text-gray-500 border-b border-gray-200 dark:border-gray-800">
+          <thead class="text-left text-xs uppercase text-gray-500 border-b border-gray-300 dark:border-gray-800">
             <tr>
               <th class="pb-2 pr-4 font-medium">Time</th>
               <th class="pb-2 pr-4 font-medium">Action</th>
@@ -460,9 +460,9 @@ onMounted(async () => {
           @update:page="loadAuditLogs"
         />
       </div>
-    </UCard>
+    </AppPanelCard>
 
-    <UCard v-if="activeTab === 'sessions'">
+    <AppPanelCard v-if="activeTab === 'sessions'">
       <template #header>
         <div class="flex items-center justify-between gap-3">
           <div>
@@ -506,7 +506,7 @@ onMounted(async () => {
       <div v-else-if="terminalSessions.length === 0" class="text-sm text-gray-500 py-2">No terminal sessions found.</div>
       <div v-else class="overflow-x-auto">
         <table class="w-full text-sm">
-          <thead class="text-left text-xs uppercase text-gray-500 border-b border-gray-200 dark:border-gray-800">
+          <thead class="text-left text-xs uppercase text-gray-500 border-b border-gray-300 dark:border-gray-800">
             <tr>
               <th class="pb-2 pr-4 font-medium">Started</th>
               <th class="pb-2 pr-4 font-medium">Ended</th>
@@ -564,7 +564,7 @@ onMounted(async () => {
           @update:page="loadTerminalSessions"
         />
       </div>
-    </UCard>
+    </AppPanelCard>
 
     <TerminalReplayModal
       v-if="replaySession"
@@ -577,7 +577,7 @@ onMounted(async () => {
     <!-- Audit Settings Modal -->
     <UModal v-model:open="showAuditSettingsModal">
       <template #content>
-        <UCard :ui="{ ring: '', divide: 'divide-y divide-gray-100 dark:divide-gray-800' }">
+        <AppPanelCard :ui="{ ring: '', divide: 'divide-y divide-gray-100 dark:divide-gray-800' }">
           <template #header>
             <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Audit Settings</h3>
             <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
@@ -623,7 +623,7 @@ onMounted(async () => {
               />
             </div>
           </template>
-        </UCard>
+        </AppPanelCard>
       </template>
     </UModal>
   </div>

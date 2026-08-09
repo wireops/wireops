@@ -98,7 +98,7 @@ function removeCapAdd(cap: string) {
       <div v-if="policy.inherit" class="absolute inset-0 z-10" title="Inheriting global policy. Disable inherit to edit."/>
 
       <!-- Images Policy Card -->
-      <UCard>
+      <AppPanelCard>
         <template #header>
           <div class="flex items-center gap-3">
             <div class="flex items-center justify-center w-8 h-8 rounded-lg bg-yellow-400/10 shrink-0">
@@ -142,10 +142,10 @@ function removeCapAdd(cap: string) {
             />
           </div>
         </div>
-      </UCard>
+      </AppPanelCard>
 
       <!-- Host Volumes Policy Card -->
-      <UCard>
+      <AppPanelCard>
         <template #header>
           <div class="flex items-center gap-3">
             <div class="flex items-center justify-center w-8 h-8 rounded-lg bg-yellow-400/10 shrink-0">
@@ -189,10 +189,10 @@ function removeCapAdd(cap: string) {
             />
           </div>
         </div>
-      </UCard>
+      </AppPanelCard>
 
       <!-- Docker Networks Policy Card -->
-      <UCard>
+      <AppPanelCard>
         <template #header>
           <div class="flex items-center gap-3">
             <div class="flex items-center justify-center w-8 h-8 rounded-lg bg-yellow-400/10 shrink-0">
@@ -218,10 +218,10 @@ function removeCapAdd(cap: string) {
             @save="emit('save')"
           />
         </div>
-      </UCard>
+      </AppPanelCard>
 
       <!-- Container Isolation Policy Card -->
-      <UCard>
+      <AppPanelCard>
         <template #header>
           <div class="flex items-center gap-3">
             <div class="flex items-center justify-center w-8 h-8 rounded-lg bg-red-400/10 shrink-0">
@@ -366,10 +366,10 @@ function removeCapAdd(cap: string) {
             />
           </div>
         </div>
-      </UCard>
+      </AppPanelCard>
 
       <!-- Render Overrides Policy Card -->
-      <UCard>
+      <AppPanelCard>
         <template #header>
           <div class="flex items-center gap-3">
             <div class="flex items-center justify-center w-8 h-8 rounded-lg bg-amber-400/10 shrink-0">
@@ -395,7 +395,7 @@ function removeCapAdd(cap: string) {
           </div>
           <TriStateToggle v-model="policy.allow_render_overrides" @change="emit('save')" />
         </div>
-      </UCard>
+      </AppPanelCard>
     </div>
   </div>
 </template>

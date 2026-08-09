@@ -140,7 +140,7 @@ function openDialog() {
       description="Pick a mount, path and field to build the reference"
     >
       <template #content>
-        <UCard>
+        <AppPanelCard>
           <template #header>
             <div class="flex items-center gap-2">
               <UIcon name="i-lucide-folder-search" class="w-5 h-5 text-primary-500" />
@@ -202,7 +202,7 @@ function openDialog() {
               </div>
             </div>
           </div>
-        </UCard>
+        </AppPanelCard>
       </template>
     </UModal>
   </div>

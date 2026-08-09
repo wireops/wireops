@@ -245,7 +245,7 @@ function handleImportYaml() {
     @update:open="emit('update:open', $event)"
   >
     <template #content>
-      <UCard :ui="{ ring: '', divide: 'divide-y divide-gray-100 dark:divide-gray-800', base: 'h-full flex flex-col', body: { base: 'flex-1 overflow-y-auto p-0 sm:p-0' } }">
+      <AppPanelCard :ui="{ ring: '', divide: 'divide-y divide-gray-100 dark:divide-gray-800', base: 'h-full flex flex-col', body: { base: 'flex-1 overflow-y-auto p-0 sm:p-0' } }">
         <template #header>
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-2">
@@ -266,7 +266,7 @@ function handleImportYaml() {
         </template>
 
         <!-- Responsive Layout Tab Switcher (Mobile Only) -->
-        <div class="lg:hidden flex border-b border-gray-200 dark:border-carbon-800">
+        <div class="lg:hidden flex border-b border-gray-300 dark:border-carbon-800">
           <button
             type="button"
             class="flex-1 py-3 text-center text-sm font-medium border-b-2 transition-colors"
@@ -298,7 +298,7 @@ function handleImportYaml() {
             class="p-3 sm:p-4 space-y-3 max-h-[70vh] overflow-y-auto"
           >
             <!-- Basic Info Card -->
-            <div class="space-y-3 border border-gray-200 dark:border-carbon-800/60 rounded-lg p-3 bg-gray-50/50 dark:bg-carbon-900/10">
+            <div class="space-y-3 border border-gray-300 dark:border-carbon-800/60 rounded-lg p-3 bg-gray-50/50 dark:bg-carbon-900/10">
               <div class="flex items-center gap-1.5 border-b border-gray-150 dark:border-carbon-800/30 pb-1.5 mb-1">
                 <UIcon name="i-lucide-info" class="w-4 h-4 text-yellow-400 shrink-0" />
                 <span class="text-xs uppercase tracking-wider font-bold text-gray-500 dark:text-wire-200/50">Basic Info</span>
@@ -309,7 +309,7 @@ function handleImportYaml() {
             </div>
 
             <!-- Sync Card -->
-            <div class="space-y-3 border border-gray-200 dark:border-carbon-800/60 rounded-lg p-3 bg-gray-50/50 dark:bg-carbon-900/10">
+            <div class="space-y-3 border border-gray-300 dark:border-carbon-800/60 rounded-lg p-3 bg-gray-50/50 dark:bg-carbon-900/10">
               <div class="flex items-center gap-1.5 border-b border-gray-150 dark:border-carbon-800/30 pb-1.5 mb-1">
                 <UIcon name="i-lucide-refresh-cw" class="w-4 h-4 text-yellow-400 shrink-0" />
                 <span class="text-xs uppercase tracking-wider font-bold text-gray-500 dark:text-wire-200/50">Sync</span>
@@ -359,7 +359,7 @@ function handleImportYaml() {
             </div>
 
             <!-- Compose Config Card -->
-            <div class="space-y-3 border border-gray-200 dark:border-carbon-800/60 rounded-lg p-3 bg-gray-50/50 dark:bg-carbon-900/10">
+            <div class="space-y-3 border border-gray-300 dark:border-carbon-800/60 rounded-lg p-3 bg-gray-50/50 dark:bg-carbon-900/10">
               <div class="flex items-center gap-1.5 border-b border-gray-150 dark:border-carbon-800/30 pb-1.5 mb-1">
                 <UIcon name="i-lucide-boxes" class="w-4 h-4 text-yellow-400 shrink-0" />
                 <span class="text-xs uppercase tracking-wider font-bold text-gray-500 dark:text-wire-200/50">Compose Config</span>
@@ -397,7 +397,7 @@ function handleImportYaml() {
             </div>
 
             <!-- Jobs Config Card -->
-            <div class="space-y-3 border border-gray-200 dark:border-carbon-800/60 rounded-lg p-3 bg-gray-50/50 dark:bg-carbon-900/10">
+            <div class="space-y-3 border border-gray-300 dark:border-carbon-800/60 rounded-lg p-3 bg-gray-50/50 dark:bg-carbon-900/10">
               <div class="flex items-center gap-1.5 border-b border-gray-150 dark:border-carbon-800/30 pb-1.5 mb-1">
                 <UIcon name="i-lucide-clock" class="w-4 h-4 text-yellow-400 shrink-0" />
                 <span class="text-xs uppercase tracking-wider font-bold text-gray-500 dark:text-wire-200/50">Jobs Config</span>
@@ -420,7 +420,7 @@ function handleImportYaml() {
             </div>
 
             <!-- Worker Config Card -->
-            <div class="space-y-3 border border-gray-200 dark:border-carbon-800/60 rounded-lg p-3 bg-gray-50/50 dark:bg-carbon-900/10">
+            <div class="space-y-3 border border-gray-300 dark:border-carbon-800/60 rounded-lg p-3 bg-gray-50/50 dark:bg-carbon-900/10">
               <div class="flex items-center gap-1.5 border-b border-gray-150 dark:border-carbon-800/30 pb-1.5 mb-1">
                 <UIcon name="i-lucide-server" class="w-4 h-4 text-yellow-400 shrink-0" />
                 <span class="text-xs uppercase tracking-wider font-bold text-gray-500 dark:text-wire-200/50">Worker Config</span>
@@ -433,7 +433,7 @@ function handleImportYaml() {
                     <span class="text-xs font-normal text-gray-400 dark:text-wire-200/40">(Separated by space, comma or /)</span>
                   </span>
                 </template>
-                <div class="flex flex-wrap gap-1.5 p-1.5 border border-gray-200 dark:border-carbon-800 rounded-lg bg-white dark:bg-carbon-950/20 focus-within:border-yellow-400/60 focus-within:ring-1 focus-within:ring-yellow-400/40 transition-all duration-200 w-full min-h-[38px] items-center">
+                <div class="flex flex-wrap gap-1.5 p-1.5 border border-gray-300 dark:border-carbon-800 rounded-lg bg-white dark:bg-carbon-950/20 focus-within:border-yellow-400/60 focus-within:ring-1 focus-within:ring-yellow-400/40 transition-all duration-200 w-full min-h-[38px] items-center">
                   <div
                     v-for="(tag, idx) in tagsArray"
                     :key="idx"
@@ -465,14 +465,14 @@ function handleImportYaml() {
 
               <div class="space-y-1.5">
                 <span class="text-xs font-semibold text-gray-500 dark:text-wire-200/50">Known Workers</span>
-                <p v-if="activeWorkers.length === 0" class="text-xs text-gray-500 dark:text-wire-200/40 italic py-2 text-center border border-dashed border-gray-200 dark:border-carbon-800 rounded-lg bg-white/20 dark:bg-carbon-900/5">
+                <p v-if="activeWorkers.length === 0" class="text-xs text-gray-500 dark:text-wire-200/40 italic py-2 text-center border border-dashed border-gray-300 dark:border-carbon-800 rounded-lg bg-white/20 dark:bg-carbon-900/5">
                   No active workers found.
                 </p>
                 <div v-else class="space-y-1.5">
                   <div
                     v-for="worker in activeWorkers"
                     :key="worker.id"
-                    class="flex flex-wrap items-center gap-1.5 border border-gray-200/60 dark:border-carbon-800/40 rounded bg-white dark:bg-carbon-900/40 px-2 py-1.5"
+                    class="flex flex-wrap items-center gap-1.5 border border-gray-300/60 dark:border-carbon-800/40 rounded bg-white dark:bg-carbon-900/40 px-2 py-1.5"
                   >
                     <span class="text-xs font-medium text-gray-700 dark:text-wire-200 shrink-0">{{ worker.hostname }}</span>
                     <template v-if="worker.tags.length">
@@ -536,13 +536,13 @@ function handleImportYaml() {
               </div>
 
               <!-- Scrollable code highlighter wrapper / Import textarea -->
-              <div class="flex-1 overflow-hidden rounded-lg border border-gray-200 dark:border-carbon-800 flex flex-col bg-white dark:bg-carbon-950">
+              <div class="flex-1 overflow-hidden rounded-lg border border-gray-300 dark:border-carbon-800 flex flex-col bg-white dark:bg-carbon-950">
                 <div v-if="isImportOpen" class="flex-1 flex flex-col p-3 gap-3">
                   <span class="text-xs font-semibold text-gray-500 dark:text-wire-200/60 uppercase tracking-wider">Paste your wireops.yaml content:</span>
                   <textarea
                     id="stack-yaml-import-textarea"
                     v-model="importContent"
-                    class="flex-1 p-2.5 font-mono text-xs bg-gray-50 dark:bg-carbon-900 border border-gray-200 dark:border-carbon-800 rounded-md text-gray-900 dark:text-white focus:outline-hidden focus:ring-1 focus:ring-yellow-400/50 resize-none min-h-[250px]"
+                    class="flex-1 p-2.5 font-mono text-xs bg-gray-50 dark:bg-carbon-900 border border-gray-300 dark:border-carbon-800 rounded-md text-gray-900 dark:text-white focus:outline-hidden focus:ring-1 focus:ring-yellow-400/50 resize-none min-h-[250px]"
                     placeholder="version: wireops.v1&#10;name: my-stack&#10;..."
                     aria-label="Paste your wireops.yaml content"
                   />
@@ -564,7 +564,7 @@ function handleImportYaml() {
               </div>
             </div>
 
-            <div class="mt-4 pt-4 border-t border-gray-200 dark:border-carbon-800/60 text-xs text-gray-500 dark:text-wire-200/50 shrink-0">
+            <div class="mt-4 pt-4 border-t border-gray-300 dark:border-carbon-800/60 text-xs text-gray-500 dark:text-wire-200/50 shrink-0">
               <p class="flex items-start gap-2">
                 <UIcon name="i-lucide-info" class="w-4 h-4 text-info-500 shrink-0 mt-0.5" />
                 <span>Save this file as <code class="bg-gray-100 dark:bg-carbon-800 px-1 py-0.5 rounded text-xs text-yellow-500">wireops.yaml</code> next to your compose file in your Git repository, then create a stack pointing to it.</span>
@@ -578,7 +578,7 @@ function handleImportYaml() {
             <CancelButton label="Close" @click="emit('update:open', false)" />
           </div>
         </template>
-      </UCard>
+      </AppPanelCard>
     </template>
   </UModal>
 </template>

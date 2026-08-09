@@ -338,7 +338,7 @@ async function handlePurge(dirName: string) {
       </div>
     </div>
 
-    <UCard>
+    <AppPanelCard>
       <template #header>
         <div class="flex items-center justify-between">
           <h3 class="font-semibold text-gray-900 dark:text-wire-200">
@@ -441,13 +441,13 @@ async function handlePurge(dirName: string) {
         :cta-label="isViewer ? undefined : emptyStateStep.ctaLabel"
         @cta="emptyStateStep.action"
       />
-    </UCard>
+    </AppPanelCard>
 
     <CreateStackModal v-model:open="showCreate" @created="onCreated" />
     <StackBuilderModal v-model:open="showBuilder" :workers="workers || []" />
     <RepositoryCreateModal v-model:open="showCreateRepoFromEmpty" @created="refreshRepos" />
 
-    <UModal v-model:open="showOrphans" title="Orphan Directories" description="Directories in the repos workspace not linked to any repository.">
+    <UModal v-model:open="showOrphans" title="Orphan Directories" description="Directories in the repos workspace not linked to any repository." :ui="{ content: 'bg-gray-50 dark:bg-(--ui-bg)' }">
       <template #body>
         <div v-if="loadingOrphans" class="py-8 text-center">
           <UIcon name="i-lucide-loader-2" class="w-6 h-6 animate-spin text-gray-400 mx-auto" />
@@ -476,7 +476,7 @@ async function handlePurge(dirName: string) {
       </template>
     </UModal>
 
-    <UModal v-model:open="showDelete" title="Delete Stack" description="Are you sure you want to delete this stack?">
+    <UModal v-model:open="showDelete" title="Delete Stack" description="Are you sure you want to delete this stack?" :ui="{ content: 'bg-gray-50 dark:bg-(--ui-bg)' }">
       <template #body>
         <DeleteStackModal
           v-if="deleteTarget"
@@ -487,7 +487,7 @@ async function handlePurge(dirName: string) {
       </template>
     </UModal>
 
-    <UModal v-model:open="showImport" title="Import Compose Stack" description="Import an existing Docker Compose project into wireops">
+    <UModal v-model:open="showImport" title="Import Compose Stack" description="Import an existing Docker Compose project into wireops" :ui="{ content: 'bg-gray-50 dark:bg-(--ui-bg)' }">
       <template #body>
         <ImportStackModal
           @imported="onImported"

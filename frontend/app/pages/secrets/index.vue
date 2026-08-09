@@ -253,6 +253,7 @@ onMounted(() => {
   subscribe('global_env_vars', () => load())
   subscribe('stack_global_env_vars', () => load())
   subscribe('job_global_env_vars', () => load())
+  if (route.query.create && canOperate.value) openCreateModal()
 })
 </script>
 
@@ -278,7 +279,7 @@ onMounted(() => {
 
     <UTabs v-model="activeTab" :items="tabs" />
 
-    <UCard v-if="activeTab === 'global-variables'">
+    <AppPanelCard v-if="activeTab === 'global-variables'">
       <template #header>
         <div class="flex items-center justify-between gap-3">
           <div>
@@ -459,11 +460,11 @@ onMounted(() => {
         <UIcon name="i-lucide-key-round" class="mx-auto h-8 w-8 text-gray-400" />
         <p class="mt-2 text-sm text-gray-500">No global variables configured</p>
       </div>
-    </UCard>
+    </AppPanelCard>
 
     <UModal v-model:open="showCreateModal" :ui="{ content: 'w-full sm:max-w-md' }">
       <template #content>
-        <UCard>
+        <AppPanelCard>
           <template #header>
             <div class="flex items-center gap-2">
               <UIcon name="i-lucide-key-round" class="h-5 w-5 text-yellow-400" />
@@ -512,13 +513,13 @@ onMounted(() => {
               <UButton type="submit" label="Create" icon="i-lucide-check" color="success" block :loading="saving" :disabled="!form.key.trim()" />
             </div>
           </form>
-        </UCard>
+        </AppPanelCard>
       </template>
     </UModal>
 
     <UModal :open="!!variableToDelete" @update:open="value => { if (!value) cancelDeleteVariable() }">
       <template #content>
-        <UCard>
+        <AppPanelCard>
           <template #header>
             <div class="flex items-center gap-2 text-red-600">
               <UIcon name="i-lucide-alert-triangle" class="h-5 w-5" />
@@ -545,7 +546,7 @@ onMounted(() => {
               />
             </div>
           </template>
-        </UCard>
+        </AppPanelCard>
       </template>
     </UModal>
 

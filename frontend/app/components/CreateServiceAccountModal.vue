@@ -12,6 +12,8 @@ const form = ref({
   role: 'viewer'
 })
 
+const errors = ref({ name: '', description: '' })
+
 const roleOptions = [
   { label: 'Viewer', value: 'viewer' },
   { label: 'Operator', value: 'operator' },
@@ -19,9 +21,15 @@ const roleOptions = [
 
 function reset() {
   form.value = { name: '', description: '', role: 'viewer' }
+  errors.value = { name: '', description: '' }
 }
 
 function handleSubmit() {
+  errors.value = {
+    name: form.value.name.trim() ? '' : 'Name is required',
+    description: form.value.description.trim() ? '' : 'Description is required',
+  }
+  if (errors.value.name || errors.value.description) return
   emit('submit', { ...form.value })
 }
 
@@ -34,7 +42,7 @@ defineExpose({ reset })
 </script>
 
 <template>
-  <UCard :ui="{ body: 'p-6' }">
+  <AppPanelCard :ui="{ body: 'p-6' }">
     <template #header>
       <div class="flex items-center gap-2">
         <UIcon name="i-lucide-key-round" class="w-5 h-5 text-amber-500" />
@@ -46,22 +54,22 @@ defineExpose({ reset })
     </template>
 
     <form class="space-y-4" @submit.prevent="handleSubmit">
-      <UFormField label="Name" required>
-        <UInput v-model="form.name" placeholder="e.g. CI-CD-deployer" class="w-full" required />
+      <UFormField label="Name" required :error="errors.name">
+        <AppTextInput v-model="form.name" placeholder="e.g. CI-CD-deployer" />
       </UFormField>
 
-      <UFormField label="Description" required>
-        <UInput v-model="form.description" placeholder="What is this service account for?" class="w-full" required />
+      <UFormField label="Description" required :error="errors.description">
+        <AppTextInput v-model="form.description" placeholder="What is this service account for?" />
       </UFormField>
 
       <UFormField label="Role">
-        <USelectMenu v-model="form.role" :items="roleOptions" value-key="value" class="w-full" />
+        <AppSelectInput v-model="form.role" :items="roleOptions" />
       </UFormField>
 
       <div class="flex justify-end gap-2 pt-2">
         <CancelButton @click="handleCancel" />
-        <UButton type="submit" label="Create" icon="i-lucide-plus" />
+        <ActionButton type="submit" label="Create" icon="i-lucide-plus" :glow="false" />
       </div>
     </form>
-  </UCard>
+  </AppPanelCard>
 </template>

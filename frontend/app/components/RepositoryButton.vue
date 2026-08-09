@@ -29,7 +29,7 @@ const textClass = computed(() =>
     target="_blank"
     rel="noopener noreferrer"
     :aria-label="`${repository.name} (opens repository in a new tab)`"
-    class="inline-flex items-center gap-1.5 rounded-md border border-gray-200 dark:border-gray-700 px-2 py-1 hover:border-primary-500 hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors"
+    class="inline-flex items-center gap-1.5 rounded-md border border-gray-300 dark:border-gray-700 px-2 py-1 hover:border-primary-500 hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors"
     :class="textClass"
   >
     <RepositoryIcon :repository="repository" :icon-class="iconClass" />

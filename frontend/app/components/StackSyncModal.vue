@@ -52,6 +52,7 @@ async function confirmSync() {
     v-model:open="isOpen"
     title="Confirm Sync"
     description="Confirm this manual sync before continuing."
+    :ui="{ content: 'bg-gray-50 dark:bg-(--ui-bg)' }"
   >
     <template #body>
       <div class="space-y-4" role="document">

@@ -173,7 +173,7 @@ function executeDelete(index: number) {
       <UButton icon="i-lucide-plus" size="xs" variant="outline" :label="props.addLabel" @click="addEntry" />
     </div>
 
-    <UModal v-if="showDeleteRuleModal" v-model:open="showDeleteRuleModal">
+    <UModal v-if="showDeleteRuleModal" v-model:open="showDeleteRuleModal" :ui="{ content: 'bg-gray-50 dark:bg-(--ui-bg)' }">
       <template #content>
         <DeleteRuleModal
           :value="deleteRuleValue"

@@ -123,7 +123,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <UModal v-model:open="open" :ui="{ content: 'sm:max-w-3xl' }">
+  <UModal v-model:open="open" :ui="{ content: 'sm:max-w-3xl bg-gray-50 dark:bg-(--ui-bg)' }">
     <template #content>
       <div class="p-4 space-y-3">
         <div class="flex items-center justify-between">

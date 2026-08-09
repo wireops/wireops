@@ -56,7 +56,7 @@ watch(isOpen, (val) => {
 <template>
   <UModal v-model:open="isOpen">
     <template #content>
-      <UCard>
+      <AppPanelCard>
         <template #header>
           <div class="flex items-center gap-2 text-red-600">
             <UIcon name="i-lucide-alert-triangle" class="w-5 h-5" />
@@ -91,7 +91,7 @@ watch(isOpen, (val) => {
             />
           </div>
         </template>
-      </UCard>
+      </AppPanelCard>
     </template>
   </UModal>
 </template>

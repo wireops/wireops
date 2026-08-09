@@ -184,7 +184,7 @@ async function submit() {
     @update:open="emit('update:open', $event)"
   >
     <template #content>
-      <UCard :ui="{ ring: '', divide: 'divide-y divide-gray-100 dark:divide-gray-800', base: 'h-full flex flex-col', body: { base: 'flex-1' } }">
+      <AppPanelCard :ui="{ ring: '', divide: 'divide-y divide-gray-100 dark:divide-gray-800', base: 'h-full flex flex-col', body: { base: 'flex-1' } }">
         <template #header>
           <div class="flex items-center gap-2">
             <UIcon name="i-lucide-calendar-clock" class="w-5 h-5 text-yellow-400" />
@@ -226,19 +226,19 @@ async function submit() {
             </UFormField>
 
             <UFormField label="Name" required :error="form.name && nameError ? nameError : undefined">
-              <div v-if="form.job_file && form.name" class="text-sm text-gray-600 dark:text-wire-200 bg-gray-50 dark:bg-carbon-900/40 border border-gray-200 dark:border-carbon-800 rounded-lg px-3 py-2 w-full select-none">
+              <div v-if="form.job_file && form.name" class="text-sm text-gray-600 dark:text-wire-200 bg-gray-50 dark:bg-carbon-900/40 border border-gray-300 dark:border-carbon-800 rounded-lg px-3 py-2 w-full select-none">
                 {{ form.name }}
               </div>
-              <div v-else class="text-sm text-gray-400 dark:text-wire-200/40 italic bg-gray-50/50 dark:bg-carbon-900/20 border border-dashed border-gray-200 dark:border-carbon-800 rounded-lg px-3 py-2 w-full select-none">
+              <div v-else class="text-sm text-gray-400 dark:text-wire-200/40 italic bg-gray-50/50 dark:bg-carbon-900/20 border border-dashed border-gray-300 dark:border-carbon-800 rounded-lg px-3 py-2 w-full select-none">
                 Pending job.yaml selection...
               </div>
             </UFormField>
 
             <UFormField label="Description">
-              <div v-if="form.job_file" class="text-sm text-gray-600 dark:text-wire-200 bg-gray-50 dark:bg-carbon-900/40 border border-gray-200 dark:border-carbon-800 rounded-lg px-3 py-2 w-full select-none">
+              <div v-if="form.job_file" class="text-sm text-gray-600 dark:text-wire-200 bg-gray-50 dark:bg-carbon-900/40 border border-gray-300 dark:border-carbon-800 rounded-lg px-3 py-2 w-full select-none">
                 {{ form.description || 'No description specified in job.yaml' }}
               </div>
-              <div v-else class="text-sm text-gray-400 dark:text-wire-200/40 italic bg-gray-50/50 dark:bg-carbon-900/20 border border-dashed border-gray-200 dark:border-carbon-800 rounded-lg px-3 py-2 w-full select-none">
+              <div v-else class="text-sm text-gray-400 dark:text-wire-200/40 italic bg-gray-50/50 dark:bg-carbon-900/20 border border-dashed border-gray-300 dark:border-carbon-800 rounded-lg px-3 py-2 w-full select-none">
                 Pending job.yaml selection...
               </div>
             </UFormField>
@@ -271,7 +271,7 @@ async function submit() {
             </div>
           </div>
         </form>
-      </UCard>
+      </AppPanelCard>
     </template>
   </UModal>
 </template>

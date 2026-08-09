@@ -122,7 +122,7 @@ const groups = computed(() => {
 </script>
 
 <template>
-  <UModal v-model:open="isShowingCommandPalette">
+  <UModal v-model:open="isShowingCommandPalette" :ui="{ content: 'bg-gray-50 dark:bg-(--ui-bg)' }">
     <template #content>
       <UCommandPalette
         :loading="loading"
