@@ -11,6 +11,21 @@
   --color-wire-700: #256d85;
 }
 
+/* Nuxt UI's light tokens make --ui-bg pure white and --ui-bg-elevated a darker
+   gray than the page itself, so cards have no visible separation. Invert that:
+   soft-gray canvas, white raised cards, darker hairline borders.
+   Scoped to .light only (not :root) — :root always matches even when .dark is
+   also set on <html>, which would clobber the vendor .dark overrides below it. */
+.light {
+  --ui-bg: var(--ui-color-neutral-100);
+  --ui-bg-muted: var(--ui-color-neutral-200);
+  --ui-bg-elevated: #fff;
+  --ui-bg-accented: var(--ui-color-neutral-200);
+  --ui-border: var(--ui-color-neutral-300);
+  --ui-border-muted: var(--ui-color-neutral-200);
+  --ui-border-accented: var(--ui-color-neutral-400);
+}
+
 @layer base {
   .sr-only {
     position: absolute;

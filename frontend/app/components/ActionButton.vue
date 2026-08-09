@@ -9,6 +9,7 @@ withDefaults(defineProps<{
   size?: ButtonProps['size']
   disabled?: boolean
   loading?: boolean
+  glow?: boolean
 }>(), {
   label: undefined,
   color: 'primary',
@@ -16,6 +17,7 @@ withDefaults(defineProps<{
   size: 'md',
   disabled: false,
   loading: false,
+  glow: true,
 })
 
 defineEmits<{ click: [MouseEvent] }>()
@@ -30,7 +32,7 @@ defineEmits<{ click: [MouseEvent] }>()
     :size="size"
     :disabled="disabled"
     :loading="loading"
-    class="shadow-[0_0_16px_rgba(255,198,0,0.35)] transition-shadow hover:shadow-[0_0_24px_rgba(255,198,0,0.55)]"
+    :class="variant === 'solid' && glow ? 'shadow-[0_0_16px_rgba(255,198,0,0.35)] transition-shadow hover:shadow-[0_0_24px_rgba(255,198,0,0.55)]' : ''"
     @click="$emit('click', $event)"
   />
 </template>

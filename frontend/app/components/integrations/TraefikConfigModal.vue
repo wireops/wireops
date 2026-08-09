@@ -56,7 +56,7 @@ async function handleSave() {
 
 <template>
   <UModal
-    v-model:open="isOpen"
+    v-model:open="isOpen" :ui="{ content: 'bg-gray-50 dark:bg-(--ui-bg)' }"
     title="Configure Traefik Integration"
     description="Set up Traefik scheme and port settings for generating app routes."
   >

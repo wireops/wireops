@@ -2,6 +2,7 @@
 const { $pb } = useNuxtApp()
 const { subscribe } = useRealtime()
 const { listJobs, getWorkers } = useApi()
+const { isViewer } = usePermissions()
 
 const { data: stacks, refresh } = useAsyncData('stacks', () =>
   $pb.collection('stacks').getFullList({ sort: '-updated', expand: 'repository' }).catch(() => [])
@@ -20,6 +21,7 @@ const { data: repos, refresh: refreshRepos } = useAsyncData('dashboard_repos', (
 )
 
 const showCreateRepo = ref(false)
+const showCreateStack = ref(false)
 
 async function refreshAll() {
   await Promise.all([refresh(), refreshJobs(), refreshWorkers(), refreshRepos()])
@@ -143,7 +145,7 @@ onMounted(() => {
           </div>
           Dashboard
         </h1>
-        <div v-if="isUpdating" class="flex items-center gap-2 text-sm text-wire-400">
+        <div v-if="isUpdating" class="flex items-center gap-2 text-sm text-gray-500 dark:text-wire-400">
           <UIcon name="i-lucide-loader-2" class="w-4 h-4 animate-spin" />
           <span class="hidden sm:inline">Updating...</span>
         </div>
@@ -154,11 +156,11 @@ onMounted(() => {
       </div>
     </div>
 
-    <UCard v-if="showGettingStarted">
+    <AppPanelCard v-if="showGettingStarted">
       <template #header>
         <div class="flex items-center justify-between">
           <h2 class="font-semibold">Getting Started</h2>
-          <span class="text-sm text-wire-200/50">{{ gettingStartedDoneCount }}/{{ gettingStartedSteps.length }} done</span>
+          <span class="text-sm text-gray-500 dark:text-wire-200/50">{{ gettingStartedDoneCount }}/{{ gettingStartedSteps.length }} done</span>
         </div>
       </template>
       <div class="flex flex-col sm:flex-row sm:items-stretch gap-3">
@@ -186,9 +188,9 @@ onMounted(() => {
               >
                 <UIcon :name="step.done ? 'i-lucide-check' : step.icon" class="w-4 h-4" />
               </div>
-              <p class="font-medium text-wire-200">{{ step.title }}</p>
+              <p class="font-medium text-gray-900 dark:text-wire-200">{{ step.title }}</p>
             </div>
-            <p class="text-sm text-wire-200/50 flex-1">{{ step.description }}</p>
+            <p class="text-sm text-gray-500 dark:text-wire-200/50 flex-1">{{ step.description }}</p>
             <span v-if="step.done" class="inline-flex items-center gap-1 text-xs font-medium text-emerald-400 mt-auto">
               <UIcon name="i-lucide-check-circle-2" class="w-3.5 h-3.5" />
               Completed
@@ -200,89 +202,89 @@ onMounted(() => {
           </button>
         </template>
       </div>
-    </UCard>
+    </AppPanelCard>
 
     <div v-if="!isPristine" class="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-      <UCard>
+      <AppPanelCard>
         <div class="flex items-center gap-3">
           <div class="p-2 rounded-lg bg-wire-400/10">
             <UIcon name="i-lucide-layers" class="w-5 h-5 text-wire-400" />
           </div>
           <div>
-            <p class="text-sm text-wire-200/60">Stacks</p>
+            <p class="text-sm text-gray-500 dark:text-wire-200/60">Stacks</p>
             <p class="text-2xl font-bold">{{ stats.stacks }}</p>
           </div>
         </div>
-      </UCard>
-      <UCard>
+      </AppPanelCard>
+      <AppPanelCard>
         <div class="flex items-center gap-3">
           <div class="p-2 rounded-lg bg-wire-400/10">
             <UIcon name="i-lucide-calendar-clock" class="w-5 h-5 text-wire-400" />
           </div>
           <div>
-            <p class="text-sm text-wire-200/60">Jobs</p>
+            <p class="text-sm text-gray-500 dark:text-wire-200/60">Jobs</p>
             <p class="text-2xl font-bold">{{ stats.jobs }}</p>
           </div>
         </div>
-      </UCard>
-      <UCard>
+      </AppPanelCard>
+      <AppPanelCard>
         <div class="flex items-center gap-3">
           <div class="p-2 rounded-lg bg-emerald-500/10">
             <UIcon name="i-lucide-circle-check" class="w-5 h-5 text-emerald-400" />
           </div>
           <div>
-            <p class="text-sm text-wire-200/60">Active</p>
+            <p class="text-sm text-gray-500 dark:text-wire-200/60">Active</p>
             <p class="text-2xl font-bold">{{ stats.active }}</p>
           </div>
         </div>
-      </UCard>
-      <UCard>
+      </AppPanelCard>
+      <AppPanelCard>
         <div class="flex items-center gap-3">
           <div class="p-2 rounded-lg" :class="stats.error > 0 ? 'bg-red-500/10' : 'bg-gray-400/10 dark:bg-carbon-700/40'">
             <UIcon name="i-lucide-alert-triangle" class="w-5 h-5" :class="stats.error > 0 ? 'text-red-400' : 'text-gray-400 dark:text-gray-500'" />
           </div>
           <div>
-            <p class="text-sm text-wire-200/60">Error</p>
+            <p class="text-sm text-gray-500 dark:text-wire-200/60">Error</p>
             <p class="text-2xl font-bold" :class="stats.error > 0 ? 'text-red-400' : 'text-gray-400 dark:text-gray-500'">{{ stats.error }}</p>
           </div>
         </div>
-      </UCard>
+      </AppPanelCard>
     </div>
 
     <div v-if="!isPristine" class="grid grid-cols-3 gap-3 sm:gap-4">
-      <UCard>
+      <AppPanelCard>
         <div class="flex items-center gap-3">
           <div class="p-2 rounded-lg bg-emerald-500/10">
             <UIcon name="i-lucide-network" class="w-5 h-5 text-emerald-400" />
           </div>
           <div>
-            <p class="text-sm text-wire-200/60">Workers Online</p>
-            <p class="text-2xl font-bold">{{ stats.workersOnline }}<span class="text-base font-medium text-wire-200/40">/{{ stats.workersTotal }}</span></p>
+            <p class="text-sm text-gray-500 dark:text-wire-200/60">Workers Online</p>
+            <p class="text-2xl font-bold">{{ stats.workersOnline }}<span class="text-base font-medium text-gray-400 dark:text-wire-200/40">/{{ stats.workersTotal }}</span></p>
           </div>
         </div>
-      </UCard>
-      <UCard>
+      </AppPanelCard>
+      <AppPanelCard>
         <div class="flex items-center gap-3">
           <div class="p-2 rounded-lg" :class="stats.stalledJobs > 0 ? 'bg-amber-500/10' : 'bg-gray-400/10 dark:bg-carbon-700/40'">
             <UIcon name="i-lucide-pause-circle" class="w-5 h-5" :class="stats.stalledJobs > 0 ? 'text-amber-400' : 'text-gray-400 dark:text-gray-500'" />
           </div>
           <div>
-            <p class="text-sm text-wire-200/60">Stalled Jobs</p>
+            <p class="text-sm text-gray-500 dark:text-wire-200/60">Stalled Jobs</p>
             <p class="text-2xl font-bold" :class="stats.stalledJobs > 0 ? 'text-amber-400' : 'text-gray-400 dark:text-gray-500'">{{ stats.stalledJobs }}</p>
           </div>
         </div>
-      </UCard>
-      <UCard>
+      </AppPanelCard>
+      <AppPanelCard>
         <div class="flex items-center gap-3">
           <div class="p-2 rounded-lg" :class="stats.paused > 0 ? 'bg-amber-500/10' : 'bg-gray-400/10 dark:bg-carbon-700/40'">
             <UIcon name="i-lucide-pause-circle" class="w-5 h-5" :class="stats.paused > 0 ? 'text-amber-400' : 'text-gray-400 dark:text-gray-500'" />
           </div>
           <div>
-            <p class="text-sm text-wire-200/60">Paused Stacks</p>
+            <p class="text-sm text-gray-500 dark:text-wire-200/60">Paused Stacks</p>
             <p class="text-2xl font-bold" :class="stats.paused > 0 ? 'text-amber-400' : 'text-gray-400 dark:text-gray-500'">{{ stats.paused }}</p>
           </div>
         </div>
-      </UCard>
+      </AppPanelCard>
     </div>
 
     <div v-if="!isPristine" class="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -292,57 +294,57 @@ onMounted(() => {
       <!-- Right Column: Widgets -->
       <div class="space-y-6">
         <!-- Quick Actions -->
-        <UCard>
+        <AppPanelCard>
           <template #header>
             <h2 class="font-semibold">Quick Actions</h2>
           </template>
           <div class="grid grid-cols-2 gap-3">
             <UButton
-              to="/stacks"
               icon="i-lucide-layers"
-              label="Manage Workloads"
+              label="Add Stack"
               color="primary"
               variant="soft"
               block
+              @click="showCreateStack = true"
             />
             <UButton
-              to="/repositories"
               icon="i-lucide-git-branch"
-              label="Repositories"
-              color="primary"
-              variant="soft"
-              block
-            />
-            <UButton
-              icon="i-lucide-plus"
-              label="Create Repository"
+              label="Add Repository"
               color="primary"
               variant="soft"
               block
               @click="showCreateRepo = true"
             />
             <UButton
-              to="/settings"
-              icon="i-lucide-settings"
-              label="Settings"
-              color="neutral"
+              icon="i-lucide-key-round"
+              label="Add Secret"
+              color="primary"
               variant="soft"
               block
+              @click="navigateTo('/secrets?create=1')"
             />
             <UButton
-              to="https://github.com/wireops/wireops"
-              target="_blank"
-              icon="i-lucide-github"
-              label="Documentation"
-              color="neutral"
+              v-if="!isViewer"
+              icon="i-lucide-network"
+              label="Add Worker"
+              color="primary"
               variant="soft"
               block
+              @click="navigateTo('/workers?generate=1')"
+            />
+            <UButton
+              icon="i-lucide-puzzle"
+              label="Enable Integration"
+              color="primary"
+              variant="soft"
+              block
+              @click="navigateTo('/settings/integrations')"
             />
           </div>
-        </UCard>
+        </AppPanelCard>
 
         <!-- Stack Health -->
-        <UCard>
+        <AppPanelCard>
           <template #header>
             <h2 class="font-semibold">System Health</h2>
           </template>
@@ -378,13 +380,13 @@ onMounted(() => {
             <div class="w-12 h-12 rounded-full bg-yellow-400/10 border border-yellow-400/20 flex items-center justify-center mb-3 shadow-[0_0_16px_rgba(255,198,0,0.1)]">
               <UIcon name="i-lucide-zap" class="w-6 h-6 text-yellow-400" />
             </div>
-            <p class="font-medium text-wire-200">All Systems Operational</p>
-            <p class="text-sm text-wire-200/50 mt-1">All {{ stats.stacks }} stacks are healthy</p>
+            <p class="font-medium text-gray-900 dark:text-wire-200">All Systems Operational</p>
+            <p class="text-sm text-gray-500 dark:text-wire-200/50 mt-1">All {{ stats.stacks }} stacks are healthy</p>
           </div>
-        </UCard>
+        </AppPanelCard>
 
         <!-- By Group -->
-        <UCard v-if="groupCounts.length > 0">
+        <AppPanelCard v-if="groupCounts.length > 0">
           <template #header>
             <h2 class="font-semibold">By Group</h2>
           </template>
@@ -418,10 +420,11 @@ onMounted(() => {
               </div>
             </div>
           </div>
-        </UCard>
+        </AppPanelCard>
       </div>
     </div>
     
     <RepositoryCreateModal v-model:open="showCreateRepo" @created="refreshRepos" />
+    <CreateStackModal v-model:open="showCreateStack" @created="refresh" />
   </div>
 </template>

@@ -97,7 +97,7 @@ async function testConnection() {
 
 <template>
   <UModal
-    v-model:open="isOpen"
+    v-model:open="isOpen" :ui="{ content: 'bg-gray-50 dark:bg-(--ui-bg)' }"
     title="Configure Infisical"
     description="Connect via Universal Auth (machine identity) to resolve secret env vars."
   >

@@ -126,7 +126,7 @@ watch(query, () => { activeIndex.value = 0 })
       <button
         :id="id"
         type="button"
-        class="flex items-center justify-between gap-1.5 px-2.5 border border-gray-200 dark:border-carbon-800 rounded-lg bg-white dark:bg-carbon-950/70 focus-within:border-yellow-400/60 focus:outline-hidden focus:border-yellow-400/60 focus:ring-1 focus:ring-yellow-400/40 transition-all duration-200 min-h-[38px] shrink-0 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+        class="flex items-center justify-between gap-1.5 px-2.5 border border-gray-300 dark:border-carbon-800 rounded-lg bg-white dark:bg-carbon-950/70 focus-within:border-yellow-400/60 focus:outline-hidden focus:border-yellow-400/60 focus:ring-1 focus:ring-yellow-400/40 transition-all duration-200 min-h-[38px] shrink-0 text-sm disabled:opacity-75 disabled:cursor-not-allowed disabled:bg-gray-200 dark:disabled:bg-carbon-900"
         :class="contentWidth ? 'w-fit' : 'w-full'"
         :disabled="disabled || loading"
         :aria-label="ariaLabel"
@@ -148,12 +148,12 @@ watch(query, () => { activeIndex.value = 0 })
       <PopoverContent
         :side-offset="4"
         align="start"
-        class="z-50 w-max border border-gray-200 dark:border-carbon-800 rounded-lg bg-white dark:bg-carbon-950 shadow-lg overflow-hidden"
+        class="z-50 w-max border border-gray-300 dark:border-carbon-800 rounded-lg bg-white dark:bg-carbon-950 shadow-lg overflow-hidden"
         :class="contentWidth ? '' : 'min-w-[var(--reka-popper-anchor-width)]'"
         @open-auto-focus="searchable ? $event.preventDefault() : undefined"
         @keydown="!searchable && onKeydown($event)"
       >
-        <div v-if="searchable" class="p-1.5 border-b border-gray-200 dark:border-carbon-800">
+        <div v-if="searchable" class="p-1.5 border-b border-gray-300 dark:border-carbon-800">
           <input
             ref="searchEl"
             v-model="query"

@@ -34,7 +34,7 @@ defineExpose({ reset })
 </script>
 
 <template>
-  <UCard :ui="{ body: 'p-6' }">
+  <AppPanelCard :ui="{ body: 'p-6' }">
     <template #header>
       <div class="flex items-center gap-2">
         <UIcon name="i-lucide-key-round" class="w-5 h-5 text-amber-500" />
@@ -47,21 +47,21 @@ defineExpose({ reset })
 
     <form class="space-y-4" @submit.prevent="handleSubmit">
       <UFormField label="Name" required>
-        <UInput v-model="form.name" placeholder="e.g. CI-CD-deployer" class="w-full" required />
+        <AppTextInput v-model="form.name" placeholder="e.g. CI-CD-deployer" />
       </UFormField>
 
       <UFormField label="Description" required>
-        <UInput v-model="form.description" placeholder="What is this service account for?" class="w-full" required />
+        <AppTextInput v-model="form.description" placeholder="What is this service account for?" />
       </UFormField>
 
       <UFormField label="Role">
-        <USelectMenu v-model="form.role" :items="roleOptions" value-key="value" class="w-full" />
+        <AppSelectInput v-model="form.role" :items="roleOptions" />
       </UFormField>
 
       <div class="flex justify-end gap-2 pt-2">
         <CancelButton @click="handleCancel" />
-        <UButton type="submit" label="Create" icon="i-lucide-plus" />
+        <ActionButton type="submit" label="Create" icon="i-lucide-plus" :glow="false" />
       </div>
     </form>
-  </UCard>
+  </AppPanelCard>
 </template>

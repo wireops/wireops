@@ -21,7 +21,7 @@ const handleIconError = (slug: string) => {
 </script>
 
 <template>
-  <div :class="wrapperClass || 'w-7 h-7 flex flex-shrink-0 items-center justify-center rounded-md bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 overflow-hidden'">
+  <div :class="wrapperClass || 'w-7 h-7 flex flex-shrink-0 items-center justify-center rounded-md bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 overflow-hidden'">
     <template v-if="slug && !failedSlugs.has(slug)">
       <!-- CDN image -->
       <img

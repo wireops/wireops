@@ -57,7 +57,7 @@ async function onConfirm() {
 </script>
 
 <template>
-  <UModal v-model:open="open">
+  <UModal v-model:open="open" :ui="{ content: 'bg-gray-50 dark:bg-(--ui-bg)' }">
     <template #content>
       <div class="p-6 space-y-5">
         <div class="flex items-start gap-4">

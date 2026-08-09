@@ -164,7 +164,7 @@ async function handleTest() {
 
 <template>
   <UModal
-    v-model:open="isOpen"
+    v-model:open="isOpen" :ui="{ content: 'bg-gray-50 dark:bg-(--ui-bg)' }"
     title="Configure Discord Integration"
     description="Configure and test Discord sync notifications."
   >

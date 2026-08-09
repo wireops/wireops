@@ -100,7 +100,7 @@ async function handleSave() {
 
 <template>
   <UModal
-    v-model:open="isOpen"
+    v-model:open="isOpen" :ui="{ content: 'bg-gray-50 dark:bg-(--ui-bg)' }"
     title="Configure S3 Storage"
     description="Mirror backups to S3-compatible storage (AWS S3, R2, MinIO, B2, ...)."
   >

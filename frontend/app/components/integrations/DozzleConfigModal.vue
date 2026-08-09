@@ -57,7 +57,7 @@ async function handleSave() {
 
 <template>
   <UModal
-    v-model:open="isOpen"
+    v-model:open="isOpen" :ui="{ content: 'bg-gray-50 dark:bg-(--ui-bg)' }"
     title="Configure Dozzle Integration"
     description="Set up your Dozzle instance URL to view container logs directly."
   >

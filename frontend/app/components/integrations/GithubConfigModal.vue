@@ -66,7 +66,7 @@ function close() {
 
 <template>
   <UModal
-    v-model:open="isOpen"
+    v-model:open="isOpen" :ui="{ content: 'bg-gray-50 dark:bg-(--ui-bg)' }"
     title="GitHub"
     description="Native GitHub OAuth connection — used to browse and pick repositories when adding one."
   >

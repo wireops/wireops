@@ -318,7 +318,7 @@ onMounted(() => {
 
     <!-- Users Tab -->
     <div v-if="activeTab === 'users'" class="space-y-6">
-      <UCard v-if="isAdmin">
+      <AppPanelCard v-if="isAdmin">
         <template #header>
           <h3 class="font-semibold">Invite User</h3>
           <p class="text-xs text-gray-500 mt-0.5">Send a magic-link invitation to a new administrator.</p>
@@ -328,9 +328,9 @@ onMounted(() => {
           <AppSelectInput v-model="inviteRole" :items="roleOptions" content-width class="w-full sm:w-auto sm:min-w-40" />
           <UButton type="submit" label="Send Invite" icon="i-lucide-send" :loading="inviteLoading" />
         </form>
-      </UCard>
+      </AppPanelCard>
 
-      <UCard>
+      <AppPanelCard>
         <template #header><h3 class="font-semibold">Users</h3></template>
         <div class="space-y-4">
           <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-gray-100 dark:border-gray-800">
@@ -395,12 +395,12 @@ onMounted(() => {
             <span class="text-xs text-gray-500">Page {{ usersPage }} of {{ usersTotalPages }}</span>
           </div>
         </div>
-      </UCard>
+      </AppPanelCard>
     </div>
 
     <!-- Service Accounts Tab -->
     <div v-if="activeTab === 'service-accounts' && isAdmin" class="space-y-6">
-      <UCard>
+      <AppPanelCard>
         <div class="flex justify-between items-center gap-4">
           <div>
             <h3 class="font-semibold text-gray-900 dark:text-white">Service Accounts</h3>
@@ -413,9 +413,9 @@ onMounted(() => {
             @click="showCreateServiceAccountModal = true"
           />
         </div>
-      </UCard>
+      </AppPanelCard>
 
-      <UCard>
+      <AppPanelCard>
         <div class="space-y-4">
           <!-- Search and Filter controls -->
           <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-gray-100 dark:border-gray-800">
@@ -432,7 +432,7 @@ onMounted(() => {
           <div v-else-if="serviceAccounts.length === 0" class="text-sm text-gray-500">No service accounts yet.</div>
           <div v-else-if="filteredServiceAccounts.length === 0" class="text-sm text-gray-500">No matching service accounts found.</div>
           <div v-else class="space-y-3">
-            <div v-for="account in filteredServiceAccounts" :key="account.id" class="rounded-lg border border-gray-200 p-3 dark:border-gray-800">
+            <div v-for="account in filteredServiceAccounts" :key="account.id" class="rounded-lg border border-gray-300 p-3 dark:border-gray-800">
               <div class="flex items-start justify-between gap-3">
                 <div class="flex items-center gap-3">
                   <div class="flex items-center justify-center w-8 h-8 rounded-full shrink-0" :class="account.enabled ? 'bg-purple-500/10' : 'bg-gray-400/10'">
@@ -554,7 +554,7 @@ onMounted(() => {
             </div>
           </div>
         </div>
-      </UCard>
+      </AppPanelCard>
 
       <UModal v-model:open="showCreateServiceAccountModal">
         <template #content>
@@ -568,7 +568,7 @@ onMounted(() => {
 
       <UModal v-model:open="showApiKeyModal">
         <template #content>
-          <UCard :ui="{ body: 'p-6' }">
+          <AppPanelCard :ui="{ body: 'p-6' }">
             <template #header>
               <div class="flex items-center gap-2">
                 <UIcon name="i-lucide-key-round" class="w-5 h-5 text-gray-500" />
@@ -598,7 +598,7 @@ onMounted(() => {
                 <UButton label="Done" variant="outline" color="neutral" @click="showApiKeyModal = false" />
               </div>
             </div>
-          </UCard>
+          </AppPanelCard>
         </template>
       </UModal>
 

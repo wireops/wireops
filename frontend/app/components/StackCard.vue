@@ -26,7 +26,7 @@ const lastSyncedLabel = computed(() => relativeTime(props.stack?.last_synced_at)
 
 <template>
   <article
-    class="relative w-full min-w-0 overflow-hidden rounded-xl border border-gray-200 border-l-4 bg-white p-3 sm:p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-[0_0_0_1px_rgba(255,198,0,0.28),0_12px_24px_rgba(15,23,42,0.08)] focus-within:-translate-y-0.5 focus-within:shadow-[0_0_0_2px_rgba(255,198,0,0.42),0_12px_24px_rgba(15,23,42,0.1)] dark:border-carbon-700 dark:bg-carbon-800/55 dark:hover:shadow-[0_0_0_1px_rgba(255,198,0,0.24),0_14px_28px_rgba(0,0,0,0.24)] dark:focus-within:shadow-[0_0_0_2px_rgba(255,198,0,0.42),0_14px_28px_rgba(0,0,0,0.24)]"
+    class="relative w-full min-w-0 overflow-hidden rounded-xl border border-gray-300 border-l-4 bg-white p-3 sm:p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-[0_0_0_1px_rgba(255,198,0,0.28),0_12px_24px_rgba(15,23,42,0.08)] focus-within:-translate-y-0.5 focus-within:shadow-[0_0_0_2px_rgba(255,198,0,0.42),0_12px_24px_rgba(15,23,42,0.1)] dark:border-carbon-700 dark:bg-carbon-800/55 dark:hover:shadow-[0_0_0_1px_rgba(255,198,0,0.24),0_14px_28px_rgba(0,0,0,0.24)] dark:focus-within:shadow-[0_0_0_2px_rgba(255,198,0,0.42),0_14px_28px_rgba(0,0,0,0.24)]"
     :class="statusBadge.borderClass"
   >
     <div class="relative">

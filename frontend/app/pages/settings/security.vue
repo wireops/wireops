@@ -327,7 +327,7 @@ onMounted(async () => {
 
     <!-- SSO Mappings Tab -->
     <div v-if="activeTab === 'sso-mappings' && isAdmin" class="space-y-6">
-      <UCard>
+      <AppPanelCard>
         <template #header>
           <h3 class="font-semibold">SSO Group Role Mapping</h3>
           <p class="text-xs text-gray-500 mt-0.5">Map identity provider groups to fixed WireOps roles. No match means SSO login is denied.</p>
@@ -355,7 +355,7 @@ onMounted(async () => {
             </li>
           </ul>
         </div>
-      </UCard>
+      </AppPanelCard>
     </div>
 
     <!-- Worker Policies Tab -->
@@ -391,7 +391,7 @@ onMounted(async () => {
       </template>
 
       <!-- Confirm Toggle Policy Modal -->
-      <UModal v-model:open="showConfirmToggleModal">
+      <UModal v-model:open="showConfirmToggleModal" :ui="{ content: 'bg-gray-50 dark:bg-(--ui-bg)' }">
         <template #content>
           <ConfirmTogglePolicyModal
             :enabled="pendingToggleValue"
@@ -403,7 +403,7 @@ onMounted(async () => {
       </UModal>
 
       <!-- Confirm Strict Production Preset Modal -->
-      <UModal v-model:open="showStrictPresetModal">
+      <UModal v-model:open="showStrictPresetModal" :ui="{ content: 'bg-gray-50 dark:bg-(--ui-bg)' }">
         <template #content>
           <ConfirmStrictPresetModal
             :loading="workerPolicySaving"

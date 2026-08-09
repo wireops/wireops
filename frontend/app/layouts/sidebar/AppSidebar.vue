@@ -164,7 +164,7 @@ watch(
           >
             <template #trailing>
               <div class="flex items-center gap-1 ml-auto">
-                <kbd class="px-1.5 py-0.5 text-[10px] font-semibold text-gray-500 bg-gray-100 dark:bg-carbon-800 border border-gray-200 dark:border-carbon-700 rounded-md shadow-sm">⌘K</kbd>
+                <kbd class="px-1.5 py-0.5 text-[10px] font-semibold text-gray-500 bg-gray-100 dark:bg-carbon-800 border border-gray-300 dark:border-carbon-700 rounded-md shadow-sm">⌘K</kbd>
               </div>
             </template>
           </UButton>
@@ -227,54 +227,14 @@ watch(
           </div>
         </nav>
 
-        <div class="mt-auto space-y-3 border-t border-carbon-800 pt-5">
-          <UButton
-            icon="i-lucide-keyboard"
-            label="Keyboard Shortcuts"
-            variant="ghost"
-            color="neutral"
-            size="lg"
-            class="w-full justify-start"
-            @click="emit('help')"
-          />
-          <UButton
-            icon="i-lucide-accessibility"
-            label="Accessibility"
-            variant="ghost"
-            color="neutral"
-            size="lg"
-            class="w-full justify-start"
-            @click="emit('accessibility')"
-          />
-          <UButton
-            :icon="colorModeValue === 'dark' ? 'i-lucide-sun' : 'i-lucide-moon'"
-            :label="colorModeValue === 'dark' ? 'Light Mode' : 'Dark Mode'"
-            variant="ghost"
-            color="neutral"
-            size="lg"
-            class="w-full justify-start"
-            @click="emit('toggleTheme')"
-          />
-          <UButton
-            icon="i-lucide-user-circle"
-            label="Account"
-            variant="ghost"
-            color="neutral"
-            size="lg"
-            class="w-full justify-start"
-            to="/account"
-            :aria-current="isActive('/account') ? 'page' : undefined"
-          />
-          <UButton
-            icon="i-lucide-log-out"
-            label="Logout"
-            variant="ghost"
-            color="neutral"
-            size="lg"
-            class="w-full justify-start"
-            @click="emit('logout')"
-          />
-        </div>
+        <AppSidebarFooter
+          :color-mode-value="colorModeValue"
+          :account-active="isActive('/account')"
+          @help="emit('help')"
+          @accessibility="emit('accessibility')"
+          @toggle-theme="emit('toggleTheme')"
+          @logout="emit('logout')"
+        />
       </div>
     </aside>
   </div>
@@ -324,7 +284,7 @@ watch(
           >
             <template v-if="!collapsed" #trailing>
               <div class="flex items-center gap-1 ml-auto">
-                <kbd class="px-1.5 py-0.5 text-[10px] font-semibold text-gray-500 bg-gray-100 dark:bg-carbon-800 border border-gray-200 dark:border-carbon-700 rounded-md shadow-sm">⌘K</kbd>
+                <kbd class="px-1.5 py-0.5 text-[10px] font-semibold text-gray-500 bg-gray-100 dark:bg-carbon-800 border border-gray-300 dark:border-carbon-700 rounded-md shadow-sm">⌘K</kbd>
               </div>
             </template>
           </UButton>
@@ -389,69 +349,15 @@ watch(
         </div>
       </nav>
 
-      <div class="mt-auto space-y-3 border-t border-carbon-800 pt-5 overflow-hidden shrink-0">
-        <UTooltip :text="collapsed ? 'Keyboard Shortcuts' : ''" :prevent="!collapsed" placement="right">
-          <UButton
-            icon="i-lucide-keyboard"
-            :label="collapsed ? undefined : 'Keyboard Shortcuts'"
-            :aria-label="collapsed ? 'Keyboard Shortcuts' : undefined"
-            variant="ghost"
-            color="neutral"
-            size="lg"
-            :class="['w-full transition-all duration-300', collapsed ? 'justify-center px-0' : 'justify-start']"
-            @click="emit('help')"
-          />
-        </UTooltip>
-        <UTooltip :text="collapsed ? 'Accessibility' : ''" :prevent="!collapsed" placement="right">
-          <UButton
-            icon="i-lucide-accessibility"
-            :label="collapsed ? undefined : 'Accessibility'"
-            :aria-label="collapsed ? 'Accessibility' : undefined"
-            variant="ghost"
-            color="neutral"
-            size="lg"
-            :class="['w-full transition-all duration-300', collapsed ? 'justify-center px-0' : 'justify-start']"
-            @click="emit('accessibility')"
-          />
-        </UTooltip>
-        <UTooltip :text="collapsed ? (colorModeValue === 'dark' ? 'Light Mode' : 'Dark Mode') : ''" :prevent="!collapsed" placement="right">
-          <UButton
-            :icon="colorModeValue === 'dark' ? 'i-lucide-sun' : 'i-lucide-moon'"
-            :label="collapsed ? undefined : (colorModeValue === 'dark' ? 'Light Mode' : 'Dark Mode')"
-            :aria-label="collapsed ? (colorModeValue === 'dark' ? 'Light Mode' : 'Dark Mode') : undefined"
-            variant="ghost"
-            color="neutral"
-            size="lg"
-            :class="['w-full transition-all duration-300', collapsed ? 'justify-center px-0' : 'justify-start']"
-            @click="emit('toggleTheme')"
-          />
-        </UTooltip>
-        <UTooltip :text="collapsed ? 'Account' : ''" :prevent="!collapsed" placement="right">
-          <UButton
-            icon="i-lucide-user-circle"
-            :label="collapsed ? undefined : 'Account'"
-            :aria-label="collapsed ? 'Account' : undefined"
-            variant="ghost"
-            color="neutral"
-            size="lg"
-            :class="['w-full transition-all duration-300', collapsed ? 'justify-center px-0' : 'justify-start']"
-            to="/account"
-            :aria-current="isActive('/account') ? 'page' : undefined"
-          />
-        </UTooltip>
-        <UTooltip :text="collapsed ? 'Logout' : ''" :prevent="!collapsed" placement="right">
-          <UButton
-            icon="i-lucide-log-out"
-            :label="collapsed ? undefined : 'Logout'"
-            :aria-label="collapsed ? 'Logout' : undefined"
-            variant="ghost"
-            color="neutral"
-            size="lg"
-            :class="['w-full transition-all duration-300', collapsed ? 'justify-center px-0' : 'justify-start']"
-            @click="emit('logout')"
-          />
-        </UTooltip>
-      </div>
+      <AppSidebarFooter
+        :collapsed="collapsed"
+        :color-mode-value="colorModeValue"
+        :account-active="isActive('/account')"
+        @help="emit('help')"
+        @accessibility="emit('accessibility')"
+        @toggle-theme="emit('toggleTheme')"
+        @logout="emit('logout')"
+      />
     </div>
   </aside>
 </template>

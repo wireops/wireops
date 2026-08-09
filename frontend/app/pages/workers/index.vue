@@ -2,6 +2,7 @@
 const { getWorkers, createWorkerToken } = useApi()
 const toast = useToast()
 const { isViewer } = usePermissions()
+const route = useRoute()
 
 if (isViewer.value) {
   navigateTo('/')
@@ -78,6 +79,15 @@ function formatRelative(dateStr: string) {
   return `${Math.floor(diff / 86_400_000)}d ago`
 }
 
+function formatDuration(dateStr: string) {
+  if (!dateStr) return ''
+  const diff = Math.abs(new Date(dateStr).getTime() - Date.now())
+  if (diff < 60_000) return `${Math.floor(diff / 1000)}s`
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m`
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h`
+  return `${Math.floor(diff / 86_400_000)}d`
+}
+
 function hasVisibleTokenExpiry(worker: any) {
   if (!worker?.token_expires) return false
   if (worker.token_status === TOKEN_STATUS.ACTIVE) return false
@@ -113,7 +123,10 @@ const workerComposeExample = computed(() =>
       - /var/run/docker.sock:/var/run/docker.sock`
 )
 
-
+const setupAccordionItems = [
+  { label: 'docker-compose.yml', icon: 'i-lucide-file-code', value: 'compose' },
+  { label: 'Docker Run', icon: 'i-lucide-terminal', value: 'docker-run' },
+]
 
 let refreshInterval: any
 
@@ -121,6 +134,7 @@ onMounted(() => {
   refreshInterval = setInterval(() => {
     if (!isAutoRefreshPaused.value) refresh()
   }, 10000)
+  if (route.query.generate && !isViewer.value) generateToken()
 })
 
 onUnmounted(() => {
@@ -145,7 +159,7 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <UCard>
+    <AppPanelCard>
       <template #header>
         <div class="flex items-center justify-between">
           <h3 class="font-semibold text-gray-900 dark:text-wire-200">
@@ -208,7 +222,7 @@ onUnmounted(() => {
         <div
           v-for="worker in visibleWorkers"
           :key="worker.id"
-          class="flex items-center gap-4 p-4 bg-gray-50 dark:bg-carbon-800/40 rounded-xl border border-gray-200 dark:border-carbon-700 transition-all"
+          class="flex items-center gap-4 p-4 bg-gray-50 dark:bg-carbon-800/40 rounded-xl border border-gray-300 dark:border-carbon-700 transition-all"
           :class="[
             workerStatus(worker) === WORKER_STATUS.REVOKED ? 'opacity-50' : '',
             isWorkerClickable(worker) ? 'cursor-pointer hover:shadow-[0_0_0_2px_rgba(255,198,0,0.35),0_0_20px_rgba(255,198,0,0.12)]' : 'cursor-default'
@@ -267,11 +281,11 @@ onUnmounted(() => {
         </div>
         </div>
       </div>
-    </UCard>
+    </AppPanelCard>
 
     <UModal v-model:open="showTokenModal" :ui="{ content: 'sm:max-w-4xl' }">
       <template #content>
-        <UCard v-if="issuedToken" class="w-full">
+        <AppPanelCard v-if="issuedToken" class="w-full">
           <template #header>
             <div class="flex items-center gap-2 text-yellow-400 font-semibold">
               <UIcon name="i-lucide-key" class="w-4 h-4" />
@@ -279,14 +293,35 @@ onUnmounted(() => {
             </div>
           </template>
 
-          <div class="flex w-full flex-col gap-4">
+          <div class="flex w-full flex-col gap-4 max-h-[70vh] overflow-y-auto pr-1">
             <p class="text-sm text-gray-500 dark:text-wire-200/60">
-              This token is valid until <strong>{{ formatDate(issuedTokenExpiresAt) }}</strong>.
+              Register your worker in <strong>{{ formatDuration(issuedTokenExpiresAt) }}</strong>.
             </p>
-            <ExecutableCommand label="Token" :content="issuedToken" />
-            <ExecutableCommand label="Docker Run" :content="workerBootstrapCommand" button-label="Copy Command" multiline />
-            <ExecutableCommand label="docker-compose.yml" :content="workerComposeExample" button-label="Copy Compose" multiline />
-            <ExecutableCommand label=".env" :content="workerEnvFileExample" button-label="Copy .env" multiline />
+            <ExecutableCommand label="Token" :content="issuedToken" download-filename="worker-token.txt" masked />
+
+            <UAccordion
+              :items="setupAccordionItems"
+              type="multiple"
+              :default-value="['compose']"
+              :ui="{ root: 'w-full flex flex-col gap-2', item: 'rounded-lg border! border-gray-300 dark:border-carbon-700 px-3 last:border-b!' }"
+            >
+              <template #default="{ item }">
+                {{ item.label }}
+                <span v-if="item.value === 'compose'" class="italic opacity-60">(recommended)</span>
+              </template>
+
+              <template #body="{ item }">
+                <ExecutableCommand
+                  label=""
+                  :content="item.value === 'compose' ? workerComposeExample : workerBootstrapCommand"
+                  :button-label="item.value === 'compose' ? 'Copy Compose' : 'Copy Command'"
+                  :download-filename="item.value === 'compose' ? 'docker-compose.yml' : 'docker-run.sh'"
+                  multiline
+                />
+              </template>
+            </UAccordion>
+
+            <ExecutableCommand label=".env" :content="workerEnvFileExample" button-label="Copy .env" download-filename=".env" multiline />
             <p class="text-xs text-gray-400 dark:text-wire-200/40">
               <code class="font-mono">WORKER_TAGS</code> is required and comma-separated. Tags may only contain letters, numbers, <code class="font-mono">-</code> and <code class="font-mono">_</code> — no spaces or special characters.
             </p>
@@ -297,7 +332,7 @@ onUnmounted(() => {
               <CancelButton label="Close" @click="showTokenModal = false" />
             </div>
           </template>
-        </UCard>
+        </AppPanelCard>
       </template>
     </UModal>
 

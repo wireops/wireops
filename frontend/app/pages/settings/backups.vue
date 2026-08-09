@@ -321,7 +321,7 @@ onMounted(() => {
 
 <template>
   <div v-if="isAdmin" class="space-y-6">
-    <UCard>
+    <AppPanelCard>
       <template #header>
         <div class="flex items-center justify-between gap-3">
           <div>
@@ -368,7 +368,7 @@ onMounted(() => {
       <div v-else-if="!backupsError && backups.length === 0" class="text-sm text-gray-500 py-2">No backups yet.</div>
       <div v-else-if="!backupsError" class="overflow-x-auto">
         <table class="w-full text-sm">
-          <thead class="text-left text-xs uppercase text-gray-500 border-b border-gray-200 dark:border-gray-800">
+          <thead class="text-left text-xs uppercase text-gray-500 border-b border-gray-300 dark:border-gray-800">
             <tr>
               <th class="pb-2 pr-4 font-medium">Name</th>
               <th class="pb-2 pr-4 font-medium">Size</th>
@@ -420,9 +420,9 @@ onMounted(() => {
           </tbody>
         </table>
       </div>
-    </UCard>
+    </AppPanelCard>
 
-    <UCard>
+    <AppPanelCard>
       <template #header><h3 class="font-semibold">Scheduled Backups</h3></template>
       <div v-if="settingsLoading" class="text-sm text-gray-500 py-2">Loading settings...</div>
       <div v-else class="space-y-4">
@@ -442,9 +442,9 @@ onMounted(() => {
 
         <UButton icon="i-lucide-save" label="Save" :loading="settingsSaving" @click="handleSaveSettings" />
       </div>
-    </UCard>
+    </AppPanelCard>
 
-    <UCard>
+    <AppPanelCard>
       <template #header><h3 class="font-semibold">Remote Storage</h3></template>
       <p class="text-sm text-gray-500">
         Off-host storage is configured as an integration now — see
@@ -471,7 +471,7 @@ onMounted(() => {
       <div v-else class="mt-3 overflow-x-auto">
         <p class="text-xs uppercase text-gray-500 mb-1">Mirror history</p>
         <table class="w-full text-sm">
-          <thead class="text-left text-xs uppercase text-gray-500 border-b border-gray-200 dark:border-gray-800">
+          <thead class="text-left text-xs uppercase text-gray-500 border-b border-gray-300 dark:border-gray-800">
             <tr>
               <th class="pb-2 pr-4 font-medium">Backup</th>
               <th class="pb-2 pr-4 font-medium">When</th>
@@ -496,11 +496,11 @@ onMounted(() => {
           </tbody>
         </table>
       </div>
-    </UCard>
+    </AppPanelCard>
 
     <UModal v-model:open="showUploadModal" :dismissible="!uploadLoading" :close="!uploadLoading">
       <template #content>
-        <UCard>
+        <AppPanelCard>
           <template #header>
             <div class="flex items-center gap-2">
               <UIcon name="i-lucide-triangle-alert" class="w-5 h-5 text-yellow-400" />
@@ -535,13 +535,13 @@ onMounted(() => {
               />
             </div>
           </template>
-        </UCard>
+        </AppPanelCard>
       </template>
     </UModal>
 
     <UModal v-model:open="showDeleteModal">
       <template #content>
-        <UCard>
+        <AppPanelCard>
           <template #header>
             <div class="flex items-center gap-2">
               <UIcon name="i-lucide-trash-2" class="w-5 h-5 text-red-500" />
@@ -567,13 +567,13 @@ onMounted(() => {
               />
             </div>
           </template>
-        </UCard>
+        </AppPanelCard>
       </template>
     </UModal>
 
     <UModal v-model:open="showRestoreModal" :dismissible="!restoreStarted" :close="!restoreStarted">
       <template #content>
-        <UCard :ui="{ ring: '', divide: 'divide-y divide-gray-100 dark:divide-gray-800' }">
+        <AppPanelCard :ui="{ ring: '', divide: 'divide-y divide-gray-100 dark:divide-gray-800' }">
           <template v-if="!restoreStarted" #header>
             <h3 class="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
               <UIcon name="i-lucide-alert-triangle" class="text-red-500" />
@@ -619,7 +619,7 @@ onMounted(() => {
               />
             </div>
           </template>
-        </UCard>
+        </AppPanelCard>
       </template>
     </UModal>
   </div>

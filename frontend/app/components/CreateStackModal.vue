@@ -504,7 +504,7 @@ async function handleSubmit() {
   >
     <template #content>
       <form class="w-full" @submit.prevent="handleSubmit">
-        <UCard class="sm:min-w-[640px] w-full" :ui="{ body: { base: 'p-6' }, header: { base: 'px-6 py-4' }, footer: { base: 'px-6 py-4' } }">
+        <AppPanelCard class="sm:min-w-[640px] w-full" :ui="{ body: { base: 'p-6' }, header: { base: 'px-6 py-4' }, footer: { base: 'px-6 py-4' } }">
           <template #header>
             <div class="space-y-4">
               <div class="flex items-center justify-between">
@@ -602,7 +602,7 @@ async function handleSubmit() {
                     title="Compose file not resolved"
                     :description="wireopsDefinition.resolution_error"
                   />
-                  <div v-else class="rounded-lg border border-gray-200 dark:border-wire-700 p-3 space-y-2 text-sm">
+                  <div v-else class="rounded-lg border border-gray-300 dark:border-wire-700 p-3 space-y-2 text-sm">
                     <div class="flex items-center gap-2 text-gray-900 dark:text-wire-200 font-medium">
                       <UIcon name="i-lucide-tag" class="w-4 h-4" />
                       <span>{{ wireopsDefinition.name }}</span>
@@ -746,7 +746,7 @@ async function handleSubmit() {
               </div>
             </div>
           </template>
-        </UCard>
+        </AppPanelCard>
       </form>
     </template>
   </UModal>

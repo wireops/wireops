@@ -62,7 +62,7 @@ async function handleSave() {
 
 <template>
   <UModal
-    v-model:open="isOpen"
+    v-model:open="isOpen" :ui="{ content: 'bg-gray-50 dark:bg-(--ui-bg)' }"
     title="Configure Nginx Proxy Manager"
     description="Set up URL generation for Nginx Proxy Manager route labels."
   >

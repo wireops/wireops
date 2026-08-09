@@ -95,7 +95,7 @@ watch(() => props.open, (open) => {
 <template>
   <UModal :open="open" :ui="{ content: 'w-full sm:max-w-lg' }" @update:open="v => emit('update:open', v)">
     <template #content>
-      <UCard>
+      <AppPanelCard>
         <template #header>
           <div class="flex items-center gap-2">
             <UIcon name="i-lucide-file-lock-2" class="h-5 w-5 text-yellow-400" />
@@ -157,7 +157,7 @@ watch(() => props.open, (open) => {
             <CancelButton v-else label="Close" @click="emit('update:open', false)" />
           </div>
         </template>
-      </UCard>
+      </AppPanelCard>
     </template>
   </UModal>
 </template>

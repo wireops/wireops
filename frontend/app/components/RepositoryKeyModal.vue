@@ -146,7 +146,7 @@ async function submit() {
 <template>
   <UModal v-model:open="isOpen" scrollable :ui="{ content: 'sm:max-w-xl w-full' }">
     <template #content>
-      <UCard class="sm:min-w-[560px] w-full">
+      <AppPanelCard class="sm:min-w-[560px] w-full">
         <template #header>
           <div class="flex items-center gap-2">
             <UIcon name="i-lucide-key-round" class="w-5 h-5 text-yellow-400" />
@@ -228,7 +228,7 @@ async function submit() {
             </div>
           </div>
         </form>
-      </UCard>
+      </AppPanelCard>
     </template>
   </UModal>
 </template>

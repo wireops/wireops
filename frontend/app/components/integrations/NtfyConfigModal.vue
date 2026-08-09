@@ -121,7 +121,7 @@ async function handleTest() {
 
 <template>
   <UModal
-    v-model:open="isOpen"
+    v-model:open="isOpen" :ui="{ content: 'bg-gray-50 dark:bg-(--ui-bg)' }"
     title="Configure Ntfy Integration"
     description="Configure and test your Ntfy push notification channel."
   >

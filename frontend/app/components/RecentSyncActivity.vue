@@ -14,7 +14,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <UCard class="h-full w-full">
+  <AppPanelCard class="h-full w-full">
     <template #header>
       <h2 class="font-semibold">Recent Sync Activity</h2>
     </template>
@@ -40,5 +40,5 @@ onMounted(() => {
       </div>
     </div>
     <p v-else class="text-sm text-gray-500 py-4 text-center">No sync activity yet</p>
-  </UCard>
+  </AppPanelCard>
 </template>

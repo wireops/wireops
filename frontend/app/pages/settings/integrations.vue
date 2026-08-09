@@ -259,33 +259,33 @@ onMounted(() => {
   <div class="space-y-4">
     <div v-if="integrationsLoading" class="text-sm text-gray-500">Loading integrations...</div>
     <template v-else>
-      <!-- Search + mobile filter trigger -->
-      <div class="flex items-center gap-2">
-        <AppTextInput
-          v-model="searchQuery"
-          icon="i-lucide-search"
-          placeholder="Search integrations..."
-          aria-label="Search integrations"
-          class="flex-1"
-        />
-        <AppButtonInput
-          icon="i-lucide-filter"
-          label="Filters"
-          aria-label="Open integration filters"
-          class="lg:hidden"
-          @click="showMobileFilters = true"
-        >
-          <template #trailing>
-            <UBadge v-if="selectedCategories.length + (statusFilter !== 'all' ? 1 : 0)" size="xs" color="primary" variant="solid">
-              {{ selectedCategories.length + (statusFilter !== 'all' ? 1 : 0) }}
-            </UBadge>
-          </template>
-        </AppButtonInput>
-      </div>
-
       <div class="grid grid-cols-1 lg:grid-cols-[1fr_240px] gap-6 items-start">
         <!-- Card grid -->
-        <div>
+        <AppPanelCard>
+          <!-- Search + mobile filter trigger -->
+          <div class="flex items-center gap-2 mb-4">
+            <AppTextInput
+              v-model="searchQuery"
+              icon="i-lucide-search"
+              placeholder="Search integrations..."
+              aria-label="Search integrations"
+              class="flex-1"
+            />
+            <AppButtonInput
+              icon="i-lucide-filter"
+              label="Filters"
+              aria-label="Open integration filters"
+              class="lg:hidden"
+              @click="showMobileFilters = true"
+            >
+              <template #trailing>
+                <UBadge v-if="selectedCategories.length + (statusFilter !== 'all' ? 1 : 0)" size="xs" color="primary" variant="solid">
+                  {{ selectedCategories.length + (statusFilter !== 'all' ? 1 : 0) }}
+                </UBadge>
+              </template>
+            </AppButtonInput>
+          </div>
+
           <div v-if="!filteredIntegrations.length" class="text-sm text-gray-500 py-12 text-center">
             No integrations match your search.
           </div>
@@ -293,7 +293,7 @@ onMounted(() => {
             <div
               v-for="integration in filteredIntegrations"
               :key="integration.slug"
-              class="flex flex-col gap-2 rounded-lg border border-gray-150 dark:border-carbon-800/40 p-3 bg-gray-50/20 dark:bg-carbon-900/10"
+              class="flex flex-col gap-2 rounded-lg border border-gray-300 dark:border-carbon-700 p-3 bg-gray-50 dark:bg-carbon-800/40"
             >
               <div class="flex items-start justify-between gap-2">
                 <div class="flex items-center gap-3 min-w-0">
@@ -349,11 +349,11 @@ onMounted(() => {
               </p>
             </div>
           </div>
-        </div>
+        </AppPanelCard>
 
         <!-- Category filter panel (desktop) -->
         <div class="hidden lg:block sticky top-4">
-          <UCard class="shadow-none">
+          <AppPanelCard class="shadow-none">
             <template #header>
               <div class="flex items-center justify-between">
                 <span class="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-wire-400/70">Filters</span>
@@ -403,7 +403,7 @@ onMounted(() => {
                 </label>
               </div>
             </div>
-          </UCard>
+          </AppPanelCard>
         </div>
       </div>
     </template>

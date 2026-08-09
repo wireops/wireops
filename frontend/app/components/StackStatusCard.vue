@@ -20,7 +20,7 @@ const cardClass = computed(() => {
     case 'error':
       return 'border-red-200 bg-red-50 text-red-950 dark:border-red-500/30 dark:bg-red-500/12 dark:text-red-100'
     default:
-      return 'border-gray-200 bg-gray-50 text-gray-950 dark:border-carbon-700 dark:bg-carbon-900/55 dark:text-wire-200'
+      return 'border-gray-300 bg-gray-50 text-gray-950 dark:border-carbon-700 dark:bg-carbon-900/55 dark:text-wire-200'
   }
 })
 

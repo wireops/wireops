@@ -53,8 +53,8 @@ function onBlur(event: FocusEvent) {
 
 <template>
   <div
-    class="flex items-center gap-1.5 px-2.5 border border-gray-200 dark:border-carbon-800 rounded-lg bg-white dark:bg-carbon-950/70 focus-within:border-yellow-400/60 focus-within:ring-1 focus-within:ring-yellow-400/40 transition-all duration-200 w-full min-h-[38px] shrink-0"
-    :class="(fieldDisabled ?? disabled) ? 'opacity-60' : ''"
+    class="flex items-center gap-1.5 px-2.5 border border-gray-300 dark:border-carbon-800 rounded-lg focus-within:border-yellow-400/60 focus-within:ring-1 focus-within:ring-yellow-400/40 transition-all duration-200 w-full min-h-[38px] shrink-0"
+    :class="(fieldDisabled ?? disabled) ? 'bg-gray-200 dark:bg-carbon-900 opacity-75' : 'bg-white dark:bg-carbon-950/70'"
   >
     <UIcon v-if="icon" :name="icon" class="w-4 h-4 text-gray-400 dark:text-wire-200/30 shrink-0" :title="title" />
     <img v-else-if="avatar" :src="avatar.src" :title="title" class="w-4 h-4 shrink-0 object-contain">

@@ -239,7 +239,7 @@ function formatRelative(dateStr: string) {
       </div>
     </div>
 
-    <UCard>
+    <AppPanelCard>
       <template #header>
         <div class="flex items-center justify-between">
           <h3 class="font-semibold text-gray-900 dark:text-wire-200">Jobs</h3>
@@ -319,11 +319,11 @@ function formatRelative(dateStr: string) {
           <div
             v-for="job in jobs"
             :key="job.id"
-            class="flex items-center justify-between p-4 bg-gray-50 dark:bg-carbon-800/40 rounded-xl border border-gray-200 border-l-4 dark:border-carbon-700 hover:shadow-[0_0_0_2px_rgba(255,198,0,0.35),0_0_20px_rgba(255,198,0,0.12)] transition-all"
+            class="flex items-center justify-between p-4 bg-gray-50 dark:bg-carbon-800/40 rounded-xl border border-gray-300 border-l-4 dark:border-carbon-700 hover:shadow-[0_0_0_2px_rgba(255,198,0,0.35),0_0_20px_rgba(255,198,0,0.12)] transition-all"
             :class="statusBorderClass(job.status)"
           >
             <!-- Icon — left, separated -->
-            <div class="hidden sm:flex mr-2 border-r border-gray-200 dark:border-carbon-700 pr-4 items-center shrink-0">
+            <div class="hidden sm:flex mr-2 border-r border-gray-300 dark:border-carbon-700 pr-4 items-center shrink-0">
               <UIcon name="i-lucide-terminal" class="w-5 h-5 text-wire-400" />
             </div>
 
@@ -350,7 +350,7 @@ function formatRelative(dateStr: string) {
                     :text="`Run: ${run.status} (${formatRelative(run.created)})`"
                   >
                     <span
-                      class="inline-block w-2.5 h-2.5 rounded-full border border-gray-200 dark:border-carbon-700 shrink-0"
+                      class="inline-block w-2.5 h-2.5 rounded-full border border-gray-300 dark:border-carbon-700 shrink-0"
                       :class="{
                         'bg-green-500': run.status === 'success',
                         'bg-red-500': run.status === 'error',
@@ -411,7 +411,7 @@ function formatRelative(dateStr: string) {
             </div>
 
             <!-- Actions and details on the right -->
-            <div class="ml-2 border-l border-gray-200 dark:border-carbon-700 pl-4 flex items-center gap-3 shrink-0">
+            <div class="ml-2 border-l border-gray-300 dark:border-carbon-700 pl-4 flex items-center gap-3 shrink-0">
               <div class="hidden md:flex flex-col items-end gap-0.5 mr-2">
                 <span class="text-xs text-gray-400 dark:text-wire-200/40 uppercase tracking-wider font-semibold">Last run</span>
                 <span class="text-sm text-gray-700 dark:text-wire-200">{{ formatRelative(job.last_run_at) }}</span>
@@ -457,7 +457,7 @@ function formatRelative(dateStr: string) {
           <span class="text-xs text-gray-500">Page {{ page }} of {{ totalPages }}</span>
         </div>
         </div>
-      </UCard>
+      </AppPanelCard>
     </div>
 
     <JobCreateModal

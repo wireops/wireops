@@ -126,7 +126,7 @@ defineExpose({
 </script>
 
 <template>
-  <UCard>
+  <AppPanelCard>
     <template #header>
       <div class="flex items-center justify-between gap-3">
         <div>
@@ -144,7 +144,7 @@ defineExpose({
         <div
           v-for="key in filteredKeys"
           :key="key.id"
-          class="flex items-center gap-4 p-4 rounded-xl border border-gray-200 dark:border-carbon-700 bg-gray-50 dark:bg-carbon-800/40"
+          class="flex items-center gap-4 p-4 rounded-xl border border-gray-300 dark:border-carbon-700 bg-gray-50 dark:bg-carbon-800/40"
         >
           <div class="w-10 h-10 rounded-lg flex items-center justify-center shrink-0" :class="keyMeta(key).wrapperClass">
             <GithubIcon v-if="isGithubKey(key)" :icon-class="`w-5 h-5 ${keyMeta(key).iconClass}`" />
@@ -189,7 +189,7 @@ defineExpose({
       <h3 class="font-medium">No repository keys yet</h3>
       <p class="text-sm text-gray-500 mt-1">Create one key and reuse it across multiple repositories.</p>
     </div>
-  </UCard>
+  </AppPanelCard>
 
   <RepositoryKeyModal
     v-model:open="showModal"

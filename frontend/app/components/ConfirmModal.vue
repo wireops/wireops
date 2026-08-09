@@ -18,7 +18,7 @@ const isOpen = defineModel<boolean>('open', { default: false })
 <template>
   <UModal v-model:open="isOpen">
     <template #content>
-      <UCard>
+      <AppPanelCard>
         <template #header>
           <div class="flex items-center gap-2" :class="confirmColor === 'error' ? 'text-red-600' : 'text-amber-500'">
             <UIcon name="i-lucide-alert-triangle" class="w-5 h-5" />
@@ -43,7 +43,7 @@ const isOpen = defineModel<boolean>('open', { default: false })
             />
           </div>
         </template>
-      </UCard>
+      </AppPanelCard>
     </template>
   </UModal>
 </template>

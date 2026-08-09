@@ -141,7 +141,7 @@ async function runKeyscan() {
 
 <template>
   <div class="space-y-6">
-    <UCard>
+    <AppPanelCard>
       <template #header><h3 class="font-semibold">System Timezone</h3></template>
       <div class="space-y-4">
         <div>
@@ -162,9 +162,9 @@ async function runKeyscan() {
           @click="handleSaveAppSettings"
         />
       </div>
-    </UCard>
+    </AppPanelCard>
 
-    <UCard>
+    <AppPanelCard>
       <template #header><h3 class="font-semibold">SSH Host Key Scanner</h3></template>
       <p class="text-sm text-gray-500 mb-3">
         Scan a remote host to retrieve its SSH public key for use in credentials.
@@ -194,6 +194,6 @@ async function runKeyscan() {
           @click="copyToClipboard(keyscanResult)"
         />
       </div>
-    </UCard>
+    </AppPanelCard>
   </div>
 </template>

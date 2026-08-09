@@ -107,7 +107,7 @@ watch(mobileMenuOpen, (isOpen) => {
 </script>
 
 <template>
-  <div class="min-h-screen bg-white dark:bg-carbon-950 safe-left safe-right safe-bottom">
+  <div class="min-h-screen bg-default dark:bg-carbon-950 safe-left safe-right safe-bottom">
     <div :class="isAuthenticated ? 'flex min-h-screen' : 'min-h-screen'">
       <template v-if="isAuthenticated">
         <AppSidebar
@@ -126,13 +126,13 @@ watch(mobileMenuOpen, (isOpen) => {
       <div :class="isAuthenticated ? 'flex min-w-0 flex-1 flex-col' : 'w-full'">
         <header
           v-if="isAuthenticated"
-          class="sticky top-0 z-40 border-b border-gray-200 bg-white/95 backdrop-blur lg:hidden dark:border-carbon-800 dark:bg-carbon-950/95"
+          class="sticky top-0 z-40 border-b border-default bg-default/95 backdrop-blur lg:hidden dark:border-carbon-800 dark:bg-carbon-950/95"
         >
           <div class="flex items-center justify-between px-4 pb-3 sm:px-6 safe-header-top">
             <div class="flex items-center gap-3">
               <button
                 type="button"
-                class="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-white transition-all duration-200 hover:border-yellow-400/60 focus-visible:border-yellow-400/60 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-yellow-400/40 dark:border-carbon-800 dark:bg-carbon-950/70"
+                class="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-lg border border-default bg-default transition-all duration-200 hover:border-yellow-400/60 focus-visible:border-yellow-400/60 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-yellow-400/40 dark:border-carbon-800 dark:bg-carbon-950/70"
                 :aria-label="mobileMenuOpen ? 'Close navigation menu' : 'Open navigation menu'"
                 :aria-expanded="mobileMenuOpen"
                 aria-controls="mobile-navigation"
@@ -233,19 +233,19 @@ watch(mobileMenuOpen, (isOpen) => {
               wireops includes several accessibility improvements to make navigation easier with keyboard and assistive technologies.
             </p>
             <div class="space-y-3">
-              <div class="rounded-lg border border-gray-200 px-4 py-3 dark:border-carbon-800">
+              <div class="rounded-lg border border-gray-300 px-4 py-3 dark:border-carbon-800">
                 <p class="font-medium text-gray-900 dark:text-wire-200">Keyboard navigation</p>
                 <p>Use the skip link, sidebar navigation, and keyboard shortcuts to move through the app without a mouse.</p>
               </div>
-              <div class="rounded-lg border border-gray-200 px-4 py-3 dark:border-carbon-800">
+              <div class="rounded-lg border border-gray-300 px-4 py-3 dark:border-carbon-800">
                 <p class="font-medium text-gray-900 dark:text-wire-200">Visible focus states</p>
                 <p>Interactive elements show a clear focus outline so it is easier to track where you are on the page.</p>
               </div>
-              <div class="rounded-lg border border-gray-200 px-4 py-3 dark:border-carbon-800">
+              <div class="rounded-lg border border-gray-300 px-4 py-3 dark:border-carbon-800">
                 <p class="font-medium text-gray-900 dark:text-wire-200">Screen reader support</p>
                 <p>Landmarks, labels, dialog titles, and live status announcements help communicate page structure and updates.</p>
               </div>
-              <div class="rounded-lg border border-gray-200 px-4 py-3 dark:border-carbon-800">
+              <div class="rounded-lg border border-gray-300 px-4 py-3 dark:border-carbon-800">
                 <p class="font-medium text-gray-900 dark:text-wire-200">Accessible forms and feedback</p>
                 <p>Critical forms and alerts include clearer labels, error states, and descriptive messages for assistive technology.</p>
               </div>

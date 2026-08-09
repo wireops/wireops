@@ -106,15 +106,17 @@ watch(query, () => { activeIndex.value = 0 })
         :id="id"
         ref="triggerEl"
         type="button"
-        class="flex items-center justify-between gap-1.5 px-2.5 border border-gray-200 dark:border-carbon-800 rounded-lg bg-white dark:bg-carbon-950/70 focus-within:border-yellow-400/60 focus:outline-hidden focus:border-yellow-400/60 focus:ring-1 focus:ring-yellow-400/40 transition-all duration-200 min-h-[38px] shrink-0 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+        class="flex items-center justify-between gap-1.5 px-2.5 border border-gray-300 dark:border-carbon-800 rounded-lg bg-white dark:bg-carbon-950/70 focus-within:border-yellow-400/60 focus:outline-hidden focus:border-yellow-400/60 focus:ring-1 focus:ring-yellow-400/40 transition-all duration-200 min-h-[38px] shrink-0 text-sm disabled:opacity-75 disabled:cursor-not-allowed disabled:bg-gray-200 dark:disabled:bg-carbon-900"
         :class="contentWidth ? 'w-fit' : 'w-full'"
         :disabled="disabled || loading"
         :aria-label="ariaLabel"
         :aria-expanded="isOpen"
       >
         <span class="flex items-center gap-1.5 min-w-0">
-          <UIcon v-if="selectedItem?.icon" :name="selectedItem.icon" class="w-4 h-4 shrink-0 text-gray-400 dark:text-wire-200/30" />
-          <img v-else-if="selectedItem?.avatar" :src="selectedItem.avatar.src" class="w-4 h-4 shrink-0 object-contain">
+          <slot name="leading" :item="selectedItem">
+            <UIcon v-if="selectedItem?.icon" :name="selectedItem.icon" class="w-4 h-4 shrink-0 text-gray-400 dark:text-wire-200/30" />
+            <img v-else-if="selectedItem?.avatar" :src="selectedItem.avatar.src" class="w-4 h-4 shrink-0 object-contain">
+          </slot>
           <span
             class="truncate text-left"
             :class="selectedItem ? 'text-gray-900/90 dark:text-white/90' : 'text-gray-400 dark:text-wire-200/30'"
@@ -130,12 +132,12 @@ watch(query, () => { activeIndex.value = 0 })
       <PopoverContent
         :side-offset="4"
         align="start"
-        class="z-50 w-max border border-gray-200 dark:border-carbon-800 rounded-lg bg-white dark:bg-carbon-950 shadow-lg overflow-hidden"
+        class="z-50 w-max border border-gray-300 dark:border-carbon-800 rounded-lg bg-white dark:bg-carbon-950 shadow-lg overflow-hidden"
         :class="contentWidth ? '' : 'min-w-[var(--reka-popper-anchor-width)]'"
         @open-auto-focus="searchable ? $event.preventDefault() : undefined"
         @keydown="!searchable && onKeydown($event)"
       >
-        <div v-if="searchable" class="p-1.5 border-b border-gray-200 dark:border-carbon-800">
+        <div v-if="searchable" class="p-1.5 border-b border-gray-300 dark:border-carbon-800">
           <input
             ref="searchEl"
             v-model="query"
@@ -156,8 +158,10 @@ watch(query, () => { activeIndex.value = 0 })
             @click="selectItem(item)"
           >
             <span class="flex items-center gap-1.5 min-w-0 truncate">
-              <UIcon v-if="item.icon" :name="item.icon" class="w-4 h-4 shrink-0 text-gray-400 dark:text-wire-200/30" />
-              <img v-else-if="item.avatar" :src="item.avatar.src" class="w-4 h-4 shrink-0 object-contain">
+              <slot name="item-leading" :item="item">
+                <UIcon v-if="item.icon" :name="item.icon" class="w-4 h-4 shrink-0 text-gray-400 dark:text-wire-200/30" />
+                <img v-else-if="item.avatar" :src="item.avatar.src" class="w-4 h-4 shrink-0 object-contain">
+              </slot>
               <span class="truncate">{{ item.label }}</span>
             </span>
             <UIcon v-if="item.value === modelValue" name="i-lucide-check" class="w-3.5 h-3.5 text-yellow-500 shrink-0" />
