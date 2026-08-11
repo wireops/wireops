@@ -24,6 +24,10 @@ describe('isValidRegistryUrl', () => {
     '://ghcr.io',
     'ghcr.io with spaces',
     '   ',
+    '/etc/passwd',
+    './foo',
+    '../foo',
+    '/',
   ])('rejects %s', (value) => {
     expect(isValidRegistryUrl(value)).toBe(false)
   })

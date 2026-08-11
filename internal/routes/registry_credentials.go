@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"time"
 
@@ -69,7 +70,7 @@ func (rr routeRegistrar) registerRegistryCredentialRoutes() {
 		// The resolved host feeds a server-initiated outbound request below —
 		// guard against SSRF into the server's own private network before
 		// dialing it (see validatePublicHost).
-		if err := validatePublicHost(host); err != nil {
+		if err := validatePublicHost(e.Request.Context(), host); err != nil {
 			return e.JSON(http.StatusOK, map[string]any{"success": false, "error": err.Error()})
 		}
 
@@ -93,9 +94,38 @@ func (rr routeRegistrar) registerRegistryCredentialRoutes() {
 // (worker/executor/registry_auth.go: checkRegistryAuth) — so a bad
 // credential is caught at save time, not at the next deploy.
 func testRegistryConnection(ctx context.Context, host, username, password string, insecure bool) error {
-	client := &http.Client{Timeout: 5 * time.Second}
+	transport := &http.Transport{
+		// host was already SSRF-validated by the caller (validatePublicHost),
+		// but re-resolving here for the actual dial would reopen a DNS
+		// rebinding window — an attacker-controlled DNS record could resolve
+		// to a public IP at validation time and a private one moments later
+		// at connect time. Instead, dial the literal IP validatePublicHost
+		// already approved, while leaving addr's hostname intact so the TLS
+		// handshake still sends the correct SNI/ServerName.
+		DialContext: func(dialCtx context.Context, network, addr string) (net.Conn, error) {
+			dialHost, port, err := net.SplitHostPort(addr)
+			if err != nil {
+				return nil, err
+			}
+			ip, err := resolveValidatedIP(dialCtx, dialHost)
+			if err != nil {
+				return nil, err
+			}
+			return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(dialCtx, network, net.JoinHostPort(ip.String(), port))
+		},
+	}
 	if insecure {
-		client.Transport = &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: true}}
+		transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: true}
+	}
+	client := &http.Client{
+		Timeout:   5 * time.Second,
+		Transport: transport,
+		// Redirects would otherwise reissue the request (and Basic Auth
+		// credentials) against a new, unvalidated host without going through
+		// the SSRF check above.
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
 	}
 
 	resp, err := doRegistryTestRequest(ctx, client, "https://"+host+"/v2/", username, password)

@@ -1,13 +1,20 @@
 package routes
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/wireops/wireops/internal/constants"
 )
+
+// dnsResolveTimeout bounds how long host resolution may take, derived from
+// (and capped below) the caller's request context so a slow/unresponsive
+// resolver can't hang the request indefinitely.
+const dnsResolveTimeout = 5 * time.Second
 
 // validatePublicHost resolves host (optionally "host:port") to its IP
 // addresses and rejects any that are loopback/private/link-local/
@@ -17,7 +24,17 @@ import (
 // running a legitimate internal registry/git server can opt back in per-IP
 // or per-CIDR via ALLOWED_PRIVATE_IP_RANGES (comma-separated), the same
 // escape hatch already used by the git credentials key-scan route.
-func validatePublicHost(host string) error {
+func validatePublicHost(ctx context.Context, host string) error {
+	_, err := resolveValidatedIP(ctx, host)
+	return err
+}
+
+// resolveValidatedIP resolves host (optionally "host:port") and returns a
+// single IP address that passed the private/loopback/allowlist checks below.
+// Callers that go on to make an outbound connection should dial this literal
+// IP rather than re-resolving the hostname, so a DNS answer that changes
+// between the check and the dial (DNS rebinding) can't bypass the guard.
+func resolveValidatedIP(ctx context.Context, host string) (net.IP, error) {
 	hostOnly := host
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		hostOnly = h
@@ -27,11 +44,15 @@ func validatePublicHost(host string) error {
 	if ip := net.ParseIP(hostOnly); ip != nil {
 		ips = append(ips, ip)
 	} else {
-		resolved, err := net.LookupIP(hostOnly)
+		resolveCtx, cancel := context.WithTimeout(ctx, dnsResolveTimeout)
+		defer cancel()
+		resolved, err := net.DefaultResolver.LookupIPAddr(resolveCtx, hostOnly)
 		if err != nil {
-			return fmt.Errorf("failed to resolve host: %w", err)
+			return nil, fmt.Errorf("failed to resolve host: %w", err)
 		}
-		ips = resolved
+		for _, addr := range resolved {
+			ips = append(ips, addr.IP)
+		}
 	}
 
 	allowedRanges := os.Getenv(constants.EnvAllowedPrivateIPRanges)
@@ -60,8 +81,8 @@ func validatePublicHost(host string) error {
 			continue
 		}
 		if ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() || ip.IsLinkLocalMulticast() || ip.IsLinkLocalUnicast() {
-			return fmt.Errorf("connecting to private or loopback addresses is not allowed")
+			return nil, fmt.Errorf("connecting to private or loopback addresses is not allowed")
 		}
 	}
-	return nil
+	return ips[0], nil
 }
