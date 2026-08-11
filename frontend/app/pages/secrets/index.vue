@@ -6,11 +6,14 @@ const toast = useToast()
 const route = useRoute()
 const router = useRouter()
 
-const activeTab = ref(route.query.tab === 'repository-keys' ? 'repository-keys' : 'global-variables')
+const VALID_TABS = ['global-variables', 'repository-keys', 'registry-credentials'] as const
+const activeTab = ref(VALID_TABS.includes(route.query.tab as any) ? (route.query.tab as string) : 'global-variables')
 const keysPanel = ref<any>()
+const registryPanel = ref<any>()
 const tabs = [
   { label: 'Global Variables', value: 'global-variables', icon: 'i-lucide-variable' },
   { label: 'Repository Keys', value: 'repository-keys', icon: 'i-lucide-key-round' },
+  { label: 'Registry Credentials', value: 'registry-credentials', icon: 'i-lucide-container' },
 ]
 const globals = ref<any[]>([])
 const stackBindings = ref<any[]>([])
@@ -112,22 +115,27 @@ async function refreshActiveTab() {
     await (keysPanel.value?.refresh?.() || refreshNuxtData('repository_keys_panel'))
     return
   }
+  if (activeTab.value === 'registry-credentials') {
+    await (registryPanel.value?.refresh?.() || refreshNuxtData('registry_credentials_panel'))
+    return
+  }
   await load()
 }
 
 watch(activeTab, (tab) => {
   const nextQuery = { ...route.query }
-  if (tab === 'repository-keys') {
+  if (tab !== 'global-variables') {
     nextQuery.tab = tab
   } else {
     delete nextQuery.tab
   }
   if (route.query.tab !== nextQuery.tab) router.replace({ query: nextQuery })
   if (tab === 'repository-keys') refreshNuxtData('repository_keys_panel')
+  if (tab === 'registry-credentials') refreshNuxtData('registry_credentials_panel')
 })
 
 watch(() => route.query.tab, (tab) => {
-  activeTab.value = tab === 'repository-keys' ? 'repository-keys' : 'global-variables'
+  activeTab.value = VALID_TABS.includes(tab as any) ? (tab as string) : 'global-variables'
 })
 
 watch(showCreateModal, (open) => {
@@ -551,6 +559,7 @@ onMounted(() => {
     </UModal>
 
     <RepositoryKeysPanel v-if="activeTab === 'repository-keys'" ref="keysPanel" />
+    <RegistryCredentialsPanel v-if="activeTab === 'registry-credentials'" ref="registryPanel" />
 
     <EncryptSopsSecretsModal v-model:open="showSopsEncryptModal" />
   </div>

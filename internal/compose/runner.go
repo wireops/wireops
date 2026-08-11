@@ -23,6 +23,13 @@ type RunOptions struct {
 	// before constructing RunOptions — this struct has no implicit default.
 	RemoveOrphans bool
 
+	// DockerConfigDir, when set, points `docker compose` at a per-command
+	// DOCKER_CONFIG directory (via the subprocess env) holding a config.json
+	// with registry auth for this deploy only — instead of the host's global
+	// ~/.docker/config.json. Lets a private-registry credential apply to
+	// exactly one deploy without touching the worker's shared docker config.
+	DockerConfigDir string
+
 	// OnLine, when set, is invoked with each complete line of combined
 	// stdout/stderr as the command runs, for live streaming. It does not
 	// affect the final string returned by the Run* functions. May be called
@@ -67,7 +74,7 @@ func RunUp(ctx context.Context, opts RunOptions) (string, error) {
 	args := buildUpArgs(composeFile, opts.RemoveOrphans, opts.ForcePull)
 	cmd := exec.CommandContext(ctx, dockerBin, args...)
 	cmd.Dir = opts.WorkDir
-	cmd.Env = safeEnv()
+	cmd.Env = safeEnv(opts.DockerConfigDir)
 
 	var buf bytes.Buffer
 	lw := &lineWriter{onLine: opts.OnLine}
@@ -110,7 +117,7 @@ func RunForceUp(ctx context.Context, opts ForceUpOptions) (string, error) {
 		composeFile = altFile
 	}
 
-	env := safeEnv()
+	env := safeEnv(opts.DockerConfigDir)
 
 	var allOutput strings.Builder
 
@@ -182,7 +189,7 @@ func RunDown(ctx context.Context, opts RunOptions) (string, error) {
 		"down",
 	)
 	cmd.Dir = opts.WorkDir
-	cmd.Env = safeEnv()
+	cmd.Env = safeEnv("")
 
 	var buf bytes.Buffer
 	lw := &lineWriter{onLine: opts.OnLine}
@@ -213,7 +220,7 @@ func RunDownPurge(ctx context.Context, opts RunOptions) (string, error) {
 		"down", "-v", "--remove-orphans",
 	)
 	cmd.Dir = opts.WorkDir
-	cmd.Env = safeEnv()
+	cmd.Env = safeEnv("")
 
 	var buf bytes.Buffer
 	lw := &lineWriter{onLine: opts.OnLine}
@@ -252,7 +259,7 @@ func RunPs(ctx context.Context, opts RunOptions) ([]string, error) {
 		"ps", "--format", "json", "--all",
 	)
 	cmd.Dir = opts.WorkDir
-	cmd.Env = safeEnv()
+	cmd.Env = safeEnv("")
 
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
@@ -315,7 +322,11 @@ func RunPs(ctx context.Context, opts RunOptions) ([]string, error) {
 	return services, nil
 }
 
-func safeEnv() []string {
+// safeEnv builds the subprocess environment, restricting PATH to trusted
+// directories. When dockerConfigDir is non-empty, DOCKER_CONFIG is pointed
+// at it so `docker compose` authenticates pulls with that directory's
+// config.json instead of the host's global ~/.docker/config.json.
+func safeEnv(dockerConfigDir string) []string {
 	env := os.Environ()
 	safeDirs := []string{"/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/local/bin"}
 	safePath := "PATH=" + strings.Join(safeDirs, string(filepath.ListSeparator))
@@ -328,6 +339,9 @@ func safeEnv() []string {
 	}
 	if !found {
 		env = append(env, safePath)
+	}
+	if dockerConfigDir != "" {
+		env = append(env, "DOCKER_CONFIG="+dockerConfigDir)
 	}
 	return env
 }

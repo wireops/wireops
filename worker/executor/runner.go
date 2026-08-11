@@ -87,13 +87,29 @@ func Deploy(ctx context.Context, cmd protocol.DeployCommand, onLine func(string)
 	}
 	start := time.Now()
 
+	if err := preflightInsecureRegistries(cmd.InsecureRegistries); err != nil {
+		log.Printf("[executor] deploy error stack=%s trigger=%s: %v", cmd.StackID, trigger, err)
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
+	}
+	if err := validateRegistryAuth(cmd.RegistryAuthB64, cmd.InsecureRegistries); err != nil {
+		log.Printf("[executor] deploy error stack=%s trigger=%s: %v", cmd.StackID, trigger, err)
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
+	}
+	dockerConfigDir, cleanupAuth, err := prepareRegistryAuth(cmd.StackID, cmd.CommandID, cmd.RegistryAuthB64)
+	if err != nil {
+		log.Printf("[executor] deploy error stack=%s trigger=%s: %v", cmd.StackID, trigger, err)
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
+	}
+	defer cleanupAuth()
+
 	output, runErr := runInWorkDir(cmd.StackID, cmd.CommandID, cmd.ComposeFileB64, cmd.EnvFileB64, "deploy", onLine, func(workDir, composeFile string, wrappedOnLine func(string)) (string, error) {
 		return compose.RunUp(ctx, compose.RunOptions{
-			WorkDir:       workDir,
-			ComposeFile:   composeFile,
-			ForcePull:     cmd.ForcePull,
-			RemoveOrphans: cmd.RemoveOrphans,
-			OnLine:        wrappedOnLine,
+			WorkDir:         workDir,
+			ComposeFile:     composeFile,
+			ForcePull:       cmd.ForcePull,
+			RemoveOrphans:   cmd.RemoveOrphans,
+			DockerConfigDir: dockerConfigDir,
+			OnLine:          wrappedOnLine,
 		})
 	})
 
@@ -123,14 +139,30 @@ func Redeploy(ctx context.Context, cmd protocol.RedeployCommand, onLine func(str
 	}
 	start := time.Now()
 
+	if err := preflightInsecureRegistries(cmd.InsecureRegistries); err != nil {
+		log.Printf("[executor] redeploy error stack=%s trigger=%s: %v", cmd.StackID, trigger, err)
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
+	}
+	if err := validateRegistryAuth(cmd.RegistryAuthB64, cmd.InsecureRegistries); err != nil {
+		log.Printf("[executor] redeploy error stack=%s trigger=%s: %v", cmd.StackID, trigger, err)
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
+	}
+	dockerConfigDir, cleanupAuth, err := prepareRegistryAuth(cmd.StackID, cmd.CommandID, cmd.RegistryAuthB64)
+	if err != nil {
+		log.Printf("[executor] redeploy error stack=%s trigger=%s: %v", cmd.StackID, trigger, err)
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
+	}
+	defer cleanupAuth()
+
 	output, runErr := runInWorkDir(cmd.StackID, cmd.CommandID, cmd.ComposeFileB64, cmd.EnvFileB64, "redeploy", onLine, func(workDir, composeFile string, wrappedOnLine func(string)) (string, error) {
 		return compose.RunForceUp(ctx, compose.ForceUpOptions{
 			RunOptions: compose.RunOptions{
-				WorkDir:       workDir,
-				ComposeFile:   composeFile,
-				ForcePull:     cmd.ForcePull,
-				RemoveOrphans: cmd.RemoveOrphans,
-				OnLine:        wrappedOnLine,
+				WorkDir:         workDir,
+				ComposeFile:     composeFile,
+				ForcePull:       cmd.ForcePull,
+				RemoveOrphans:   cmd.RemoveOrphans,
+				DockerConfigDir: dockerConfigDir,
+				OnLine:          wrappedOnLine,
 			},
 			RecreateContainers: cmd.RecreateContainers,
 			RecreateVolumes:    cmd.RecreateVolumes,
@@ -581,6 +613,18 @@ func RunJob(ctx context.Context, cmd protocol.RunJobCommand) protocol.JobComplet
 	// that check runs.
 	cmd.Volumes = append(cmd.Volumes, configVolumes...)
 
+	if err := preflightInsecureRegistries(cmd.InsecureRegistries); err != nil {
+		return protocol.JobCompletedMessage{JobRunID: cmd.JobRunID, Success: false, Output: "failed to start job, " + err.Error()}
+	}
+	if err := validateRegistryAuth(cmd.RegistryAuthB64, cmd.InsecureRegistries); err != nil {
+		return protocol.JobCompletedMessage{JobRunID: cmd.JobRunID, Success: false, Output: "failed to start job, " + err.Error()}
+	}
+	dockerConfigDir, cleanupAuth, err := prepareRegistryAuth(cmd.JobRunID, cmd.CommandID, cmd.RegistryAuthB64)
+	if err != nil {
+		return protocol.JobCompletedMessage{JobRunID: cmd.JobRunID, Success: false, Output: "failed to start job, " + err.Error()}
+	}
+	defer cleanupAuth()
+
 	timeout := 10 * time.Minute
 	if cmd.TimeoutSeconds > 0 {
 		timeout = time.Duration(cmd.TimeoutSeconds) * time.Second
@@ -601,6 +645,9 @@ func RunJob(ctx context.Context, cmd protocol.RunJobCommand) protocol.JobComplet
 	}
 	runCmd := exec.CommandContext(runCtx, dockerPath, args...)
 	runCmd.Env = safeEnv()
+	if dockerConfigDir != "" {
+		runCmd.Env = append(runCmd.Env, "DOCKER_CONFIG="+dockerConfigDir)
+	}
 	out, runErr := runCmd.CombinedOutput()
 	jobSecrets := make([]string, 0, len(cmd.Env))
 	for _, v := range cmd.Env {

@@ -29,6 +29,7 @@ import (
 	gitpkg "github.com/wireops/wireops/internal/git"
 	"github.com/wireops/wireops/internal/notify"
 	"github.com/wireops/wireops/internal/protocol"
+	"github.com/wireops/wireops/internal/registry"
 	"github.com/wireops/wireops/internal/safepath"
 	"github.com/wireops/wireops/internal/secrets"
 )
@@ -90,6 +91,25 @@ func resolveComposeRuntimeFlags(stack *core.Record) (forcePull, removeOrphans bo
 		removeOrphans = false
 	}
 	return forcePull, removeOrphans
+}
+
+// resolveRegistryAuth resolves the stack's assigned registry_credential (if
+// any) into the base64 docker config.json payload and insecure-host list
+// dispatched alongside the compose file — see protocol.DeployCommand.
+// Resolution failures (e.g. a deleted credential) are logged and degrade to
+// "no registry auth" rather than failing the whole deploy, matching the
+// non-fatal posture of resolveComposeRuntimeFlags.
+func (r *Reconciler) resolveRegistryAuth(stack *core.Record) (authB64 string, insecureHosts []string) {
+	credentialID := stack.GetString("registry_credential")
+	if credentialID == "" {
+		return "", nil
+	}
+	authB64, insecureHosts, err := registry.BuildDockerAuth(r.app, credentialID)
+	if err != nil {
+		log.Printf("[reconciler] failed to resolve registry credential %s for stack %s: %v", credentialID, stack.Id, err)
+		return "", nil
+	}
+	return authB64, insecureHosts
 }
 
 // withDeployTimeout wraps ctx with a deadline: the stack's own
@@ -434,17 +454,20 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 			runErr = fmt.Errorf("failed to serialize env vars for remote deploy: %w", b64Err)
 		} else {
 			forcePull, removeOrphans := resolveComposeRuntimeFlags(stack)
+			registryAuthB64, insecureRegistries := r.resolveRegistryAuth(stack)
 			dispatchCtx, cancelDispatch := withDeployTimeout(ctx, stack)
 			result, dispatchErr := r.dispatcher.Dispatch(dispatchCtx, workerID, protocol.DeployCommand{
-				CommandID:      syncLog.Id,
-				StackID:        stackID,
-				CommitSHA:      remoteSHA,
-				Trigger:        trigger,
-				QueueTotal:     queueTotal,
-				ComposeFileB64: base64.StdEncoding.EncodeToString(composeContent),
-				EnvFileB64:     envFileB64,
-				ForcePull:      forcePull,
-				RemoveOrphans:  removeOrphans,
+				CommandID:          syncLog.Id,
+				StackID:            stackID,
+				CommitSHA:          remoteSHA,
+				Trigger:            trigger,
+				QueueTotal:         queueTotal,
+				ComposeFileB64:     base64.StdEncoding.EncodeToString(composeContent),
+				EnvFileB64:         envFileB64,
+				ForcePull:          forcePull,
+				RemoveOrphans:      removeOrphans,
+				RegistryAuthB64:    registryAuthB64,
+				InsecureRegistries: insecureRegistries,
 			})
 			cancelDispatch()
 			composeUpMs = result.ComposeUpMs
@@ -723,17 +746,20 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 		runErr = fmt.Errorf("failed to serialize env vars for remote rollback: %w", b64Err)
 	} else {
 		forcePull, removeOrphans := resolveComposeRuntimeFlags(stack)
+		registryAuthB64, insecureRegistries := r.resolveRegistryAuth(stack)
 		dispatchCtx, cancelDispatch := withDeployTimeout(ctx, stack)
 		defer cancelDispatch()
 		result, dispatchErr := r.dispatcher.Dispatch(dispatchCtx, workerID, protocol.DeployCommand{
-			CommandID:      cmdID,
-			StackID:        stackID,
-			CommitSHA:      commitSHA,
-			Trigger:        "rollback",
-			ComposeFileB64: base64.StdEncoding.EncodeToString(composeContent),
-			EnvFileB64:     envFileB64,
-			ForcePull:      forcePull,
-			RemoveOrphans:  removeOrphans,
+			CommandID:          cmdID,
+			StackID:            stackID,
+			CommitSHA:          commitSHA,
+			Trigger:            "rollback",
+			ComposeFileB64:     base64.StdEncoding.EncodeToString(composeContent),
+			EnvFileB64:         envFileB64,
+			ForcePull:          forcePull,
+			RemoveOrphans:      removeOrphans,
+			RegistryAuthB64:    registryAuthB64,
+			InsecureRegistries: insecureRegistries,
 		})
 		composeUpMs = result.ComposeUpMs
 		output, runErr = extractDispatchResult(result, dispatchErr)
@@ -996,18 +1022,21 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 		runErr = fmt.Errorf("failed to serialize env vars for remote redeploy: %w", b64Err)
 	} else {
 		forcePull, removeOrphans := resolveComposeRuntimeFlags(stack)
+		registryAuthB64, insecureRegistries := r.resolveRegistryAuth(stack)
 		dispatchCtx, cancelDispatch := withDeployTimeout(ctx, stack)
 		defer cancelDispatch()
 		result, dispatchErr := r.dispatcher.Dispatch(dispatchCtx, workerID, protocol.RedeployCommand{
 			DeployCommand: protocol.DeployCommand{
-				CommandID:      cmdID,
-				StackID:        stackID,
-				CommitSHA:      lastSHA,
-				Trigger:        "force-redeploy",
-				ComposeFileB64: base64.StdEncoding.EncodeToString(composeContent),
-				EnvFileB64:     envFileB64,
-				ForcePull:      forcePull,
-				RemoveOrphans:  removeOrphans,
+				CommandID:          cmdID,
+				StackID:            stackID,
+				CommitSHA:          lastSHA,
+				Trigger:            "force-redeploy",
+				ComposeFileB64:     base64.StdEncoding.EncodeToString(composeContent),
+				EnvFileB64:         envFileB64,
+				ForcePull:          forcePull,
+				RemoveOrphans:      removeOrphans,
+				RegistryAuthB64:    registryAuthB64,
+				InsecureRegistries: insecureRegistries,
 			},
 			RecreateContainers: recreateContainers,
 			RecreateVolumes:    recreateVolumes,
@@ -1450,18 +1479,21 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 		runErr = fmt.Errorf("failed to serialize env vars for remote local-sync: %w", b64Err)
 	} else if recreateContainers {
 		forcePull, removeOrphans := resolveComposeRuntimeFlags(stack)
+		registryAuthB64, insecureRegistries := r.resolveRegistryAuth(stack)
 		dispatchCtx, cancelDispatch := withDeployTimeout(ctx, stack)
 		defer cancelDispatch()
 		result, dispatchErr := r.dispatcher.Dispatch(dispatchCtx, workerID, protocol.RedeployCommand{
 			DeployCommand: protocol.DeployCommand{
-				CommandID:      syncLog.Id,
-				StackID:        stackID,
-				CommitSHA:      "imported",
-				Trigger:        trigger,
-				ComposeFileB64: b64,
-				EnvFileB64:     envFileB64,
-				ForcePull:      forcePull,
-				RemoveOrphans:  removeOrphans,
+				CommandID:          syncLog.Id,
+				StackID:            stackID,
+				CommitSHA:          "imported",
+				Trigger:            trigger,
+				ComposeFileB64:     b64,
+				EnvFileB64:         envFileB64,
+				ForcePull:          forcePull,
+				RemoveOrphans:      removeOrphans,
+				RegistryAuthB64:    registryAuthB64,
+				InsecureRegistries: insecureRegistries,
 			},
 			RecreateContainers: true,
 			RecreateVolumes:    recreateVolumes,
@@ -1470,17 +1502,20 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 		output, runErr = extractDispatchResult(result, dispatchErr)
 	} else {
 		forcePull, removeOrphans := resolveComposeRuntimeFlags(stack)
+		registryAuthB64, insecureRegistries := r.resolveRegistryAuth(stack)
 		dispatchCtx, cancelDispatch := withDeployTimeout(ctx, stack)
 		defer cancelDispatch()
 		result, dispatchErr := r.dispatcher.Dispatch(dispatchCtx, workerID, protocol.DeployCommand{
-			CommandID:      syncLog.Id,
-			StackID:        stackID,
-			CommitSHA:      "imported",
-			Trigger:        trigger,
-			ComposeFileB64: b64,
-			EnvFileB64:     envFileB64,
-			ForcePull:      forcePull,
-			RemoveOrphans:  removeOrphans,
+			CommandID:          syncLog.Id,
+			StackID:            stackID,
+			CommitSHA:          "imported",
+			Trigger:            trigger,
+			ComposeFileB64:     b64,
+			EnvFileB64:         envFileB64,
+			ForcePull:          forcePull,
+			RemoveOrphans:      removeOrphans,
+			RegistryAuthB64:    registryAuthB64,
+			InsecureRegistries: insecureRegistries,
 		})
 		composeUpMs = result.ComposeUpMs
 		output, runErr = extractDispatchResult(result, dispatchErr)
@@ -2459,17 +2494,20 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 
 	log.Printf("[transfer] step 1/2: deploy dispatching to target_agent=%s (%s) stack=%s", targetWorkerID, targetHostname, stackID)
 	transferForcePull, transferRemoveOrphans := resolveComposeRuntimeFlags(stack)
+	transferRegistryAuthB64, transferInsecureRegistries := r.resolveRegistryAuth(stack)
 	transferDispatchCtx, cancelTransferDispatch := withDeployTimeout(ctx, stack)
 	defer cancelTransferDispatch()
 	deployDispatchStart := time.Now()
 	deployResult, dErr := r.dispatcher.Dispatch(transferDispatchCtx, targetWorkerID, protocol.DeployCommand{
-		CommandID:      cmdID,
-		StackID:        stackID,
-		Trigger:        "transfer",
-		ComposeFileB64: composeB64,
-		EnvFileB64:     envFileB64,
-		ForcePull:      transferForcePull,
-		RemoveOrphans:  transferRemoveOrphans,
+		CommandID:          cmdID,
+		StackID:            stackID,
+		Trigger:            "transfer",
+		ComposeFileB64:     composeB64,
+		EnvFileB64:         envFileB64,
+		ForcePull:          transferForcePull,
+		RemoveOrphans:      transferRemoveOrphans,
+		RegistryAuthB64:    transferRegistryAuthB64,
+		InsecureRegistries: transferInsecureRegistries,
 	})
 	deployOutput = deployResult.Output
 	dispatchErr = dErr

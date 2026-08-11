@@ -335,6 +335,38 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 		return e.Next()
 	})
 
+	// Encrypt registry credential password on create/update, mirroring
+	// repository_keys above.
+	app.OnRecordCreate("registry_credentials").BindFunc(func(e *core.RecordEvent) error {
+		if err := encryptField(e.Record, "password", secretKey); err != nil {
+			log.Printf("[hooks] failed to encrypt registry credential %s: %v", e.Record.Id, err)
+			return err
+		}
+		return e.Next()
+	})
+
+	app.OnRecordUpdate("registry_credentials").BindFunc(func(e *core.RecordEvent) error {
+		if err := encryptField(e.Record, "password", secretKey); err != nil {
+			log.Printf("[hooks] failed to encrypt registry credential %s: %v", e.Record.Id, err)
+			return err
+		}
+		return e.Next()
+	})
+
+	app.OnRecordEnrich("registry_credentials").BindFunc(func(e *core.RecordEnrichEvent) error {
+		isSuperuser := false
+		if e.RequestInfo != nil && e.RequestInfo.Auth != nil {
+			authCol := e.RequestInfo.Auth.Collection()
+			if authCol != nil && authCol.Name == core.CollectionNameSuperusers {
+				isSuperuser = true
+			}
+		}
+		if !isSuperuser {
+			e.Record.Hide("password")
+		}
+		return e.Next()
+	})
+
 	app.OnRecordCreate("worker_policies").BindFunc(func(e *core.RecordEvent) error {
 		records, err := app.FindAllRecords("worker_policies")
 		if err != nil {

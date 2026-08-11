@@ -73,6 +73,7 @@ var secretBearingFields = [][2]string{
 	{"repositories", "sops_age_key"},
 	{"stack_env_vars", "value"},
 	{"job_env_vars", "value"},
+	{"registry_credentials", "password"},
 }
 
 func hasExistingEncryptedData(app core.App) (bool, error) {

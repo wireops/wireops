@@ -188,6 +188,20 @@ resources:
   timeout: "15m"    # Mandatory: Job timeout duration (e.g., "10m", "1h")
 ```
 
+### Private Registry Credentials
+
+To deploy a stack that pulls images from a private registry (Docker Hub, GHCR, a self-hosted Harbor/Nexus/`registry:2`, or GCP Artifact Registry), add a **Registry Credential** and assign it to the stack — the worker authenticates the pull with it, scoped to that one deploy only, without touching the worker host's global `~/.docker/config.json`.
+
+1. **Settings → Secrets → Registry Credentials** tab, **Add Credential**.
+2. Fill in:
+   - **Registry URL** — a host, with or without scheme (`ghcr.io`, `https://registry.example.com:5000`).
+   - **Type** — `Username / Password`, `Token`, or `GCP Service Account` (paste the service-account JSON key; the username is fixed to `_json_key`, the convention Google's registries expect).
+   - **Insecure registry** — only for a registry served over plain HTTP or a self-signed TLS certificate. This toggle does **not** configure the worker's Docker daemon for you — the worker host still needs the registry listed under `insecure-registries` in its own `/etc/docker/daemon.json` (with Docker restarted), or the deploy will fail with a clear preflight error rather than a silent pull failure.
+3. **Test Connection** before saving to confirm the credential authenticates against the registry.
+4. Open the target **Stack**'s settings and assign the credential under **Registry Credential** — it now applies to every deploy, redeploy, and rollback of that stack.
+
+Testing the connection to a registry on your own private network (not reachable from the public internet) requires opting it into `ALLOWED_PRIVATE_IP_RANGES` (comma-separated CIDRs/IPs) — by default the server blocks that request as a potential SSRF vector, the same protection already applied to git host key scanning. This only gates the server-side "Test Connection" handshake; the worker's actual pull is unaffected.
+
 ## Customization
 
 ### Custom Container Thumbnails
