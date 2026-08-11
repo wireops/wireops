@@ -113,7 +113,7 @@ func validateRegistryAuth(authB64 string, insecureHosts []string) error {
 func checkRegistryAuth(host, authHeader string, insecure bool) error {
 	client := &http.Client{Timeout: 5 * time.Second}
 	if insecure {
-		client.Transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+		client.Transport = &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: true}}
 	}
 
 	resp, err := doRegistryCheck(client, "https://"+host+"/v2/", authHeader)
