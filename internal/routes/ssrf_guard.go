@@ -5,6 +5,8 @@ import (
 	"net"
 	"os"
 	"strings"
+
+	"github.com/wireops/wireops/internal/constants"
 )
 
 // validatePublicHost resolves host (optionally "host:port") to its IP
@@ -32,7 +34,7 @@ func validatePublicHost(host string) error {
 		ips = resolved
 	}
 
-	allowedRanges := os.Getenv("ALLOWED_PRIVATE_IP_RANGES")
+	allowedRanges := os.Getenv(constants.EnvAllowedPrivateIPRanges)
 	isIPAllowed := func(ip net.IP) bool {
 		if allowedRanges == "" {
 			return false

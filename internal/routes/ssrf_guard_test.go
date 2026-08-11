@@ -1,9 +1,13 @@
 package routes
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/wireops/wireops/internal/constants"
+)
 
 func TestValidatePublicHostBlocksPrivateAndLoopback(t *testing.T) {
-	t.Setenv("ALLOWED_PRIVATE_IP_RANGES", "")
+	t.Setenv(constants.EnvAllowedPrivateIPRanges, "")
 
 	cases := []string{
 		"127.0.0.1",
@@ -23,7 +27,7 @@ func TestValidatePublicHostBlocksPrivateAndLoopback(t *testing.T) {
 }
 
 func TestValidatePublicHostAllowsPublicAddresses(t *testing.T) {
-	t.Setenv("ALLOWED_PRIVATE_IP_RANGES", "")
+	t.Setenv(constants.EnvAllowedPrivateIPRanges, "")
 
 	// Public IP literals only — no DNS resolution, so this test doesn't
 	// depend on network access.
@@ -36,7 +40,7 @@ func TestValidatePublicHostAllowsPublicAddresses(t *testing.T) {
 }
 
 func TestValidatePublicHostRespectsAllowlist(t *testing.T) {
-	t.Setenv("ALLOWED_PRIVATE_IP_RANGES", "10.0.0.0/8,127.0.0.1")
+	t.Setenv(constants.EnvAllowedPrivateIPRanges, "10.0.0.0/8,127.0.0.1")
 
 	if err := validatePublicHost("10.1.2.3"); err != nil {
 		t.Errorf("expected 10.1.2.3 to be allowed by CIDR, got %v", err)

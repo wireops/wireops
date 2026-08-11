@@ -9,6 +9,7 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
 
+	"github.com/wireops/wireops/internal/constants"
 	"github.com/wireops/wireops/internal/crypto"
 )
 
@@ -36,7 +37,7 @@ func newRegistryCredentialTestApp(t *testing.T) (*tests.TestApp, *core.Collectio
 func TestLoadCredentialByIDDecryptsPassword(t *testing.T) {
 	app, col := newRegistryCredentialTestApp(t)
 	secret := "0123456789abcdef0123456789abcdef"
-	t.Setenv("SECRET_KEY", secret)
+	t.Setenv(constants.EnvSecretKey, secret)
 
 	encrypted, err := crypto.Encrypt([]byte("s3cr3t-token"), []byte(secret))
 	if err != nil {
@@ -74,7 +75,7 @@ func TestLoadCredentialByIDDecryptsPassword(t *testing.T) {
 func TestLoadCredentialByIDDecryptsMultilineJSONKey(t *testing.T) {
 	app, col := newRegistryCredentialTestApp(t)
 	secret := "0123456789abcdef0123456789abcdef"
-	t.Setenv("SECRET_KEY", secret)
+	t.Setenv(constants.EnvSecretKey, secret)
 
 	jsonKey := `{
   "type": "service_account",
@@ -127,7 +128,7 @@ func TestNormalizeRegistryHost(t *testing.T) {
 func TestBuildDockerAuth(t *testing.T) {
 	app, col := newRegistryCredentialTestApp(t)
 	secret := "0123456789abcdef0123456789abcdef"
-	t.Setenv("SECRET_KEY", secret)
+	t.Setenv(constants.EnvSecretKey, secret)
 
 	encrypted, err := crypto.Encrypt([]byte("hunter2"), []byte(secret))
 	if err != nil {

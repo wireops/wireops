@@ -7,6 +7,7 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
 
+	"github.com/wireops/wireops/internal/constants"
 	"github.com/wireops/wireops/internal/crypto"
 )
 
@@ -59,7 +60,7 @@ func TestResolveRegistryAuthWithCredential(t *testing.T) {
 	app, stacks, credentials := newResolveRegistryAuthTestApp(t)
 	r := &Reconciler{app: app}
 	secret := "0123456789abcdef0123456789abcdef"
-	t.Setenv("SECRET_KEY", secret)
+	t.Setenv(constants.EnvSecretKey, secret)
 
 	encrypted, err := crypto.Encrypt([]byte("hunter2"), []byte(secret))
 	if err != nil {

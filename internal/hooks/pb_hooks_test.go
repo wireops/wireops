@@ -16,6 +16,7 @@ import (
 	"github.com/pocketbase/pocketbase/tools/router"
 	"github.com/pocketbase/pocketbase/tools/types"
 
+	"github.com/wireops/wireops/internal/constants"
 	"github.com/wireops/wireops/internal/crypto"
 	"github.com/wireops/wireops/internal/logstream"
 )
@@ -761,7 +762,7 @@ func TestEnsureRepositorySopsKeypairEncryptFailure(t *testing.T) {
 // building that harness is out of scope for this fix.
 func TestRegistryCredentialPasswordEncryptedOnCreateAndUpdate(t *testing.T) {
 	secret := "12345678901234567890123456789012"
-	t.Setenv("SECRET_KEY", secret)
+	t.Setenv(constants.EnvSecretKey, secret)
 
 	app, err := tests.NewTestApp()
 	if err != nil {

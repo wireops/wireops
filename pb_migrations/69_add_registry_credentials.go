@@ -30,11 +30,11 @@ func init() {
 		col.Fields.Add(&core.AutodateField{Name: "created", OnCreate: true})
 		col.Fields.Add(&core.AutodateField{Name: "updated", OnCreate: true, OnUpdate: true})
 
-		col.ListRule = strPtr("@request.auth.id != ''")
-		col.ViewRule = strPtr("@request.auth.id != ''")
-		col.CreateRule = strPtr("@request.auth.id != ''")
-		col.UpdateRule = strPtr("@request.auth.id != ''")
-		col.DeleteRule = strPtr("@request.auth.id != ''")
+		col.ListRule = strPtr(rbacReadRule)
+		col.ViewRule = strPtr(rbacReadRule)
+		col.CreateRule = strPtr(rbacOperatorRule)
+		col.UpdateRule = strPtr(rbacOperatorRule)
+		col.DeleteRule = strPtr(rbacOperatorRule)
 
 		if err := app.Save(col); err != nil {
 			return err
@@ -56,16 +56,18 @@ func init() {
 		log.Println("[MIGRATE] Created registry_credentials collection and stacks.registry_credential relation")
 		return nil
 	}, func(app core.App) error {
-		if stacksCol, err := app.FindCollectionByNameOrId("stacks"); err == nil {
-			stacksCol.Fields.RemoveByName("registry_credential")
-			if err := app.Save(stacksCol); err != nil {
-				return err
-			}
+		stacksCol, err := app.FindCollectionByNameOrId("stacks")
+		if err != nil {
+			return err
+		}
+		stacksCol.Fields.RemoveByName("registry_credential")
+		if err := app.Save(stacksCol); err != nil {
+			return err
 		}
 
 		col, err := app.FindCollectionByNameOrId("registry_credentials")
 		if err != nil {
-			return nil
+			return err
 		}
 		return app.Delete(col)
 	})

@@ -11,6 +11,7 @@ import (
 
 	"github.com/pocketbase/pocketbase/core"
 
+	"github.com/wireops/wireops/internal/constants"
 	"github.com/wireops/wireops/internal/git"
 	"github.com/wireops/wireops/internal/rbac"
 )
@@ -111,7 +112,7 @@ func (rr routeRegistrar) registerCredentialRoutes() {
 			ips = resolved
 		}
 
-		allowedRanges := os.Getenv("ALLOWED_PRIVATE_IP_RANGES")
+		allowedRanges := os.Getenv(constants.EnvAllowedPrivateIPRanges)
 		isIPAllowed := func(ip net.IP) bool {
 			if allowedRanges == "" {
 				return false

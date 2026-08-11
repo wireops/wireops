@@ -10,6 +10,7 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/router"
 
+	"github.com/wireops/wireops/internal/constants"
 	"github.com/wireops/wireops/internal/crypto"
 	"github.com/wireops/wireops/internal/rbac"
 )
@@ -37,11 +38,11 @@ func registryCredentialRoutesMux(t *testing.T, app core.App, auth *core.Record) 
 
 func registryCredentialTestApp(t *testing.T) (core.App, *core.Record) {
 	t.Helper()
-	t.Setenv("SECRET_KEY", testSecretBackendKey)
+	t.Setenv(constants.EnvSecretKey, testSecretBackendKey)
 	// Test registries are httptest servers on 127.0.0.1, which the SSRF
 	// guard (validatePublicHost) rejects by default — allowlist loopback
 	// here the same way an operator would opt in a real internal registry.
-	t.Setenv("ALLOWED_PRIVATE_IP_RANGES", "127.0.0.1/32")
+	t.Setenv(constants.EnvAllowedPrivateIPRanges, "127.0.0.1/32")
 	app := newSetupTestApp(t)
 	clearAllUsers(t, app)
 	operator := createTestUser(t, app, "registry-operator@example.com", "Password1!", rbac.RoleOperator)
@@ -235,7 +236,7 @@ func TestRegistryCredentialTestConnectionBlocksPrivateHost(t *testing.T) {
 	defer registryServer.Close()
 
 	app, operator := registryCredentialTestApp(t)
-	t.Setenv("ALLOWED_PRIVATE_IP_RANGES", "")
+	t.Setenv(constants.EnvAllowedPrivateIPRanges, "")
 	mux := registryCredentialRoutesMux(t, app, operator)
 
 	body := map[string]any{

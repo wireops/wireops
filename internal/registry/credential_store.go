@@ -14,6 +14,7 @@ import (
 
 	"github.com/pocketbase/pocketbase/core"
 
+	"github.com/wireops/wireops/internal/constants"
 	"github.com/wireops/wireops/internal/crypto"
 )
 
@@ -48,7 +49,7 @@ func LoadCredentialByID(app core.App, id string) (*Credential, error) {
 		return nil, fmt.Errorf("find registry credential: %w", err)
 	}
 
-	secretKey := crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))
+	secretKey := crypto.NormalizeSecretKey(os.Getenv(constants.EnvSecretKey))
 	if len(secretKey) != 32 {
 		return nil, fmt.Errorf("SECRET_KEY must be exactly 32 bytes")
 	}
