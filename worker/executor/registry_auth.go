@@ -113,7 +113,10 @@ func validateRegistryAuth(authB64 string, insecureHosts []string) error {
 func checkRegistryAuth(host, authHeader string, insecure bool) error {
 	client := &http.Client{Timeout: 5 * time.Second}
 	if insecure {
-		client.Transport = &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: true}}
+		// InsecureSkipVerify is only reached when the admin has explicitly
+		// marked this specific registry host as insecure (self-signed cert /
+		// plain HTTP internal registry) — mirrors internal/routes/registry_credentials.go.
+		client.Transport = &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: true}} // #nosec G402 -- opt-in per-registry insecure flag, not default behavior
 	}
 
 	resp, err := doRegistryCheck(client, "https://"+host+"/v2/", authHeader)
