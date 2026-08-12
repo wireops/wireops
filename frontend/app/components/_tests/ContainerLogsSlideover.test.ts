@@ -1,23 +1,44 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
+import { h } from 'vue'
 import ContainerLogsSlideover from '../ContainerLogsSlideover.vue'
 
 const getContainerLogs = vi.fn()
 const toastAdd = vi.fn()
 
-function mountViewer() {
+function mountViewer(props: Partial<{ containerId: string, containerName: string }> = {}) {
   return mount(ContainerLogsSlideover, {
     props: {
       open: true,
       stackId: 'stack-1',
       containerId: 'container-1',
       containerName: 'api/one',
+      ...props,
     },
     global: {
       stubs: {
-        USlideover: { template: '<section><slot name="content" /></section>' },
-        UTooltip: { template: '<span><slot /></span>' },
-        UButton: { template: '<button v-bind="$attrs" @click="$emit(\'click\')"><slot /></button>' },
+        USlideover: {
+          setup(_: unknown, { slots }: any) {
+            return () => h('section', slots.content?.())
+          },
+        },
+        UTooltip: {
+          setup(_: unknown, { slots }: any) {
+            return () => h('span', slots.default?.())
+          },
+        },
+        UButton: {
+          inheritAttrs: false,
+          props: ['icon', 'label', 'disabled', 'loading'],
+          emits: ['click'],
+          setup(props: any, { attrs, slots, emit }: any) {
+            return () => h('button', {
+              ...attrs,
+              disabled: props.disabled,
+              onClick: () => emit('click'),
+            }, [props.label, slots.default?.()])
+          },
+        },
         UIcon: true,
         CloseButton: true,
         AppTextInput: true,
@@ -66,6 +87,7 @@ describe('ContainerLogsSlideover', () => {
   })
 
   it('downloads the unfiltered logs using a safe filename', async () => {
+    vi.useFakeTimers()
     const wrapper = mountViewer()
     await flushPromises()
 
@@ -81,7 +103,51 @@ describe('ContainerLogsSlideover', () => {
     expect(await blob.text()).toContain('INFO ready')
     expect(click).toHaveBeenCalledOnce()
     expect(toastAdd).toHaveBeenCalledWith({ title: 'Logs downloaded', color: 'success' })
+    expect(revokeObjectURL).not.toHaveBeenCalled()
+
+    vi.runAllTimers()
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:logs')
+    vi.useRealTimers()
+  })
+
+  it('shows an error message when the logs request fails', async () => {
+    getContainerLogs.mockReset()
+    getContainerLogs.mockRejectedValue(new Error('worker offline'))
+
+    const wrapper = mountViewer()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('worker offline')
+    expect(wrapper.find('[role="log"]').exists()).toBe(false)
+  })
+
+  it('shows an empty-log message when the container has no logs', async () => {
+    getContainerLogs.mockReset()
+    getContainerLogs.mockResolvedValue({ logs: '' })
+
+    const wrapper = mountViewer()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('This container has no logs yet.')
+    expect(wrapper.find('[role="log"]').exists()).toBe(false)
+  })
+
+  it('clears stale content when switching to a different container', async () => {
+    const wrapper = mountViewer()
+    await flushPromises()
+    expect(wrapper.text()).toContain('INFO ready')
+
+    let resolveNext: (value: { logs: string }) => void = () => {}
+    getContainerLogs.mockReset()
+    getContainerLogs.mockReturnValue(new Promise((resolve) => { resolveNext = resolve }))
+
+    await wrapper.setProps({ containerId: 'container-2' })
+
+    expect(wrapper.text()).not.toContain('INFO ready')
+
+    resolveNext({ logs: '2026-08-12T10:00:02Z INFO other\n' })
+    await flushPromises()
+    expect(wrapper.text()).toContain('INFO other')
   })
 })
 

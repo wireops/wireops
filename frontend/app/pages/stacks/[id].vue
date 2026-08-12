@@ -615,11 +615,19 @@ function splitList(value: string): string[] | undefined {
   return parts.length ? parts : undefined
 }
 
-function scaleValidationError(value: string): string {
+// Shared parsing so validation, the stepper buttons' disabled state, and the
+// +/- adjustment all agree on what counts as a valid scale value. A blank or
+// non-whole-number string parses to null (no override / not yet valid).
+function parsedOverrideScale(value: string): number | null {
   const trimmed = value.trim()
-  if (!trimmed) return ''
-  if (!/^\d+$/.test(trimmed)) return 'Scale must be a whole number'
-  const scale = Number(trimmed)
+  if (!trimmed || !/^\d+$/.test(trimmed)) return null
+  return Number(trimmed)
+}
+
+function scaleValidationError(value: string): string {
+  if (!value.trim()) return ''
+  const scale = parsedOverrideScale(value)
+  if (scale === null) return 'Scale must be a whole number'
   if (scale > 100) return 'Scale must be between 0 and 100'
   return ''
 }
@@ -627,14 +635,16 @@ function scaleValidationError(value: string): string {
 function adjustOverrideScale(name: string, adjustment: number) {
   const entry = overridesForm.value[name]
   if (!entry) return
-  const current = Number(entry.scale)
-  const base = Number.isInteger(current) && current >= 0 ? current : (adjustment < 0 ? 1 : 0)
+  const current = parsedOverrideScale(entry.scale)
+  const base = current !== null ? current : (adjustment < 0 ? 1 : 0)
   entry.scale = String(Math.min(100, Math.max(0, base + adjustment)))
 }
 
 async function handleApplyOverrides() {
   const payload: Record<string, OverrideValue> = {}
-  for (const [name, entry] of Object.entries(overridesForm.value)) {
+  for (const name of overrideServiceNames.value) {
+    const entry = overridesForm.value[name]
+    if (!entry) continue
     const override: OverrideValue = {}
     if (entry.image.trim()) override.image = entry.image.trim()
     const ports = splitList(entry.ports)
@@ -1310,7 +1320,7 @@ onMounted(() => {
                       size="sm"
                       title="Scale down"
                       class="shrink-0"
-                      :disabled="Number(overridesForm[name].scale) <= 0"
+                      :disabled="(parsedOverrideScale(overridesForm[name].scale) ?? 0) <= 0"
                       @click="adjustOverrideScale(name, -1)"
                     />
                     <div class="min-w-0 flex-1">
@@ -1328,7 +1338,7 @@ onMounted(() => {
                       size="sm"
                       title="Scale up"
                       class="shrink-0"
-                      :disabled="Number(overridesForm[name].scale) >= 100"
+                      :disabled="(parsedOverrideScale(overridesForm[name].scale) ?? 0) >= 100"
                       @click="adjustOverrideScale(name, 1)"
                     />
                   </div>

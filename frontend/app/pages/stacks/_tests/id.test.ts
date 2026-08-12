@@ -171,23 +171,9 @@ describe('stacks/[id].vue force redeploy pause toggle', () => {
 
   function setupGlobalsWithForceRedeploy(forceRedeploy: ReturnType<typeof vi.fn>) {
     const globals = setupGlobals()
-    ;(globalThis as any).useApi = () => ({
-      triggerSync: vi.fn(),
-      triggerRollback: vi.fn(),
-      forceRedeploy,
-      deleteStack: vi.fn(),
-      getServices: vi.fn().mockResolvedValue([]),
-      getComposeFile: vi.fn(),
-      getWebhookUrl: vi.fn().mockResolvedValue(''),
-      getContainerStats: vi.fn(),
-      getContainerLogs: vi.fn(),
-      getRepoCommits: vi.fn().mockResolvedValue([]),
-      transferStack: vi.fn(),
-      getWorkers: vi.fn().mockResolvedValue([]),
-      stopContainer: vi.fn(),
-      restartContainer: vi.fn(),
-    })
-    return globals
+    const api = { ...globals.api, forceRedeploy }
+    ;(globalThis as any).useApi = () => api
+    return { ...globals, api }
   }
 
   it('defaults pauseAfterRedeploy to true and sends it on a successful redeploy', async () => {
@@ -290,7 +276,10 @@ describe('stacks/[id].vue stack operations and override helpers', () => {
   it('applies valid overrides, rejects invalid input, and clears persisted overrides', async () => {
     const { api, toastAdd, asyncDataStore } = setupGlobals()
     const wrapper = await mountPage()
-    asyncDataStore['stack_stack-1'].data.value = { id: 'stack-1', name: 'my-stack', status: 'active' }
+    asyncDataStore['stack_stack-1'].data.value = {
+      id: 'stack-1', name: 'my-stack', status: 'active',
+      containers_list: [{ name: 'web' }],
+    }
     await flushPromises()
 
     ;(wrapper.vm as any).overridesForm = { web: { image: ' nginx:1.25 ', ports: '8080:80', networks: 'edge', scale: '3' } }
@@ -301,6 +290,17 @@ describe('stacks/[id].vue stack operations and override helpers', () => {
     ;(wrapper.vm as any).overridesForm = { web: { image: '', ports: '', networks: '', scale: 'bad' } }
     await (wrapper.vm as any).handleApplyOverrides()
     expect(toastAdd).toHaveBeenCalledWith({ title: 'web: Scale must be a whole number', color: 'warning' })
+
+    ;(wrapper.vm as any).overridesForm = { web: { image: '', ports: '', networks: '', scale: '0' } }
+    await (wrapper.vm as any).handleApplyOverrides()
+    expect(api.setRenderOverrides).toHaveBeenCalledWith('stack-1', { web: { scale: 0 } })
+
+    ;(wrapper.vm as any).overridesForm = {
+      web: { image: '', ports: '', networks: '', scale: '2' },
+      stale: { image: 'ghost:latest', ports: '', networks: '', scale: '' },
+    }
+    await (wrapper.vm as any).handleApplyOverrides()
+    expect(api.setRenderOverrides).toHaveBeenCalledWith('stack-1', { web: { scale: 2 } })
 
     await (wrapper.vm as any).handleClearOverrides()
     expect(api.clearRenderOverrides).toHaveBeenCalledWith('stack-1')

@@ -32,5 +32,10 @@ describe('highlightLogLine', () => {
     const segments = highlightLogLine('<script>alert("x")</script>')
     expect(segments.map(segment => segment.text).join('')).toBe('<script>alert("x")</script>')
   })
+
+  it('falls back to a single empty plain segment for a blank line', () => {
+    const segments = highlightLogLine('')
+    expect(segments).toEqual([{ text: '', kind: 'plain', match: false }])
+  })
 })
 

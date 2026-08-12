@@ -466,6 +466,11 @@ func applyServiceScaleOverride(serviceName string, svc map[string]interface{}, s
 	if scale < 0 || scale > maxRenderOverrideScale {
 		return fmt.Errorf("render override scale for service %q must be between 0 and %d", serviceName, maxRenderOverrideScale)
 	}
+	if deploy, ok := svc["deploy"].(map[string]interface{}); ok {
+		if mode, _ := deploy["mode"].(string); mode == "global" || mode == "global-job" {
+			return fmt.Errorf("render override cannot scale service %q because it declares deploy.mode %q", serviceName, mode)
+		}
+	}
 	if scale > 1 {
 		if name, _ := svc["container_name"].(string); name != "" {
 			return fmt.Errorf("render override cannot scale service %q above 1 because it sets container_name", serviceName)

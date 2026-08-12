@@ -95,15 +95,15 @@ function downloadLogs() {
   document.body.appendChild(link)
   link.click()
   link.remove()
-  URL.revokeObjectURL(blobUrl)
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 0)
   toast.add({ title: 'Logs downloaded', color: 'success' })
 }
 
 watch([open, () => props.containerId], ([isOpen, containerId]) => {
-  if (!isOpen || !containerId) {
-    requestId++
-    return
-  }
+  requestId++
+  content.value = ''
+  error.value = ''
+  if (!isOpen || !containerId) return
   query.value = ''
   loadLogs()
 }, { immediate: true })

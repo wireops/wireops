@@ -133,12 +133,6 @@ function hasNetworkDetails(network: NetworkInfo): boolean {
     || (network.docker_name && network.docker_name !== network.name)
     || network.ipam_configs?.length
     || recordEntries(network.options).length
-    || network.enable_ipv4
-    || network.enable_ipv6
-    || network.internal
-    || network.attachable
-    || network.ingress
-    || network.config_only
   )
 }
 
@@ -433,16 +427,10 @@ watch(() => props.services, (services) => {
               >
               <!-- Accordion Header -->
               <div
-                role="button"
-                tabindex="0"
                 class="flex w-full items-center gap-2 px-3 py-2.5 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/60 text-left"
                 :class="openContainers[container.container_id] ? 'bg-gray-50 dark:bg-gray-800/50' : 'bg-transparent'"
-                :aria-expanded="!!openContainers[container.container_id]"
-                @click="toggleContainer(container.container_id)"
-                @keydown.enter.prevent="toggleContainer(container.container_id)"
-                @keydown.space.prevent="toggleContainer(container.container_id)"
               >
-                <label v-if="canOperate" class="flex shrink-0 cursor-pointer items-center" @click.stop>
+                <label v-if="canOperate" class="flex shrink-0 cursor-pointer items-center">
                   <input
                     type="checkbox"
                     class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
@@ -454,29 +442,47 @@ watch(() => props.services, (services) => {
                   >
                 </label>
 
-                <!-- Container Icon -->
-                <ContainerIcon
-                  :name="container.service_name"
-                  :slug="getContainerSlug(container)"
-                  wrapper-class="w-6 h-6 flex shrink-0 items-center justify-center rounded bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 overflow-hidden"
-                  icon-class="w-4 h-4 object-contain"
-                />
+                <!-- Clickable/toggle region: icon, name, badge, id, chevron only — no nested interactive controls -->
+                <div
+                  role="button"
+                  tabindex="0"
+                  class="flex flex-1 min-w-0 items-center gap-2"
+                  :aria-expanded="!!openContainers[container.container_id]"
+                  @click="toggleContainer(container.container_id)"
+                  @keydown.enter.prevent="toggleContainer(container.container_id)"
+                  @keydown.space.prevent="toggleContainer(container.container_id)"
+                >
+                  <!-- Container Icon -->
+                  <ContainerIcon
+                    :name="container.service_name"
+                    :slug="getContainerSlug(container)"
+                    wrapper-class="w-6 h-6 flex shrink-0 items-center justify-center rounded bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 overflow-hidden"
+                    icon-class="w-4 h-4 object-contain"
+                  />
 
-                <!-- Container Name -->
-                <span class="font-medium text-sm text-gray-900 dark:text-white truncate flex-1 min-w-0">
-                  {{ container.container_name || container.service_name }}
-                </span>
+                  <!-- Container Name -->
+                  <span class="font-medium text-sm text-gray-900 dark:text-white truncate flex-1 min-w-0">
+                    {{ container.container_name || container.service_name }}
+                  </span>
 
-                <!-- Status badge -->
-                <BadgeStatus :status="container.status" class="shrink-0" />
+                  <!-- Status badge -->
+                  <BadgeStatus :status="container.status" class="shrink-0" />
 
-                <!-- Container ID as code -->
-                <code class="hidden sm:inline-flex text-xs font-mono text-gray-400 dark:text-gray-500 bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded shrink-0">
-                  {{ container.container_id.slice(0, 12) }}
-                </code>
+                  <!-- Container ID as code -->
+                  <code class="hidden sm:inline-flex text-xs font-mono text-gray-400 dark:text-gray-500 bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded shrink-0">
+                    {{ container.container_id.slice(0, 12) }}
+                  </code>
+
+                  <!-- Chevron indicator -->
+                  <UIcon
+                    name="i-lucide-chevron-down"
+                    class="w-4 h-4 shrink-0 text-gray-400 transition-transform duration-200"
+                    :class="openContainers[container.container_id] ? 'rotate-180' : ''"
+                  />
+                </div>
 
                 <!-- Copy container ID -->
-                <div class="hidden sm:inline-flex shrink-0" @click.stop>
+                <div class="hidden sm:inline-flex shrink-0">
                   <UTooltip text="Copy container ID">
                     <UButton
                       icon="i-lucide-copy"
@@ -489,8 +495,8 @@ watch(() => props.services, (services) => {
                   </UTooltip>
                 </div>
 
-                <!-- Action buttons — @click.stop prevents accordion toggle -->
-                <div class="flex items-center gap-0.5 shrink-0 ml-1" @click.stop>
+                <!-- Action buttons -->
+                <div class="flex items-center gap-0.5 shrink-0 ml-1">
                   <ContainerIntegrationActions
                     :actions="integrationActions[container.container_id] || []"
                     :container-id="container.container_id"
@@ -534,13 +540,6 @@ watch(() => props.services, (services) => {
                     />
                   </UTooltip>
                 </div>
-
-                <!-- Chevron indicator -->
-                <UIcon
-                  name="i-lucide-chevron-down"
-                  class="w-4 h-4 shrink-0 text-gray-400 transition-transform duration-200"
-                  :class="openContainers[container.container_id] ? 'rotate-180' : ''"
-                />
               </div>
 
               <!-- Accordion Body -->

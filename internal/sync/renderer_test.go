@@ -1127,6 +1127,24 @@ func TestApplyServiceOverridesScaleRejectsUnsupportedServices(t *testing.T) {
 			scale:   &tooLarge,
 			want:    "between 0 and 100",
 		},
+		{
+			name: "global deploy mode",
+			service: map[string]interface{}{
+				"image":  "nginx",
+				"deploy": map[string]interface{}{"mode": "global"},
+			},
+			scale: &three,
+			want:  "deploy.mode",
+		},
+		{
+			name: "global-job deploy mode",
+			service: map[string]interface{}{
+				"image":  "nginx",
+				"deploy": map[string]interface{}{"mode": "global-job"},
+			},
+			scale: &three,
+			want:  "deploy.mode",
+		},
 	}
 
 	for _, tc := range cases {

@@ -22,6 +22,7 @@ describe('ExecutableCommand', () => {
   afterEach(() => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+    delete (document as any).execCommand
   })
 
   it('re-masks and requires another reveal when masked content changes', async () => {

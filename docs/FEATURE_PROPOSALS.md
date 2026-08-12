@@ -136,6 +136,8 @@ Each of these reuses machinery that is already built and tested. They're listed 
 
 **Missing:** assignment to a tag pool rather than a specific worker, with the server choosing among connected workers that satisfy the tags — and re-placing a stack when its worker is gone for good rather than only queueing in `stack_pending_reconciles` for a worker that may never return.
 
+**Scope note:** this is multi-node scheduling and automatic stack re-placement, which is a boundary change from wireops' current single-worker-per-stack, human-picked-target model. The README scopes wireops to single-host/small-fleet `docker compose` GitOps and explicitly points enterprise-scale orchestration, multi-node scheduling, and autoscaling at Kubernetes with Flux or ArgoCD. Treat this proposal as out of the active tiers unless that product boundary is deliberately revisited.
+
 **Why it matters:** tags are already a pool declaration in everything but the last step. It also converts worker loss from "these stacks are stuck pending" into "these stacks moved", which is the behaviour the tag model implies.
 
 ### Glances integration — live worker metrics
@@ -162,9 +164,9 @@ Each of these reuses machinery that is already built and tested. They're listed 
 
 ### Lint as a pull-request check
 
-**Today:** `internal/lint/` is server-side and daemon-free, and its findings already gate deploys and stack creation. `internal/gitprovider` already holds a working GitHub OAuth connection.
+**Today:** `internal/lint/` is server-side and daemon-free, and its error-severity findings already gate deploys and stack creation — warning- and info-severity findings are advisory only. `internal/gitprovider` already holds a working GitHub OAuth connection.
 
-**Missing:** publishing those findings as a commit status / check run when a push arrives, with per-line annotations (the lint already reports line numbers — the Review step renders them today).
+**Missing:** publishing those findings as a commit status / check run when a push arrives, with per-line annotations (the lint already reports line numbers — the Review step renders them today). The check would mirror the existing gate: only error-severity findings fail the check/block merge via branch protection; warning- and info-severity findings post as advisory annotations, same as they are advisory in the existing create/deploy gate.
 
 **Why it matters:** the gate currently fires at deploy time, which is *after* the merge. The same engine posting on the pull request moves the failure to where it can still be fixed cheaply, and costs no new analysis logic — only a new output surface on top of `internal/gitprovider`.
 

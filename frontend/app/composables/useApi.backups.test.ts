@@ -166,7 +166,7 @@ describe('useApi backup wrappers', () => {
     await api.updateSelf({ name: 'New name' })
 
     const paths = fetchMock.mock.calls.map(([url]) => String(url))
-    expect(paths).toContain('http://test/api/custom/stacks/stack id/container/container id/logs?tail=25')
+    expect(paths).toContain('http://test/api/custom/stacks/stack%20id/container/container%20id/logs?tail=25')
     expect(paths).toContain('http://test/api/custom/git-providers/github/repos?key=key%20id&org=org%20name')
     expect(paths).toContain('http://test/api/custom/jobs?page=2&per_page=10&status=enabled&repository=repo+id&search=backup+task')
     expect(paths).toContain('http://test/api/custom/audit-logs?page=2&status=error')

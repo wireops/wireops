@@ -127,7 +127,10 @@ moves a stack: stack assignment is currently explicit.
 ## Restore drill
 
 At least once per release line, restore the newest off-host archive into a
-throwaway instance using the separately stored `SECRET_KEY`. Confirm login,
-collection counts, one secret decryption, one repository reconciliation, and
-worker reconnect. A successful upload proves that an object exists; only a
-restore drill proves it is usable.
+throwaway instance using the separately stored `SECRET_KEY`. Run the drill on
+an isolated network with a disposable worker and a disposable token — never
+expose the throwaway server through the production address, and never repoint
+a production worker at it. Confirm login, collection counts, one secret
+decryption, one repository reconciliation, and worker reconnect (using the
+disposable worker/token only). A successful upload proves that an object
+exists; only a restore drill proves it is usable.

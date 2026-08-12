@@ -236,7 +236,7 @@ Stacks support render-time overrides — swapping a service's `image`, `ports`, 
 - Gated by the **"Allow render overrides"** worker policy flag (`allow_render_overrides`), off by default — set it globally or per-worker in worker policy settings.
 - View, set, and clear overrides from the stack detail page, or via `GET`/`PUT`/`DELETE /api/custom/stacks/{id}/render-overrides`.
 - Overridden values still pass through the worker's other deploy policy checks (image/network allowlists, etc.) — an override can't be used to bypass policy.
-- Applying or clearing overrides force-recreates the stack's containers.
+- Applying or clearing overrides force-recreates the stack's containers, except when the change is scale-only — those adjust replica counts without recreating unchanged containers.
 
 ## Environment Variables
 

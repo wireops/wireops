@@ -209,19 +209,25 @@ func GetStackVolumes(ctx context.Context, cli *dockerclient.Client, projectName 
 	// VolumeInspect may omit UsageData depending on the daemon API version. The
 	// daemon's disk-usage endpoint calculates it itself (equivalent to `docker
 	// system df -v`) and remains accessible through the worker's Docker socket.
+	// Scoped to volumes only so this doesn't also compute container/image/
+	// build-cache usage on every call.
 	diskUsageSizes := map[string]int64{}
-	if diskUsage, diskUsageErr := cli.DiskUsage(ctx, dockertypes.DiskUsageOptions{}); diskUsageErr == nil {
+	diskUsageOpts := dockertypes.DiskUsageOptions{Types: []dockertypes.DiskUsageObject{dockertypes.VolumeObject}}
+	if diskUsage, diskUsageErr := cli.DiskUsage(ctx, diskUsageOpts); diskUsageErr == nil {
 		diskUsageSizes = volumeUsageSizes(diskUsage.Volumes)
 	}
 
 	infos := make([]protocol.VolumeInfo, 0, len(resp.Volumes))
 	for _, v := range resp.Volumes {
-		// UsageData is not consistently returned by VolumeList. Inspecting the
-		// stack's individual volumes gives drivers that support it a chance to
-		// report the actual size, without making size availability a requirement
-		// for listing the rest of the volume metadata.
-		if inspected, inspectErr := cli.VolumeInspect(ctx, v.Name); inspectErr == nil {
-			v = &inspected
+		// UsageData is not consistently returned by VolumeList. Only fall back to
+		// inspecting the individual volume when disk-usage didn't already report
+		// its size, since inspect is a per-volume daemon round trip.
+		if _, hasUsage := diskUsageSizes[v.Name]; v.UsageData == nil && !hasUsage {
+			if inspected, inspectErr := cli.VolumeInspect(ctx, v.Name); inspectErr == nil {
+				v = &inspected
+			} else {
+				log.Printf("failed to inspect volume %s: %v", v.Name, inspectErr)
+			}
 		}
 
 		name := v.Labels["com.docker.compose.volume"]

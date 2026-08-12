@@ -145,11 +145,12 @@ describe('useAuth', () => {
     const save = vi.fn()
     pbAuthStore.save = save
     const fetchMock = vi.fn().mockResolvedValue({ token: 'app-token', record: { id: 'elevated-user' } })
+    const collection = vi.fn().mockReturnValue({ authWithOAuth2, listAuthMethods })
 
     ;(globalThis as any).$fetch = fetchMock
     ;(globalThis as any).useRuntimeConfig = () => ({ public: { pocketbaseUrl: 'https://wireops.example/' } })
     ;(globalThis as any).useNuxtApp = () => ({
-      $pb: { authStore: pbAuthStore, collection: () => ({ authWithOAuth2, listAuthMethods }) },
+      $pb: { authStore: pbAuthStore, collection },
       $pbSuperuser: { authStore: pbSuperuserAuthStore, collection: () => ({}) },
     })
 
@@ -157,6 +158,7 @@ describe('useAuth', () => {
     const auth = useAuth()
     await expect(auth.getSSOProviders()).resolves.toEqual([])
     await auth.loginWithSSO('oidc')
+    expect(collection).toHaveBeenCalledWith('sso_users')
     expect(authWithOAuth2).toHaveBeenCalledWith({ provider: 'oidc' })
     expect(pbAuthStore.clear).toHaveBeenCalled()
     expect(pbSuperuserAuthStore.clear).toHaveBeenCalled()
