@@ -82,8 +82,19 @@ export function useApi() {
   const getServices = (stackId: string) => customGet(`/api/custom/stacks/${stackId}/services`)
   const getDependencyGraph = (stackId: string) =>
     customGet<import('../utils/dependency-graph-layout').DependencyGraph>(`/api/custom/stacks/${stackId}/dependency-graph`)
-  type VolumeInfo = { name: string; driver: string; mountpoint: string; scope: string }
-  type NetworkInfo = { name: string; driver: string; scope: string; subnet?: string; gateway?: string }
+  type VolumeInfo = {
+    name: string; docker_name: string; driver: string; mountpoint: string; scope: string
+    created_at?: string; size_bytes?: number; options?: Record<string, string>
+  }
+  type NetworkIPAMConfig = {
+    subnet?: string; gateway?: string; ip_range?: string; aux_addresses?: Record<string, string>
+  }
+  type NetworkInfo = {
+    name: string; docker_name: string; id?: string; driver: string; scope: string; created_at?: string
+    subnet?: string; gateway?: string; ipam_configs?: NetworkIPAMConfig[]
+    enable_ipv4: boolean; enable_ipv6: boolean; internal: boolean; attachable: boolean; ingress: boolean; config_only: boolean
+    options?: Record<string, string>
+  }
   const getStackResources = (stackId: string) =>
     customGet<{ volumes: VolumeInfo[]; networks: NetworkInfo[] }>(`/api/custom/stacks/${stackId}/resources`)
   const stopContainer = (stackId: string, containerId: string) =>
@@ -100,10 +111,10 @@ export function useApi() {
   const getContainerStats = (stackId: string, containerId: string) =>
     customGet<{ cpu_percent: number; mem_usage: number; mem_limit: number; started_at: string }>(`/api/custom/stacks/${stackId}/container/${containerId}/stats`)
   const getContainerLogs = (stackId: string, containerId: string, tail = 100) =>
-    customGet<{ logs: string }>(`/api/custom/stacks/${stackId}/container/${containerId}/logs?tail=${tail}`)
+    customGet<{ logs: string }>(`/api/custom/stacks/${stackId}/container/${containerId}/logs?tail=${encodeURIComponent(String(tail))}`)
   const forceRedeploy = (stackId: string, options: { recreate_containers: boolean; recreate_volumes: boolean; recreate_networks: boolean; pause_after_redeploy?: boolean }) =>
     customPost(`/api/custom/stacks/${stackId}/force-redeploy`, options)
-  type ServiceOverride = { image?: string; ports?: string[]; networks?: string[] }
+  type ServiceOverride = { image?: string; ports?: string[]; networks?: string[]; scale?: number }
   const setRenderOverrides = (stackId: string, overrides: Record<string, ServiceOverride>) =>
     customPut(`/api/custom/stacks/${stackId}/render-overrides`, { overrides })
   const clearRenderOverrides = (stackId: string) =>

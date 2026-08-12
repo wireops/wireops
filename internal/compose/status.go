@@ -7,7 +7,9 @@ import (
 	"log"
 	"path"
 	"strings"
+	"time"
 
+	dockertypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	dockernetwork "github.com/docker/docker/api/types/network"
@@ -204,20 +206,56 @@ func GetStackVolumes(ctx context.Context, cli *dockerclient.Client, projectName 
 		return nil, err
 	}
 
+	// VolumeInspect may omit UsageData depending on the daemon API version. The
+	// daemon's disk-usage endpoint calculates it itself (equivalent to `docker
+	// system df -v`) and remains accessible through the worker's Docker socket.
+	diskUsageSizes := map[string]int64{}
+	if diskUsage, diskUsageErr := cli.DiskUsage(ctx, dockertypes.DiskUsageOptions{}); diskUsageErr == nil {
+		diskUsageSizes = volumeUsageSizes(diskUsage.Volumes)
+	}
+
 	infos := make([]protocol.VolumeInfo, 0, len(resp.Volumes))
 	for _, v := range resp.Volumes {
+		// UsageData is not consistently returned by VolumeList. Inspecting the
+		// stack's individual volumes gives drivers that support it a chance to
+		// report the actual size, without making size availability a requirement
+		// for listing the rest of the volume metadata.
+		if inspected, inspectErr := cli.VolumeInspect(ctx, v.Name); inspectErr == nil {
+			v = &inspected
+		}
+
 		name := v.Labels["com.docker.compose.volume"]
 		if name == "" {
 			name = v.Name
 		}
-		infos = append(infos, protocol.VolumeInfo{
+		info := protocol.VolumeInfo{
 			Name:       name,
+			DockerName: v.Name,
 			Driver:     v.Driver,
 			Mountpoint: v.Mountpoint,
 			Scope:      v.Scope,
-		})
+			CreatedAt:  v.CreatedAt,
+			Options:    v.Options,
+		}
+		if v.UsageData != nil && v.UsageData.Size >= 0 {
+			size := v.UsageData.Size
+			info.SizeBytes = &size
+		} else if size, ok := diskUsageSizes[v.Name]; ok {
+			info.SizeBytes = &size
+		}
+		infos = append(infos, info)
 	}
 	return infos, nil
+}
+
+func volumeUsageSizes(volumes []*volume.Volume) map[string]int64 {
+	sizes := make(map[string]int64, len(volumes))
+	for _, v := range volumes {
+		if v != nil && v.UsageData != nil && v.UsageData.Size >= 0 {
+			sizes[v.Name] = v.UsageData.Size
+		}
+	}
+	return sizes
 }
 
 // GetStackNetworks returns Docker networks associated with a compose project.
@@ -233,16 +271,36 @@ func GetStackNetworks(ctx context.Context, cli *dockerclient.Client, projectName
 	infos := make([]protocol.NetworkInfo, 0, len(networks))
 	for _, n := range networks {
 		info := protocol.NetworkInfo{
-			Name:   n.Labels["com.docker.compose.network"],
-			Driver: n.Driver,
-			Scope:  n.Scope,
+			Name:       n.Labels["com.docker.compose.network"],
+			DockerName: n.Name,
+			ID:         n.ID,
+			Driver:     n.Driver,
+			Scope:      n.Scope,
+			EnableIPv4: n.EnableIPv4,
+			EnableIPv6: n.EnableIPv6,
+			Internal:   n.Internal,
+			Attachable: n.Attachable,
+			Ingress:    n.Ingress,
+			ConfigOnly: n.ConfigOnly,
+			Options:    n.Options,
+		}
+		if !n.Created.IsZero() {
+			info.CreatedAt = n.Created.Format(time.RFC3339)
 		}
 		if info.Name == "" {
 			info.Name = n.Name
 		}
-		if len(n.IPAM.Config) > 0 {
-			info.Subnet = n.IPAM.Config[0].Subnet
-			info.Gateway = n.IPAM.Config[0].Gateway
+		for _, config := range n.IPAM.Config {
+			info.IPAMConfigs = append(info.IPAMConfigs, protocol.NetworkIPAMConfig{
+				Subnet:       config.Subnet,
+				Gateway:      config.Gateway,
+				IPRange:      config.IPRange,
+				AuxAddresses: config.AuxAddress,
+			})
+		}
+		if len(info.IPAMConfigs) > 0 {
+			info.Subnet = info.IPAMConfigs[0].Subnet
+			info.Gateway = info.IPAMConfigs[0].Gateway
 		}
 		infos = append(infos, info)
 	}

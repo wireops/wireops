@@ -74,7 +74,7 @@ func Register(server *mcp.Server, c *client.Client) {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_stack_render_overrides",
-		Description: "Get the render-time overrides (image/ports/networks) currently active on a wireops stack, plus what those same services resolve to from Git alone, for comparison. Render overrides are ephemeral (not committed to git) and are reapplied automatically on every reconcile until cleared. Empty if the stack has no active overrides.",
+		Description: "Get the render-time overrides (image/ports/networks/scale) currently active on a wireops stack, plus what those same services resolve to from Git alone, for comparison. Render overrides are ephemeral (not committed to git) and are reapplied automatically on every reconcile until cleared. Empty if the stack has no active overrides.",
 	}, getStackRenderOverrides(c))
 
 	mcp.AddTool(server, &mcp.Tool{

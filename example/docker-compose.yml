@@ -1,6 +1,6 @@
 services:
   wireops:
-    image: ghcr.io/wireops/server:latest
+    image: ghcr.io/wireops/server:${WIREOPS_VERSION:-0.2.11}
     restart: unless-stopped
     container_name: wireops
     ports:
@@ -14,7 +14,14 @@ services:
       - SECRET_KEY=${SECRET_KEY}
       - APP_URL=${APP_URL:-http://localhost:8090}
       - DATA_DIR=/data
+      - PB_DATA_DIR=${PB_DATA_DIR:-/data/pb_data}
+      - REPOS_WORKSPACE=${REPOS_WORKSPACE:-/data/repos}
       - BOOTSTRAP_TOKEN=${BOOTSTRAP_TOKEN}
+      - TLS_ENABLED=${TLS_ENABLED:-false}
+      - SERVER_DOMAIN=${SERVER_DOMAIN:-}
+      - TLS_CERT_FILE=${TLS_CERT_FILE:-}
+      - TLS_KEY_FILE=${TLS_KEY_FILE:-}
+      - TLS_DATA_DIR=${TLS_DATA_DIR:-/data/pb_data/tls}
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8090/api/health"]
       interval: 30s
@@ -23,7 +30,7 @@ services:
       retries: 3
 
   wireops-worker:
-    image: ghcr.io/wireops/worker:latest
+    image: ghcr.io/wireops/worker:${WIREOPS_VERSION:-0.2.11}
     container_name: wireops-worker
     restart: unless-stopped
     depends_on:
@@ -35,8 +42,13 @@ services:
       - WORKER_TAGS=${WORKER_TAGS:-}
       - WORKER_STACK_DIR=/tmp/wireops-worker
       - HOSTNAME=${WORKER_HOSTNAME:-}
+      - WORKER_TLS_SKIP_VERIFY=${WORKER_TLS_SKIP_VERIFY:-false}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+    # Required on Linux when the socket is not world-accessible. Set this to
+    # the socket's numeric group: stat -c '%g' /var/run/docker.sock
+    group_add:
+      - "${DOCKER_GID:-0}"
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8095/healthz"]
       interval: 30s

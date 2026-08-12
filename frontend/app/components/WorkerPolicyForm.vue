@@ -377,7 +377,7 @@ function removeCapAdd(cap: string) {
             </div>
             <div class="min-w-0">
               <h3 class="font-semibold text-gray-900 dark:text-wire-200 text-sm">Render Overrides Policy</h3>
-              <p class="text-xs text-gray-500 mt-0.5">Controls whether render-time (not committed to git) image/ports/networks overrides can be applied to stacks on this worker.</p>
+              <p class="text-xs text-gray-500 mt-0.5">Controls whether render-time (not committed to git) image/ports/networks/scale overrides can be applied to stacks on this worker.</p>
             </div>
           </div>
         </template>
@@ -389,7 +389,7 @@ function removeCapAdd(cap: string) {
               Allow render-time overrides
             </p>
             <p class="text-xs text-gray-400 mt-0.5 ml-6">
-              Blocked by default. When enabled, users can override a service's image, ports, or networks for a
+              Blocked by default. When enabled, users can override a service's image, ports, networks, or scale for a
               one-off redeploy without touching Git. Overridden values still pass the allowlists and checks above.
             </p>
           </div>

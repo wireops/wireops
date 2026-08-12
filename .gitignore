@@ -47,10 +47,15 @@ stacks/
 tests/*/.data/
 tests/infisical/.env
 __debug_bin*
-docs/roadmap
 worker_bin
 .tmpbin
 .gomodcache
 .gocache
 docs/*
 !docs/DISASTER_RECOVERY.md
+!docs/FEATURE_PROPOSALS.md
+!docs/COMPATIBILITY.md
+!docs/PRODUCTION.md
+!docs/TROUBLESHOOTING.md
+!docs/UPGRADING.md
+docs/roadmap/

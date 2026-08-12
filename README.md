@@ -17,13 +17,13 @@
 
 **Push to Git. wireops ships it.** A self-hosted GitOps controller that watches your repos and rolls out `docker compose` changes across every host you own — no Kubernetes, no YAML sprawl, no manual SSH-and-pray deploys. Think Flux/ArgoCD, but for plain Compose stacks.
 
-> **Project status**: pre-1.0 (releases `v0.1.x`), now in a maintenance phase — only point bugfixes, no active feature development. Core GitOps sync, worker security policies, RBAC, external secret providers (Vault, Infisical), and the audited web terminal are in daily use.
+> **Project status**: pre-1.0 (current release line: `v0.2.x`) and under active development. Core GitOps sync, worker security policies, RBAC, external secret providers (Vault, Infisical), backups, and the audited web terminal are in daily use. Until `v1.0`, releases may still change configuration or the server-worker protocol; read the release notes and upgrade both components together.
 
-📚 **Full technical docs** (architecture, data model, API reference, env vars, MCP server, disaster recovery, integrations) live in the **[Wiki](https://github.com/wireops/wireops/wiki)**.
+📚 **Full technical docs** (architecture, data model, API reference, env vars, MCP server, disaster recovery, integrations) live in the **[Wiki](https://github.com/wireops/wireops/wiki)**. Operational guides kept with the code: [production](docs/PRODUCTION.md) · [upgrades](docs/UPGRADING.md) · [compatibility](docs/COMPATIBILITY.md) · [disaster recovery](docs/DISASTER_RECOVERY.md) · [troubleshooting](docs/TROUBLESHOOTING.md) · [security policy](SECURITY.md).
 
 ## Project Scope
 
-Targets developers, homelabs, and self-hosters running plain `docker compose` stacks across one or many hosts and repos — GitOps sync/deploy, without manifest sprawl or enterprise-grade autoscaling/control-plane complexity. 
+Targets developers, homelabs, and self-hosters running plain `docker compose` stacks across one or many hosts and repos — GitOps sync/deploy, without manifest sprawl or enterprise-grade autoscaling/control-plane complexity.
 
 **Not** a Kubernetes/Swarm alternative, not a competitor to Flux/ArgoCD or enterprise app-management platforms. For production workloads exposed to the internet at enterprise scale (multi-node autoscaling, high availability, compliance-grade orchestration), prefer Kubernetes (with Flux/ArgoCD) instead.
 
@@ -36,6 +36,9 @@ Targets developers, homelabs, and self-hosters running plain `docker compose` st
 - [Quick Start](#quick-start)
 - [Usage](#usage)
 - [Customization](#customization)
+- [Environment Variables](#environment-variables)
+- [Production](#production)
+- [Integrations](#integrations)
 - [Development](#development)
 - [Known Limitations](#known-limitations)
 - [Backlog / Future Enhancements](#backlog--future-enhancements)
@@ -58,7 +61,7 @@ Deeper technical docs (moved to the [Wiki](https://github.com/wireops/wireops/wi
 - 🔄 Rollback to previous commits
 - 🐙 Native GitHub OAuth connect
 - 💻 Audited web terminal, RBAC-gated
-- 🎛️ Optional render-time stack overrides (image/ports/networks) for one-off validation testing, without a git commit
+- 🎛️ Optional render-time stack overrides (image/ports/networks/scale) for one-off validation testing, without a git commit
 
 ## Screenshots
 
@@ -117,16 +120,16 @@ openssl rand -hex 32
 ```
 
 ```bash
-cp .env.example .env
-# Edit .env: set SECRET_KEY to the value generated above, and set BOOTSTRAP_TOKEN
+cp example/.env.example example/.env
+# Edit example/.env: set SECRET_KEY, BOOTSTRAP_TOKEN, WORKER_TAGS, and the
+# Linux DOCKER_GID when applicable
 # Optionally set APP_URL for production deployments
 
 cd example
 docker compose up -d wireops
-# Or run directly: go run main.go serve
 ```
 
-Example `.env` values:
+Minimum `example/.env` values for the server's first start:
 
 ```bash
 SECRET_KEY=<paste the openssl output here>
@@ -155,6 +158,10 @@ WORKER_TOKEN=paste-the-token-here WORKER_TAGS=prod,eu-west-1 docker compose up -
 The worker connects out to the server, registers with that token, and starts polling for stacks/jobs to run. Check **Workers** in the UI — it should flip to `ACTIVE` within a few seconds.
 
 `WORKER_TAGS` labels what a worker is for (e.g. `prod`, `eu-west-1`) — required, comma-separated, set on the worker itself, not in the UI. Stacks and jobs can require specific tags in their `wireops.yaml`/`job.yaml`, so only matching workers show up as valid targets.
+
+> **Linux permissions:** the containers run as UID/GID `1000`. Before the first start, create `example/data` and make it writable by that identity. A Linux worker also needs the Docker socket's numeric group in `DOCKER_GID`; `example/.env.example` contains the commands. Docker Desktop usually handles the socket differently, but the data directory still needs to be writable.
+
+The example defaults to the current release, not `latest`. Keep `WIREOPS_VERSION` identical for the server and every worker. Port `8443` is plain HTTP/WebSocket while `TLS_ENABLED=false`; remote workers should use native TLS or a private network. See [Production](docs/PRODUCTION.md) before exposing an instance.
 
 ## Usage
 
@@ -224,7 +231,7 @@ services:
 
 ### Override Deployment
 
-Stacks support render-time overrides — swapping a service's `image`, `ports`, or `networks` without committing anything to git. Overrides are stored on the stack (not the repo), applied only when the compose file is rendered for deploy, and only take effect the next time the stack is rendered/redeployed.
+Stacks support render-time overrides — swapping a service's `image`, `ports`, `networks`, or `scale` without committing anything to git. Overrides are stored on the stack (not the repo), applied only when the compose file is rendered for deploy, and only take effect the next time the stack is rendered/redeployed. A scale of `0` stops every container for that service; scale-only overrides adjust replica counts without recreating unchanged containers.
 
 - Gated by the **"Allow render overrides"** worker policy flag (`allow_render_overrides`), off by default — set it globally or per-worker in worker policy settings.
 - View, set, and clear overrides from the stack detail page, or via `GET`/`PUT`/`DELETE /api/custom/stacks/{id}/render-overrides`.
@@ -233,11 +240,15 @@ Stacks support render-time overrides — swapping a service's `image`, `ports`, 
 
 ## Environment Variables
 
-`SECRET_KEY` and `BOOTSTRAP_TOKEN` are required — see [Quick Start](#quick-start) above. 
+`SECRET_KEY` and `BOOTSTRAP_TOKEN` are required — see [Quick Start](#quick-start) above.
 
 For the full server/worker env var reference, SMTP, OIDC/SSO, secret providers (Vault/Infisical), and SOPS+age, see the [Environment Variables wiki page](https://github.com/wireops/wireops/wiki/Environment-Variables).
 
 Metrics, Prometheus/Grafana scrape config, the MCP server, and the disaster-recovery runbook have also moved to the wiki: [Observability](https://github.com/wireops/wireops/wiki/Observability) · [MCP Server](https://github.com/wireops/wireops/wiki/MCP-Server) · [Disaster Recovery](https://github.com/wireops/wireops/wiki/Disaster-Recovery).
+
+## Production
+
+The quick start is intended to prove the installation. Before using wireops for workloads you care about, pin the image version, enable TLS for remote workers, configure off-host backups, protect `SECRET_KEY` separately, and test one restore. Follow the [production checklist](docs/PRODUCTION.md), [compatibility policy](docs/COMPATIBILITY.md), and [upgrade guide](docs/UPGRADING.md).
 
 ## Integrations
 
@@ -265,29 +276,10 @@ npm run dev
 
 ## Backlog / Future Enhancements
 
-### 📋 Logs & Debugging
-- Advanced log viewer with syntax highlighting
-- Search/filter within logs
-- Download logs functionality
-- Diff viewer for commit comparisons
-
 ### 🔄 Bulk Operations
 - Multi-select stacks with checkboxes
 - Bulk actions: "Sync All", "Pause All", "Resume All"
 - Progress tracking for batch operations
-
-### 🐳 Container Management
-- "Restart All" / "Stop All" buttons per service
-- Bulk container operations
-
-### ⚙️ User Preferences
-- Configurable auto-refresh interval
-- Theme preferences
-- UI density options (compact/comfortable)
-
-### 🔒 Security & Ops (strategic)
-- Git auth hardening, deploy metrics/alerts
-- docker-run → compose converter, OCI artifact sources, Swarm/multi-node, canary deploys
 
 ---
 
@@ -302,4 +294,4 @@ as the original project — see [NOTICE](NOTICE).
 
 ## Contributing
 
-Contributions are welcome! Please open an issue or PR.
+Contributions are welcome! Please open an issue or PR. Security reports must follow [SECURITY.md](SECURITY.md) instead of a public issue. User-visible changes should be added to the `Unreleased` section of [CHANGELOG.md](CHANGELOG.md).

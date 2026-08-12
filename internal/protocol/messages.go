@@ -223,19 +223,42 @@ type GetResourcesCommand struct {
 
 // VolumeInfo describes a Docker volume associated with a compose project.
 type VolumeInfo struct {
-	Name       string `json:"name"`
-	Driver     string `json:"driver"`
-	Mountpoint string `json:"mountpoint"`
-	Scope      string `json:"scope"`
+	Name       string            `json:"name"`
+	DockerName string            `json:"docker_name"`
+	Driver     string            `json:"driver"`
+	Mountpoint string            `json:"mountpoint"`
+	Scope      string            `json:"scope"`
+	CreatedAt  string            `json:"created_at,omitempty"`
+	SizeBytes  *int64            `json:"size_bytes,omitempty"`
+	Options    map[string]string `json:"options,omitempty"`
 }
 
 // NetworkInfo describes a Docker network associated with a compose project.
 type NetworkInfo struct {
-	Name    string `json:"name"`
-	Driver  string `json:"driver"`
-	Scope   string `json:"scope"`
-	Subnet  string `json:"subnet,omitempty"`
-	Gateway string `json:"gateway,omitempty"`
+	Name        string              `json:"name"`
+	DockerName  string              `json:"docker_name"`
+	ID          string              `json:"id,omitempty"`
+	Driver      string              `json:"driver"`
+	Scope       string              `json:"scope"`
+	CreatedAt   string              `json:"created_at,omitempty"`
+	Subnet      string              `json:"subnet,omitempty"`
+	Gateway     string              `json:"gateway,omitempty"`
+	IPAMConfigs []NetworkIPAMConfig `json:"ipam_configs,omitempty"`
+	EnableIPv4  bool                `json:"enable_ipv4"`
+	EnableIPv6  bool                `json:"enable_ipv6"`
+	Internal    bool                `json:"internal"`
+	Attachable  bool                `json:"attachable"`
+	Ingress     bool                `json:"ingress"`
+	ConfigOnly  bool                `json:"config_only"`
+	Options     map[string]string   `json:"options,omitempty"`
+}
+
+// NetworkIPAMConfig describes one address pool configured for a Docker network.
+type NetworkIPAMConfig struct {
+	Subnet       string            `json:"subnet,omitempty"`
+	Gateway      string            `json:"gateway,omitempty"`
+	IPRange      string            `json:"ip_range,omitempty"`
+	AuxAddresses map[string]string `json:"aux_addresses,omitempty"`
 }
 
 // PortInfo describes a single port mapping for a container, derived from
