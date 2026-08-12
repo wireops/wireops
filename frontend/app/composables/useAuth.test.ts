@@ -107,4 +107,67 @@ describe('useAuth', () => {
     expect(user.value).toBeNull()
     expect(navigateToMock).toHaveBeenCalledWith('/login')
   })
+
+  it('proxies password reset helpers and returns the configured SSO providers', async () => {
+    const pbAuthStore = makeAuthStore()
+    const pbSuperuserAuthStore = makeAuthStore()
+    const requestPasswordReset = vi.fn().mockResolvedValue({})
+    const confirmPasswordReset = vi.fn().mockResolvedValue({})
+    const listAuthMethods = vi.fn().mockResolvedValue({ oauth2: { providers: [{ name: 'oidc', displayName: 'Company SSO' }, { name: 'github' }] } })
+
+    ;(globalThis as any).useNuxtApp = () => ({
+      $pb: {
+        authStore: pbAuthStore,
+        collection: (name: string) => name === 'users'
+          ? { requestPasswordReset, confirmPasswordReset }
+          : { listAuthMethods },
+      },
+      $pbSuperuser: { authStore: pbSuperuserAuthStore, collection: () => ({}) },
+    })
+
+    const { useAuth } = await import('./useAuth')
+    const auth = useAuth()
+    await auth.requestPasswordReset('user@example.com')
+    await auth.confirmPasswordReset('token', 'new-password', 'new-password')
+    await expect(auth.getSSOProviders()).resolves.toEqual([
+      { name: 'oidc', displayName: 'Company SSO' },
+      { name: 'github', displayName: 'github' },
+    ])
+    expect(requestPasswordReset).toHaveBeenCalledWith('user@example.com')
+    expect(confirmPasswordReset).toHaveBeenCalledWith('token', 'new-password', 'new-password')
+  })
+
+  it('returns no SSO providers on a PocketBase error and elevates a successful SSO session', async () => {
+    const pbAuthStore = makeAuthStore()
+    const pbSuperuserAuthStore = makeAuthStore()
+    const authWithOAuth2 = vi.fn().mockResolvedValue({ token: 'sso-token' })
+    const listAuthMethods = vi.fn().mockRejectedValue(new Error('unavailable'))
+    const save = vi.fn()
+    pbAuthStore.save = save
+    const fetchMock = vi.fn().mockResolvedValue({ token: 'app-token', record: { id: 'elevated-user' } })
+    const collection = vi.fn().mockReturnValue({ authWithOAuth2, listAuthMethods })
+
+    ;(globalThis as any).$fetch = fetchMock
+    ;(globalThis as any).useRuntimeConfig = () => ({ public: { pocketbaseUrl: 'https://wireops.example/' } })
+    ;(globalThis as any).useNuxtApp = () => ({
+      $pb: { authStore: pbAuthStore, collection },
+      $pbSuperuser: { authStore: pbSuperuserAuthStore, collection: () => ({}) },
+    })
+
+    const { useAuth } = await import('./useAuth')
+    const auth = useAuth()
+    await expect(auth.getSSOProviders()).resolves.toEqual([])
+    await auth.loginWithSSO('oidc')
+    expect(collection).toHaveBeenCalledWith('sso_users')
+    expect(authWithOAuth2).toHaveBeenCalledWith({ provider: 'oidc' })
+    expect(pbAuthStore.clear).toHaveBeenCalled()
+    expect(pbSuperuserAuthStore.clear).toHaveBeenCalled()
+    expect(fetchMock).toHaveBeenCalledWith('https://wireops.example/api/custom/auth/elevate', expect.objectContaining({ method: 'POST', body: { token: 'sso-token' } }))
+    expect(save).toHaveBeenCalledWith('app-token', { id: 'elevated-user' })
+    expect(auth.user.value).toEqual({ id: 'elevated-user' })
+
+    fetchMock.mockRejectedValueOnce(new Error('elevation failed'))
+    await expect(auth.loginWithSSO('oidc')).rejects.toThrow('elevation failed')
+    expect(auth.user.value).toBeNull()
+  })
 })

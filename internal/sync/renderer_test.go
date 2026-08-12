@@ -1037,6 +1037,141 @@ services:
 	}
 }
 
+func TestApplyServiceOverridesScale(t *testing.T) {
+	scale := 3
+	config := map[string]interface{}{
+		"services": map[string]interface{}{
+			"web": map[string]interface{}{
+				"image": "nginx:alpine",
+				"deploy": map[string]interface{}{
+					"mode":     "replicated",
+					"replicas": 1,
+				},
+			},
+		},
+	}
+
+	if err := sync.ApplyServiceOverrides(config, map[string]sync.ServiceOverride{
+		"web": {Scale: &scale},
+	}); err != nil {
+		t.Fatalf("apply scale override: %v", err)
+	}
+
+	web := config["services"].(map[string]interface{})["web"].(map[string]interface{})
+	if got := web["scale"]; got != scale {
+		t.Errorf("scale = %#v, want %d", got, scale)
+	}
+	deploy := web["deploy"].(map[string]interface{})
+	if got := deploy["replicas"]; got != scale {
+		t.Errorf("deploy.replicas = %#v, want %d", got, scale)
+	}
+	if got := deploy["mode"]; got != "replicated" {
+		t.Errorf("deploy.mode = %#v, want replicated", got)
+	}
+}
+
+func TestApplyServiceOverridesScaleAllowsZero(t *testing.T) {
+	scale := 0
+	config := map[string]interface{}{
+		"services": map[string]interface{}{
+			"worker": map[string]interface{}{"image": "busybox"},
+		},
+	}
+
+	if err := sync.ApplyServiceOverrides(config, map[string]sync.ServiceOverride{
+		"worker": {Scale: &scale},
+	}); err != nil {
+		t.Fatalf("apply zero scale override: %v", err)
+	}
+
+	worker := config["services"].(map[string]interface{})["worker"].(map[string]interface{})
+	if got := worker["scale"]; got != 0 {
+		t.Errorf("scale = %#v, want 0", got)
+	}
+}
+
+func TestApplyServiceOverridesScaleRejectsUnsupportedServices(t *testing.T) {
+	three := 3
+	negative := -1
+	tooLarge := 101
+	cases := []struct {
+		name    string
+		service map[string]interface{}
+		scale   *int
+		want    string
+	}{
+		{
+			name:    "custom container name",
+			service: map[string]interface{}{"image": "nginx", "container_name": "web"},
+			scale:   &three,
+			want:    "container_name",
+		},
+		{
+			name: "fixed published port",
+			service: map[string]interface{}{
+				"image": "nginx",
+				"ports": []interface{}{map[string]interface{}{"published": "8080", "target": float64(80)}},
+			},
+			scale: &three,
+			want:  "fixed host ports",
+		},
+		{
+			name:    "negative scale",
+			service: map[string]interface{}{"image": "nginx"},
+			scale:   &negative,
+			want:    "between 0 and 100",
+		},
+		{
+			name:    "unbounded scale",
+			service: map[string]interface{}{"image": "nginx"},
+			scale:   &tooLarge,
+			want:    "between 0 and 100",
+		},
+		{
+			name: "global deploy mode",
+			service: map[string]interface{}{
+				"image":  "nginx",
+				"deploy": map[string]interface{}{"mode": "global"},
+			},
+			scale: &three,
+			want:  "deploy.mode",
+		},
+		{
+			name: "global-job deploy mode",
+			service: map[string]interface{}{
+				"image":  "nginx",
+				"deploy": map[string]interface{}{"mode": "global-job"},
+			},
+			scale: &three,
+			want:  "deploy.mode",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			config := map[string]interface{}{
+				"services": map[string]interface{}{"web": tc.service},
+			}
+			err := sync.ApplyServiceOverrides(config, map[string]sync.ServiceOverride{
+				"web": {Scale: tc.scale},
+			})
+			if err == nil || !contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want message containing %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestRenderOverridesRequireContainerRecreate(t *testing.T) {
+	scale := 2
+	if sync.RenderOverridesRequireContainerRecreate(map[string]sync.ServiceOverride{"web": {Scale: &scale}}) {
+		t.Fatal("scale-only override must not force container recreation")
+	}
+	if !sync.RenderOverridesRequireContainerRecreate(map[string]sync.ServiceOverride{"web": {Image: "nginx:test", Scale: &scale}}) {
+		t.Fatal("image override must force container recreation")
+	}
+}
+
 func TestRendererRenderOverridesUnknownServiceErrors(t *testing.T) {
 	app, workDir, composePath := setupRendererTest(t)
 	writeTestComposeFile(t, composePath, `

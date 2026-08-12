@@ -353,6 +353,47 @@ func TestRenderOverridesPutPersistsAndAudits(t *testing.T) {
 	}
 }
 
+func TestRenderOverridesPutPersistsZeroScaleAndGetReportsGitScale(t *testing.T) {
+	app, mux, _ := setupRenderOverridesTestApp(t, true)
+	repo, worker := createOverridesTestRepoAndWorker(t, app)
+	setGlobalAllowRenderOverrides(t, app, true)
+	workDir := t.TempDir()
+	writeOverridesComposeFile(t, workDir, "name: overrides_stack\nservices:\n  web:\n    image: nginx:alpine\n    scale: 2\n")
+	stack := createOverridesTestStack(t, app, repo.Id, worker.Id, workDir)
+
+	put := doRenderOverridesRequest(t, mux, http.MethodPut, stack.Id, map[string]interface{}{
+		"overrides": map[string]interface{}{"web": map[string]interface{}{"scale": 0}},
+	})
+	if put.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", put.Code, put.Body.String())
+	}
+
+	reloaded, err := app.FindRecordById("stacks", stack.Id)
+	if err != nil {
+		t.Fatalf("reload stack: %v", err)
+	}
+	override := wiresync.LoadRenderOverrides(reloaded)["web"]
+	if override.Scale == nil || *override.Scale != 0 {
+		t.Fatalf("expected persisted zero scale, got %#v", override.Scale)
+	}
+
+	get := doRenderOverridesRequest(t, mux, http.MethodGet, stack.Id, nil)
+	if get.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", get.Code, get.Body.String())
+	}
+	var response struct {
+		Git map[string]struct {
+			Scale int `json:"scale"`
+		} `json:"git"`
+	}
+	if err := json.Unmarshal(get.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode GET response: %v", err)
+	}
+	if got := response.Git["web"].Scale; got != 2 {
+		t.Fatalf("Git scale = %d, want 2", got)
+	}
+}
+
 func TestRenderOverridesDeleteClearsAndAudits(t *testing.T) {
 	app, mux, _ := setupRenderOverridesTestApp(t, true)
 	repo, worker := createOverridesTestRepoAndWorker(t, app)

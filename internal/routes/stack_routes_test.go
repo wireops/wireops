@@ -225,3 +225,45 @@ func TestWebhookRejectsUnknownStack(t *testing.T) {
 		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestComposeServiceScale(t *testing.T) {
+	cases := []struct {
+		name string
+		svc  map[string]interface{}
+		want int
+	}{
+		{
+			name: "top-level scale takes precedence over deploy.replicas",
+			svc: map[string]interface{}{
+				"scale": 3,
+				"deploy": map[string]interface{}{
+					"replicas": 5,
+				},
+			},
+			want: 3,
+		},
+		{
+			name: "falls back to deploy.replicas when scale absent",
+			svc: map[string]interface{}{
+				"deploy": map[string]interface{}{
+					"replicas": 4,
+				},
+			},
+			want: 4,
+		},
+		{
+			name: "defaults to 1 when neither scale nor deploy.replicas declared",
+			svc:  map[string]interface{}{},
+			want: 1,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := composeServiceScale(c.svc)
+			if got != c.want {
+				t.Fatalf("composeServiceScale() = %d, want %d", got, c.want)
+			}
+		})
+	}
+}

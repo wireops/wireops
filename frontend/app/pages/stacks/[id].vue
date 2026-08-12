@@ -7,7 +7,7 @@ const route = useRoute()
 const { $pb } = useNuxtApp()
 const { subscribe } = useRealtime()
 const { copy } = useCopy()
-const { triggerSync, triggerRollback, forceRedeploy, setRenderOverrides, clearRenderOverrides, getRenderOverridesDiff, deleteStack, getServices, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, transferStack, getWorkers, stopContainer, restartContainer } = useApi()
+const { triggerSync, triggerRollback, forceRedeploy, setRenderOverrides, clearRenderOverrides, getRenderOverridesDiff, deleteStack, getServices, getComposeFile, getWebhookUrl, getContainerStats, getRepoCommits, transferStack, getWorkers, stopContainer, restartContainer } = useApi()
 const { getStackIntegrationActions } = useIntegrations()
 const { validateComposePath, validateComposeFile } = useValidation()
 const toast = useToast()
@@ -140,19 +140,12 @@ async function loadAllStats() {
 
 // Container logs viewer
 const showLogsModal = ref(false)
-const logsContent = ref('')
+const logsContainerId = ref('')
 const logsContainerName = ref('')
-const logsWordWrap = ref(false)
-async function openContainerLogs(containerId: string, containerName: string) {
+function openContainerLogs(containerId: string, containerName: string) {
+  logsContainerId.value = containerId
   logsContainerName.value = containerName || containerId
-  logsContent.value = 'Loading...'
   showLogsModal.value = true
-  try {
-    const res = await getContainerLogs(stackId, containerId, 200)
-    logsContent.value = res.logs || '(no logs)'
-  } catch {
-    logsContent.value = 'Failed to load logs'
-  }
 }
 
 // Container action confirmation
@@ -183,13 +176,17 @@ function openTerminalModal(containerId: string, containerName: string) {
 
 // Bulk container action confirmation
 const showBulkActionModal = ref(false)
-const bulkActionState = ref<{ containers: { containerId: string, containerName: string }[], action: 'stop' | 'restart' }>({
+const bulkActionState = ref<{ containers: { containerId: string, containerName: string }[], action: 'stop' | 'restart', subject: string }>({
   containers: [],
-  action: 'restart'
+  action: 'restart',
+  subject: 'all containers',
 })
 const bulkActionLoading = ref(false)
+const bulkActionTitle = computed(() =>
+  `${bulkActionState.value.action === 'stop' ? 'Stop' : 'Restart'} ${bulkActionState.value.subject}?`
+)
 
-function handleBulkContainerAction(payload: { containers: { containerId: string, containerName: string }[], action: 'stop' | 'restart' }) {
+function handleBulkContainerAction(payload: { containers: { containerId: string, containerName: string }[], action: 'stop' | 'restart', subject: string }) {
   bulkActionState.value = payload
   showBulkActionModal.value = true
 }
@@ -205,14 +202,23 @@ async function executeBulkContainerAction() {
           : restartContainer(stackId, c.containerId)
       )
     )
-    const failed = results.filter(r => r.status === 'rejected').length
-    const succeeded = results.length - failed
+    const failures = results.flatMap((result, index) =>
+      result.status === 'rejected' ? [containers[index]!] : []
+    )
+    const failed = failures.length
+    const succeeded = results.length - failures.length
     showBulkActionModal.value = false
     if (failed === 0) {
       toast.add({ title: `${action === 'stop' ? 'Stopped' : 'Restarted'} ${succeeded} container${succeeded !== 1 ? 's' : ''}`, color: action === 'stop' ? 'warning' : 'success' })
     } else {
-      toast.add({ title: `${succeeded} succeeded, ${failed} failed`, color: 'error' })
+      const failedNames = failures.slice(0, 3).map(container => container.containerName).join(', ')
+      toast.add({
+        title: `${succeeded} succeeded, ${failed} failed`,
+        description: `${failedNames}${failed > 3 ? ` and ${failed - 3} more` : ''}`,
+        color: 'error',
+      })
     }
+    servicesCard.value?.clearSelection()
     setTimeout(() => servicesCard.value?.refresh(), 1500)
   } finally {
     bulkActionLoading.value = false
@@ -443,11 +449,23 @@ async function handleForceRedeploy() {
   }
 }
 
-// Render-time overrides (image/ports/networks) — ephemeral, not committed to git
+// Render-time overrides (image/ports/networks/scale) — ephemeral, not committed to git
 const showOverridesModal = ref(false)
-type OverrideFormEntry = { image: string; ports: string; networks: string }
+type OverrideFormEntry = { image: string; ports: string; networks: string; scale: string }
 const overridesForm = ref<Record<string, OverrideFormEntry>>({})
-const overrideServiceNames = computed(() => [...new Set(services.value.map((s: any) => s.service_name).filter(Boolean))] as string[])
+const overrideServiceNames = computed(() => {
+  const names = new Set<string>()
+  for (const service of services.value) {
+    if (service.service_name) names.add(service.service_name)
+  }
+  for (const container of stack.value?.containers_list || []) {
+    if (container.name) names.add(container.name)
+  }
+  for (const name of Object.keys(stack.value?.render_overrides || {})) {
+    names.add(name)
+  }
+  return [...names].sort()
+})
 
 function getOverrideServiceSlug(name: string) {
   const containersList = (stack.value?.containers_list || []) as { name?: string; slug?: string }[]
@@ -458,7 +476,7 @@ function getOverrideServiceSlug(name: string) {
 // updates while the modal is open/closing — keep overridesForm in sync so the template
 // never indexes a name that isn't there yet.
 watch(overrideServiceNames, (names) => {
-  const existing = (stack.value?.render_overrides || {}) as Record<string, { image?: string; ports?: string[]; networks?: string[] }>
+  const existing = (stack.value?.render_overrides || {}) as Record<string, OverrideValue>
   for (const name of names) {
     if (!overridesForm.value[name]) {
       const current = existing[name]
@@ -466,6 +484,7 @@ watch(overrideServiceNames, (names) => {
         image: current?.image || '',
         ports: joinList(current?.ports),
         networks: joinList(current?.networks),
+        scale: current?.scale?.toString() || '',
       }
     }
   }
@@ -475,7 +494,7 @@ function joinList(value: unknown): string {
   return Array.isArray(value) ? value.join(', ') : ''
 }
 
-type OverrideValue = { image?: string; ports?: string[]; networks?: string[] }
+type OverrideValue = { image?: string; ports?: string[]; networks?: string[]; scale?: number }
 const renderOverridesGit = ref<Record<string, OverrideValue>>({})
 const renderOverridesGitError = ref('')
 
@@ -562,12 +581,21 @@ const renderOverridesDiffLines = computed<DiffLine[]>(() => {
         for (const n of override.networks) lines.push(diffLine(' ', 6, `- ${n}`))
       }
     }
+
+    if (override.scale !== undefined) {
+      if (git && git.scale !== override.scale) {
+        lines.push(diffLine('-', 4, `scale: ${git.scale ?? 1}`))
+        lines.push(diffLine('+', 4, `scale: ${override.scale}`))
+      } else {
+        lines.push(diffLine(' ', 4, `scale: ${override.scale}`))
+      }
+    }
   }
   return lines
 })
 
 function openOverridesModal() {
-  const existing = (stack.value?.render_overrides || {}) as Record<string, { image?: string; ports?: string[]; networks?: string[] }>
+  const existing = (stack.value?.render_overrides || {}) as Record<string, OverrideValue>
   const form: Record<string, OverrideFormEntry> = {}
   for (const name of overrideServiceNames.value) {
     const current = existing[name]
@@ -575,6 +603,7 @@ function openOverridesModal() {
       image: current?.image || '',
       ports: joinList(current?.ports),
       networks: joinList(current?.networks),
+      scale: current?.scale?.toString() || '',
     }
   }
   overridesForm.value = form
@@ -586,15 +615,48 @@ function splitList(value: string): string[] | undefined {
   return parts.length ? parts : undefined
 }
 
+// Shared parsing so validation, the stepper buttons' disabled state, and the
+// +/- adjustment all agree on what counts as a valid scale value. A blank or
+// non-whole-number string parses to null (no override / not yet valid).
+function parsedOverrideScale(value: string): number | null {
+  const trimmed = value.trim()
+  if (!trimmed || !/^\d+$/.test(trimmed)) return null
+  return Number(trimmed)
+}
+
+function scaleValidationError(value: string): string {
+  if (!value.trim()) return ''
+  const scale = parsedOverrideScale(value)
+  if (scale === null) return 'Scale must be a whole number'
+  if (scale > 100) return 'Scale must be between 0 and 100'
+  return ''
+}
+
+function adjustOverrideScale(name: string, adjustment: number) {
+  const entry = overridesForm.value[name]
+  if (!entry) return
+  const current = parsedOverrideScale(entry.scale)
+  const base = current !== null ? current : (adjustment < 0 ? 1 : 0)
+  entry.scale = String(Math.min(100, Math.max(0, base + adjustment)))
+}
+
 async function handleApplyOverrides() {
-  const payload: Record<string, { image?: string; ports?: string[]; networks?: string[] }> = {}
-  for (const [name, entry] of Object.entries(overridesForm.value)) {
-    const override: { image?: string; ports?: string[]; networks?: string[] } = {}
+  const payload: Record<string, OverrideValue> = {}
+  for (const name of overrideServiceNames.value) {
+    const entry = overridesForm.value[name]
+    if (!entry) continue
+    const override: OverrideValue = {}
     if (entry.image.trim()) override.image = entry.image.trim()
     const ports = splitList(entry.ports)
     if (ports) override.ports = ports
     const networks = splitList(entry.networks)
     if (networks) override.networks = networks
+    const scaleError = scaleValidationError(entry.scale)
+    if (scaleError) {
+      toast.add({ title: `${name}: ${scaleError}`, color: 'warning' })
+      return
+    }
+    if (entry.scale.trim()) override.scale = Number(entry.scale)
     if (Object.keys(override).length) payload[name] = override
   }
   if (!Object.keys(payload).length) {
@@ -842,7 +904,6 @@ onMounted(() => {
                 <WorkerNameLabel :name="stack?.expand?.worker?.hostname || 'Unknown'" />
               </span>
             </div>
-          <div><span class="text-gray-500">Compose Path:</span> {{ stack?.compose_path || '.' }}</div>
           <div>
             <span class="text-gray-500">Compose File:</span>
             <button
@@ -922,6 +983,8 @@ onMounted(() => {
         :container-stats="containerStats"
         :integration-actions="integrationActions"
         :containers-list="stack?.containers_list"
+        :can-operate="canOperate"
+        :actions-disabled="!canSyncDeploy || bulkActionLoading"
         @refresh="loadServices"
         @copy-container-id="copy($event, 'Container ID')"
         @show-logs="openContainerLogs"
@@ -1157,31 +1220,12 @@ onMounted(() => {
       </template>
     </UModal>
 
-    <!-- Container Logs Drawer -->
-    <USlideover v-model:open="showLogsModal" title="Container Logs" class="w-full sm:w-[800px] md:w-[1000px] max-w-full">
-      <template #content>
-        <div class="p-4 h-full flex flex-col space-y-4">
-          <div class="flex items-center justify-between shrink-0">
-            <h3 class="font-semibold text-lg">{{ logsContainerName }}</h3>
-            <div class="flex items-center gap-2">
-              <UTooltip :text="logsWordWrap ? 'Disable Word Wrap' : 'Enable Word Wrap'">
-                <UButton
-                  :icon="logsWordWrap ? 'i-lucide-wrap-text' : 'i-lucide-align-left'"
-                  variant="soft"
-                  color="neutral"
-                  size="sm"
-                  @click="logsWordWrap = !logsWordWrap"
-                />
-              </UTooltip>
-              <CloseButton size="sm" @click="showLogsModal = false" />
-            </div>
-          </div>
-          <div class="flex-1 overflow-hidden bg-gray-900 rounded-lg">
-            <pre class="h-full p-4 text-gray-100 text-xs font-mono overflow-auto" :class="{'whitespace-pre-wrap break-all': logsWordWrap, 'whitespace-pre': !logsWordWrap}">{{ logsContent }}</pre>
-          </div>
-        </div>
-      </template>
-    </USlideover>
+    <ContainerLogsSlideover
+      v-model:open="showLogsModal"
+      :stack-id="stackId"
+      :container-id="logsContainerId"
+      :container-name="logsContainerName"
+    />
 
     <!-- Force Redeploy Modal -->
     <UModal v-model:open="showForceRedeploy" :ui="{ content: 'bg-gray-50 dark:bg-(--ui-bg)' }">
@@ -1236,7 +1280,7 @@ onMounted(() => {
             <CloseButton size="xs" @click="showOverridesModal = false" />
           </div>
           <p class="text-sm text-gray-500">
-            Override image, ports, or networks per service at deploy time without touching Git. Blank field keeps Git value. Stays active on every deploy until cleared.
+            Override image, ports, networks, or scale per service at deploy time without touching Git. Blank field keeps Git value. Stays active on every deploy until cleared.
           </p>
           <p v-if="!overrideServiceNames.length" class="text-sm text-gray-400 py-4 text-center">
             No services detected yet — load the stack's services before setting overrides.
@@ -1261,6 +1305,43 @@ onMounted(() => {
                 </UFormField>
                 <UFormField label="Networks" size="sm" hint="comma-separated network names">
                   <AppTextInput v-model="overridesForm[name].networks" placeholder="proxy" aria-label="Networks override" />
+                </UFormField>
+                <UFormField
+                  label="Scale"
+                  size="sm"
+                  hint="0 stops this service; blank keeps the Git value"
+                  :error="scaleValidationError(overridesForm[name].scale)"
+                >
+                  <div class="flex w-full items-center gap-2">
+                    <UButton
+                      icon="i-lucide-minus"
+                      variant="outline"
+                      color="neutral"
+                      size="sm"
+                      title="Scale down"
+                      class="shrink-0"
+                      :disabled="(parsedOverrideScale(overridesForm[name].scale) ?? 0) <= 0"
+                      @click="adjustOverrideScale(name, -1)"
+                    />
+                    <div class="min-w-0 flex-1">
+                      <AppTextInput
+                        v-model="overridesForm[name].scale"
+                        type="number"
+                        placeholder="e.g. 3"
+                        aria-label="Scale override"
+                      />
+                    </div>
+                    <UButton
+                      icon="i-lucide-plus"
+                      variant="outline"
+                      color="neutral"
+                      size="sm"
+                      title="Scale up"
+                      class="shrink-0"
+                      :disabled="(parsedOverrideScale(overridesForm[name].scale) ?? 0) >= 100"
+                      @click="adjustOverrideScale(name, 1)"
+                    />
+                  </div>
                 </UFormField>
               </template>
             </div>
@@ -1411,7 +1492,7 @@ onMounted(() => {
             </div>
             <div>
               <h3 class="font-semibold text-gray-900 dark:text-white text-base">
-                {{ bulkActionState.action === 'stop' ? 'Stop All Containers' : 'Restart All Containers' }}
+                {{ bulkActionTitle }}
               </h3>
               <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
                 The following {{ bulkActionState.containers.length }} container{{ bulkActionState.containers.length !== 1 ? 's' : '' }} will be affected:
@@ -1441,7 +1522,7 @@ onMounted(() => {
               @click="showBulkActionModal = false"
             />
             <UButton
-              :label="bulkActionState.action === 'stop' ? 'Stop All' : 'Restart All'"
+              :label="bulkActionState.action === 'stop' ? 'Stop' : 'Restart'"
               :color="bulkActionState.action === 'stop' ? 'warning' : 'info'"
               :icon="bulkActionState.action === 'stop' ? 'i-lucide-square' : 'i-lucide-rotate-cw'"
               :loading="bulkActionLoading"

@@ -47,7 +47,7 @@ type WorkerPolicy struct {
 	BlockHostIPC        bool // when true, services with ipc: host are rejected
 	BlockDockerSocket   bool // when true, mounting /var/run/docker.sock (or /run/docker.sock) is rejected
 
-	// AllowRenderOverrides gates render-time (not-committed-to-git) image/ports/networks
+	// AllowRenderOverrides gates render-time (not-committed-to-git) image/ports/networks/scale
 	// overrides. Unlike the Block*/Prevent* flags above, this defaults to false (blocked)
 	// since the capability itself must be explicitly opted into per worker.
 	AllowRenderOverrides bool

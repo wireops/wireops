@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/volume"
 	"github.com/wireops/wireops/internal/protocol"
 )
 
@@ -48,5 +49,24 @@ func TestMapDockerPorts(t *testing.T) {
 				t.Fatalf("mapDockerPorts(%+v) = %+v, want %+v", tt.in, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestVolumeUsageSizes(t *testing.T) {
+	sizes := volumeUsageSizes([]*volume.Volume{
+		{Name: "known", UsageData: &volume.UsageData{Size: 123}},
+		{Name: "unknown", UsageData: &volume.UsageData{Size: -1}},
+		{Name: "missing"},
+		nil,
+	})
+
+	if got := sizes["known"]; got != 123 {
+		t.Fatalf("size for known volume = %d, want 123", got)
+	}
+	if _, ok := sizes["unknown"]; ok {
+		t.Fatal("unknown size must not be included")
+	}
+	if _, ok := sizes["missing"]; ok {
+		t.Fatal("missing size must not be included")
 	}
 }

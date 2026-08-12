@@ -46,11 +46,14 @@ type RenderResult struct {
 }
 
 // ServiceOverride holds render-time (not committed to git) overrides for a single
-// compose service. Fields left empty are not overridden.
+// compose service. Empty strings and nil lists are not overridden. Scale uses a
+// pointer so nil means "keep the Git value" while 0 deliberately scales a service
+// down to zero containers.
 type ServiceOverride struct {
 	Image    string   `json:"image,omitempty"`
 	Ports    []string `json:"ports,omitempty"`
 	Networks []string `json:"networks,omitempty"`
+	Scale    *int     `json:"scale,omitempty"`
 }
 
 const (
@@ -386,12 +389,13 @@ func (r *Renderer) GenerateRevision(
 // stale override and self-heal instead of failing the sync indefinitely.
 var ErrUnknownOverrideService = errors.New("render override targets unknown service")
 
-// ApplyServiceOverrides mutates services in place, replacing image/ports/networks for
-// each named service per the given overrides. It returns an error if an override
+// ApplyServiceOverrides mutates services in place, replacing image/ports/networks/scale
+// for each named service per the given overrides. It returns an error if an override
 // targets a service that doesn't exist in the compose config. Exported so the
 // render-overrides API route can run the exact same mutation against a resolved
-// compose config before persisting, and reject policy-violating overrides (blocked
-// images/networks/:latest) up front instead of only failing at the next reconcile.
+// compose config before persisting, and reject invalid or policy-violating overrides
+// (blocked images/networks/:latest) up front instead of only failing at the next
+// reconcile.
 //
 // Any override network name not already declared in configMap's top-level "networks"
 // block is added there as external:true — an override can only reasonably point at a
@@ -437,6 +441,11 @@ func ApplyServiceOverrides(configMap map[string]interface{}, overrides map[strin
 			}
 			svc["networks"] = networks
 		}
+		if override.Scale != nil {
+			if err := applyServiceScaleOverride(serviceName, svc, *override.Scale); err != nil {
+				return err
+			}
+		}
 
 		services[serviceName] = svc
 	}
@@ -446,6 +455,77 @@ func ApplyServiceOverrides(configMap map[string]interface{}, overrides map[strin
 		configMap["networks"] = declaredNetworks
 	}
 	return nil
+}
+
+// maxRenderOverrideScale is deliberately bounded: scale originates in an API request
+// and a typo such as an extra zero should not create an unbounded number of containers
+// on a worker host.
+const maxRenderOverrideScale = 100
+
+func applyServiceScaleOverride(serviceName string, svc map[string]interface{}, scale int) error {
+	if scale < 0 || scale > maxRenderOverrideScale {
+		return fmt.Errorf("render override scale for service %q must be between 0 and %d", serviceName, maxRenderOverrideScale)
+	}
+	if deploy, ok := svc["deploy"].(map[string]interface{}); ok {
+		if mode, _ := deploy["mode"].(string); mode == "global" || mode == "global-job" {
+			return fmt.Errorf("render override cannot scale service %q because it declares deploy.mode %q", serviceName, mode)
+		}
+	}
+	if scale > 1 {
+		if name, _ := svc["container_name"].(string); name != "" {
+			return fmt.Errorf("render override cannot scale service %q above 1 because it sets container_name", serviceName)
+		}
+		if serviceHasFixedPublishedPort(svc["ports"]) {
+			return fmt.Errorf("render override cannot scale service %q above 1 because it publishes fixed host ports", serviceName)
+		}
+	}
+
+	// Compose requires scale and deploy.replicas to agree when both are present.
+	// Preserve every other deploy option while updating replicas.
+	svc["scale"] = scale
+	if deploy, ok := svc["deploy"].(map[string]interface{}); ok {
+		deploy["replicas"] = scale
+		svc["deploy"] = deploy
+	}
+	return nil
+}
+
+// serviceHasFixedPublishedPort identifies host-port mappings that cannot be shared
+// by multiple replicas. compose.Config normalizes ports to maps, but accepting the
+// short form too keeps this validation correct for direct callers and future changes.
+func serviceHasFixedPublishedPort(raw interface{}) bool {
+	ports, ok := raw.([]interface{})
+	if !ok {
+		return false
+	}
+	for _, rawPort := range ports {
+		switch port := rawPort.(type) {
+		case map[string]interface{}:
+			if published, exists := port["published"]; exists && fmt.Sprint(published) != "" && fmt.Sprint(published) != "0" {
+				return true
+			}
+		case string:
+			// A short-form entry with one colon (or an IP plus port) publishes a
+			// host port. Container-only values such as "80" do not.
+			if strings.Count(port, ":") >= 1 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// RenderOverridesRequireContainerRecreate reports whether an override changes a
+// service definition in a way that needs --force-recreate. Scale-only changes are
+// intentionally excluded: docker compose up creates/removes only the required
+// replicas without recreating unchanged containers.
+func RenderOverridesRequireContainerRecreate(overrides map[string]ServiceOverride) bool {
+	for _, override := range overrides {
+		if override.Image != "" || override.Ports != nil || override.Networks != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func injectVersionMetadata(services map[string]interface{}, commitSHA, checksum, generatedAt string, version int) {

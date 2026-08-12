@@ -179,7 +179,7 @@ func (rr routeRegistrar) registerStackInspectionRoutes() {
 			return e.JSON(http.StatusOK, resp)
 		}
 
-		// Best-effort: resolve what each overridden service's image/ports/networks would
+		// Best-effort: resolve what each overridden service's image/ports/networks/scale would
 		// be from Git alone, so the UI can show a diff against the active override.
 		composeFile := stack.GetString("compose_file")
 		if composeFile == "" {
@@ -219,6 +219,7 @@ func (rr routeRegistrar) registerStackInspectionRoutes() {
 				"image":    image,
 				"ports":    composePortsToShortForm(svc["ports"]),
 				"networks": composeNetworksToList(svc["networks"]),
+				"scale":    composeServiceScale(svc),
 			}
 		}
 		resp["git"] = gitValues
@@ -309,11 +310,12 @@ func (rr routeRegistrar) registerStackInspectionRoutes() {
 		if e.Auth != nil {
 			userID = e.Auth.Id
 		}
-		// Applying overrides always changes the service definition (image/ports/networks),
-		// so force-recreate the containers rather than relying on docker compose's own
-		// diffing to notice the change. Pause after, same as every other reconcile path,
-		// so a scheduled reconcile can't immediately race the override just applied.
-		rr.scheduler.TriggerForceRedeploy(stackID, true, false, false, true, userID)
+		// Image/ports/networks changes force recreation. A scale-only change deliberately
+		// leaves it to `docker compose up` to create/remove just the needed replicas,
+		// preserving existing unchanged containers. Pause after, same as every other
+		// reconcile path, so a scheduled reconcile can't immediately race this update.
+		recreateContainers := sync.RenderOverridesRequireContainerRecreate(body.Overrides)
+		rr.scheduler.TriggerForceRedeploy(stackID, recreateContainers, false, false, true, userID)
 		return e.JSON(http.StatusOK, map[string]string{"status": "triggered"})
 	}).BindFunc(rbac.Require(rbac.CapOperateStacks))
 
@@ -330,6 +332,7 @@ func (rr routeRegistrar) registerStackInspectionRoutes() {
 			return nil
 		}
 
+		recreateContainers := sync.RenderOverridesRequireContainerRecreate(sync.LoadRenderOverrides(stack))
 		stack.Set("render_overrides", nil)
 		if err := rr.app.Save(stack); err != nil {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to clear overrides"})
@@ -339,11 +342,9 @@ func (rr routeRegistrar) registerStackInspectionRoutes() {
 		if e.Auth != nil {
 			userID = e.Auth.Id
 		}
-		// Reverting to Git state changes the service definition back, same as applying
-		// overrides — force-recreate so the revert is guaranteed to take effect. Pause
-		// after, same as every other reconcile path, so a scheduled reconcile can't
-		// immediately race the revert just applied.
-		rr.scheduler.TriggerForceRedeploy(stackID, true, false, false, true, userID)
+		// Reverting image/ports/networks needs recreation; reverting scale-only overrides
+		// lets Compose adjust replica counts without recreating unchanged containers.
+		rr.scheduler.TriggerForceRedeploy(stackID, recreateContainers, false, false, true, userID)
 		return e.JSON(http.StatusOK, map[string]string{"status": "triggered"})
 	}).BindFunc(rbac.Require(rbac.CapOperateStacks))
 
@@ -1241,4 +1242,37 @@ func composeNetworksToList(raw interface{}) []string {
 		return out
 	}
 	return nil
+}
+
+// composeServiceScale returns the effective replica count from a resolved Compose
+// service. The top-level scale value is authoritative; deploy.replicas is the
+// equivalent Compose declaration when scale is absent. Services without either
+// declaration run one container by default.
+func composeServiceScale(svc map[string]interface{}) int {
+	if scale, ok := composeInteger(svc["scale"]); ok {
+		return scale
+	}
+	if deploy, ok := svc["deploy"].(map[string]interface{}); ok {
+		if replicas, ok := composeInteger(deploy["replicas"]); ok {
+			return replicas
+		}
+	}
+	return 1
+}
+
+func composeInteger(raw interface{}) (int, bool) {
+	switch value := raw.(type) {
+	case int:
+		return value, true
+	case int64:
+		return int(value), true
+	case float64:
+		if value == float64(int(value)) {
+			return int(value), true
+		}
+	case json.Number:
+		parsed, err := value.Int64()
+		return int(parsed), err == nil
+	}
+	return 0, false
 }
