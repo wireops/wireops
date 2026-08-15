@@ -12,7 +12,7 @@ require (
 	github.com/fatih/color v1.19.0
 	github.com/getsops/sops/v3 v3.13.2
 	github.com/gin-gonic/gin v1.11.0
-	github.com/go-git/go-git/v5 v5.19.1
+	github.com/go-git/go-git/v5 v5.19.2
 	github.com/go-ozzo/ozzo-validation/v4 v4.3.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
