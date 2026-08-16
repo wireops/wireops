@@ -346,12 +346,13 @@ func stackHasSopsSecretsFile(app core.App, stack *core.Record) (bool, error) {
 	if err := safepath.ValidateComposePath(composePath); err != nil {
 		return false, err
 	}
-	workDir := filepath.Join(config.GetReposWorkspace(), repoID)
+	root := filepath.Join(config.GetReposWorkspace(), repoID)
+	workDir := root
 	if composePath != "" && composePath != "." {
 		workDir = filepath.Join(workDir, composePath)
 	}
 
-	path, err := secrets.FindSecretsFile(workDir)
+	path, err := secrets.FindSecretsFile(root, workDir)
 	if err != nil {
 		return false, err
 	}

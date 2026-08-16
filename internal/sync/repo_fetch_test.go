@@ -101,6 +101,33 @@ func TestFetchRepoCronSkipsWhenAlreadyLocked(t *testing.T) {
 	}
 }
 
+// TestReconcilerIsSyncingReflectsLockState is the deterministic, white-box
+// counterpart to a route-level "migrate rejected while stack is syncing"
+// test: IsSyncing is exactly the TryLock/Unlock probe the migrate route's
+// 409 guard (rr.scheduler.IsSyncing) relies on, and it's driven directly off
+// the same per-stack mutex ReconcileStack/TransferStack hold — asserting it
+// here avoids racing a real background reconcile goroutine to observe the
+// same thing at the HTTP layer.
+func TestReconcilerIsSyncingReflectsLockState(t *testing.T) {
+	r := &Reconciler{}
+	stackID := "busy-stack"
+
+	if r.IsSyncing(stackID) {
+		t.Fatal("expected IsSyncing=false before anything holds the stack's mutex")
+	}
+
+	mu := r.stackMutex(stackID)
+	mu.Lock()
+	if !r.IsSyncing(stackID) {
+		t.Fatal("expected IsSyncing=true while the stack's mutex is held")
+	}
+	mu.Unlock()
+
+	if r.IsSyncing(stackID) {
+		t.Fatal("expected IsSyncing=false again once the mutex is released")
+	}
+}
+
 func TestFetchRepoReturnsErrorWhenRepositoryNotFound(t *testing.T) {
 	app, _ := newRepoFetchTestApp(t)
 	r := &Reconciler{app: app}

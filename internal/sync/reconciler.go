@@ -1116,6 +1116,37 @@ func (r *Reconciler) stackMutex(stackID string) *sync.Mutex {
 	return mu.(*sync.Mutex)
 }
 
+// IsSyncing reports whether stackID currently holds its per-stack mutex —
+// i.e. a reconcile/transfer/migrate is in flight. Callers that need to
+// reject a concurrent mutation synchronously (e.g. the migrate route's 409
+// guard) probe with a TryLock/Unlock pair rather than blocking.
+//
+// This is a point-in-time check only: a caller doing a multi-step mutation
+// (validate, then act) needs TryLockStack instead, to hold the lock across
+// its own critical section rather than re-probing and racing whatever else
+// might acquire it in between.
+func (r *Reconciler) IsSyncing(stackID string) bool {
+	mu := r.stackMutex(stackID)
+	if !mu.TryLock() {
+		return true
+	}
+	mu.Unlock()
+	return false
+}
+
+// TryLockStack attempts to acquire stackID's per-stack mutex without
+// blocking, returning ok=false if a reconcile/transfer/migrate already holds
+// it. On success the caller owns the lock and must call release exactly
+// once (e.g. via defer) — typically held across a whole validate-then-act
+// critical section, unlike IsSyncing's single point-in-time probe.
+func (r *Reconciler) TryLockStack(stackID string) (release func(), ok bool) {
+	mu := r.stackMutex(stackID)
+	if !mu.TryLock() {
+		return nil, false
+	}
+	return mu.Unlock, true
+}
+
 // repoMutex guards a repository's on-disk working tree at
 // workspace/<repoID>: writers (FetchRepo, RollbackStack) take the write lock
 // while they clone/fetch/reset it; readers (ReconcileStack, once it starts
@@ -1777,8 +1808,17 @@ func (r *Reconciler) loadSopsEnv(ctx context.Context, repo *core.Record, workDir
 	if repo == nil {
 		return nil, nil
 	}
+	// containmentRootFor (renderer.go) is the same "root workDir must resolve
+	// inside" helper lintCompose already uses a few lines up the call chain
+	// (ReconcileStack passes its result there too): real reconciles always
+	// have workDir nested under the repo checkout, so this resolves to the
+	// checkout root and secrets.ReadSecretsFile enforces containment against
+	// it. Callers that pass an unrelated workDir (tests; local-import stacks
+	// have no repo checkout at all) fall back to workDir as its own root —
+	// no narrower boundary to enforce there, matching pre-existing behavior.
+	root := containmentRootFor(repo, workDir)
 
-	path, err := secrets.FindSecretsFile(workDir)
+	path, content, err := secrets.ReadSecretsFile(root, workDir)
 	if err != nil {
 		return nil, err
 	}
@@ -1795,11 +1835,6 @@ func (r *Reconciler) loadSopsEnv(ctx context.Context, repo *core.Record, workDir
 	ageKey, err := crypto.Decrypt(encryptedKey, secretKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt repository SOPS age key: %w", err)
-	}
-
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read %q: %w", path, err)
 	}
 
 	return secrets.DecryptSecretsFile(ctx, content, string(ageKey))

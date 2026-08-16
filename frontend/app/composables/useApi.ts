@@ -290,6 +290,31 @@ export function useApi() {
   const transferStack = (stackId: string, targetWorkerId: string) =>
     customPost(`/api/custom/stacks/${stackId}/transfer`, { target_worker_id: targetWorkerId })
 
+  // --- Stack repository migration ---
+  type MigrateRequestBody = {
+    repository: string
+    compose_path?: string
+    compose_file?: string
+    wireops_file?: string
+    confirm?: boolean
+    teardown_old_project?: boolean
+  }
+  type MigrateDiff = { added: string[]; removed: string[]; common: string[] }
+  type MigratePreview = {
+    source_repository: string
+    target_repository: string
+    services: MigrateDiff
+    volumes: MigrateDiff
+    networks: MigrateDiff
+    project_name: { source: string; target: string; same: boolean }
+    sops: { status: string; target_age_public_key?: string }
+    warnings: { severity: 'critical' | 'warn' | 'info'; code: string; message: string }[]
+  }
+  const previewMigrateStack = (stackId: string, body: MigrateRequestBody) =>
+    customPost<MigratePreview>(`/api/custom/stacks/${stackId}/migrate/preview`, body)
+  const migrateStack = (stackId: string, body: MigrateRequestBody) =>
+    customPost<{ status: string }>(`/api/custom/stacks/${stackId}/migrate`, body)
+
   // --- Worker Policies ---
   type PolicyData = {
     enabled?: boolean
@@ -494,5 +519,5 @@ export function useApi() {
   const updateSelf = (body: UpdateSelfBody) =>
     customPatch<{ id: string; name: string; email: string }>('/api/custom/users/me', body)
 
-  return { triggerSync, triggerRollback, forceRedeploy, setRenderOverrides, clearRenderOverrides, getRenderOverridesDiff, getServices, getDependencyGraph, getStackResources, stopContainer, restartContainer, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, getRepoFiles, getStackFiles, getJobFiles, getJobDefinitionFromFile, getWireopsFiles, getWireopsDefinitionFromFile, createStackFromWireops, lintCompose, testCredentials, keyscan, testRegistryCredential, listGitProviders, getGitProviderAuthorizeUrl, listGitProviderOrgs, listGitProviderRepos, listGitProviderBranches, listOrphans, purgeOrphan, getSystemInfo, customPost, customGet, customPut, customPatch, customDelete, getWorkers, createWorkerToken, revokeWorker, transferStack, discoverProjects, importStack, listJobs, listJobGroups, triggerJobRun, cancelJobRun, deleteJobRun, getJobDefinition, getJobRaw, getWorkerPolicy, saveWorkerPolicy, resetWorkerPolicy, getGlobalWorkerPolicy, saveGlobalWorkerPolicy, getAppSettings, saveAppSettings, listAuditLogs, listTerminalSessions, listBackups, createBackup, deleteBackup, restoreBackup, syncLocalBackup, getBackupSettings, saveBackupSettings, updateSelf }
+  return { triggerSync, triggerRollback, forceRedeploy, setRenderOverrides, clearRenderOverrides, getRenderOverridesDiff, getServices, getDependencyGraph, getStackResources, stopContainer, restartContainer, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, getRepoFiles, getStackFiles, getJobFiles, getJobDefinitionFromFile, getWireopsFiles, getWireopsDefinitionFromFile, createStackFromWireops, lintCompose, testCredentials, keyscan, testRegistryCredential, listGitProviders, getGitProviderAuthorizeUrl, listGitProviderOrgs, listGitProviderRepos, listGitProviderBranches, listOrphans, purgeOrphan, getSystemInfo, customPost, customGet, customPut, customPatch, customDelete, getWorkers, createWorkerToken, revokeWorker, transferStack, previewMigrateStack, migrateStack, discoverProjects, importStack, listJobs, listJobGroups, triggerJobRun, cancelJobRun, deleteJobRun, getJobDefinition, getJobRaw, getWorkerPolicy, saveWorkerPolicy, resetWorkerPolicy, getGlobalWorkerPolicy, saveGlobalWorkerPolicy, getAppSettings, saveAppSettings, listAuditLogs, listTerminalSessions, listBackups, createBackup, deleteBackup, restoreBackup, syncLocalBackup, getBackupSettings, saveBackupSettings, updateSelf }
 }

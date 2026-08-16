@@ -162,6 +162,9 @@ var wireopsManagedStackFields = []string{
 }
 
 func validateWireopsFieldsImmutable(app core.App, record *core.Record) error {
+	if isMigrationBypass(record.Id) {
+		return nil
+	}
 	original := record.Original()
 	if original == nil && strings.TrimSpace(record.Id) != "" {
 		persisted, err := app.FindRecordById("stacks", record.Id)

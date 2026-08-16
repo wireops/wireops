@@ -207,6 +207,38 @@ func (s *Scheduler) LoadStackEnvVars(ctx context.Context, stackID string) ([]str
 	return s.reconciler.loadEnvVars(ctx, stackID)
 }
 
+// IsSyncing reports whether stackID has a reconcile/transfer/migrate in
+// flight — a single point-in-time probe. A caller that needs to reject a
+// concurrent mutation across its own multi-step critical section (validate,
+// then act) should use TryLockStack instead: checking IsSyncing and later
+// acting on that answer is a check-then-act race, since nothing stops
+// another reconcile/migrate from acquiring the lock in between.
+func (s *Scheduler) IsSyncing(stackID string) bool {
+	return s.reconciler.IsSyncing(stackID)
+}
+
+// TryLockStack attempts to acquire stackID's per-stack mutex without
+// blocking, returning ok=false if something else (a reconcile, transfer, or
+// another migrate request) already holds it. On success the caller owns the
+// lock for as long as it likes and must call release exactly once on every
+// exit path before returning — e.g. via a sync.Once-guarded defer, so an
+// early release (to let a subsequently-triggered reconcile acquire it)
+// doesn't double-unlock when the deferred call also fires.
+func (s *Scheduler) TryLockStack(stackID string) (release func(), ok bool) {
+	return s.reconciler.TryLockStack(stackID)
+}
+
+// LockStackForTest acquires stackID's per-stack mutex and returns a func
+// that releases it. Test-only helper: package tests outside internal/sync
+// (e.g. internal/routes' migrate-route 409 guard) can use it to make
+// IsSyncing deterministically true instead of racing a real background
+// reconcile to observe the same state.
+func (s *Scheduler) LockStackForTest(stackID string) func() {
+	mu := s.reconciler.stackMutex(stackID)
+	mu.Lock()
+	return mu.Unlock
+}
+
 func (s *Scheduler) TriggerTransfer(stackID, targetWorkerID string, userID string) {
 	ctx := contextutil.WithUserID(s.rootCtx, userID)
 	go s.safeRun(ctx, fmt.Sprintf("transfer[%s]", stackID), func() error {
