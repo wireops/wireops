@@ -1808,8 +1808,17 @@ func (r *Reconciler) loadSopsEnv(ctx context.Context, repo *core.Record, workDir
 	if repo == nil {
 		return nil, nil
 	}
+	// containmentRootFor (renderer.go) is the same "root workDir must resolve
+	// inside" helper lintCompose already uses a few lines up the call chain
+	// (ReconcileStack passes its result there too): real reconciles always
+	// have workDir nested under the repo checkout, so this resolves to the
+	// checkout root and secrets.ReadSecretsFile enforces containment against
+	// it. Callers that pass an unrelated workDir (tests; local-import stacks
+	// have no repo checkout at all) fall back to workDir as its own root —
+	// no narrower boundary to enforce there, matching pre-existing behavior.
+	root := containmentRootFor(repo, workDir)
 
-	path, err := secrets.FindSecretsFile(workDir)
+	path, content, err := secrets.ReadSecretsFile(root, workDir)
 	if err != nil {
 		return nil, err
 	}
@@ -1826,11 +1835,6 @@ func (r *Reconciler) loadSopsEnv(ctx context.Context, repo *core.Record, workDir
 	ageKey, err := crypto.Decrypt(encryptedKey, secretKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt repository SOPS age key: %w", err)
-	}
-
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read %q: %w", path, err)
 	}
 
 	return secrets.DecryptSecretsFile(ctx, content, string(ageKey))

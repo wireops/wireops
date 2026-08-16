@@ -478,7 +478,7 @@ func TestResolveSopsCheckNone(t *testing.T) {
 	destWorkDir := t.TempDir()
 	sourceWorkDir := t.TempDir()
 
-	got := resolveSopsCheck(context.Background(), nil, destWorkDir, sourceWorkDir)
+	got := resolveSopsCheck(context.Background(), nil, destWorkDir, destWorkDir, sourceWorkDir, sourceWorkDir)
 	if got.Status != "none" {
 		t.Fatalf("expected status=none, got %+v", got)
 	}
@@ -489,7 +489,7 @@ func TestResolveSopsCheckSourceHadSecrets(t *testing.T) {
 	sourceWorkDir := t.TempDir()
 	writeFile(t, sourceWorkDir, "secrets.yaml", "DB_PASS: whatever\n")
 
-	got := resolveSopsCheck(context.Background(), nil, destWorkDir, sourceWorkDir)
+	got := resolveSopsCheck(context.Background(), nil, destWorkDir, destWorkDir, sourceWorkDir, sourceWorkDir)
 	if got.Status != "source_had_secrets" {
 		t.Fatalf("expected status=source_had_secrets, got %+v", got)
 	}
@@ -536,7 +536,8 @@ func TestResolveSopsCheckOkAndUndecryptable(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(okDir, "secrets.yaml"), okEncrypted, 0o644); err != nil {
 		t.Fatalf("write secrets.yaml: %v", err)
 	}
-	got := resolveSopsCheck(context.Background(), okRepo, okDir, t.TempDir())
+	okSourceDir := t.TempDir()
+	got := resolveSopsCheck(context.Background(), okRepo, okDir, okDir, okSourceDir, okSourceDir)
 	if got.Status != "ok" {
 		t.Fatalf("expected status=ok, got %+v", got)
 	}
@@ -548,7 +549,8 @@ func TestResolveSopsCheckOkAndUndecryptable(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(badDir, "secrets.yaml"), badEncrypted, 0o644); err != nil {
 		t.Fatalf("write secrets.yaml: %v", err)
 	}
-	got = resolveSopsCheck(context.Background(), okRepo, badDir, t.TempDir())
+	badSourceDir := t.TempDir()
+	got = resolveSopsCheck(context.Background(), okRepo, badDir, badDir, badSourceDir, badSourceDir)
 	if got.Status != "undecryptable" || got.TargetAgePublicKey != correctPub {
 		t.Fatalf("expected status=undecryptable with pubkey=%s, got %+v", correctPub, got)
 	}
@@ -574,7 +576,8 @@ func TestResolveSopsCheckMissingAgeKey(t *testing.T) {
 		t.Fatalf("write secrets.yaml: %v", err)
 	}
 
-	got := resolveSopsCheck(context.Background(), repo, destDir, t.TempDir())
+	sourceDir := t.TempDir()
+	got := resolveSopsCheck(context.Background(), repo, destDir, destDir, sourceDir, sourceDir)
 	if got.Status != "undecryptable" {
 		t.Fatalf("expected status=undecryptable when the repo has no age key, got %+v", got)
 	}
@@ -600,7 +603,8 @@ func TestResolveSopsCheckCorruptedAgeKey(t *testing.T) {
 		t.Fatalf("write secrets.yaml: %v", err)
 	}
 
-	got := resolveSopsCheck(context.Background(), repo, destDir, t.TempDir())
+	sourceDir := t.TempDir()
+	got := resolveSopsCheck(context.Background(), repo, destDir, destDir, sourceDir, sourceDir)
 	if got.Status != "undecryptable" {
 		t.Fatalf("expected status=undecryptable for a corrupted stored age key, got %+v", got)
 	}

@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"sync"
 
 	"filippo.io/age"
@@ -170,17 +171,38 @@ func flattenSecretsYAML(plaintext []byte) (map[string]string, error) {
 // compose_path / workDir).
 var SecretsFileNames = []string{"secrets.yaml", "secrets.yml"}
 
-// FindSecretsFile returns the absolute path to a secrets.yaml/secrets.yml
-// in dir, or "" if none exists. dir is the checked-out contents of a
-// third-party git repository, so it is untrusted: a malicious commit could
-// plant "secrets.yaml" as a symlink to an arbitrary host path (e.g.
-// /etc/shadow) to have it read and echoed back through the decrypt-error
-// response. Lstat (rather than Stat) deliberately does not follow symlinks,
-// so a symlinked "secrets.yaml" is rejected instead of silently resolved.
-func FindSecretsFile(dir string) (string, error) {
+// FindSecretsFile returns the absolute path to a secrets.yaml/secrets.yml in
+// dir, or "" if none exists. dir must resolve inside root (typically the
+// repository checkout root, e.g. config.GetReposWorkspace()/<repoID>) —
+// empty root defaults to dir itself, for callers with no meaningful
+// containment boundary (e.g. tests operating on a single directory).
+//
+// dir is the checked-out contents of a third-party git repository, so every
+// path component under it is untrusted, not just the final "secrets.yaml"
+// entry: a malicious commit could symlink an *intermediate* directory (e.g.
+// dir itself, if it's reached via a stack's attacker-influenced compose_path)
+// to point outside root, which a plain os.Lstat(filepath.Join(dir, name))
+// would silently follow when resolving dir's parent components on most
+// platforms. Resolution goes through os.Root instead: it follows in-root
+// symlinks but refuses any that reference a location outside root, closing
+// that gap in one place for every caller. The final "secrets.yaml" entry
+// itself is still rejected outright if it is a symlink at all (even one that
+// stays in-root) — Lstat deliberately does not follow it — since there is
+// never a legitimate reason for it to be one.
+func FindSecretsFile(root, dir string) (string, error) {
+	r, rel, err := openSecretsRoot(root, dir)
+	if err != nil {
+		return "", err
+	}
+	if r == nil {
+		return "", nil
+	}
+	defer r.Close()
+
 	for _, name := range SecretsFileNames {
+		relPath := secretsRelPath(rel, name)
 		path := filepath.Join(dir, name)
-		info, err := os.Lstat(path)
+		info, err := r.Lstat(relPath)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
@@ -196,4 +218,81 @@ func FindSecretsFile(dir string) (string, error) {
 		return path, nil
 	}
 	return "", nil
+}
+
+// ReadSecretsFile is FindSecretsFile plus reading the file's contents,
+// against the same os.Root session (i.e. the same open directory handle) so
+// the existence/symlink check and the read can't be split by a concurrent
+// git fetch rewriting the checkout in between — the class of race
+// internal/compose's openContained guards against for compose files.
+// Returns ("", nil, nil) if no secrets file exists.
+func ReadSecretsFile(root, dir string) (path string, content []byte, err error) {
+	r, rel, err := openSecretsRoot(root, dir)
+	if err != nil {
+		return "", nil, err
+	}
+	if r == nil {
+		return "", nil, nil
+	}
+	defer r.Close()
+
+	for _, name := range SecretsFileNames {
+		relPath := secretsRelPath(rel, name)
+		fullPath := filepath.Join(dir, name)
+		info, err := r.Lstat(relPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return "", nil, fmt.Errorf("sops: failed to stat %q: %w", fullPath, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return "", nil, fmt.Errorf("sops: %q must be a regular file, not a symlink", fullPath)
+		}
+		if info.IsDir() {
+			continue
+		}
+		data, err := r.ReadFile(relPath)
+		if err != nil {
+			return "", nil, fmt.Errorf("sops: failed to read %q: %w", fullPath, err)
+		}
+		return fullPath, data, nil
+	}
+	return "", nil, nil
+}
+
+// openSecretsRoot opens dir's containing root for FindSecretsFile/
+// ReadSecretsFile, returning the dir-relative path prefix to join each
+// candidate filename onto. Caller must close a non-nil returned *os.Root.
+//
+// A nil root with a nil error means "root doesn't exist on disk" (e.g. a
+// repository that hasn't been cloned yet, or a stack whose compose_path
+// doesn't exist in the checkout) — not found, not an error: there is
+// nothing under a nonexistent directory to find, matching the graceful
+// os.IsNotExist handling below for the individual candidate files.
+func openSecretsRoot(root, dir string) (*os.Root, string, error) {
+	rootDir := root
+	if rootDir == "" {
+		rootDir = dir
+	}
+	rel, err := filepath.Rel(rootDir, dir)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return nil, "", fmt.Errorf("sops: directory %q resolves outside %q", dir, rootDir)
+	}
+
+	r, err := os.OpenRoot(rootDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, "", nil
+		}
+		return nil, "", fmt.Errorf("sops: cannot open root %q: %w", rootDir, err)
+	}
+	return r, rel, nil
+}
+
+func secretsRelPath(rel, name string) string {
+	if rel == "." {
+		return name
+	}
+	return filepath.Join(rel, name)
 }

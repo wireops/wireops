@@ -46,12 +46,13 @@ func (rr routeRegistrar) registerSopsRoutes() {
 		if err := safepath.ValidateComposePath(composePath); err != nil {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 		}
-		workDir := filepath.Join(config.GetReposWorkspace(), repoID)
+		root := filepath.Join(config.GetReposWorkspace(), repoID)
+		workDir := root
 		if composePath != "" && composePath != "." {
 			workDir = filepath.Join(workDir, composePath)
 		}
 
-		path, err := secrets.FindSecretsFile(workDir)
+		path, content, err := secrets.ReadSecretsFile(root, workDir)
 		if err != nil {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
@@ -77,16 +78,6 @@ func (rr routeRegistrar) registerSopsRoutes() {
 				"available":   true,
 				"source_file": filepath.Base(path),
 				"error":       "failed to decrypt repository SOPS age key",
-			})
-		}
-
-		content, err := os.ReadFile(path)
-		if err != nil {
-			return e.JSON(http.StatusOK, map[string]any{
-				"keys":        []string{},
-				"available":   true,
-				"source_file": filepath.Base(path),
-				"error":       "failed to read secrets file",
 			})
 		}
 

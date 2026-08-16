@@ -11,7 +11,6 @@ import (
 	"github.com/wireops/wireops/internal/testutil"
 )
 
-
 func TestGenerateAgeKeypair(t *testing.T) {
 	privateKey, publicKey, err := GenerateAgeKeypair()
 	if err != nil {
@@ -221,7 +220,7 @@ func TestEncryptSecretsMapRejectsInvalidPublicKey(t *testing.T) {
 
 func TestFindSecretsFileNoneFound(t *testing.T) {
 	dir := t.TempDir()
-	path, err := FindSecretsFile(dir)
+	path, err := FindSecretsFile(dir, dir)
 	if err != nil {
 		t.Fatalf("FindSecretsFile: %v", err)
 	}
@@ -237,7 +236,7 @@ func TestFindSecretsFileFindsRegularFile(t *testing.T) {
 		t.Fatalf("write secrets.yaml: %v", err)
 	}
 
-	path, err := FindSecretsFile(dir)
+	path, err := FindSecretsFile(dir, dir)
 	if err != nil {
 		t.Fatalf("FindSecretsFile: %v", err)
 	}
@@ -262,11 +261,86 @@ func TestFindSecretsFileRejectsSymlink(t *testing.T) {
 		t.Fatalf("create symlink: %v", err)
 	}
 
-	path, err := FindSecretsFile(dir)
+	path, err := FindSecretsFile(dir, dir)
 	if err == nil {
 		t.Fatalf("expected FindSecretsFile to reject a symlinked secrets file, got path=%q", path)
 	}
 	if !strings.Contains(err.Error(), "symlink") {
 		t.Fatalf("error = %q, want it to mention symlink rejection", err)
+	}
+}
+
+// TestFindSecretsFileRejectsSymlinkedIntermediateDirectory is the
+// CodeQL-flagged case: unlike TestFindSecretsFileRejectsSymlink (the final
+// "secrets.yaml" path component itself is a symlink), here an *intermediate*
+// directory the caller's dir passes through is a symlink escaping root. A
+// caller building dir from attacker-influenced input (e.g. a migrate
+// request's compose_path, joined onto the repo checkout root) must not have
+// that resolve outside root just because some path component under the
+// checkout happens to be a symlink — os.Root refuses that escape.
+func TestFindSecretsFileRejectsSymlinkedIntermediateDirectory(t *testing.T) {
+	root := t.TempDir()
+	outsideDir := t.TempDir()
+	outsideTarget := filepath.Join(outsideDir, "secrets.yaml")
+	if err := os.WriteFile(outsideTarget, []byte("super-secret-host-file"), 0o644); err != nil {
+		t.Fatalf("write outside target: %v", err)
+	}
+	// root/escape -> outsideDir (a symlinked directory, not the final entry).
+	linkDir := filepath.Join(root, "escape")
+	if err := os.Symlink(outsideDir, linkDir); err != nil {
+		t.Fatalf("create symlink: %v", err)
+	}
+
+	dir := filepath.Join(root, "escape")
+	path, err := FindSecretsFile(root, dir)
+	if err == nil {
+		t.Fatalf("expected FindSecretsFile to reject a dir reached through a symlinked intermediate component, got path=%q", path)
+	}
+}
+
+func TestReadSecretsFileNoneFound(t *testing.T) {
+	dir := t.TempDir()
+	path, content, err := ReadSecretsFile(dir, dir)
+	if err != nil {
+		t.Fatalf("ReadSecretsFile: %v", err)
+	}
+	if path != "" || content != nil {
+		t.Fatalf("path = %q, content = %v, want empty/nil", path, content)
+	}
+}
+
+func TestReadSecretsFileReadsContent(t *testing.T) {
+	dir := t.TempDir()
+	want := []byte("DB_PASS: ENC[...]\n")
+	if err := os.WriteFile(filepath.Join(dir, "secrets.yaml"), want, 0o644); err != nil {
+		t.Fatalf("write secrets.yaml: %v", err)
+	}
+
+	path, content, err := ReadSecretsFile(dir, dir)
+	if err != nil {
+		t.Fatalf("ReadSecretsFile: %v", err)
+	}
+	if path != filepath.Join(dir, "secrets.yaml") {
+		t.Fatalf("path = %q, want %q", path, filepath.Join(dir, "secrets.yaml"))
+	}
+	if string(content) != string(want) {
+		t.Fatalf("content = %q, want %q", content, want)
+	}
+}
+
+func TestReadSecretsFileRejectsSymlinkedIntermediateDirectory(t *testing.T) {
+	root := t.TempDir()
+	outsideDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outsideDir, "secrets.yaml"), []byte("nope"), 0o644); err != nil {
+		t.Fatalf("write outside target: %v", err)
+	}
+	linkDir := filepath.Join(root, "escape")
+	if err := os.Symlink(outsideDir, linkDir); err != nil {
+		t.Fatalf("create symlink: %v", err)
+	}
+
+	_, content, err := ReadSecretsFile(root, filepath.Join(root, "escape"))
+	if err == nil {
+		t.Fatalf("expected ReadSecretsFile to reject a dir reached through a symlinked intermediate component, got content=%q", content)
 	}
 }

@@ -248,13 +248,21 @@ func migrateWarnings(services, volumes, networks MigrateDiff, projectName Projec
 // the preview can surface a mismatch before it fails a real deploy. It
 // never returns an error: every failure mode is a reportable SopsCheck
 // status instead, since the preview must never 4xx on an incompatibility.
-func resolveSopsCheck(ctx context.Context, destRepo *core.Record, destWorkDir, sourceWorkDir string) SopsCheck {
+// destRoot/sourceRoot are the repository checkout roots destWorkDir/
+// sourceWorkDir must resolve inside — both compose_path values they're built
+// from can be attacker-influenced (a manual-mode migrate request supplies
+// compose_path directly; see safepath's traversal check, which constrains
+// the literal string but not a symlinked path component inside a
+// checked-out repo). secrets.FindSecretsFile/ReadSecretsFile route through
+// os.Root against these roots so such a component can't be followed outside
+// the checkout.
+func resolveSopsCheck(ctx context.Context, destRepo *core.Record, destRoot, destWorkDir, sourceRoot, sourceWorkDir string) SopsCheck {
 	sourceHadSecrets := false
-	if path, _ := secrets.FindSecretsFile(sourceWorkDir); path != "" {
+	if path, _ := secrets.FindSecretsFile(sourceRoot, sourceWorkDir); path != "" {
 		sourceHadSecrets = true
 	}
 
-	destPath, _ := secrets.FindSecretsFile(destWorkDir)
+	destPath, content, _ := secrets.ReadSecretsFile(destRoot, destWorkDir)
 	if destPath == "" {
 		if sourceHadSecrets {
 			return SopsCheck{Status: "source_had_secrets"}
@@ -270,11 +278,6 @@ func resolveSopsCheck(ctx context.Context, destRepo *core.Record, destWorkDir, s
 
 	secretKey := crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))
 	ageKey, err := crypto.Decrypt(encryptedKey, secretKey)
-	if err != nil {
-		return SopsCheck{Status: "undecryptable", TargetAgePublicKey: targetPubKey}
-	}
-
-	content, err := os.ReadFile(destPath)
 	if err != nil {
 		return SopsCheck{Status: "undecryptable", TargetAgePublicKey: targetPubKey}
 	}
@@ -430,7 +433,8 @@ func (rr routeRegistrar) registerMigratePreviewRoute() {
 			return e.JSON(http.StatusUnprocessableEntity, map[string]string{"error": "failed to resolve source compose config: " + err.Error()})
 		}
 
-		sops := resolveSopsCheck(e.Request.Context(), destRepo, destWorkDir, stackWorkDir(rr.app, stack))
+		sourceRoot := filepath.Join(config.GetReposWorkspace(), stack.GetString("repository"))
+		sops := resolveSopsCheck(e.Request.Context(), destRepo, destRepoDir, destWorkDir, sourceRoot, stackWorkDir(rr.app, stack))
 
 		preview := buildMigratePreview(sourceRepoID, body.Repository, sourceConfig, targetConfig, sops)
 		return e.JSON(http.StatusOK, preview)
