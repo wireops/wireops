@@ -2,6 +2,7 @@ package safepath
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -112,6 +113,45 @@ func ValidateContainerMountPath(target string) error {
 		return fmt.Errorf("mount target is not a clean absolute path: %q", target)
 	}
 	return nil
+}
+
+// OpenRoot resolves dir against root (root defaults to dir itself when
+// empty — a caller with no meaningful containment boundary still gets a dir
+// that can't escape itself) and opens an os.Root scoped to root, so every
+// subsequent path resolved against it follows in-root symlinks but refuses
+// any that escape root. Returns dir's root-relative path alongside it, for
+// joining a filename onto before an r.Open/r.Lstat/r.ReadFile call.
+//
+// This exists because a plain os.Lstat/os.Open on a path built by joining
+// caller-influenced segments onto a directory follows symlinked
+// *intermediate* path components silently — a check on the final filename
+// alone (e.g. rejecting a symlinked "docker-compose.yml") doesn't stop a
+// symlinked parent directory from redirecting the whole read elsewhere. Repo
+// checkout content is exactly this kind of attacker-influenced input: git
+// preserves symlinks verbatim, and compose_path (validated by
+// ValidateComposePath as a string, never against what it resolves to on
+// disk) can select any directory in that checkout.
+//
+// The returned *os.Root must be Closed by the caller when the error is nil.
+// A root that doesn't exist on disk yet (e.g. a repository never cloned)
+// surfaces as a plain wrapped error here; callers that want to treat that
+// case as "nothing found" rather than a failure can check
+// errors.Is(err, fs.ErrNotExist).
+func OpenRoot(root, dir string) (*os.Root, string, error) {
+	rootDir := root
+	if rootDir == "" {
+		rootDir = dir
+	}
+	rel, err := filepath.Rel(rootDir, dir)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return nil, "", fmt.Errorf("path %q resolves outside %q", dir, rootDir)
+	}
+
+	r, err := os.OpenRoot(rootDir)
+	if err != nil {
+		return nil, "", fmt.Errorf("cannot open root %q: %w", rootDir, err)
+	}
+	return r, rel, nil
 }
 
 // CleanRelativePath validates that a path is relative and does not contain traversal,

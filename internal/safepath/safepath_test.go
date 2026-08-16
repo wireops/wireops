@@ -1,6 +1,10 @@
 package safepath
 
 import (
+	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -197,5 +201,85 @@ func TestValidateContainerMountPath(t *testing.T) {
 				t.Errorf("ValidateContainerMountPath(%q) unexpected error: %v", tt.input, err)
 			}
 		})
+	}
+}
+
+func TestOpenRootFindsFileInsideRoot(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "target.txt"), []byte("ok"), 0o644); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	r, rel, err := OpenRoot(root, root)
+	if err != nil {
+		t.Fatalf("OpenRoot: %v", err)
+	}
+	defer r.Close()
+
+	data, err := r.ReadFile(filepath.Join(rel, "target.txt"))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if string(data) != "ok" {
+		t.Fatalf("content = %q, want %q", data, "ok")
+	}
+}
+
+func TestOpenRootDefaultsRootToDir(t *testing.T) {
+	dir := t.TempDir()
+	r, rel, err := OpenRoot("", dir)
+	if err != nil {
+		t.Fatalf("OpenRoot: %v", err)
+	}
+	defer r.Close()
+	if rel != "." {
+		t.Fatalf("rel = %q, want %q", rel, ".")
+	}
+}
+
+func TestOpenRootRejectsEscapingDir(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+
+	if _, _, err := OpenRoot(root, outside); err == nil {
+		t.Fatal("expected an error when dir is outside root")
+	}
+}
+
+// TestOpenRootRejectsSymlinkedIntermediateDirectory is the core guarantee
+// this function exists for: a symlinked *intermediate* path component (not
+// just a symlinked final entry) must not let a caller read outside root —
+// os.Root refuses to follow it, unlike a plain os.Open/os.Lstat on a joined
+// path string.
+func TestOpenRootRejectsSymlinkedIntermediateDirectory(t *testing.T) {
+	root := t.TempDir()
+	outsideDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outsideDir, "secret.txt"), []byte("nope"), 0o644); err != nil {
+		t.Fatalf("write outside target: %v", err)
+	}
+	linkDir := filepath.Join(root, "escape")
+	if err := os.Symlink(outsideDir, linkDir); err != nil {
+		t.Fatalf("create symlink: %v", err)
+	}
+
+	r, rel, err := OpenRoot(root, linkDir)
+	if err != nil {
+		// Rejected up front (path-string resolution) — also acceptable.
+		return
+	}
+	defer r.Close()
+	if _, err := r.ReadFile(filepath.Join(rel, "secret.txt")); err == nil {
+		t.Fatal("expected reading through a symlinked intermediate directory to fail")
+	}
+}
+
+func TestOpenRootReturnsNotExistForMissingRoot(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "does-not-exist")
+	_, _, err := OpenRoot(missing, missing)
+	if err == nil {
+		t.Fatal("expected an error for a nonexistent root")
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("expected errors.Is(err, fs.ErrNotExist), got: %v", err)
 	}
 }

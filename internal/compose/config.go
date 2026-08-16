@@ -10,11 +10,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/wireops/wireops/internal/config"
+	"github.com/wireops/wireops/internal/safepath"
 )
 
 // ConfigOptions represents options for `docker compose config`
@@ -39,20 +39,6 @@ type ConfigOptions struct {
 // there is no reason to let a chatty or hostile subprocess push megabytes
 // through it.
 const maxStderrBytes = 64 << 10
-
-// containmentRoot returns the directory a compose file must resolve inside.
-//
-// Defaulting to workDir rather than to "unchecked" is deliberate: a caller
-// that forgets to set Root still gets a file that cannot escape its own
-// working directory via a symlink. Callers whose workDir is itself derived
-// from request input (the lint route's compose_path) pass the repository
-// workspace instead, so the directory cannot escape either.
-func containmentRoot(root, workDir string) string {
-	if root == "" {
-		return workDir
-	}
-	return root
-}
 
 // ResolveFile returns the compose filename Config would actually use inside
 // workDir, applying the same "docker-compose.yml, else compose.yml" fallback.
@@ -86,33 +72,27 @@ func ResolveFile(root, workDir, composeFile string) (string, error) {
 
 // openContained opens workDir/name for reading, refusing to leave root.
 //
-// It goes through os.Root rather than resolving a path and re-opening it:
-// os.Root performs the traversal itself and refuses symlinks that escape,
-// which closes the gap between checking a path and opening it. A check
-// followed by a separate open is a race — the repository checkout is shared
-// between concurrent requests and rewritten by every git fetch, so a path
-// validated a moment ago can be a symlink by the time it is read.
+// It goes through safepath.OpenRoot (os.Root under the hood) rather than
+// resolving a path and re-opening it: os.Root performs the traversal itself
+// and refuses symlinks that escape — both workDir's own path down to root
+// and name itself — which closes the gap between checking a path and
+// opening it. A check followed by a separate open is a race — the
+// repository checkout is shared between concurrent requests and rewritten
+// by every git fetch, so a path validated a moment ago can be a symlink by
+// the time it is read. Defaulting root to workDir when unset (safepath.
+// OpenRoot's behavior) is deliberate: a caller that forgets to set Root
+// still gets a file that cannot escape its own working directory.
 //
 // The caller gets the open file, so the size check and the read both act on
 // the descriptor rather than re-consulting the path.
 func openContained(root, workDir, name string) (*os.File, os.FileInfo, error) {
-	rootDir := containmentRoot(root, workDir)
-
-	rel, err := filepath.Rel(rootDir, filepath.Join(workDir, name))
+	r, rel, err := safepath.OpenRoot(root, workDir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("compose file %q is not reachable from the repository: %w", name, err)
 	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return nil, nil, fmt.Errorf("compose file %q resolves outside the repository", name)
-	}
-
-	r, err := os.OpenRoot(rootDir)
-	if err != nil {
-		return nil, nil, fmt.Errorf("cannot open repository directory: %w", err)
-	}
 	defer r.Close()
 
-	f, err := r.Open(rel)
+	f, err := r.Open(filepath.Join(rel, name))
 	if err != nil {
 		return nil, nil, err
 	}

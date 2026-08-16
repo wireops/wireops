@@ -9,17 +9,20 @@ package secrets
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
-	"strings"
 	"sync"
 
 	"filippo.io/age"
 	sopswrapper "github.com/jfxdev/sops-wrapper"
 	"github.com/jfxdev/sops-wrapper/keychain/entities"
 	"gopkg.in/yaml.v3"
+
+	"github.com/wireops/wireops/internal/safepath"
 )
 
 // decryptMu serializes SOPS decrypt calls. The underlying sops library reads
@@ -190,17 +193,17 @@ var SecretsFileNames = []string{"secrets.yaml", "secrets.yml"}
 // stays in-root) — Lstat deliberately does not follow it — since there is
 // never a legitimate reason for it to be one.
 func FindSecretsFile(root, dir string) (string, error) {
-	r, rel, err := openSecretsRoot(root, dir)
+	r, rel, err := safepath.OpenRoot(root, dir)
 	if err != nil {
-		return "", err
-	}
-	if r == nil {
-		return "", nil
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", nil
+		}
+		return "", fmt.Errorf("sops: %w", err)
 	}
 	defer r.Close()
 
 	for _, name := range SecretsFileNames {
-		relPath := secretsRelPath(rel, name)
+		relPath := filepath.Join(rel, name)
 		path := filepath.Join(dir, name)
 		info, err := r.Lstat(relPath)
 		if err != nil {
@@ -227,17 +230,17 @@ func FindSecretsFile(root, dir string) (string, error) {
 // internal/compose's openContained guards against for compose files.
 // Returns ("", nil, nil) if no secrets file exists.
 func ReadSecretsFile(root, dir string) (path string, content []byte, err error) {
-	r, rel, err := openSecretsRoot(root, dir)
+	r, rel, err := safepath.OpenRoot(root, dir)
 	if err != nil {
-		return "", nil, err
-	}
-	if r == nil {
-		return "", nil, nil
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", nil, nil
+		}
+		return "", nil, fmt.Errorf("sops: %w", err)
 	}
 	defer r.Close()
 
 	for _, name := range SecretsFileNames {
-		relPath := secretsRelPath(rel, name)
+		relPath := filepath.Join(rel, name)
 		fullPath := filepath.Join(dir, name)
 		info, err := r.Lstat(relPath)
 		if err != nil {
@@ -259,40 +262,4 @@ func ReadSecretsFile(root, dir string) (path string, content []byte, err error) 
 		return fullPath, data, nil
 	}
 	return "", nil, nil
-}
-
-// openSecretsRoot opens dir's containing root for FindSecretsFile/
-// ReadSecretsFile, returning the dir-relative path prefix to join each
-// candidate filename onto. Caller must close a non-nil returned *os.Root.
-//
-// A nil root with a nil error means "root doesn't exist on disk" (e.g. a
-// repository that hasn't been cloned yet, or a stack whose compose_path
-// doesn't exist in the checkout) — not found, not an error: there is
-// nothing under a nonexistent directory to find, matching the graceful
-// os.IsNotExist handling below for the individual candidate files.
-func openSecretsRoot(root, dir string) (*os.Root, string, error) {
-	rootDir := root
-	if rootDir == "" {
-		rootDir = dir
-	}
-	rel, err := filepath.Rel(rootDir, dir)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return nil, "", fmt.Errorf("sops: directory %q resolves outside %q", dir, rootDir)
-	}
-
-	r, err := os.OpenRoot(rootDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, "", nil
-		}
-		return nil, "", fmt.Errorf("sops: cannot open root %q: %w", rootDir, err)
-	}
-	return r, rel, nil
-}
-
-func secretsRelPath(rel, name string) string {
-	if rel == "." {
-		return name
-	}
-	return filepath.Join(rel, name)
 }
