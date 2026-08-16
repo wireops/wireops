@@ -30,9 +30,9 @@ const stubs = {
     },
   },
   UFormField: {
-    props: ['label'],
-    setup(props: { label?: string }, { slots }: { slots: Slots }) {
-      return () => h('div', { class: 'form-field' }, [h('label', props.label), slots.default?.()])
+    props: ['label', 'help'],
+    setup(props: { label?: string, help?: string }, { slots }: { slots: Slots }) {
+      return () => h('div', { class: 'form-field' }, [h('label', props.label), slots.default?.(), h('p', { class: 'form-help' }, props.help)])
     },
   },
   AppSelectInput: {
@@ -112,6 +112,7 @@ function setupGlobals(opts: {
   ;(globalThis as any).useAsyncData = (_key: string, fn: () => Promise<any>) => {
     const data = ref<any[]>([])
     const refresh = async () => { data.value = await fn() }
+    refresh() // mirrors Nuxt's default immediate: true fetch-on-call behavior
     return { data, refresh }
   }
 
@@ -160,6 +161,56 @@ describe('MigrateStackModal', () => {
     expect(getStackFiles).toHaveBeenCalledWith('repo-target')
     // Second select (compose file) should now be present.
     expect(wrapper.findAll('select.app-select').length).toBe(2)
+  })
+
+  it('disables the target repository selector and shows a fallback message when none are available', async () => {
+    setupGlobals({ repos: [{ id: 'repo-source', name: 'source-repo', git_url: 'git@x:source.git' }] })
+    const wrapper = mount(MigrateStackModal, { props: { stack: manualStack() }, global: { stubs } })
+    await flushPromises()
+
+    const targetSelect = wrapper.findAll('select.app-select')[0]!
+    expect(targetSelect.attributes('disabled')).toBeDefined()
+    expect(wrapper.find('.form-help').text()).toBe('No other registered repositories available.')
+  })
+
+  it('resets a checked teardown_old_project when a second preview no longer shows the checkbox', async () => {
+    const previewMigrateStack = vi.fn()
+      .mockResolvedValueOnce(baselinePreview({ project_name: { source: 'old-name', target: 'new-name', same: false } }))
+      .mockResolvedValueOnce(baselinePreview({ project_name: { source: 'old-name', target: 'old-name', same: true } }))
+    const migrateStack = vi.fn().mockResolvedValue({ status: 'migration_started' })
+    setupGlobals({ previewMigrateStack, migrateStack })
+    const wrapper = mount(MigrateStackModal, { props: { stack: manualStack() }, global: { stubs } })
+    await flushPromises()
+
+    const selects = wrapper.findAll('select.app-select')
+    await selects[0]!.setValue('repo-target')
+    await flushPromises()
+    await wrapper.findAll('select.app-select')[1]!.setValue('docker-compose.yml')
+    await flushPromises()
+
+    // First preview: checkbox appears, user checks it.
+    await wrapper.findAll('button.u-button').find(b => b.text() === 'Preview Migration')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.u-checkbox').exists()).toBe(true)
+    await wrapper.find('.u-checkbox input').setValue(true)
+
+    // Second preview (same target selection, re-clicked): project_name now
+    // matches, checkbox disappears — the stale "true" must not survive into
+    // the submitted body.
+    await wrapper.findAll('button.u-button').find(b => b.text() === 'Preview Migration')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.u-checkbox').exists()).toBe(false)
+
+    await wrapper.findAll('button.u-button').find(b => b.text() === 'Migrate Stack')!.trigger('click')
+    await flushPromises()
+
+    expect(migrateStack).toHaveBeenCalledWith('stack-1', {
+      repository: 'repo-target',
+      compose_path: '.',
+      compose_file: 'docker-compose.yml',
+      confirm: true,
+      teardown_old_project: false,
+    })
   })
 
   it('shows the wireops.yaml picker for a wireops-managed stack instead of a compose-file picker', async () => {

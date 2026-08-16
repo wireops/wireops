@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	stdsync "sync"
 
 	"github.com/pocketbase/pocketbase/core"
 	"gopkg.in/yaml.v3"
@@ -471,9 +472,20 @@ func (rr routeRegistrar) registerMigrateRoute() {
 			return e.JSON(http.StatusNotFound, map[string]string{"error": "target repository not found"})
 		}
 
-		if rr.scheduler.IsSyncing(stackID) {
+		// Held across the whole validate-then-act section below (teardown +
+		// mutation): a plain IsSyncing probe here would be a TOCTOU — nothing
+		// would stop a cron-triggered reconcile, or a second concurrent
+		// migrate request for the same stack, from acquiring the lock in the
+		// gap between the check and the mutation. Released explicitly right
+		// before TriggerSync (not deferred past it), since ReconcileStack
+		// itself needs this same lock and would otherwise skip silently.
+		release, ok := rr.scheduler.TryLockStack(stackID)
+		if !ok {
 			return e.JSON(http.StatusConflict, map[string]string{"error": "stack is currently syncing"})
 		}
+		var releaseOnce stdsync.Once
+		releaseStackLock := func() { releaseOnce.Do(release) }
+		defer releaseStackLock()
 
 		destRepoDir, ok := rr.repoFilesSetupByID(e, body.Repository)
 		if !ok {
@@ -536,6 +548,12 @@ func (rr routeRegistrar) registerMigrateRoute() {
 		}
 
 		recordMigrateAudit(rr.app, e, stackID, sourceRepoID, body.Repository, oldPath, composePath, body.TeardownOldProject)
+
+		// Release before triggering the reconcile: ReconcileStack acquires
+		// this same per-stack lock itself, and TryLock-based, not
+		// blocking — still holding it here would make the reconcile skip as
+		// "already syncing" instead of actually running.
+		releaseStackLock()
 
 		var userID string
 		if e.Auth != nil {

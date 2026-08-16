@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -644,15 +645,16 @@ func localGitFixture(t *testing.T, dir string, files map[string]string) string {
 
 func setupMigrateTestApp(t *testing.T, withHooks bool) (*tests.TestApp, http.Handler, *wiresync.Scheduler) {
 	t.Helper()
-	app, mux, scheduler, _ := setupMigrateTestAppWithWorker(t, withHooks, nil)
-	return app, mux, scheduler
+	return setupMigrateTestAppWithWorker(t, withHooks, nil)
 }
 
 // setupMigrateTestAppWithWorker is setupMigrateTestApp for tests that also
 // need rr.workerSvc wired (the coordinated-teardown path dispatches a
 // TeardownCommand through it) — a nil workerSvc is fine for every route path
-// that never reaches that dispatch.
-func setupMigrateTestAppWithWorker(t *testing.T, withHooks bool, workerSvc wiresync.WorkerDispatcher) (*tests.TestApp, http.Handler, *wiresync.Scheduler, wiresync.WorkerDispatcher) {
+// that never reaches that dispatch. Callers that need to inspect the
+// dispatcher afterward should keep their own reference to what they pass in
+// rather than type-asserting a returned value back.
+func setupMigrateTestAppWithWorker(t *testing.T, withHooks bool, workerSvc wiresync.WorkerDispatcher) (*tests.TestApp, http.Handler, *wiresync.Scheduler) {
 	t.Helper()
 	t.Setenv("SECRET_KEY", testSecretBackendKey)
 	workspace := t.TempDir()
@@ -682,7 +684,7 @@ func setupMigrateTestAppWithWorker(t *testing.T, withHooks bool, workerSvc wires
 	if err != nil {
 		t.Fatalf("build mux: %v", err)
 	}
-	return app, mux, scheduler, workerSvc
+	return app, mux, scheduler
 }
 
 // waitUntilNotSyncing polls scheduler.IsSyncing for stackID: with hooks
@@ -1315,6 +1317,16 @@ func TestMigrateWireopsManagedChangesPathsBypassesImmutability(t *testing.T) {
 	// status=paused makes ReconcileStack return immediately after grabbing
 	// that mutex instead of racing a real clone+render+dispatch attempt
 	// against the migrate request sent right below.
+	//
+	// A LockStackForTest-based approach was tried here instead of the sleep
+	// (holding the lock across stack creation so the auto-sync goroutine's
+	// own TryLock would fail immediately) and does NOT work: Save() returning
+	// says nothing about whether the goroutine it spawned has run yet, so
+	// releasing right after Save() can free the lock before that goroutine
+	// ever attempts to acquire it — it then grabs the now-free lock for real
+	// during the HTTP request below and the migrate route correctly (if
+	// confusingly for the test) 409s. There's no signal from production code
+	// to synchronize against, so the sleep is the least-bad option here.
 	stack := createMigrateTestStack(t, app, sourceRepo.Id, map[string]any{
 		"config_source":     "wireops_file",
 		"wireops_file_path": "wireops.yaml",
@@ -1364,16 +1376,40 @@ func TestMigrateWireopsManagedChangesPathsBypassesImmutability(t *testing.T) {
 
 type recordingWorkerDispatcher struct {
 	connected bool
-	calls     []protocol.TeardownCommand
 	result    protocol.CommandResult
 	err       error
+	// entered, if non-nil, is closed the instant Dispatch is called — lets a
+	// concurrency test wait deterministically for "the first request has
+	// reached its critical section" instead of guessing with a sleep.
+	entered chan struct{}
+	// blockUntil, if non-nil, makes Dispatch wait for a receive on it before
+	// returning — used to widen the migrate route's critical section in
+	// concurrency tests (e.g. TestMigrateConcurrentRequestsAreSerialized).
+	blockUntil chan struct{}
+
+	mu    sync.Mutex
+	calls []protocol.TeardownCommand
 }
 
 func (d *recordingWorkerDispatcher) Dispatch(_ context.Context, _ string, cmd interface{}) (protocol.CommandResult, error) {
+	if d.entered != nil {
+		close(d.entered)
+	}
+	if d.blockUntil != nil {
+		<-d.blockUntil
+	}
+	d.mu.Lock()
 	if tc, ok := cmd.(protocol.TeardownCommand); ok {
 		d.calls = append(d.calls, tc)
 	}
+	d.mu.Unlock()
 	return d.result, d.err
+}
+
+func (d *recordingWorkerDispatcher) callCount() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return len(d.calls)
 }
 
 func (d *recordingWorkerDispatcher) IsConnected(_ string) bool { return d.connected }
@@ -1412,8 +1448,8 @@ func seedRenderedRevision(t *testing.T, stackID string, content string) {
 }
 
 func TestDispatchTeardownForMigrationSkipsWhenNeverSynced(t *testing.T) {
-	app, _, _, workerSvcAny := setupMigrateTestAppWithWorker(t, false, &recordingWorkerDispatcher{connected: true})
-	dispatcher := workerSvcAny.(*recordingWorkerDispatcher)
+	dispatcher := &recordingWorkerDispatcher{connected: true}
+	app, _, _ := setupMigrateTestAppWithWorker(t, false, dispatcher)
 
 	repo := createMigrateTestRepo(t, app, "repo-a", "https://example.com/a.git")
 	worker := createMigrateTestWorker(t, app)
@@ -1438,8 +1474,8 @@ func TestDispatchTeardownForMigrationSkipsWhenNeverSynced(t *testing.T) {
 // rather than silently skip, since skipping there would proceed straight to
 // mutating the record without ever tearing the old project down.
 func TestDispatchTeardownForMigrationMissingRevisionFileErrors(t *testing.T) {
-	app, _, _, workerSvcAny := setupMigrateTestAppWithWorker(t, false, &recordingWorkerDispatcher{connected: true})
-	dispatcher := workerSvcAny.(*recordingWorkerDispatcher)
+	dispatcher := &recordingWorkerDispatcher{connected: true}
+	app, _, _ := setupMigrateTestAppWithWorker(t, false, dispatcher)
 	t.Setenv("STACKS_STORAGE_PATH", t.TempDir()) // empty — no v1.yml written
 
 	repo := createMigrateTestRepo(t, app, "repo-a", "https://example.com/a.git")
@@ -1462,7 +1498,7 @@ func TestDispatchTeardownForMigrationMissingRevisionFileErrors(t *testing.T) {
 // which is the worker successfully responding with a failure.
 func TestDispatchTeardownForMigrationDispatchTransportError(t *testing.T) {
 	dispatcher := &recordingWorkerDispatcher{connected: true, err: fmt.Errorf("connection reset")}
-	app, _, _, _ := setupMigrateTestAppWithWorker(t, false, dispatcher)
+	app, _, _ := setupMigrateTestAppWithWorker(t, false, dispatcher)
 
 	repo := createMigrateTestRepo(t, app, "repo-a", "https://example.com/a.git")
 	worker := createMigrateTestWorker(t, app)
@@ -1501,7 +1537,7 @@ func TestResolveCurrentStackConfigMapReadsRenderedRevision(t *testing.T) {
 
 func TestMigrateTeardownDispatchesBeforeMutationAndRecordsAudit(t *testing.T) {
 	dispatcher := &recordingWorkerDispatcher{connected: true, result: protocol.CommandResult{Output: "removed 2 containers"}}
-	app, mux, _, _ := setupMigrateTestAppWithWorker(t, false, dispatcher)
+	app, mux, _ := setupMigrateTestAppWithWorker(t, false, dispatcher)
 
 	sourceDir := t.TempDir()
 	localGitFixture(t, sourceDir, map[string]string{"docker-compose.yml": "services:\n  web:\n    image: nginx\n"})
@@ -1555,7 +1591,7 @@ func TestMigrateTeardownDispatchesBeforeMutationAndRecordsAudit(t *testing.T) {
 
 func TestMigrateTeardownFailureAbortsMutation(t *testing.T) {
 	dispatcher := &recordingWorkerDispatcher{connected: true, result: protocol.CommandResult{Error: "compose down failed"}}
-	app, mux, _, _ := setupMigrateTestAppWithWorker(t, false, dispatcher)
+	app, mux, _ := setupMigrateTestAppWithWorker(t, false, dispatcher)
 
 	sourceDir := t.TempDir()
 	localGitFixture(t, sourceDir, map[string]string{"docker-compose.yml": "services:\n  web:\n    image: nginx\n"})
@@ -1605,7 +1641,7 @@ func TestMigrateTeardownFailureAbortsMutation(t *testing.T) {
 
 func TestMigrateTeardownRequiresWorkerOnline(t *testing.T) {
 	dispatcher := &recordingWorkerDispatcher{connected: false}
-	app, mux, _, _ := setupMigrateTestAppWithWorker(t, false, dispatcher)
+	app, mux, _ := setupMigrateTestAppWithWorker(t, false, dispatcher)
 
 	sourceDir := t.TempDir()
 	localGitFixture(t, sourceDir, map[string]string{"docker-compose.yml": "services:\n  web:\n    image: nginx\n"})
@@ -1645,5 +1681,68 @@ func TestMigrateTeardownRequiresWorkerOnline(t *testing.T) {
 	}
 	if updated.GetString("repository") != sourceRepo.Id {
 		t.Fatalf("expected repository unchanged when the worker is offline, got %s", updated.GetString("repository"))
+	}
+}
+
+// TestMigrateConcurrentRequestsAreSerialized is the end-to-end proof for the
+// TOCTOU fix: TryLockStack must be held across the whole teardown+mutation
+// critical section, not just probed once at the top of the handler (the old
+// IsSyncing-only guard). A dispatcher that blocks inside the teardown
+// dispatch widens that section long enough for a second concurrent request
+// to observe the lock still held and get rejected — deterministically, via
+// the entered/blockUntil channels, no sleeps.
+func TestMigrateConcurrentRequestsAreSerialized(t *testing.T) {
+	entered := make(chan struct{})
+	blockUntil := make(chan struct{})
+	dispatcher := &recordingWorkerDispatcher{connected: true, entered: entered, blockUntil: blockUntil}
+	app, mux, _ := setupMigrateTestAppWithWorker(t, false, dispatcher)
+
+	sourceDir := t.TempDir()
+	localGitFixture(t, sourceDir, map[string]string{"docker-compose.yml": "services:\n  web:\n    image: nginx\n"})
+	sourceRepo := createMigrateTestRepo(t, app, "source-repo", sourceDir)
+
+	targetDir := t.TempDir()
+	localGitFixture(t, targetDir, map[string]string{"docker-compose.yml": "services:\n  web:\n    image: nginx\n"})
+	targetRepo := createMigrateTestRepo(t, app, "target-repo", targetDir)
+
+	worker := createMigrateTestWorker(t, app)
+	stack := createMigrateTestStack(t, app, sourceRepo.Id, map[string]any{"worker": worker.Id, "current_version": 1})
+	seedRenderedRevision(t, stack.Id, "name: myapp\nservices:\n  web:\n    image: nginx\n")
+
+	body, _ := json.Marshal(migrateReq(targetRepo.Id, map[string]any{
+		"compose_path":         ".",
+		"compose_file":         "docker-compose.yml",
+		"confirm":              true,
+		"teardown_old_project": true,
+	}))
+	doRequest := func() int {
+		req := httptest.NewRequest(http.MethodPost, "/api/custom/stacks/"+stack.Id+"/migrate", strings.NewReader(string(body)))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	var wg sync.WaitGroup
+	var firstCode int
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		firstCode = doRequest()
+	}()
+
+	<-entered // the first request is now inside dispatchTeardownForMigration, holding the lock
+	secondCode := doRequest()
+	close(blockUntil) // let the first request finish
+	wg.Wait()
+
+	if secondCode != http.StatusConflict {
+		t.Fatalf("expected the second concurrent request to get 409, got %d", secondCode)
+	}
+	if firstCode != http.StatusAccepted {
+		t.Fatalf("expected the first request to get 202, got %d", firstCode)
+	}
+	if dispatcher.callCount() != 1 {
+		t.Fatalf("expected exactly one teardown dispatch, got %d", dispatcher.callCount())
 	}
 }

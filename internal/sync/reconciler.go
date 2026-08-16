@@ -1120,6 +1120,11 @@ func (r *Reconciler) stackMutex(stackID string) *sync.Mutex {
 // i.e. a reconcile/transfer/migrate is in flight. Callers that need to
 // reject a concurrent mutation synchronously (e.g. the migrate route's 409
 // guard) probe with a TryLock/Unlock pair rather than blocking.
+//
+// This is a point-in-time check only: a caller doing a multi-step mutation
+// (validate, then act) needs TryLockStack instead, to hold the lock across
+// its own critical section rather than re-probing and racing whatever else
+// might acquire it in between.
 func (r *Reconciler) IsSyncing(stackID string) bool {
 	mu := r.stackMutex(stackID)
 	if !mu.TryLock() {
@@ -1127,6 +1132,19 @@ func (r *Reconciler) IsSyncing(stackID string) bool {
 	}
 	mu.Unlock()
 	return false
+}
+
+// TryLockStack attempts to acquire stackID's per-stack mutex without
+// blocking, returning ok=false if a reconcile/transfer/migrate already holds
+// it. On success the caller owns the lock and must call release exactly
+// once (e.g. via defer) — typically held across a whole validate-then-act
+// critical section, unlike IsSyncing's single point-in-time probe.
+func (r *Reconciler) TryLockStack(stackID string) (release func(), ok bool) {
+	mu := r.stackMutex(stackID)
+	if !mu.TryLock() {
+		return nil, false
+	}
+	return mu.Unlock, true
 }
 
 // repoMutex guards a repository's on-disk working tree at

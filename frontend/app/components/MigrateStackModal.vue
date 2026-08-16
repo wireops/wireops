@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 const props = defineProps<{
   stack: any // the stack record (must have .id, .name, .repository, .config_source, .compose_path, .compose_file, .wireops_file_path)
@@ -14,7 +14,9 @@ const { $pb } = useNuxtApp()
 const { getWireopsFiles, getStackFiles, previewMigrateStack, migrateStack } = useApi()
 const toast = useToast()
 
-const { data: repos, refresh: refreshRepos } = useAsyncData('repos_for_migrate_stack', () =>
+// useAsyncData fetches immediately by default (immediate: true) — no
+// onMounted needed, and one would just duplicate this request.
+const { data: repos } = useAsyncData('repos_for_migrate_stack', () =>
   $pb.collection('repositories').getFullList({ sort: 'name' })
 )
 
@@ -75,6 +77,7 @@ watch(targetRepository, (repoId) => {
   wireopsFiles.value = []
   stackFiles.value = []
   preview.value = null
+  teardownOldProject.value = false
   errorMsg.value = ''
   if (!repoId) return
   if (isWireopsManaged.value) {
@@ -97,9 +100,14 @@ watch(selectedFile, (file) => {
   }
 })
 
-// Clear a stale report as soon as the target selection changes underneath it.
+// Clear a stale report (and any checkbox choice made against it) as soon as
+// the target selection changes underneath it — otherwise a checked
+// "tear down" from a previous preview could get silently submitted for a
+// new preview that never showed the checkbox (e.g. project_name.same flips
+// true, hiding it, but the ref stays true underneath).
 watch([wireopsFile, selectedFile], () => {
   preview.value = null
+  teardownOldProject.value = false
 })
 
 const canPreview = computed(() => {
@@ -127,6 +135,7 @@ async function runPreview() {
   previewing.value = true
   errorMsg.value = ''
   preview.value = null
+  teardownOldProject.value = false
   try {
     preview.value = await previewMigrateStack(props.stack.id, requestBody(false))
   } catch (e: any) {
@@ -166,8 +175,6 @@ function severityIcon(severity: string) {
   if (severity === 'warn') return 'i-lucide-triangle-alert'
   return 'i-lucide-info'
 }
-
-onMounted(refreshRepos)
 </script>
 
 <template>
@@ -185,7 +192,7 @@ onMounted(refreshRepos)
           v-model="targetRepository"
           :items="repoOptions"
           placeholder="Select a target repository"
-          :disabled="repoOptions.length === 0"
+          :disabled="repoOptions.length === 0 || migrating"
           class="w-full"
         />
       </UFormField>
@@ -196,7 +203,7 @@ onMounted(refreshRepos)
             v-model="wireopsFile"
             :items="wireopsFileOptions"
             placeholder="Select a wireops.yaml file"
-            :disabled="loadingWireopsFiles"
+            :disabled="loadingWireopsFiles || migrating"
             :loading="loadingWireopsFiles"
             class="w-full"
           />
@@ -207,7 +214,7 @@ onMounted(refreshRepos)
             v-model="selectedFile"
             :items="stackFileOptions"
             placeholder="Select a compose file"
-            :disabled="loadingStackFiles"
+            :disabled="loadingStackFiles || migrating"
             :loading="loadingStackFiles"
             class="w-full"
           />
@@ -219,7 +226,7 @@ onMounted(refreshRepos)
         icon="i-lucide-eye"
         variant="outline"
         :loading="previewing"
-        :disabled="!canPreview"
+        :disabled="!canPreview || migrating"
         @click="runPreview"
       />
 

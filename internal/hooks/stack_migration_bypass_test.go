@@ -21,7 +21,10 @@ func TestWireopsManagedStackMigrationBypassAllowsComposeFieldEdits(t *testing.T)
 
 func TestWireopsManagedStackMigrationBypassClearedAfterUse(t *testing.T) {
 	app, stacks := newWireopsImmutabilityTestApp(t)
-	workers, _ := app.FindAllRecords("workers")
+	workers, err := app.FindAllRecords("workers")
+	if err != nil || len(workers) == 0 {
+		t.Fatalf("expected a worker record: %v", err)
+	}
 	stack := newWireopsManagedStack(t, app, stacks, workers[0].Id)
 
 	if err := WithMigrationBypass(stack.Id, func() error { return nil }); err != nil {
