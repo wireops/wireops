@@ -41,6 +41,8 @@ func Register(r *router.Router[*core.RequestEvent], app core.App, scheduler *syn
 	registrar.registerContainerActionRoutes()
 	registrar.registerStackDeleteRoute()
 	registrar.registerStackTransferRoute()
+	registrar.registerMigratePreviewRoute()
+	registrar.registerMigrateRoute()
 	registrar.registerSystemRoutes()
 	registrar.registerImportRoutes()
 	registrar.registerCreateFromWireopsRoute()

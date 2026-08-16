@@ -1116,6 +1116,19 @@ func (r *Reconciler) stackMutex(stackID string) *sync.Mutex {
 	return mu.(*sync.Mutex)
 }
 
+// IsSyncing reports whether stackID currently holds its per-stack mutex —
+// i.e. a reconcile/transfer/migrate is in flight. Callers that need to
+// reject a concurrent mutation synchronously (e.g. the migrate route's 409
+// guard) probe with a TryLock/Unlock pair rather than blocking.
+func (r *Reconciler) IsSyncing(stackID string) bool {
+	mu := r.stackMutex(stackID)
+	if !mu.TryLock() {
+		return true
+	}
+	mu.Unlock()
+	return false
+}
+
 // repoMutex guards a repository's on-disk working tree at
 // workspace/<repoID>: writers (FetchRepo, RollbackStack) take the write lock
 // while they clone/fetch/reset it; readers (ReconcileStack, once it starts

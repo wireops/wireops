@@ -700,25 +700,53 @@ async function onStackDeleted() {
 
 // Transfer stack modal
 const showTransferModal = ref(false)
+// Migrate-to-another-repository modal
+const showMigrateModal = ref(false)
 
-const dangerZoneActions = computed(() => [
-  {
-    key: 'transfer',
-    label: 'Transfer Stack',
-    description: 'Move this stack to another worker. Data will not be preserved.',
-    buttonLabel: 'Transfer Stack',
-    icon: 'i-lucide-arrow-right-left',
-    color: 'warning' as const,
-    onClick: () => { showTransferModal.value = true }
-  },
-  {
+type DangerZoneAction = {
+  key: string
+  label: string
+  description: string
+  buttonLabel: string
+  icon?: string
+  color?: 'error' | 'warning'
+  onClick: () => void
+}
+
+const dangerZoneActions = computed<DangerZoneAction[]>(() => {
+  const actions: DangerZoneAction[] = [
+    {
+      key: 'transfer',
+      label: 'Transfer Stack',
+      description: 'Move this stack to another worker. Data will not be preserved.',
+      buttonLabel: 'Transfer Stack',
+      icon: 'i-lucide-arrow-right-left',
+      color: 'warning' as const,
+      onClick: () => { showTransferModal.value = true }
+    },
+  ]
+  // Migration re-points the repository field, which only exists for
+  // git-backed stacks — a source_type=local (imported) stack has none.
+  if (stack.value?.source_type !== 'local') {
+    actions.push({
+      key: 'migrate',
+      label: 'Migrate to Another Repository',
+      description: 'Move this stack to a different (already-registered) Git repository.',
+      buttonLabel: 'Migrate Stack',
+      icon: 'i-lucide-git-branch',
+      color: 'warning' as const,
+      onClick: () => { showMigrateModal.value = true }
+    })
+  }
+  actions.push({
     key: 'remove',
     label: 'Remove Stack',
     description: 'This will stop all containers and delete the stack permanently.',
     buttonLabel: 'Remove Stack',
     onClick: () => { showDeleteModal.value = true }
-  }
-])
+  })
+  return actions
+})
 function onTransferDone() {
   showTransferModal.value = false
   // Switch to Sync Logs tab so the user can watch the transfer progress in real-time
@@ -727,6 +755,14 @@ function onTransferDone() {
   // starts working, so the 'running' state should already be visible.
   refreshLogs()
   // Refresh the stack record after a delay for the worker field to update
+  setTimeout(() => { refreshStack(); refreshLogs() }, 4000)
+}
+function onMigrateDone() {
+  showMigrateModal.value = false
+  // Same rationale as onTransferDone: watch the reconcile the migrate route
+  // kicks off, and refresh once the repository field has updated.
+  activeTab.value = 'logs'
+  refreshLogs()
   setTimeout(() => { refreshStack(); refreshLogs() }, 4000)
 }
 
@@ -1441,6 +1477,17 @@ onMounted(() => {
           :stack="stack"
           @transferred="onTransferDone"
           @cancel="showTransferModal = false"
+        />
+      </template>
+    </UModal>
+    <!-- Migrate stack modal -->
+    <UModal v-model:open="showMigrateModal" :ui="{ content: 'bg-gray-50 dark:bg-(--ui-bg)' }">
+      <template #content>
+        <MigrateStackModal
+          v-if="stack"
+          :stack="stack"
+          @migrated="onMigrateDone"
+          @cancel="showMigrateModal = false"
         />
       </template>
     </UModal>

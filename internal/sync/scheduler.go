@@ -207,6 +207,24 @@ func (s *Scheduler) LoadStackEnvVars(ctx context.Context, stackID string) ([]str
 	return s.reconciler.loadEnvVars(ctx, stackID)
 }
 
+// IsSyncing reports whether stackID has a reconcile/transfer/migrate in
+// flight, for callers that need to reject a concurrent mutation
+// synchronously (e.g. the migrate route's 409 guard) instead of racing it.
+func (s *Scheduler) IsSyncing(stackID string) bool {
+	return s.reconciler.IsSyncing(stackID)
+}
+
+// LockStackForTest acquires stackID's per-stack mutex and returns a func
+// that releases it. Test-only helper: package tests outside internal/sync
+// (e.g. internal/routes' migrate-route 409 guard) can use it to make
+// IsSyncing deterministically true instead of racing a real background
+// reconcile to observe the same state.
+func (s *Scheduler) LockStackForTest(stackID string) func() {
+	mu := s.reconciler.stackMutex(stackID)
+	mu.Lock()
+	return mu.Unlock
+}
+
 func (s *Scheduler) TriggerTransfer(stackID, targetWorkerID string, userID string) {
 	ctx := contextutil.WithUserID(s.rootCtx, userID)
 	go s.safeRun(ctx, fmt.Sprintf("transfer[%s]", stackID), func() error {

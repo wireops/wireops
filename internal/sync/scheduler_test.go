@@ -115,6 +115,31 @@ func newSchedulerTestApp(t *testing.T) *tests.TestApp {
 	return app
 }
 
+// TestSchedulerIsSyncingDelegatesToReconciler is the thin-wrapper coverage
+// for Scheduler.IsSyncing (the migrate route's 409 guard calls this, not
+// Reconciler.IsSyncing directly) — TestReconcilerIsSyncingReflectsLockState
+// already covers the actual TryLock/Unlock semantics, this just asserts the
+// Scheduler method actually forwards to it instead of e.g. always false.
+func TestSchedulerIsSyncingDelegatesToReconciler(t *testing.T) {
+	app := newSchedulerTestApp(t)
+	s := NewScheduler(app, &fakeDispatcher{})
+
+	if s.IsSyncing("stack-1") {
+		t.Fatal("expected IsSyncing=false before anything holds the stack's mutex")
+	}
+
+	mu := s.reconciler.stackMutex("stack-1")
+	mu.Lock()
+	if !s.IsSyncing("stack-1") {
+		t.Fatal("expected IsSyncing=true while the stack's mutex is held")
+	}
+	mu.Unlock()
+
+	if s.IsSyncing("stack-1") {
+		t.Fatal("expected IsSyncing=false again once the mutex is released")
+	}
+}
+
 // TestRegisterRepoAndUnregisterRepoManageTickerLifecycle drives the repo-level
 // ticker's lifecycle map directly: registering a repo must (re)start its job,
 // and unregistering must remove it, mirroring the stack ticker's contract
