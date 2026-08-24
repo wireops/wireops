@@ -116,16 +116,64 @@ watch(query, async () => {
   await nextTick()
   if (viewport.value) viewport.value.scrollTop = 0
 })
+
+// Claiming a leftward swipe ourselves (and blocking the browser's own
+// edge-swipe/overscroll "go back" gesture via `overscroll-x-none` on the
+// panel) is what lets the gesture close this modal instead of navigating
+// the underlying page away. Swipes starting inside the log viewport are
+// ignored so horizontal scrolling of long, non-wrapped log lines still works.
+const SWIPE_CLOSE_DISTANCE = 60
+const SWIPE_MAX_DURATION = 800
+let touchStartX = 0
+let touchStartY = 0
+let touchStartTime = 0
+let ignoreSwipe = false
+
+function handleTouchStart(event: TouchEvent) {
+  const touch = event.touches[0]
+  if (!touch) return
+  ignoreSwipe = !!(event.target as HTMLElement | null)?.closest('[data-log-viewport]')
+  touchStartX = touch.clientX
+  touchStartY = touch.clientY
+  touchStartTime = event.timeStamp
+}
+
+function handleTouchMove(event: TouchEvent) {
+  if (ignoreSwipe) return
+  const touch = event.touches[0]
+  if (!touch) return
+  const dx = touch.clientX - touchStartX
+  const dy = touch.clientY - touchStartY
+  if (event.cancelable && Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy)) {
+    event.preventDefault()
+  }
+}
+
+function handleTouchEnd(event: TouchEvent) {
+  if (ignoreSwipe) return
+  const touch = event.changedTouches[0]
+  if (!touch) return
+  const dx = touch.clientX - touchStartX
+  const dy = touch.clientY - touchStartY
+  const elapsed = event.timeStamp - touchStartTime
+  const isLeftSwipe = dx < -SWIPE_CLOSE_DISTANCE && Math.abs(dx) > Math.abs(dy) * 1.5 && elapsed < SWIPE_MAX_DURATION
+  if (isLeftSwipe) open.value = false
+}
 </script>
 
 <template>
   <USlideover
     v-model:open="open"
     title="Container Logs"
-    class="w-full max-w-full sm:w-[800px] md:w-[1000px]"
+    class="h-[100svh] max-h-[100svh] w-full max-w-full overscroll-x-none sm:h-full sm:max-h-none sm:w-[800px] md:w-[1000px]"
   >
     <template #content>
-      <div class="flex h-full min-h-0 flex-col gap-3 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:gap-4 sm:p-4">
+      <div
+        class="flex h-full min-h-0 flex-col gap-3 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:gap-4 sm:p-4"
+        @touchstart="handleTouchStart"
+        @touchmove="handleTouchMove"
+        @touchend="handleTouchEnd"
+      >
         <header class="flex shrink-0 items-center justify-between gap-3">
           <div class="min-w-0">
             <div class="flex items-center gap-2">
@@ -219,6 +267,7 @@ watch(query, async () => {
           <div
             v-else
             ref="viewport"
+            data-log-viewport
             class="h-full overflow-auto overscroll-contain py-2 text-[11px] leading-5 sm:text-xs"
             role="log"
             aria-label="Container log output"
@@ -253,6 +302,17 @@ watch(query, async () => {
             </div>
           </div>
         </div>
+
+        <footer class="flex shrink-0 sm:hidden">
+          <CloseButton
+            label="Close"
+            variant="soft"
+            size="lg"
+            class="w-full justify-center"
+            aria-label="Close container logs"
+            @click="open = false"
+          />
+        </footer>
       </div>
     </template>
   </USlideover>

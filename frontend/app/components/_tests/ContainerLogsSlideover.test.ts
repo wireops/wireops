@@ -40,7 +40,18 @@ function mountViewer(props: Partial<{ containerId: string, containerName: string
           },
         },
         UIcon: true,
-        CloseButton: true,
+        CloseButton: {
+          inheritAttrs: false,
+          props: ['label'],
+          emits: ['click'],
+          setup(props: any, { attrs, emit }: any) {
+            return () => h('button', {
+              type: 'button',
+              'aria-label': attrs['aria-label'],
+              onClick: () => emit('click'),
+            }, props.label)
+          },
+        },
         AppTextInput: true,
         AppSelectInput: true,
       },
@@ -130,6 +141,37 @@ describe('ContainerLogsSlideover', () => {
 
     expect(wrapper.text()).toContain('This container has no logs yet.')
     expect(wrapper.find('[role="log"]').exists()).toBe(false)
+  })
+
+  it('closes via the mobile footer close button', async () => {
+    const wrapper = mountViewer()
+    await flushPromises()
+
+    await wrapper.find('[aria-label="Close container logs"]').trigger('click')
+
+    expect(wrapper.emitted('update:open')?.[0]).toEqual([false])
+  })
+
+  it('closes on a leftward swipe outside the log viewport', async () => {
+    const wrapper = mountViewer()
+    await flushPromises()
+
+    const panel = wrapper.find('.flex.h-full.min-h-0.flex-col')
+    await panel.trigger('touchstart', { touches: [{ clientX: 300, clientY: 100 }] })
+    await panel.trigger('touchend', { changedTouches: [{ clientX: 200, clientY: 105 }] })
+
+    expect(wrapper.emitted('update:open')?.[0]).toEqual([false])
+  })
+
+  it('ignores a leftward swipe that starts inside the log viewport', async () => {
+    const wrapper = mountViewer()
+    await flushPromises()
+
+    const logViewport = wrapper.find('[data-log-viewport]')
+    await logViewport.trigger('touchstart', { touches: [{ clientX: 300, clientY: 100 }] })
+    await logViewport.trigger('touchend', { changedTouches: [{ clientX: 200, clientY: 105 }] })
+
+    expect(wrapper.emitted('update:open')).toBeUndefined()
   })
 
   it('clears stale content when switching to a different container', async () => {
