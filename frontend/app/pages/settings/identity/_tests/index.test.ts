@@ -22,6 +22,7 @@ function setupGlobals() {
   const toastAdd = vi.fn()
   const fetchMock = vi.fn()
   const clipboardWrite = vi.fn()
+  const isAdmin = ref(false)
 
   vi.stubGlobal('fetch', fetchMock)
   vi.stubGlobal('navigator', { clipboard: { writeText: clipboardWrite } })
@@ -34,11 +35,11 @@ function setupGlobals() {
     },
   })
   ;(globalThis as any).useToast = () => ({ add: toastAdd })
-  ;(globalThis as any).usePermissions = () => ({ isAdmin: ref(false) })
+  ;(globalThis as any).usePermissions = () => ({ isAdmin })
   ;(globalThis as any).useRoute = () => ({ query: {} })
   ;(globalThis as any).useRouter = () => ({ replace: vi.fn() })
 
-  return { clipboardWrite, fetchMock, toastAdd }
+  return { clipboardWrite, fetchMock, isAdmin, toastAdd }
 }
 
 function mountPage() {
@@ -144,5 +145,93 @@ describe('settings/identity invite actions', () => {
       description: 'Copy it manually from the field.',
       color: 'error',
     })
+  })
+
+  it('updates user status and roles, while preserving failures for retry', async () => {
+    const { fetchMock, toastAdd } = setupGlobals()
+    vi.stubGlobal('confirm', vi.fn().mockReturnValue(true))
+    fetchMock.mockResolvedValue({ ok: true, json: () => Promise.resolve({}) })
+    const wrapper = mountPage()
+    await flushPromises()
+    const user = { id: 'user-1', email: 'viewer@example.com', disabled: false, role: 'viewer' }
+
+    await (wrapper.vm as any).toggleUserDisabled(user)
+    expect(user.disabled).toBe(true)
+    expect(JSON.parse((fetchMock.mock.calls[0]![1] as RequestInit).body as string)).toEqual({ disabled: true })
+    expect(toastAdd).toHaveBeenCalledWith({ title: 'User disabled', color: 'success' })
+
+    await (wrapper.vm as any).updateUserRole(user, 'operator')
+    expect(user.role).toBe('operator')
+    expect(JSON.parse((fetchMock.mock.calls[1]![1] as RequestInit).body as string)).toEqual({ role: 'operator' })
+    expect(toastAdd).toHaveBeenCalledWith({ title: 'Role updated', color: 'success' })
+
+    fetchMock.mockResolvedValueOnce({ ok: false, json: () => Promise.resolve({ error: 'forbidden' }) })
+    await (wrapper.vm as any).updateUserRole(user, 'admin')
+    expect(user.role).toBe('operator')
+    expect(toastAdd).toHaveBeenCalledWith({ title: 'Failed to update role', description: 'forbidden', color: 'error' })
+  })
+
+  it('loads, filters, and creates service accounts', async () => {
+    const { fetchMock, isAdmin, toastAdd } = setupGlobals()
+    const wrapper = mountPage()
+    await flushPromises()
+    isAdmin.value = true
+
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve([
+        { id: 'disabled', name: 'Archive', description: 'old', enabled: false },
+        { id: 'active', name: 'Deploy', description: 'production', enabled: true },
+      ]),
+    })
+    await (wrapper.vm as any).loadServiceAccounts()
+    expect((wrapper.vm as any).filteredServiceAccounts.map((account: any) => account.id)).toEqual(['active'])
+
+    ;(wrapper.vm as any).showDisabledSAs = true
+    ;(wrapper.vm as any).saSearchQuery = 'archive'
+    expect((wrapper.vm as any).filteredServiceAccounts.map((account: any) => account.id)).toEqual(['disabled'])
+
+    fetchMock
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ api_key: 'key-1', name: 'Automation' }) })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([]) })
+    await (wrapper.vm as any).createServiceAccount({ name: 'Automation', description: 'CI', role: 'operator' })
+
+    expect((wrapper.vm as any).createdApiKey).toBe('key-1')
+    expect((wrapper.vm as any).targetAccountName).toBe('Automation')
+    expect((wrapper.vm as any).showApiKeyModal).toBe(true)
+    expect(toastAdd).toHaveBeenCalledWith({ title: 'Service account created', color: 'success' })
+  })
+
+  it('issues, revokes, and disables service-account keys', async () => {
+    const { fetchMock, isAdmin, toastAdd } = setupGlobals()
+    const wrapper = mountPage()
+    await flushPromises()
+    isAdmin.value = true
+    const account = { id: 'service-1', name: 'Automation', enabled: true }
+
+    fetchMock
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ api_key: 'issued-key' }) })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([]) })
+    await (wrapper.vm as any).issueApiKey(account)
+    expect((wrapper.vm as any).createdApiKey).toBe('issued-key')
+    expect(toastAdd).toHaveBeenCalledWith({ title: 'API key issued', color: 'success' })
+
+    ;(wrapper.vm as any).confirmRevokeApiKey(account)
+    fetchMock
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([]) })
+    await (wrapper.vm as any).executeRevokeApiKey()
+    expect((wrapper.vm as any).showRevokeKeyModal).toBe(false)
+    expect(toastAdd).toHaveBeenCalledWith({ title: 'API key revoked', color: 'success' })
+
+    ;(wrapper.vm as any).openApiKeys = { 'service-1': true }
+    ;(wrapper.vm as any).confirmToggleSAEnabled(account)
+    fetchMock
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([]) })
+    await (wrapper.vm as any).executeToggleSAEnabled()
+    expect((wrapper.vm as any).showDisableSAModal).toBe(false)
+    expect((wrapper.vm as any).openApiKeys['service-1']).toBe(false)
+    expect(toastAdd).toHaveBeenCalledWith({ title: 'Service account disabled', color: 'success' })
   })
 })
