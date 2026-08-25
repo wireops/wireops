@@ -10,29 +10,22 @@
 [![govulncheck](https://img.shields.io/badge/govulncheck-passing-brightgreen.svg)](.govulncheck-allowlist.txt)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/wireops/wireops)](go.mod)
 [![Node Version](https://img.shields.io/badge/node-26-brightgreen.svg)](.github/workflows/server-ci.yml)
-[![Nuxt](https://img.shields.io/badge/Nuxt-4.3-00DC82.svg?logo=nuxtdotjs&logoColor=white)](frontend/package.json)
+[![Nuxt](https://img.shields.io/badge/Nuxt-4.5-00DC82.svg?logo=nuxtdotjs&logoColor=white)](frontend/package.json)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPLv3-blue.svg)](LICENSE)
 [![Codacy Badge](https://app.codacy.com/project/badge/Grade/cdc7bea4ca1e44f780110e784d34938a)](https://app.codacy.com/gh/wireops/wireops/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
 [![Codacy Badge](https://app.codacy.com/project/badge/Coverage/cdc7bea4ca1e44f780110e784d34938a)](https://app.codacy.com/gh/wireops/wireops/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_coverage)
 
-**Push to Git. wireops ships it.** A self-hosted GitOps controller that watches your repos and rolls out `docker compose` changes across every host you own — no Kubernetes, no YAML sprawl, no manual SSH-and-pray deploys. Think Flux/ArgoCD, but for plain Compose stacks.
-
-> **Project status**: pre-1.0 (current release line: `v0.2.x`) and under active development. Core GitOps sync, worker security policies, RBAC, external secret providers (Vault, Infisical), backups, and the audited web terminal are in daily use. Until `v1.0`, releases may still change configuration or the server-worker protocol; read the release notes and upgrade both components together.
+**Push to Git. wireops ships it.** A self-hosted GitOps controller that watches your repos and rolls out `docker compose` changes across every host you own — no Kubernetes, no extra control-plane manifests, no manual SSH-and-pray deploys. Think Flux/ArgoCD, but for plain Compose stacks.
 
 📚 **Full technical docs** (architecture, data model, API reference, env vars, MCP server, disaster recovery, integrations) live in the **[Wiki](https://github.com/wireops/wireops/wiki)**. Operational guides kept with the code: [production](docs/PRODUCTION.md) · [upgrades](docs/UPGRADING.md) · [compatibility](docs/COMPATIBILITY.md) · [disaster recovery](docs/DISASTER_RECOVERY.md) · [troubleshooting](docs/TROUBLESHOOTING.md) · [security policy](SECURITY.md).
 
-## Project Scope
-
-Targets developers, homelabs, and self-hosters running plain `docker compose` stacks across one or many hosts and repos — GitOps sync/deploy, without manifest sprawl or enterprise-grade autoscaling/control-plane complexity.
-
-**Not** a Kubernetes/Swarm alternative, not a competitor to Flux/ArgoCD or enterprise app-management platforms. For production workloads exposed to the internet at enterprise scale (multi-node autoscaling, high availability, compliance-grade orchestration), prefer Kubernetes (with Flux/ArgoCD) instead.
-
 ## Table of Contents
 
-- [Project Scope](#project-scope)
 - [Features](#features)
 - [Screenshots](#screenshots)
+- [Project Scope](#project-scope)
 - [Tech Stack](#tech-stack)
+- [Requirements](#requirements)
 - [Quick Start](#quick-start)
 - [Usage](#usage)
 - [Customization](#customization)
@@ -41,11 +34,8 @@ Targets developers, homelabs, and self-hosters running plain `docker compose` st
 - [Integrations](#integrations)
 - [Development](#development)
 - [Known Limitations](#known-limitations)
-- [Backlog / Future Enhancements](#backlog--future-enhancements)
 - [License](#license)
 - [Contributing](#contributing)
-
-Deeper technical docs (moved to the [Wiki](https://github.com/wireops/wireops/wiki)): [Architecture](https://github.com/wireops/wireops/wiki/Architecture) · [Data Model](https://github.com/wireops/wireops/wiki/Data-Model) · [API Reference](https://github.com/wireops/wireops/wiki/API-Reference) · [Environment Variables](https://github.com/wireops/wireops/wiki/Environment-Variables) · [Observability](https://github.com/wireops/wireops/wiki/Observability) · [MCP Server](https://github.com/wireops/wireops/wiki/MCP-Server) · [Disaster Recovery](https://github.com/wireops/wireops/wiki/Disaster-Recovery) · [Integrations](https://github.com/wireops/wireops/wiki/Integrations)
 
 ## Features
 
@@ -100,12 +90,28 @@ Deeper technical docs (moved to the [Wiki](https://github.com/wireops/wireops/wi
   <sub><b>Mobile-friendly UI</b> — manage stacks and secrets from your phone</sub>
 </p>
 
+## Project Scope
+
+Targets developers, homelabs, and self-hosters running plain `docker compose` stacks across one or many hosts and repos — GitOps sync/deploy, without manifest sprawl or enterprise-grade autoscaling/control-plane complexity.
+
+**Not** a Kubernetes/Swarm alternative, not a competitor to Flux/ArgoCD or enterprise app-management platforms. For production workloads exposed to the internet at enterprise scale (multi-node autoscaling, high availability, compliance-grade orchestration), prefer Kubernetes (with Flux/ArgoCD) instead.
+
 ## Tech Stack
 
 - **Backend**: Go + PocketBase
 - **Frontend**: Nuxt 4 + Vue 3 + Nuxt UI
 - **Container Runtime**: Docker + Docker Compose
 - **Database**: SQLite (via PocketBase)
+
+## Requirements
+
+- A Linux host on `amd64` or `arm64`.
+- Docker Engine `25.0+` and Docker Compose `v2.24.1+` (`docker compose`).
+- Worker access to the Docker socket or configured Docker endpoint.
+- Network access from every worker to the server; use TLS or a private network for remote workers.
+
+Keep the server and every worker on the exact same release. See the
+[compatibility policy](docs/COMPATIBILITY.md) before upgrading either component.
 
 ## Quick Start
 
@@ -159,9 +165,9 @@ The worker connects out to the server, registers with that token, and starts pol
 
 `WORKER_TAGS` labels what a worker is for (e.g. `prod`, `eu-west-1`) — required, comma-separated, set on the worker itself, not in the UI. Stacks and jobs can require specific tags in their `wireops.yaml`/`job.yaml`, so only matching workers show up as valid targets.
 
-> **Linux permissions:** the containers run as UID/GID `1000`. Before the first start, create `example/data` and make it writable by that identity. A Linux worker also needs the Docker socket's numeric group in `DOCKER_GID`; `example/.env.example` contains the commands. Docker Desktop usually handles the socket differently, but the data directory still needs to be writable.
+> **Linux permissions:** the containers run as UID/GID `1000`. Before the first start, create `example/data` and make it writable by that identity. A Linux worker also needs the Docker socket's numeric group in `DOCKER_GID`; `example/.env.example` contains the commands. On Docker Desktop, the data directory must still be writable by the container user and socket permissions depend on the local setup; Linux is the supported production environment.
 
-The example defaults to the current release, not `latest`. Keep `WIREOPS_VERSION` identical for the server and every worker. Port `8443` is plain HTTP/WebSocket while `TLS_ENABLED=false`; remote workers should use native TLS or a private network. See [Production](docs/PRODUCTION.md) before exposing an instance.
+The example pins `WIREOPS_VERSION` instead of using `latest`. Port `8443` is plain HTTP/WebSocket while `TLS_ENABLED=false`; remote workers should use native TLS or a private network. See [Production](docs/PRODUCTION.md) before exposing an instance.
 
 ## Usage
 
@@ -224,7 +230,7 @@ The application automatically extracts this value from the service's `labels`, `
 ```yaml
 services:
   app:
-    image: nginx:latest
+    image: nginx:1.31.4-alpine
     labels:
       - "customization.image.slug=nginx"
 ```
@@ -240,7 +246,8 @@ Stacks support render-time overrides — swapping a service's `image`, `ports`, 
 
 ## Environment Variables
 
-`SECRET_KEY` and `BOOTSTRAP_TOKEN` are required — see [Quick Start](#quick-start) above.
+`SECRET_KEY` is required. `BOOTSTRAP_TOKEN` is required only until the first
+administrator is created — see [Quick Start](#quick-start) above.
 
 For the full server/worker env var reference, SMTP, OIDC/SSO, secret providers (Vault/Infisical), and SOPS+age, see the [Environment Variables wiki page](https://github.com/wireops/wireops/wiki/Environment-Variables).
 
@@ -273,15 +280,6 @@ npm run dev
 ## Known Limitations
 
 - No OCI-artifact source, Docker Swarm/multi-node, or canary/preview deploys yet (tracked as strategic backlog with no ETA).
-
-## Backlog / Future Enhancements
-
-### 🔄 Bulk Operations
-- Multi-select stacks with checkboxes
-- Bulk actions: "Sync All", "Pause All", "Resume All"
-- Progress tracking for batch operations
-
----
 
 ## License
 

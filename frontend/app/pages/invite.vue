@@ -91,8 +91,11 @@ async function handleSubmit() {
 
     <div class="relative z-10 w-full max-w-sm px-4">
       <div class="flex flex-col items-center mb-8">
-        <div class="flex items-center justify-center w-16 h-16 rounded-2xl bg-yellow-400/10 border border-yellow-400/20 mb-4 shadow-[0_0_24px_rgba(255,198,0,0.15)]">
-          <UIcon name="i-lucide-zap" class="w-9 h-9 text-yellow-400 drop-shadow-[0_0_8px_rgba(255,198,0,0.7)]" />
+        <div class="relative">
+          <div class="w-36 h-36 flex items-center justify-center">
+            <img src="~/assets/img/logo.png" alt="" class="w-28 h-28 object-contain drop-shadow-[0_0_12px_rgba(255,198,0,0.5)]">
+          </div>
+          <div class="absolute -inset-4 rounded-3xl bg-yellow-400/5 blur-xl pointer-events-none" />
         </div>
         <h1 class="text-3xl font-black tracking-widest uppercase text-yellow-400 drop-shadow-[0_0_12px_rgba(255,198,0,0.4)]">
           wireops

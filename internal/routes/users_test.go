@@ -5,13 +5,126 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/router"
 
 	"github.com/wireops/wireops/internal/rbac"
 )
+
+func callCreateInviteHandler(t *testing.T, app core.App, body any, actor *core.Record) *httptest.ResponseRecorder {
+	t.Helper()
+	b, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal body: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/custom/users/invite", bytes.NewBuffer(b))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	e := &core.RequestEvent{
+		App: app,
+		Event: router.Event{
+			Response: rec,
+			Request:  req,
+		},
+		Auth: actor,
+	}
+	if err := handleCreateInvite(app)(e); err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	return rec
+}
+
+func TestCreateInviteDelivery(t *testing.T) {
+	app := newSetupTestApp(t)
+	clearAllUsers(t, app)
+	admin := createTestUser(t, app, "admin@example.com", "Password1!", rbac.RoleAdmin)
+
+	tests := []struct {
+		name           string
+		body           map[string]any
+		expectedCode   int
+		expectedEmails int
+		expectsLink    bool
+		expectsInvite  bool
+	}{
+		{
+			name: "shareable link",
+			body: map[string]any{
+				"email":    "link@example.com",
+				"role":     rbac.RoleViewer,
+				"delivery": "link",
+			},
+			expectedCode:  http.StatusOK,
+			expectsLink:   true,
+			expectsInvite: true,
+		},
+		{
+			name: "email by default when delivery is omitted",
+			body: map[string]any{
+				"email": "email@example.com",
+				"role":  rbac.RoleViewer,
+			},
+			expectedCode:   http.StatusOK,
+			expectedEmails: 1,
+			expectsInvite:  true,
+		},
+		{
+			name: "invalid delivery",
+			body: map[string]any{
+				"email":    "invalid@example.com",
+				"role":     rbac.RoleViewer,
+				"delivery": "pigeon",
+			},
+			expectedCode: http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			emailsBefore := app.TestMailer.TotalSend()
+			rec := callCreateInviteHandler(t, app, tt.body, admin)
+			if rec.Code != tt.expectedCode {
+				t.Fatalf("expected %d, got %d: %s", tt.expectedCode, rec.Code, rec.Body.String())
+			}
+
+			invites, err := app.FindAllRecords("invites", dbx.HashExp{"email": tt.body["email"]})
+			if err != nil {
+				t.Fatalf("find invites: %v", err)
+			}
+			if got := len(invites) == 1; got != tt.expectsInvite {
+				t.Fatalf("expected invite persisted=%t, got %d invite(s)", tt.expectsInvite, len(invites))
+			}
+			if got, want := app.TestMailer.TotalSend(), emailsBefore+tt.expectedEmails; got != want {
+				t.Fatalf("unexpected number of sent emails: got %d, expected %d", got, want)
+			}
+			if !tt.expectsInvite {
+				return
+			}
+
+			var response struct {
+				Status    string `json:"status"`
+				InviteURL string `json:"invite_url"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if response.Status != "invited" {
+				t.Fatalf("unexpected response: %#v", response)
+			}
+			if tt.expectsLink {
+				if !strings.Contains(response.InviteURL, "/invite?token=") || !strings.HasSuffix(response.InviteURL, invites[0].GetString("token")) {
+					t.Fatalf("invite URL does not include the saved token: %q", response.InviteURL)
+				}
+			} else if response.InviteURL != "" {
+				t.Fatalf("email delivery must not return an invite URL: %q", response.InviteURL)
+			}
+		})
+	}
+}
 
 func callUpdateUserHandler(t *testing.T, app core.App, userID string, body any, actor *core.Record) *httptest.ResponseRecorder {
 	t.Helper()

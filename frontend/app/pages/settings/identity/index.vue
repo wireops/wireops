@@ -61,6 +61,7 @@ const roleOptions = [
 const inviteEmail = ref('')
 const inviteRole = ref('viewer')
 const inviteLoading = ref(false)
+const inviteLink = ref('')
 
 const usersSearchQuery = ref('')
 
@@ -84,9 +85,10 @@ const {
   { perPage: 24, watchDebounced: [usersSearchQuery] }
 )
 
-async function sendInvite() {
+async function createInvite(delivery: 'email' | 'link') {
   if (!inviteEmail.value) return
   inviteLoading.value = true
+  inviteLink.value = ''
   try {
     const res = await fetch(`${$pb.baseURL}/api/custom/users/invite`, {
       method: 'POST',
@@ -95,17 +97,37 @@ async function sendInvite() {
         Authorization: `Bearer ${$pb.authStore.token}`,
         'X-Wireops-Origin': 'ui',
       },
-      body: JSON.stringify({ email: inviteEmail.value, role: inviteRole.value }),
+      body: JSON.stringify({ email: inviteEmail.value, role: inviteRole.value, delivery }),
     })
     const data = await res.json()
     if (!res.ok) throw new Error(data.error)
     inviteEmail.value = ''
     inviteRole.value = 'viewer'
-    toast.add({ title: 'Invitation sent', color: 'success' })
+    if (delivery === 'email') {
+      toast.add({ title: 'Invitation sent', color: 'success' })
+      return
+    }
+
+    inviteLink.value = data.invite_url
+    try {
+      await navigator.clipboard.writeText(inviteLink.value)
+      toast.add({ title: 'Invitation link copied', color: 'success' })
+    } catch {
+      toast.add({ title: 'Invitation link created', description: 'Copy the link below to share it.', color: 'warning' })
+    }
   } catch (e: any) {
-    toast.add({ title: 'Failed to send invite', description: e?.message, color: 'error' })
+    toast.add({ title: 'Failed to create invite', description: e?.message, color: 'error' })
   } finally {
     inviteLoading.value = false
+  }
+}
+
+async function copyInviteLink() {
+  try {
+    await navigator.clipboard.writeText(inviteLink.value)
+    toast.add({ title: 'Invitation link copied', color: 'success' })
+  } catch {
+    toast.add({ title: 'Could not copy invitation link', description: 'Copy it manually from the field.', color: 'error' })
   }
 }
 
@@ -321,13 +343,20 @@ onMounted(() => {
       <AppPanelCard v-if="isAdmin">
         <template #header>
           <h3 class="font-semibold">Invite User</h3>
-          <p class="text-xs text-gray-500 mt-0.5">Send a magic-link invitation to a new administrator.</p>
+          <p class="text-xs text-gray-500 mt-0.5">Send a magic-link invitation by email or copy a link to share yourself.</p>
         </template>
-        <form class="flex flex-col gap-2 sm:flex-row" @submit.prevent="sendInvite">
-          <AppTextInput v-model="inviteEmail" type="email" placeholder="user@example.com" icon="i-lucide-mail" aria-label="Invite email" class="flex-1" />
+        <form class="flex flex-col gap-2 sm:flex-row" @submit.prevent="createInvite('email')">
+          <AppTextInput v-model="inviteEmail" type="email" placeholder="user@example.com" icon="i-lucide-mail" aria-label="Invite email" class="flex-1" required />
           <AppSelectInput v-model="inviteRole" :items="roleOptions" content-width class="w-full sm:w-auto sm:min-w-40" />
-          <UButton type="submit" label="Send Invite" icon="i-lucide-send" :loading="inviteLoading" />
+          <div class="flex gap-2">
+            <UButton type="submit" label="Email Invite" icon="i-lucide-send" :loading="inviteLoading" />
+            <UButton type="button" label="Copy Link" icon="i-lucide-link" color="neutral" variant="outline" :loading="inviteLoading" @click="createInvite('link')" />
+          </div>
         </form>
+        <div v-if="inviteLink" class="mt-3 flex flex-col gap-2 sm:flex-row">
+          <AppTextInput :model-value="inviteLink" readonly aria-label="Invitation link" class="flex-1 font-mono text-xs" />
+          <UButton type="button" label="Copy" icon="i-lucide-copy" color="neutral" variant="outline" @click="copyInviteLink" />
+        </div>
       </AppPanelCard>
 
       <AppPanelCard>
