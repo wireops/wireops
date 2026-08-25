@@ -57,7 +57,7 @@ dev:
 	}; \
 	trap 'cleanup; exit 130' INT TERM; \
 	trap 'cleanup' EXIT; \
-	go run . serve --http=0.0.0.0:8090 >/dev/stdout 2>/dev/stderr & \
+	APP_URL="$${APP_URL:-http://localhost:3000}" go run . serve --http=0.0.0.0:8090 >/dev/stdout 2>/dev/stderr & \
 	backend_pid=$$!; \
 	sleep 2; \
 	sh -c 'cd $(FRONTEND_DIR) && exec npm run dev' >/dev/stdout 2>/dev/stderr & \

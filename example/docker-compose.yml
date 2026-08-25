@@ -1,6 +1,6 @@
 services:
   wireops:
-    image: ghcr.io/wireops/server:${WIREOPS_VERSION:-0.2.11}
+    image: ghcr.io/wireops/server:${WIREOPS_VERSION:-1.0.0}
     restart: unless-stopped
     container_name: wireops
     ports:
@@ -30,7 +30,7 @@ services:
       retries: 3
 
   wireops-worker:
-    image: ghcr.io/wireops/worker:${WIREOPS_VERSION:-0.2.11}
+    image: ghcr.io/wireops/worker:${WIREOPS_VERSION:-1.0.0}
     container_name: wireops-worker
     restart: unless-stopped
     depends_on:

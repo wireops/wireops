@@ -12,16 +12,16 @@ combination is:
 
 | Server | Worker | Support |
 |---|---|---|
-| `v0.2.x` | Exact same release | Supported |
-| `v0.2.x` | Different patch/minor release | Not guaranteed |
+| `v1.x` | Exact same release | Supported |
+| `v1.x` | Different patch/minor release | Unsupported |
 | Development build | Same commit | Development only |
 
-For example, pair server `v0.2.11` with worker `v0.2.11`. Update all workers
+For example, pair server `v1.0.0` with worker `v1.0.0`. Update all workers
 immediately after the server and do not rely on a mixed-version fleet. A
 worker may appear connected while only failing later when it receives a
 message introduced by a newer server.
 
-`v1.0` will not retroactively make old pre-1.0 workers compatible. A formal
+`v1.0.0` does not retroactively make old pre-1.0 workers compatible. A formal
 multi-version window will be documented here only after it is enforced by the
 registration/handshake path and covered by tests.
 
@@ -35,8 +35,10 @@ Release images are built for Linux `amd64` and `arm64`. The worker requires:
 - permission to use the Docker socket or the configured Docker endpoint;
 - outbound HTTP(S)/WebSocket access to the wireops server.
 
-No minimum Docker Engine or Compose version is currently enforced. Before
-production use, validate the exact host combination with:
+The minimum supported runtime baseline is Docker Engine `25.0` and Docker
+Compose `v2.24.1`. wireops does not prevent older hosts from connecting, but
+they are unsupported. Before production use, validate the exact host
+combination with:
 
 ```bash
 docker version
@@ -64,6 +66,6 @@ depending on it.
 
 ## Support policy
 
-While the project is pre-1.0, only the latest released patch is expected to
-receive fixes. Security support is defined in [`SECURITY.md`](../SECURITY.md).
-Upgrade instructions live in [`UPGRADING.md`](UPGRADING.md).
+The supported release line is `v1.0.x`; fixes target its latest released patch.
+Security support is defined in [`SECURITY.md`](../SECURITY.md). Upgrade
+instructions live in [`UPGRADING.md`](UPGRADING.md).

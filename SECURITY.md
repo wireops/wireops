@@ -6,9 +6,8 @@ uncertain.
 
 ## Supported versions
 
-The project is pre-1.0 and currently supports the latest released patch only.
-Older releases may not receive security fixes. After `v1.0`, supported release
-lines will be listed here explicitly.
+The supported release line is `v1.0.x`; security fixes target its latest
+released patch. Older releases may not receive security fixes.
 
 ## Reporting a vulnerability
 

@@ -5,13 +5,72 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/router"
 
 	"github.com/wireops/wireops/internal/rbac"
 )
+
+func callCreateInviteHandler(t *testing.T, app core.App, body any, actor *core.Record) *httptest.ResponseRecorder {
+	t.Helper()
+	b, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal body: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/custom/users/invite", bytes.NewBuffer(b))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	e := &core.RequestEvent{
+		App: app,
+		Event: router.Event{
+			Response: rec,
+			Request:  req,
+		},
+		Auth: actor,
+	}
+	if err := handleCreateInvite(app)(e); err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	return rec
+}
+
+func TestCreateInviteReturnsShareableLinkWithoutSendingEmail(t *testing.T) {
+	app := newSetupTestApp(t)
+	clearAllUsers(t, app)
+	admin := createTestUser(t, app, "admin@example.com", "Password1!", rbac.RoleAdmin)
+
+	rec := callCreateInviteHandler(t, app, map[string]any{
+		"email":    "viewer@example.com",
+		"role":     rbac.RoleViewer,
+		"delivery": "link",
+	}, admin)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var response struct {
+		Status    string `json:"status"`
+		InviteURL string `json:"invite_url"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.Status != "invited" || !strings.Contains(response.InviteURL, "/invite?token=") {
+		t.Fatalf("unexpected response: %#v", response)
+	}
+
+	invites, err := app.FindAllRecords("invites", dbx.HashExp{"email": "viewer@example.com"})
+	if err != nil || len(invites) != 1 {
+		t.Fatalf("expected one invite, got %d (%v)", len(invites), err)
+	}
+	if !strings.HasSuffix(response.InviteURL, invites[0].GetString("token")) {
+		t.Fatalf("invite URL does not include the saved token: %q", response.InviteURL)
+	}
+}
 
 func callUpdateUserHandler(t *testing.T, app core.App, userID string, body any, actor *core.Record) *httptest.ResponseRecorder {
 	t.Helper()

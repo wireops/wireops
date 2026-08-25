@@ -92,8 +92,9 @@ func handleUpdateSelf(app core.App) func(*core.RequestEvent) error {
 func handleCreateInvite(app core.App) func(*core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
 		var body struct {
-			Email string `json:"email"`
-			Role  string `json:"role"`
+			Email    string `json:"email"`
+			Role     string `json:"role"`
+			Delivery string `json:"delivery"`
 		}
 		if err := json.NewDecoder(e.Request.Body).Decode(&body); err != nil || body.Email == "" {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "email is required"})
@@ -101,6 +102,13 @@ func handleCreateInvite(app core.App) func(*core.RequestEvent) error {
 		role := rbac.NormalizeRole(body.Role)
 		if role == "" {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "valid role is required"})
+		}
+		delivery := body.Delivery
+		if delivery == "" {
+			delivery = "email"
+		}
+		if delivery != "email" && delivery != "link" {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "delivery must be email or link"})
 		}
 
 		existing, _ := app.FindAllRecords("users", dbx.HashExp{"email": body.Email})
@@ -132,6 +140,13 @@ func handleCreateInvite(app core.App) func(*core.RequestEvent) error {
 		}
 
 		actionURL := config.GetAppURL() + "/invite?token=" + token
+		if delivery == "link" {
+			return e.JSON(http.StatusOK, map[string]string{
+				"status":     "invited",
+				"invite_url": actionURL,
+			})
+		}
+
 		senderAddr := app.Settings().Meta.SenderAddress
 		if senderAddr == "" {
 			senderAddr = "noreply@wireops.local"

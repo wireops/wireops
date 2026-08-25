@@ -10,6 +10,7 @@ const props = withDefaults(
     type?: string
     disabled?: boolean
     readonly?: boolean
+    required?: boolean
     icon?: string
     avatar?: { src: string } | null
     title?: string
@@ -21,6 +22,7 @@ const props = withDefaults(
     type: 'text',
     disabled: false,
     readonly: false,
+    required: false,
     icon: undefined,
     avatar: null,
     title: undefined,
@@ -69,6 +71,7 @@ function onBlur(event: FocusEvent) {
       :value="modelValue"
       :disabled="fieldDisabled ?? disabled"
       :readonly="readonly"
+      :required="required"
       @input="onInput"
       @focus="onFocus"
       @blur="onBlur"
