@@ -63,6 +63,7 @@ function truncatePath(path: string): string {
           target="_blank"
           icon="i-simple-icons-kofi"
           label="Ko-fi"
+          aria-label="Ko-fi (opens in a new tab)"
           color="info"
           variant="solid"
           size="md"
@@ -123,7 +124,7 @@ function truncatePath(path: string): string {
     </AppPanelCard>
 
     <div class="text-center text-sm text-gray-400 dark:text-wire-200/30">
-      <p>Made with ❤️ by <a href="https://github.com/jfxdev" target="_blank" rel="noopener noreferrer" class="hover:text-yellow-400 transition-colors">jfxdev</a></p>
+      <p>Made with ❤️ by <a href="https://github.com/jfxdev" target="_blank" rel="noopener noreferrer" aria-label="jfxdev (opens in a new tab)" class="hover:text-yellow-400 transition-colors">jfxdev</a></p>
     </div>
   </div>
 </template>
