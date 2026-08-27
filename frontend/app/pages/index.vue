@@ -168,7 +168,7 @@ onMounted(() => {
           <div v-if="index > 0" class="hidden sm:flex items-center justify-center shrink-0 w-6">
             <div
               class="flex items-center justify-center w-6 h-6 rounded-full border shrink-0"
-              :class="gettingStartedSteps[index - 1].done ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400' : 'border-carbon-700 bg-carbon-900 text-wire-200/30'"
+              :class="gettingStartedSteps[index - 1].done ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400' : 'border-gray-300 bg-gray-100 text-gray-400 dark:border-carbon-700 dark:bg-carbon-900 dark:text-wire-200/30'"
             >
               <UIcon name="i-lucide-chevron-right" class="w-3.5 h-3.5" />
             </div>
@@ -178,7 +178,7 @@ onMounted(() => {
             class="flex-1 w-full text-left rounded-xl border p-4 transition-all duration-200 flex flex-col gap-2 cursor-pointer"
             :class="step.done
               ? 'border-emerald-500/25 bg-emerald-500/[0.03] hover:border-emerald-500/50 hover:bg-emerald-500/[0.06]'
-              : 'border-carbon-800 bg-carbon-900/40 hover:border-yellow-400/50 hover:bg-carbon-800/60 hover:shadow-[0_0_16px_rgba(255,198,0,0.12)]'"
+              : 'border-gray-300 bg-gray-50 hover:border-yellow-400/50 hover:bg-gray-100 dark:border-carbon-800 dark:bg-carbon-900/40 dark:hover:bg-carbon-800/60 hover:shadow-[0_0_16px_rgba(255,198,0,0.12)]'"
             @click="step.done ? step.viewAction() : step.action()"
           >
             <div class="flex items-center gap-2">

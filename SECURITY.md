@@ -47,4 +47,4 @@ fix and release, and credit the reporter when requested and appropriate.
 Pin releases, use TLS, restrict network exposure, protect and back up
 `SECRET_KEY` separately, use least-privileged RBAC, configure worker policy,
 keep Docker and the host patched, and test restores. See
-[`docs/PRODUCTION.md`](docs/PRODUCTION.md).
+[the production checklist](https://wireops.dev/docs/operations/production/).

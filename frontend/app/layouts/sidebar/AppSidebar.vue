@@ -242,15 +242,9 @@ watch(
   <aside v-else :class="sidebarClasses">
     <div :class="['flex h-20 items-center border-b border-carbon-800 shrink-0 relative transition-all duration-300', collapsed ? 'justify-center px-0' : 'justify-between px-6']">
       <NuxtLink to="/" class="flex items-center gap-3 shrink-0" aria-label="Go to dashboard">
-        <div :class="['flex shrink-0 items-center justify-center rounded-2xl transition-all duration-300 overflow-hidden', collapsed ? 'h-10 w-10' : 'h-11 w-11']">
-          <img src="~/assets/img/logo.png" alt="wireops" class="h-8 w-8 object-contain">
-        </div>
-        <div v-show="!collapsed" class="whitespace-nowrap transition-opacity duration-300">
-          <span class="block font-black text-lg tracking-widest uppercase text-yellow-400 drop-shadow-[0_0_8px_rgba(255,198,0,0.4)]">
-            wireops
-          </span>
+        <AppLogo :collapsed="collapsed">
           <span class="text-xs uppercase tracking-[0.24em] text-wire-200/45">{{ brandSubtitle }}</span>
-        </div>
+        </AppLogo>
       </NuxtLink>
     </div>
 

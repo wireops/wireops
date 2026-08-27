@@ -17,7 +17,7 @@
 
 **Push to Git. wireops ships it.** A self-hosted GitOps controller that watches your repos and rolls out `docker compose` changes across every host you own — no Kubernetes, no extra control-plane manifests, no manual SSH-and-pray deploys. Think Flux/ArgoCD, but for plain Compose stacks.
 
-📚 **Full technical docs** (architecture, data model, API reference, env vars, MCP server, disaster recovery, integrations) live in the **[Wiki](https://github.com/wireops/wireops/wiki)**. Operational guides kept with the code: [production](docs/PRODUCTION.md) · [upgrades](docs/UPGRADING.md) · [compatibility](docs/COMPATIBILITY.md) · [disaster recovery](docs/DISASTER_RECOVERY.md) · [troubleshooting](docs/TROUBLESHOOTING.md) · [security policy](SECURITY.md).
+📚 **Documentation**: [wireops.dev](https://wireops.dev/docs/) · [Português (Brasil)](https://wireops.dev/pt-BR/docs/). It includes installation, architecture, API reference, operations, security, integrations, and troubleshooting. Security reporting remains in [SECURITY.md](SECURITY.md).
 
 ## Table of Contents
 
@@ -111,11 +111,11 @@ Targets developers, homelabs, and self-hosters running plain `docker compose` st
 - Network access from every worker to the server; use TLS or a private network for remote workers.
 
 Keep the server and every worker on the exact same release. See the
-[compatibility policy](docs/COMPATIBILITY.md) before upgrading either component.
+[compatibility policy](https://wireops.dev/docs/operations/compatibility/) before upgrading either component.
 
 ## Quick Start
 
-wireops has two pieces you bring up separately: the **server** first, then one or more **workers** that register against it (see the [Architecture wiki page](https://github.com/wireops/wireops/wiki/Architecture) for why). The `example/docker-compose.yml` file has both services predefined.
+wireops has two pieces you bring up separately: the **server** first, then one or more **workers** that register against it (see the [architecture guide](https://wireops.dev/docs/reference/architecture/) for why). The `example/docker-compose.yml` file has both services predefined.
 
 **1. Start the server**
 
@@ -167,7 +167,7 @@ The worker connects out to the server, registers with that token, and starts pol
 
 > **Linux permissions:** the containers run as UID/GID `1000`. Before the first start, create `example/data` and make it writable by that identity. A Linux worker also needs the Docker socket's numeric group in `DOCKER_GID`; `example/.env.example` contains the commands. On Docker Desktop, the data directory must still be writable by the container user and socket permissions depend on the local setup; Linux is the supported production environment.
 
-The example pins `WIREOPS_VERSION` instead of using `latest`. Port `8443` is plain HTTP/WebSocket while `TLS_ENABLED=false`; remote workers should use native TLS or a private network. See [Production](docs/PRODUCTION.md) before exposing an instance.
+The example pins `WIREOPS_VERSION` instead of using `latest`. Port `8443` is plain HTTP/WebSocket while `TLS_ENABLED=false`; remote workers should use native TLS or a private network. See [production guidance](https://wireops.dev/docs/operations/production/) before exposing an instance.
 
 ## Usage
 
@@ -249,19 +249,19 @@ Stacks support render-time overrides — swapping a service's `image`, `ports`, 
 `SECRET_KEY` is required. `BOOTSTRAP_TOKEN` is required only until the first
 administrator is created — see [Quick Start](#quick-start) above.
 
-For the full server/worker env var reference, SMTP, OIDC/SSO, secret providers (Vault/Infisical), and SOPS+age, see the [Environment Variables wiki page](https://github.com/wireops/wireops/wiki/Environment-Variables).
+For the full server/worker env var reference, SMTP, OIDC/SSO, secret providers (Vault/Infisical), and SOPS+age, see [Environment Variables](https://wireops.dev/docs/reference/environment-variables/).
 
-Metrics, Prometheus/Grafana scrape config, the MCP server, and the disaster-recovery runbook have also moved to the wiki: [Observability](https://github.com/wireops/wireops/wiki/Observability) · [MCP Server](https://github.com/wireops/wireops/wiki/MCP-Server) · [Disaster Recovery](https://github.com/wireops/wireops/wiki/Disaster-Recovery).
+Metrics, Prometheus/Grafana scrape config, the MCP server, and the disaster-recovery runbook are documented at [Observability](https://wireops.dev/docs/reference/observability/) · [MCP Server](https://wireops.dev/docs/reference/mcp-server/) · [Disaster Recovery](https://wireops.dev/docs/operations/disaster-recovery/).
 
 ## Production
 
-The quick start is intended to prove the installation. Before using wireops for workloads you care about, pin the image version, enable TLS for remote workers, configure off-host backups, protect `SECRET_KEY` separately, and test one restore. Follow the [production checklist](docs/PRODUCTION.md), [compatibility policy](docs/COMPATIBILITY.md), and [upgrade guide](docs/UPGRADING.md).
+The quick start is intended to prove the installation. Before using wireops for workloads you care about, pin the image version, enable TLS for remote workers, configure off-host backups, protect `SECRET_KEY` separately, and test one restore. Follow the [production checklist](https://wireops.dev/docs/operations/production/), [compatibility policy](https://wireops.dev/docs/operations/compatibility/), and [upgrade guide](https://wireops.dev/docs/operations/upgrading/).
 
 ## Integrations
 
 Wireops ships two kinds of integration plugin, registered the same way (`internal/integrations/`) and enabled/configured from the same Settings screen: **container-action** integrations (Traefik, Caddy, Nginx Proxy Manager, Dozzle) add clickable "Open"/"Logs" shortcuts to the container list; **notification** integrations (Webhook, Discord, Slack, Ntfy) send a message when a sync event fires and don't touch the container list.
 
-Full plugin interface, config fields, and label/compose examples: [Integrations wiki page](https://github.com/wireops/wireops/wiki/Integrations).
+Full plugin interface, config fields, and label/compose examples: [Integrations](https://wireops.dev/docs/integrations/).
 
 ## Development
 
