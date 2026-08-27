@@ -75,79 +75,79 @@ const integrationMeta: Record<string, IntegrationMeta> = {
   ntfy: {
     icon: ntfyIcon,
     description: 'Push notifications to ntfy.sh or self-hosted topics.',
-    docLink: 'https://ntfy.sh',
+    docLink: 'https://wireops.dev/docs/integrations/notifications/ntfy/',
     open: integration => { ntfyIntegration.value = integration; showNtfyModal.value = true }
   },
   webhook: {
     icon: webhookIcon,
     description: 'Send event payloads to custom HTTP endpoints.',
-    docLink: 'https://webhook.site',
+    docLink: 'https://wireops.dev/docs/integrations/notifications/webhook/',
     open: integration => { webhookIntegration.value = integration; showWebhookModal.value = true }
   },
   discord: {
     icon: discordIcon,
     description: 'Send sync notifications to a Discord channel.',
-    docLink: 'https://support.discord.com/hc/en-us/articles/228383668-Intro-to-Webhooks',
+    docLink: 'https://wireops.dev/docs/integrations/notifications/discord/',
     open: integration => { discordIntegration.value = integration; showDiscordModal.value = true }
   },
   slack: {
     icon: slackIcon,
     description: 'Send sync notifications to a Slack channel.',
-    docLink: 'https://api.slack.com/messaging/webhooks',
+    docLink: 'https://wireops.dev/docs/integrations/notifications/slack/',
     open: integration => { slackIntegration.value = integration; showSlackModal.value = true }
   },
   dozzle: {
     icon: dozzleIcon,
     description: 'Realtime log viewer for Docker containers.',
-    docLink: 'https://dozzle.dev',
+    docLink: 'https://wireops.dev/docs/integrations/logging/dozzle/',
     open: integration => { dozzleIntegration.value = integration; showDozzleModal.value = true }
   },
   traefik: {
     icon: traefikIcon,
     description: 'HTTP reverse proxy and load balancer.',
-    docLink: 'https://doc.traefik.io/traefik/',
+    docLink: 'https://wireops.dev/docs/integrations/reverse-proxy/traefik/',
     open: integration => { traefikIntegration.value = integration; showTraefikModal.value = true }
   },
   caddy: {
     icon: caddyIcon,
     description: 'Discover Caddy Docker Proxy routes from labels.',
-    docLink: 'https://github.com/lucaslorentz/caddy-docker-proxy',
+    docLink: 'https://wireops.dev/docs/integrations/reverse-proxy/caddy/',
     open: integration => { caddyIntegration.value = integration; showCaddyModal.value = true }
   },
   'nginx-proxy-manager': {
     icon: nginxProxyManagerIcon,
     description: 'Open Nginx Proxy Manager routes from wireops labels.',
-    docLink: 'https://nginxproxymanager.com/guide/',
+    docLink: 'https://wireops.dev/docs/integrations/reverse-proxy/nginx-proxy-manager/',
     open: integration => { nginxProxyManagerIntegration.value = integration; showNginxProxyManagerModal.value = true }
   },
   vault: {
     icon: vaultIcon,
     description: 'Resolve secret env vars from a Vault KV v2 secrets engine.',
-    docLink: 'https://developer.hashicorp.com/vault/docs',
+    docLink: 'https://wireops.dev/docs/integrations/secrets/vault/',
     open: integration => { vaultIntegration.value = integration; showVaultModal.value = true }
   },
   infisical: {
     icon: infisicalIcon,
     description: 'Resolve secret env vars from Infisical via Universal Auth.',
-    docLink: 'https://infisical.com/docs',
+    docLink: 'https://wireops.dev/docs/integrations/secrets/infisical/',
     open: integration => { infisicalIntegration.value = integration; showInfisicalModal.value = true }
   },
   s3: {
     icon: '',
     description: 'Mirror backups to S3-compatible storage (AWS S3, R2, MinIO, B2, ...).',
-    docLink: 'https://github.com/wireops/wireops/blob/main/docs/DISASTER_RECOVERY.md',
+    docLink: 'https://wireops.dev/docs/integrations/storage/s3/',
     open: integration => { s3Integration.value = integration; showS3Modal.value = true }
   },
   github: {
     icon: githubIcon,
     description: 'Native GitHub OAuth connection — browse and pick repositories when adding one.',
-    docLink: 'https://github.com/wireops/wireops/wiki/Environment-Variables#github-oauth-optional',
+    docLink: 'https://wireops.dev/docs/integrations/source-control/github/',
     open: integration => { githubIntegration.value = integration; showGithubModal.value = true }
   },
   sops: {
     icon: '',
     description: 'Decrypts secrets.yaml files committed next to wireops.yaml. Always active — each repository gets its own age key (see repository detail page).',
-    docLink: 'https://github.com/getsops/sops',
+    docLink: 'https://wireops.dev/docs/integrations/secrets/sops/',
     open: () => {}
   }
 }
