@@ -73,7 +73,7 @@ function keyMeta(key: Record<string, any>): KeyMeta {
 }
 
 function keySubtitle(key: Record<string, any>): string {
-  if (isGithubKey(key) || isGitlabKey(key)) return `Connected as @${key.oauth_account_login}`
+  if (isGithubKey(key) || isGitlabKey(key)) return `Connected as @${key.oauth_account_login || ''}`
   if (key.auth_type === AUTH_TYPE.BASIC) return key.git_username
   return 'Private key'
 }

@@ -106,6 +106,14 @@ func (d *goldenStatusDispatcher) IsConnected(workerID string) bool {
 func setupIntegrationsGoldenTestApp(t *testing.T, dispatcher *goldenStatusDispatcher) (core.App, http.Handler, *core.Record) {
 	t.Helper()
 	t.Setenv("SECRET_KEY", testSecretBackendKey)
+	// github/gitlab's "enabled" is derived live from provider.Configured(),
+	// which reads these env vars (see registerIntegrationRoutes) — clear them
+	// so an ambient value in the test process can't make the "enabled=false"
+	// assertions below flaky.
+	t.Setenv("GITHUB_OAUTH_CLIENT_ID", "")
+	t.Setenv("GITHUB_OAUTH_CLIENT_SECRET", "")
+	t.Setenv("GITLAB_OAUTH_CLIENT_ID", "")
+	t.Setenv("GITLAB_OAUTH_CLIENT_SECRET", "")
 
 	app := newSetupTestApp(t)
 	clearAllUsers(t, app)

@@ -6,9 +6,16 @@
 // the same selfhst/icons asset useRepositoryPlatform's platformIconUrl()
 // already serves for every non-GitHub provider, so the logo GitLab actually
 // ships is what renders here.
-const props = defineProps<{
+// alt defaults to '' (decorative) since every call site renders this next
+// to the "GitLab" name already — only pass a real alt where the icon
+// appears with no adjacent text.
+const props = withDefaults(defineProps<{
   iconClass?: string
-}>()
+  alt?: string
+}>(), {
+  iconClass: 'w-5 h-5',
+  alt: '',
+})
 
 const { platformIconUrl } = useRepositoryPlatform()
 </script>
@@ -16,7 +23,7 @@ const { platformIconUrl } = useRepositoryPlatform()
 <template>
   <img
     :src="platformIconUrl('gitlab')!"
-    :class="props.iconClass || 'w-5 h-5'"
-    alt="GitLab"
+    :class="props.iconClass"
+    :alt="props.alt"
   >
 </template>

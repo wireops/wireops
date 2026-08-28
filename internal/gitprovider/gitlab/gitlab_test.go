@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/wireops/wireops/internal/gitprovider"
@@ -16,9 +18,9 @@ func setEnv(t *testing.T, baseURL string) {
 	t.Helper()
 	t.Setenv("GITLAB_OAUTH_CLIENT_ID", "client-id")
 	t.Setenv("GITLAB_OAUTH_CLIENT_SECRET", "client-secret")
-	if baseURL != "" {
-		t.Setenv("GITLAB_BASE_URL", baseURL)
-	}
+	// Always set (even to ""), so a real GITLAB_BASE_URL in the ambient
+	// environment can never leak into a test expecting the gitlab.com default.
+	t.Setenv("GITLAB_BASE_URL", baseURL)
 }
 
 func TestSlugAndName(t *testing.T) {
@@ -302,6 +304,49 @@ func TestListBranches(t *testing.T) {
 	}
 	if sawPath == "" {
 		t.Fatal("expected the URL-encoded project path handler to be hit")
+	}
+}
+
+// TestHTTPClientRejectsHTTPSToHTTPDowngrade covers both postToken (used by
+// ExchangeCode/RefreshToken) and get (used by every listing call), which
+// share the package-level httpClient and therefore its CheckRedirect — a
+// malicious or hijacked redirect from the configured https endpoint to a
+// plain-http one must not cause the client to resend the Authorization
+// header / client_secret in plaintext.
+func TestHTTPClientRejectsHTTPSToHTTPDowngrade(t *testing.T) {
+	// t.Fatal can't be called from a handler goroutine (a different goroutine
+	// than the test's), so the "never reached" assertion is a counter
+	// checked after the fact instead of failing inline.
+	var insecureHits int32
+	insecureTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&insecureHits, 1)
+	}))
+	defer insecureTarget.Close()
+
+	secure := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, insecureTarget.URL, http.StatusFound)
+	}))
+	defer secure.Close()
+
+	setEnv(t, secure.URL)
+	p := &Provider{}
+
+	originalTransport := httpClient.Transport
+	httpClient.Transport = secure.Client().Transport
+	defer func() { httpClient.Transport = originalTransport }()
+
+	// get() drives ListOrganizations/ListRepositories/ListBranches/fetchAuthenticatedUser.
+	if _, err := p.fetchAuthenticatedUser(context.Background(), "token"); err == nil {
+		t.Error("expected get() to reject the https->http redirect")
+	}
+
+	// postToken() drives ExchangeCode/RefreshToken.
+	if _, err := p.postToken(context.Background(), url.Values{}); err == nil {
+		t.Error("expected postToken() to reject the https->http redirect")
+	}
+
+	if atomic.LoadInt32(&insecureHits) != 0 {
+		t.Fatalf("expected the downgraded http target to never be reached, got %d hit(s)", insecureHits)
 	}
 }
 

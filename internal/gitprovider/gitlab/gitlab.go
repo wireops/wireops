@@ -23,8 +23,24 @@ import (
 
 // httpClient bounds all outbound requests to GitLab (token exchange/refresh +
 // REST API) so a hung connection doesn't stall an OAuth callback or a
-// repo/branch listing indefinitely.
-var httpClient = &http.Client{Timeout: 15 * time.Second}
+// repo/branch listing indefinitely. CheckRedirect blocks an https->http
+// downgrade mid-request (a malicious or hijacked redirect could otherwise
+// make Go's client resend the Authorization/client_secret in plaintext);
+// self-hosted instances deliberately configured for http throughout (see
+// config.GetGitLabBaseURL) are unaffected since there's no https leg to
+// downgrade from.
+var httpClient = &http.Client{
+	Timeout: 15 * time.Second,
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return fmt.Errorf("gitlab: stopped after 10 redirects")
+		}
+		if via[0].URL.Scheme == "https" && req.URL.Scheme != "https" {
+			return fmt.Errorf("gitlab: refusing to follow redirect from https to %s", req.URL.Scheme)
+		}
+		return nil
+	},
+}
 
 func init() {
 	gitprovider.Register(&Provider{})

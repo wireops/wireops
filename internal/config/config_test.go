@@ -422,6 +422,72 @@ func TestGetWebhookURL(t *testing.T) {
 	}
 }
 
+func TestGetGitLabBaseURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		baseURL  string
+		expected string
+	}{
+		{
+			name:     "DefaultsToGitLabCom",
+			baseURL:  "",
+			expected: "https://gitlab.com",
+		},
+		{
+			name:     "SelfHostedHTTPS",
+			baseURL:  "https://gitlab.example.com",
+			expected: "https://gitlab.example.com",
+		},
+		{
+			// Deliberately still accepted: wireops targets self-hosted
+			// homelab-style deployments, where an internal-network GitLab
+			// reached over plain http behind the operator's own perimeter is
+			// a legitimate setup, not a misconfiguration to reject.
+			name:     "SelfHostedHTTPAllowed",
+			baseURL:  "http://gitlab.internal.lan",
+			expected: "http://gitlab.internal.lan",
+		},
+		{
+			name:     "TrailingSlashTrimmed",
+			baseURL:  "https://gitlab.example.com/",
+			expected: "https://gitlab.example.com",
+		},
+		{
+			name:     "MalformedFallsBackToDefault",
+			baseURL:  "not a url",
+			expected: "https://gitlab.com",
+		},
+		{
+			name:     "HostlessFallsBackToDefault",
+			baseURL:  "https://",
+			expected: "https://gitlab.com",
+		},
+		{
+			name:     "UnsupportedSchemeFallsBackToDefault",
+			baseURL:  "ftp://gitlab.example.com",
+			expected: "https://gitlab.com",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			originalValue := os.Getenv("GITLAB_BASE_URL")
+			defer os.Setenv("GITLAB_BASE_URL", originalValue)
+
+			if tt.baseURL == "" {
+				os.Unsetenv("GITLAB_BASE_URL")
+			} else {
+				os.Setenv("GITLAB_BASE_URL", tt.baseURL)
+			}
+
+			result := GetGitLabBaseURL()
+			if result != tt.expected {
+				t.Errorf("GetGitLabBaseURL() = %v, want %v", result, tt.expected)
+			}
+		})
+	}
+}
+
 func TestGetComposeMaxBytes(t *testing.T) {
 	const defaultBytes = int64(512) * 1024
 
