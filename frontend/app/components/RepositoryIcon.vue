@@ -2,10 +2,10 @@
 import { computed } from 'vue'
 
 // Resolves a repository's `platform` field to the right icon component —
-// GithubIcon for github, the CDN platform icon (frontend/app/composables/
-// useRepositoryPlatform.ts) for any other known platform (gitlab, gitea,
-// forgejo, bitbucket, ...), and GenericIcon as the final fallback for an
-// unset/unrecognized platform (a plain git-url repository).
+// GithubIcon for github, GitlabIcon for gitlab, the CDN platform icon
+// (frontend/app/composables/useRepositoryPlatform.ts) for any other known
+// platform (gitea, forgejo, bitbucket, ...), and GenericIcon as the final
+// fallback for an unset/unrecognized platform (a plain git-url repository).
 const { platformIconUrl } = useRepositoryPlatform()
 
 const props = withDefaults(defineProps<{
@@ -21,6 +21,7 @@ const platform = computed(() => props.repository?.platform || '')
 
 <template>
   <GithubIcon v-if="platform === 'github'" :icon-class="iconClass" />
+  <GitlabIcon v-else-if="platform === 'gitlab'" :icon-class="iconClass" />
   <img
     v-else-if="platformIconUrl(platform)"
     :src="platformIconUrl(platform)!"

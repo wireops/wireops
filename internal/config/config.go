@@ -184,3 +184,27 @@ func GetGitHubOAuthClientSecret() string {
 func GetGitProviderCallbackURL(slug string) string {
 	return GetAppURL() + "/api/custom/git-providers/" + slug + "/callback"
 }
+
+// GetGitLabOAuthClientID returns the GitLab OAuth application client ID,
+// configured via GITLAB_OAUTH_CLIENT_ID. Empty means the GitLab provider is
+// unconfigured.
+func GetGitLabOAuthClientID() string {
+	return strings.TrimSpace(os.Getenv("GITLAB_OAUTH_CLIENT_ID"))
+}
+
+// GetGitLabOAuthClientSecret returns the GitLab OAuth application client
+// secret, configured via GITLAB_OAUTH_CLIENT_SECRET.
+func GetGitLabOAuthClientSecret() string {
+	return strings.TrimSpace(os.Getenv("GITLAB_OAUTH_CLIENT_SECRET"))
+}
+
+// GetGitLabBaseURL returns the base URL of the GitLab instance to
+// authenticate against and call the API of — gitlab.com by default, or a
+// self-hosted instance via GITLAB_BASE_URL (e.g. "https://gitlab.example.com").
+// A trailing slash is trimmed so callers can append paths directly.
+func GetGitLabBaseURL() string {
+	if raw := strings.TrimSpace(os.Getenv("GITLAB_BASE_URL")); raw != "" {
+		return strings.TrimRight(raw, "/")
+	}
+	return "https://gitlab.com"
+}

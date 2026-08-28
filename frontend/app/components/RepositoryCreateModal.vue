@@ -440,6 +440,7 @@ async function handleKeySaved(key: Record<string, any>) {
                   @click="selectProvider(provider.slug)"
                 >
                   <GithubIcon v-if="provider.slug === 'github'" icon-class="w-10 h-10 text-gray-700 dark:text-white" />
+                  <GitlabIcon v-else-if="provider.slug === 'gitlab'" icon-class="w-10 h-10" />
                   <img v-else-if="platformIconUrl(provider.slug)" :src="platformIconUrl(provider.slug)!" class="w-10 h-10 object-contain" alt="">
                   <UIcon v-else name="i-lucide-git-branch" class="w-10 h-10 text-gray-400" />
                   <span class="font-medium">{{ provider.name }}</span>
@@ -470,6 +471,7 @@ async function handleKeySaved(key: Record<string, any>) {
                 >
                   <UIcon name="i-lucide-check" class="w-4 h-4 text-green-600 dark:text-green-400" />
                   <GithubIcon v-if="connectedProviderSlug === 'github'" icon-class="w-4 h-4 text-gray-700 dark:text-white" />
+                  <GitlabIcon v-else-if="connectedProviderSlug === 'gitlab'" icon-class="w-4 h-4" />
                   <img v-else-if="platformIconUrl(connectedProviderSlug)" :src="platformIconUrl(connectedProviderSlug)!" class="w-4 h-4 object-contain" alt="">
                   <UIcon v-else name="i-lucide-git-branch" class="w-4 h-4 text-gray-400" />
                   <span class="text-sm font-medium text-green-700 dark:text-green-400">{{ availableProviders.find(p => p.slug === connectedProviderSlug)?.name || connectedProviderSlug }}</span>
@@ -481,10 +483,12 @@ async function handleKeySaved(key: Record<string, any>) {
                   <AppSelectInput v-model="form.platform" :items="PLATFORM_OPTIONS" :searchable="false">
                     <template #leading="{ item }">
                       <GithubIcon v-if="item?.value === 'github'" icon-class="w-4 h-4 text-gray-700 dark:text-white" />
+                      <GitlabIcon v-else-if="item?.value === 'gitlab'" icon-class="w-4 h-4" />
                       <img v-else-if="platformIconUrl(item?.value)" :src="platformIconUrl(item?.value)!" class="w-4 h-4 object-contain" alt="">
                     </template>
                     <template #item-leading="{ item }">
                       <GithubIcon v-if="item.value === 'github'" icon-class="w-4 h-4 text-gray-700 dark:text-white" />
+                      <GitlabIcon v-else-if="item.value === 'gitlab'" icon-class="w-4 h-4" />
                       <img v-else-if="platformIconUrl(item.value)" :src="platformIconUrl(item.value)!" class="w-4 h-4 object-contain" alt="">
                     </template>
                   </AppSelectInput>
