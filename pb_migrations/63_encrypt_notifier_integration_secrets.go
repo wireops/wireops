@@ -45,7 +45,7 @@ func init() {
 
 func encryptNotifierIntegrationSecrets(app core.App, secretKey []byte) error {
 	if secretKey == nil {
-		app.Logger().Info("Skipping notifier secret encryption backfill: SECRET_KEY is not set or invalid")
+		app.Logger().Warn("Skipping notifier secret encryption backfill: SECRET_KEY is not set or invalid")
 		return nil
 	}
 
