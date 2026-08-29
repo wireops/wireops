@@ -221,8 +221,10 @@ func TestListOrganizations(t *testing.T) {
 
 func TestListRepositoriesOwnAndGroup(t *testing.T) {
 	var sawGroupPath string
+	var sawOwnedParam, sawIncludeSubgroupsParam string
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v4/projects", func(w http.ResponseWriter, r *http.Request) {
+		sawOwnedParam = r.URL.Query().Get("owned")
 		if r.URL.Query().Get("page") != "1" {
 			_ = json.NewEncoder(w).Encode([]map[string]any{})
 			return
@@ -240,6 +242,7 @@ func TestListRepositoriesOwnAndGroup(t *testing.T) {
 	})
 	mux.HandleFunc("/api/v4/groups/my-group%2Fsubgroup/projects", func(w http.ResponseWriter, r *http.Request) {
 		sawGroupPath = r.URL.Path
+		sawIncludeSubgroupsParam = r.URL.Query().Get("include_subgroups")
 		if r.URL.Query().Get("page") != "1" {
 			_ = json.NewEncoder(w).Encode([]map[string]any{})
 			return
@@ -267,6 +270,9 @@ func TestListRepositoriesOwnAndGroup(t *testing.T) {
 	if len(own) != 1 || own[0].FullName != "me/my-project" || !own[0].Private {
 		t.Fatalf("unexpected own repos: %+v", own)
 	}
+	if sawOwnedParam != "true" {
+		t.Fatalf("expected owned=true (not membership=true) for org==\"\", got owned=%q", sawOwnedParam)
+	}
 
 	grouped, err := p.ListRepositories(context.Background(), "token", "my-group/subgroup")
 	if err != nil {
@@ -277,6 +283,9 @@ func TestListRepositoriesOwnAndGroup(t *testing.T) {
 	}
 	if sawGroupPath == "" {
 		t.Fatal("expected the URL-encoded group path handler to be hit")
+	}
+	if sawIncludeSubgroupsParam != "true" {
+		t.Fatalf("expected include_subgroups=true so subgroup projects surface under their parent, got %q", sawIncludeSubgroupsParam)
 	}
 }
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, computed, watch } from 'vue'
 
 const props = defineProps<{
   integration: any
@@ -13,11 +13,15 @@ const isOpen = defineModel<boolean>('open', { default: false })
 const toast = useToast()
 const { listGitProviders } = useApi()
 const { testGitlabIntegration } = useIntegrations()
+const { copy } = useCopy()
 
 const loading = ref(false)
 const testing = ref(false)
 const connected = ref(false)
 const accountLogin = ref('')
+
+const { $pb } = useNuxtApp()
+const callbackUrl = computed(() => `${$pb.baseURL}/api/custom/git-providers/gitlab/callback`)
 
 async function refreshStatus() {
   loading.value = true
@@ -91,9 +95,53 @@ function close() {
               <span class="text-sm text-gray-500">Not connected yet</span>
             </div>
             <ConnectGitlabButton v-if="props.integration?.enabled" @connected="handleConnected" />
-            <p v-else class="text-xs text-amber-600 dark:text-amber-400">
-              Set the OAuth env vars above and restart the server to enable connecting.
-            </p>
+            <div v-else class="space-y-3">
+              <p class="text-xs text-amber-600 dark:text-amber-400">
+                Set the OAuth env vars above and restart the server to enable connecting.
+              </p>
+
+              <div class="rounded-lg border border-gray-200 dark:border-carbon-700 p-3 space-y-3">
+                <p class="text-xs font-semibold text-gray-700 dark:text-wire-200">How to set up</p>
+
+                <ol class="text-xs text-gray-500 dark:text-wire-200/70 space-y-2 list-decimal list-inside">
+                  <li>
+                    In GitLab, go to
+                    <strong>User Settings → Applications</strong>
+                    (self-hosted: same path on your instance, e.g.
+                    <code>https://gitlab.example.com/-/user_settings/applications</code>).
+                  </li>
+                  <li>Click <strong>Add new application</strong> and give it a name (e.g. "wireops").</li>
+                  <li>
+                    Paste the callback URL below into <strong>Redirect URI</strong>.
+                  </li>
+                  <li>
+                    Under <strong>Scopes</strong>, check <code>read_api</code> and <code>read_repository</code>. Leave
+                    "Confidential" checked.
+                  </li>
+                  <li>Save the application, then copy the generated <strong>Application ID</strong> and <strong>Secret</strong>.</li>
+                  <li>
+                    On the server, set <code>GITLAB_OAUTH_CLIENT_ID</code> and <code>GITLAB_OAUTH_CLIENT_SECRET</code>
+                    to those values (and <code>GITLAB_BASE_URL</code> if self-hosted, e.g.
+                    <code>https://gitlab.example.com</code>), then restart wireops.
+                  </li>
+                </ol>
+
+                <div class="space-y-1">
+                  <span class="text-xs font-semibold text-gray-700 dark:text-wire-200">Redirect / Callback URL</span>
+                  <div class="flex items-center gap-2">
+                    <code class="flex-1 min-w-0 truncate text-xs bg-gray-100 dark:bg-carbon-800 rounded px-2 py-1">{{ callbackUrl }}</code>
+                    <UButton
+                      icon="i-lucide-copy"
+                      size="xs"
+                      variant="ghost"
+                      color="neutral"
+                      aria-label="Copy callback URL"
+                      @click="copy(callbackUrl, 'Callback URL')"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </template>
       </div>

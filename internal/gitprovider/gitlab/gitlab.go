@@ -226,11 +226,19 @@ type gitlabProject struct {
 }
 
 func (p *Provider) ListRepositories(ctx context.Context, accessToken, org string) ([]gitprovider.Repo, error) {
-	path := "/projects?membership=true&order_by=last_activity_at"
+	// org == "" means "the authenticated user's own repos" (see the
+	// Provider interface doc) — owned=true scopes to the user's personal
+	// namespace, matching GitHub's /user/repos default. membership=true
+	// would instead return every project across every group the user
+	// belongs to, which is a different (much larger) thing than "my repos".
+	path := "/projects?owned=true&order_by=last_activity_at"
 	if org != "" {
 		// GitLab's :id path parameter accepts a namespace's URL-encoded full
 		// path (slashes as %2F) as an alternative to its numeric ID.
-		path = "/groups/" + url.QueryEscape(org) + "/projects?order_by=last_activity_at"
+		// include_subgroups so picking a parent group also surfaces projects
+		// that live in its subgroups, instead of requiring each subgroup to
+		// be selected individually from the org list.
+		path = "/groups/" + url.QueryEscape(org) + "/projects?include_subgroups=true&order_by=last_activity_at"
 	}
 
 	var out []gitprovider.Repo
