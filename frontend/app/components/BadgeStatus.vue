@@ -17,6 +17,7 @@ const statusColor = computed(() => {
     case 'pending':
     case 'queued':
     case 'stalled':
+    case 'degraded':
       return 'warning'
     case 'noop':
       return 'neutral'

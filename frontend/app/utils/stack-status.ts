@@ -194,6 +194,15 @@ export function buildStackStatusFilter(effectiveStatus: string): string | null {
       return "(status = 'error')"
     case 'pending':
       return "((status = 'pending') || (status = 'syncing' && deployed_at = ''))"
+    case 'degraded':
+      // Best-effort: worker.docker_online is the last heartbeat's reading,
+      // not a live connection check, so a worker that went fully offline
+      // right as its Docker daemon died can still match here for a while.
+      // Harmless overlap — the client-side badge/bar (stackFleetStatus,
+      // which does use the live-computed worker status) is the accurate
+      // signal; this filter only needs to be a reasonable approximation for
+      // narrowing the paginated query.
+      return "((status = 'active') || (status = 'syncing' && deployed_at != '')) && worker.docker_online = false"
     default:
       return null
   }
@@ -252,10 +261,24 @@ export type StackStatusBadge = {
   borderClass: string
 }
 
-export function stackStatusBadge(stack: any): StackStatusBadge {
-  switch (stackEffectiveStatus(stack)) {
+// stackFleetStatus folds "the deploy looks active but we can't currently
+// verify it because the worker's Docker daemon is down" into its own
+// 'degraded' bucket — a first-class status alongside active/paused/pending/
+// error, not just a deploy-status-card nuance (see stackVisibleDeployStatus),
+// so a stack that's quietly unverifiable is easy to spot across the whole
+// fleet (list badges, the stacks-page availability bar) instead of only
+// showing up once someone opens that one stack's detail page.
+export function stackFleetStatus(stack: any, workersById?: WorkerLookup): string | undefined {
+  if (stackVisibleDeployStatus(stack, workersById).key === 'degraded') return 'degraded'
+  return stackEffectiveStatus(stack)
+}
+
+export function stackStatusBadge(stack: any, workersById?: WorkerLookup): StackStatusBadge {
+  switch (stackFleetStatus(stack, workersById)) {
     case 'active':
       return { label: 'Active', color: 'success', dotClass: 'bg-emerald-400', borderClass: 'border-l-emerald-400 dark:border-l-emerald-400' }
+    case 'degraded':
+      return { label: 'Degraded', color: 'warning', dotClass: 'bg-orange-400', borderClass: 'border-l-orange-400 dark:border-l-orange-400' }
     case 'paused':
       return { label: 'Paused', color: 'warning', dotClass: 'bg-amber-400', borderClass: 'border-l-amber-400 dark:border-l-amber-400' }
     case 'pending':
@@ -272,6 +295,13 @@ export function stackVisibleDeployStatus(stack: any, workersById?: WorkerLookup)
   const worker = stackWorkerStatus(stack, workersById)
 
   if (deploy.key === 'deployed' && worker.key !== 'online') {
+    // A degraded worker (connected, but its Docker daemon isn't responding)
+    // is a more specific — and more actionable — reason we can't currently
+    // verify the deploy than the generic "can't tell at all" Unknown, which
+    // is reserved for truly unreachable workers (offline/revoked).
+    if (worker.key === 'degraded') {
+      return { ...worker }
+    }
     return { ...UNKNOWN_STATUS }
   }
 
@@ -328,6 +358,14 @@ export function stackWorkerStatus(stack: any, workersById?: WorkerLookup): Stack
         color: 'success',
         icon: 'i-lucide-wifi',
         iconClass: 'text-emerald-500',
+      }
+    case WORKER_STATUS.DEGRADED:
+      return {
+        key: 'degraded',
+        label: 'Degraded',
+        color: 'warning',
+        icon: 'i-lucide-triangle-alert',
+        iconClass: 'text-amber-500',
       }
     case WORKER_STATUS.OFFLINE:
       return {

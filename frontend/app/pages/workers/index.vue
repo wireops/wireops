@@ -32,7 +32,9 @@ const sortedWorkers = computed(() => {
 })
 
 const revokedCount = computed(() => actualWorkers.value.filter(a => workerStatus(a) === WORKER_STATUS.REVOKED).length)
-const activeCount = computed(() => actualWorkers.value.filter(a => workerStatus(a) === WORKER_STATUS.ACTIVE || workerStatus(a) === WORKER_STATUS.OFFLINE).length)
+const activeCount = computed(() => actualWorkers.value.filter(a =>
+  [WORKER_STATUS.ACTIVE, WORKER_STATUS.DEGRADED, WORKER_STATUS.OFFLINE].includes(workerStatus(a) as any)
+).length)
 
 const searchQuery = ref('')
 
@@ -249,9 +251,11 @@ onUnmounted(() => {
               :class="[
                 workerStatus(worker) === WORKER_STATUS.ACTIVE
                   ? 'bg-yellow-400 shadow-[0_0_8px_rgba(255,198,0,0.7)]'
-                  : workerStatus(worker) === WORKER_STATUS.REVOKED
-                    ? 'bg-gray-400'
-                    : 'bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.6)]'
+                  : workerStatus(worker) === WORKER_STATUS.DEGRADED
+                    ? 'bg-amber-500 shadow-[0_0_6px_rgba(245,158,11,0.6)]'
+                    : workerStatus(worker) === WORKER_STATUS.REVOKED
+                      ? 'bg-gray-400'
+                      : 'bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.6)]'
               ]"
             />
           </div>

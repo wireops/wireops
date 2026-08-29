@@ -21,7 +21,7 @@ const props = defineProps<{
 const hasInfo = computed(() => workerHasReportedInfo(props.worker))
 
 const showDockerOfflineWarning = computed(() =>
-  props.worker.status === WORKER_STATUS.ACTIVE && hasInfo.value && props.worker.docker_online === false
+  props.worker.status === WORKER_STATUS.DEGRADED && hasInfo.value && props.worker.docker_online === false
 )
 const showComposeMissingWarning = computed(() => hasInfo.value && !props.worker.compose_version)
 const showVersionMissingWarning = computed(() => !props.worker.version)

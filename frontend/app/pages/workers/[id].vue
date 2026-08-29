@@ -21,6 +21,7 @@ const { data: allWorkers, refresh: refreshWorkers } = useAsyncData(`workers_deta
 const worker = computed(() => allWorkers.value?.find(w => w.id === workerId) ?? null)
 
 const isActive = computed(() => worker.value?.status === WORKER_STATUS.ACTIVE)
+const isDegraded = computed(() => worker.value?.status === WORKER_STATUS.DEGRADED)
 const isOffline = computed(() => worker.value?.status === WORKER_STATUS.OFFLINE)
 const isRevoked = computed(() => worker.value?.status === WORKER_STATUS.REVOKED)
 const associatedJobs = computed(() => worker.value?.jobs ?? [])
@@ -28,12 +29,14 @@ const redirectingAfterRevoke = ref(false)
 
 const statusDotClass = computed(() => {
   if (isActive.value) return 'bg-yellow-400 shadow-[0_0_8px_rgba(255,198,0,0.7)]'
+  if (isDegraded.value) return 'bg-amber-500 shadow-[0_0_6px_rgba(245,158,11,0.6)]'
   if (isRevoked.value) return 'bg-gray-400'
   return 'bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.6)]'
 })
 
 const statusCardDotClass = computed(() => {
   if (isActive.value) return 'bg-green-400 shadow-[0_0_8px_rgba(74,222,128,0.7)]'
+  if (isDegraded.value) return 'bg-amber-500 shadow-[0_0_6px_rgba(245,158,11,0.6)]'
   if (isRevoked.value) return 'bg-gray-400'
   return 'bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.6)]'
 })

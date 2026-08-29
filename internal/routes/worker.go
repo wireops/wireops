@@ -102,6 +102,15 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 			status := rec.GetString("status")
 			if status == "ACTIVE" && !dispatcher.IsConnected(rec.Id) {
 				status = "OFFLINE"
+			} else if status == "ACTIVE" && !rec.GetBool("docker_online") &&
+				(rec.GetString("os") != "" || rec.GetString("docker_version") != "") {
+				// Connected over the websocket (so not OFFLINE) but the most
+				// recent heartbeat's Docker connectivity check failed — e.g. the
+				// daemon crashed or is mid-restart. Gated on having reported
+				// telemetry at least once so a worker that just connected and
+				// hasn't sent its first heartbeat yet isn't flagged before it's
+				// had a chance to report DockerOnline=true.
+				status = "DEGRADED"
 			}
 
 			tokenRecord, tokenErr := workerSvc.GetTokenForWorker(rec.Id)

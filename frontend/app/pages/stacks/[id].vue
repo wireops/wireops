@@ -41,6 +41,8 @@ const syncDisabledReason = computed(() => {
       return 'Worker offline'
     case 'revoked':
       return 'Worker revoked'
+    case 'degraded':
+      return 'Docker unreachable on worker'
     default:
       return 'Worker unavailable'
   }
@@ -98,7 +100,7 @@ const { data: webhookUrl } = useAsyncData(`webhook_url_${stackId}`, () => getWeb
 
 const workerOptions = computed(() =>
   (workers.value || [])
-    .filter((a: any) => a.status === WORKER_STATUS.ACTIVE || a.status === WORKER_STATUS.OFFLINE)
+    .filter((a: any) => a.status === WORKER_STATUS.ACTIVE || a.status === WORKER_STATUS.DEGRADED || a.status === WORKER_STATUS.OFFLINE)
     .map((a: any) => ({ label: a.hostname, value: a.id }))
 )
 
