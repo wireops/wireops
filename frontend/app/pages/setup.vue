@@ -136,7 +136,7 @@ async function handleSetup() {
         <div class="flex items-center justify-center w-12 h-12 rounded-xl bg-yellow-400/10 border border-yellow-400/20 mb-3 shadow-[0_0_24px_rgba(255,198,0,0.15)] sm:w-16 sm:h-16 sm:rounded-2xl sm:mb-4">
           <img src="~/assets/img/logo.png" alt="" class="w-7 h-7 object-contain sm:w-9 sm:h-9">
         </div>
-        <h1 class="text-2xl font-black tracking-[0.22em] uppercase text-yellow-400 drop-shadow-[0_0_12px_rgba(255,198,0,0.4)] sm:text-3xl sm:tracking-widest">
+        <h1 class="text-2xl font-black tracking-[0.06em] bg-linear-to-r from-yellow-400 via-[#d5cc83] to-wire-400 bg-clip-text text-transparent drop-shadow-[0_0_12px_rgba(255,198,0,0.28)] sm:text-3xl">
           wireops
         </h1>
         <p class="text-sm text-wire-400 mt-1 tracking-wide">Initial Setup</p>
