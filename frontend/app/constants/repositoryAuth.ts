@@ -13,6 +13,7 @@ export type AuthType = typeof AUTH_TYPE[keyof typeof AUTH_TYPE]
 
 export const GIT_PROVIDER = {
   GITHUB: 'github',
+  GITLAB: 'gitlab',
 } as const
 
 export type GitProviderSlug = typeof GIT_PROVIDER[keyof typeof GIT_PROVIDER]

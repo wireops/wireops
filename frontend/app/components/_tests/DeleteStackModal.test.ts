@@ -137,6 +137,51 @@ describe('DeleteStackModal', () => {
     expect(announce).toHaveBeenCalledWith(expect.stringContaining('Failed to delete'), 'assertive')
   })
 
+  it('shows the rendered-compose-file-missing warning and offers force-delete', async () => {
+    const { deleteStack } = setupGlobals()
+    deleteStack.mockResolvedValue({ error: "worker couldn't find the rendered compose file" })
+
+    const wrapper = mount(DeleteStackModal, {
+      props: { stack: baseStack() },
+      global: { stubs },
+    })
+
+    const deleteButton = wrapper.findAll('button').find(b => b.text() === 'Delete Stack')!
+    await deleteButton.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Rendered compose file missing')
+    expect(wrapper.text()).toContain('Force delete database records only')
+  })
+
+  it('requires the force checkbox to be checked before Delete Stack sends force=true', async () => {
+    const { deleteStack } = setupGlobals()
+    deleteStack.mockResolvedValueOnce({ error: 'worker is offline' }).mockResolvedValueOnce({})
+
+    const wrapper = mount(DeleteStackModal, {
+      props: { stack: baseStack() },
+      global: { stubs },
+    })
+
+    const deleteButton = () => wrapper.findAll('button').find(b => b.text() === 'Delete Stack')!
+    await deleteButton().trigger('click')
+    await flushPromises()
+
+    expect(deleteStack).toHaveBeenNthCalledWith(1, 'stack-1', false)
+
+    // Checkbox not yet checked — button must stay disabled and not re-issue the call.
+    expect(deleteButton().attributes('disabled')).not.toBeUndefined()
+
+    const checkbox = wrapper.find('input[type="checkbox"]')
+    await checkbox.setValue(true)
+
+    expect(deleteButton().attributes('disabled')).toBeUndefined()
+    await deleteButton().trigger('click')
+    await flushPromises()
+
+    expect(deleteStack).toHaveBeenNthCalledWith(2, 'stack-1', true)
+  })
+
   // A real parent — not just wrapper.emitted() — is needed here: the parent
   // reacts to the first 'deleted' emit by unmounting the modal via v-if,
   // which is exactly the trigger that previously caused onUnmounted to fire

@@ -64,6 +64,9 @@ const s3Integration = ref<any>(null)
 const showGithubModal = ref(false)
 const githubIntegration = ref<any>(null)
 
+const showGitlabModal = ref(false)
+const gitlabIntegration = ref<any>(null)
+
 interface IntegrationMeta {
   icon: string
   description: string
@@ -143,6 +146,12 @@ const integrationMeta: Record<string, IntegrationMeta> = {
     description: 'Native GitHub OAuth connection — browse and pick repositories when adding one.',
     docLink: 'https://wireops.dev/docs/integrations/source-control/github/',
     open: integration => { githubIntegration.value = integration; showGithubModal.value = true }
+  },
+  gitlab: {
+    icon: '',
+    description: 'Native GitLab OAuth connection — browse and pick repositories when adding one. Supports gitlab.com and self-hosted instances.',
+    docLink: 'https://wireops.dev/docs/integrations/source-control/gitlab/',
+    open: integration => { gitlabIntegration.value = integration; showGitlabModal.value = true }
   },
   sops: {
     icon: '',
@@ -300,6 +309,7 @@ onMounted(() => {
                   <!-- Icon -->
                   <div class="w-10 h-10 shrink-0 rounded-lg bg-gray-50 dark:bg-carbon-800 flex items-center justify-center p-2 shadow-inner">
                     <GithubIcon v-if="integration.slug === 'github'" icon-class="w-6 h-6" />
+                    <GitlabIcon v-else-if="integration.slug === 'gitlab'" icon-class="w-6 h-6" />
                     <img v-else-if="getIntegrationIcon(integration.slug)" :src="getIntegrationIcon(integration.slug)" class="w-6 h-6 object-contain" alt="">
                     <UIcon v-else :name="getIntegrationFallbackIcon(integration.slug)" class="w-5 h-5 text-primary-500" />
                   </div>
@@ -531,6 +541,12 @@ onMounted(() => {
     <IntegrationsGithubConfigModal
       v-model:open="showGithubModal"
       :integration="githubIntegration"
+      @saved="loadIntegrations"
+    />
+
+    <IntegrationsGitlabConfigModal
+      v-model:open="showGitlabModal"
+      :integration="gitlabIntegration"
       @saved="loadIntegrations"
     />
   </div>

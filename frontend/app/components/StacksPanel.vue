@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { stackEffectiveStatus, buildStackStatusFilter } from '../utils/stack-status'
+import { stackFleetStatus, buildStackStatusFilter } from '../utils/stack-status'
 import { GROUP_ALL, GROUP_UNGROUPED, encodeGroupValue, decodeGroupValue } from '../utils/job-filter'
 import { usePaginatedList } from '../composables/usePaginatedList'
 import type { AvailabilitySegment } from './StatusAvailabilityBar.vue'
@@ -89,7 +89,7 @@ const {
 // isn't paginated: the expensive part of the main query is the full record
 // payload + expand, not these three columns.
 const { data: stacksAggregate, refresh: refreshStacksAggregate } = useAsyncData('stacks_aggregate', () =>
-  $pb.collection('stacks').getFullList({ fields: 'id,status,group,deployed_at', requestKey: null })
+  $pb.collection('stacks').getFullList({ fields: 'id,status,group,deployed_at,worker', requestKey: null })
 )
 
 const { data: workers, refresh: refreshWorkers } = useAsyncData('stack_card_workers', () =>
@@ -162,6 +162,14 @@ onMounted(() => {
   })
   subscribe('workers', () => {
     refreshWorkers()
+    // The "degraded" bucket is filtered server-side on worker.docker_online
+    // (see buildStacksFilter/buildStackStatusFilter) - a worker flipping
+    // online/offline can change which stacks belong in that page without any
+    // stack record itself changing, so the paginated query needs its own
+    // refetch here instead of relying on the 'stacks' subscription above.
+    if (statusFilter.value === 'degraded') {
+      reloadStacks(true)
+    }
   })
   subscribe('repositories', () => {
     refreshRepos()
@@ -213,12 +221,13 @@ const workersById = computed(() =>
 // counts under Active/Paused same as it does everywhere else in the UI.
 const stackStatusSegments: AvailabilitySegment[] = [
   { key: 'active', label: 'Active', barClass: 'bg-emerald-400', dotClass: 'bg-emerald-400', statuses: ['active'] },
+  { key: 'degraded', label: 'Degraded', barClass: 'bg-orange-400', dotClass: 'bg-orange-400', statuses: ['degraded'] },
   { key: 'paused', label: 'Paused', barClass: 'bg-amber-400', dotClass: 'bg-amber-400', statuses: ['paused', 'pending'], filterValue: 'paused' },
   { key: 'error', label: 'Error', barClass: 'bg-rose-400', dotClass: 'bg-rose-400', statuses: ['error'] },
 ]
 
 const stacksForAvailability = computed(() =>
-  (stacksAggregate.value || []).map((s: any) => ({ ...s, status: stackEffectiveStatus(s) }))
+  (stacksAggregate.value || []).map((s: any) => ({ ...s, status: stackFleetStatus(s, workersById.value) }))
 )
 
 const groupOptions = computed(() => {
@@ -368,7 +377,8 @@ async function handlePurge(dirName: string) {
               { label: 'Active', value: 'active' },
               { label: 'Paused', value: 'paused' },
               { label: 'Error', value: 'error' },
-              { label: 'Pending', value: 'pending' }
+              { label: 'Pending', value: 'pending' },
+              { label: 'Degraded', value: 'degraded' }
             ]"
             placeholder="Filter by status"
             content-width

@@ -2,6 +2,7 @@ package config
 
 import (
 	"math"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -183,4 +184,43 @@ func GetGitHubOAuthClientSecret() string {
 // open-redirect-shaped parameter entirely.
 func GetGitProviderCallbackURL(slug string) string {
 	return GetAppURL() + "/api/custom/git-providers/" + slug + "/callback"
+}
+
+// GetGitLabOAuthClientID returns the GitLab OAuth application client ID,
+// configured via GITLAB_OAUTH_CLIENT_ID. Empty means the GitLab provider is
+// unconfigured.
+func GetGitLabOAuthClientID() string {
+	return strings.TrimSpace(os.Getenv("GITLAB_OAUTH_CLIENT_ID"))
+}
+
+// GetGitLabOAuthClientSecret returns the GitLab OAuth application client
+// secret, configured via GITLAB_OAUTH_CLIENT_SECRET.
+func GetGitLabOAuthClientSecret() string {
+	return strings.TrimSpace(os.Getenv("GITLAB_OAUTH_CLIENT_SECRET"))
+}
+
+// gitlabDefaultBaseURL is returned whenever GITLAB_BASE_URL is unset or
+// fails validation, so a typo'd/malformed value can't silently produce a
+// broken OAuth authorize/token/API URL downstream.
+const gitlabDefaultBaseURL = "https://gitlab.com"
+
+// GetGitLabBaseURL returns the base URL of the GitLab instance to
+// authenticate against and call the API of — gitlab.com by default, or a
+// self-hosted instance via GITLAB_BASE_URL (e.g. "https://gitlab.example.com").
+// A trailing slash is trimmed so callers can append paths directly. http is
+// intentionally still accepted (not just https): wireops targets self-hosted
+// homelab-style deployments, where an internal-network GitLab instance
+// reached over plain http behind the operator's own perimeter is a
+// legitimate, deliberate setup — only a malformed value or one missing a
+// host falls back to the default, so it doesn't produce a broken URL.
+func GetGitLabBaseURL() string {
+	raw := strings.TrimRight(strings.TrimSpace(os.Getenv("GITLAB_BASE_URL")), "/")
+	if raw == "" {
+		return gitlabDefaultBaseURL
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return gitlabDefaultBaseURL
+	}
+	return raw
 }

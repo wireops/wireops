@@ -51,9 +51,14 @@ function isGithubKey(key: Record<string, any>): boolean {
   return key.auth_type === AUTH_TYPE.OAUTH_TOKEN && key.oauth_provider === GIT_PROVIDER.GITHUB
 }
 
+function isGitlabKey(key: Record<string, any>): boolean {
+  return key.auth_type === AUTH_TYPE.OAUTH_TOKEN && key.oauth_provider === GIT_PROVIDER.GITLAB
+}
+
 type KeyMeta = { icon: string, label: string, wrapperClass: string, iconClass: string }
 
 const GITHUB_META: KeyMeta = { icon: 'github', label: 'GitHub', wrapperClass: 'bg-gray-500/10', iconClass: 'text-gray-700 dark:text-white' }
+const GITLAB_META: KeyMeta = { icon: 'gitlab', label: 'GitLab', wrapperClass: 'bg-orange-500/10', iconClass: 'text-orange-500' }
 const DEFAULT_META: KeyMeta = { icon: 'i-lucide-user-key', label: 'Username / Password', wrapperClass: 'bg-yellow-400/10', iconClass: 'text-yellow-400' }
 const AUTH_TYPE_META: Record<string, KeyMeta> = {
   [AUTH_TYPE.SSH_KEY]: { icon: 'i-lucide-key-round', label: 'SSH', wrapperClass: 'bg-yellow-400/10', iconClass: 'text-yellow-400' },
@@ -63,11 +68,12 @@ const AUTH_TYPE_META: Record<string, KeyMeta> = {
 
 function keyMeta(key: Record<string, any>): KeyMeta {
   if (isGithubKey(key)) return GITHUB_META
+  if (isGitlabKey(key)) return GITLAB_META
   return AUTH_TYPE_META[key.auth_type] ?? DEFAULT_META
 }
 
 function keySubtitle(key: Record<string, any>): string {
-  if (isGithubKey(key)) return `Connected as @${key.oauth_account_login}`
+  if (isGithubKey(key) || isGitlabKey(key)) return `Connected as @${key.oauth_account_login || ''}`
   if (key.auth_type === AUTH_TYPE.BASIC) return key.git_username
   return 'Private key'
 }
@@ -148,6 +154,7 @@ defineExpose({
         >
           <div class="w-10 h-10 rounded-lg flex items-center justify-center shrink-0" :class="keyMeta(key).wrapperClass">
             <GithubIcon v-if="isGithubKey(key)" :icon-class="`w-5 h-5 ${keyMeta(key).iconClass}`" />
+            <GitlabIcon v-else-if="isGitlabKey(key)" :icon-class="`w-5 h-5 ${keyMeta(key).iconClass}`" />
             <UIcon v-else :name="keyMeta(key).icon" class="w-5 h-5" :class="keyMeta(key).iconClass" />
           </div>
           <div class="flex-1 min-w-0">

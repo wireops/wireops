@@ -52,6 +52,10 @@ export function useIntegrations() {
         return customPost<{ success: string; error?: string }>('/api/custom/integrations/github/test', {})
     }
 
+    async function testGitlabIntegration() {
+        return customPost<{ success: string; error?: string }>('/api/custom/integrations/gitlab/test', {})
+    }
+
     async function getStackIntegrationActions(stackId: string) {
         return customGet<Record<string, IntegrationAction[]>>(
             `/api/custom/stacks/${stackId}/integration-actions`
@@ -66,6 +70,7 @@ export function useIntegrations() {
         testVaultIntegration,
         testInfisicalIntegration,
         testGithubIntegration,
+        testGitlabIntegration,
         getStackIntegrationActions,
     }
 }

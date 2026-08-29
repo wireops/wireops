@@ -39,10 +39,12 @@ import (
 	wiretls "github.com/wireops/wireops/pkg/tls"
 
 	_ "github.com/wireops/wireops/internal/gitprovider/github"
+	_ "github.com/wireops/wireops/internal/gitprovider/gitlab"
 	_ "github.com/wireops/wireops/internal/integrations/caddy"
 	_ "github.com/wireops/wireops/internal/integrations/discord"
 	_ "github.com/wireops/wireops/internal/integrations/dozzle"
 	_ "github.com/wireops/wireops/internal/integrations/github"
+	_ "github.com/wireops/wireops/internal/integrations/gitlab"
 	_ "github.com/wireops/wireops/internal/integrations/infisical"
 	_ "github.com/wireops/wireops/internal/integrations/nginxproxymanager"
 	_ "github.com/wireops/wireops/internal/integrations/ntfy"

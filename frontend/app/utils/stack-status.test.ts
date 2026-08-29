@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { stackDeployStatus, stackHasRenderOverrides, stackIsSyncing, stackLastError, stackSourceStatus, stackStatusBadge, stackSyncStatus, stackVisibleDeployStatus, stackWorkerStatus } from './stack-status'
+import { buildStackStatusFilter, stackDeployStatus, stackFleetStatus, stackHasRenderOverrides, stackIsSyncing, stackLastError, stackSourceStatus, stackStatusBadge, stackSyncStatus, stackVisibleDeployStatus, stackWorkerStatus } from './stack-status'
 
 describe('stackHasRenderOverrides', () => {
   it('is false when render_overrides is missing or empty', () => {
@@ -79,6 +79,48 @@ describe('stack status helpers', () => {
       label: 'Offline',
       icon: 'i-lucide-wifi-off',
     })
+  })
+
+  it('shows Degraded (not the generic Unknown) when the worker is connected but its Docker daemon is unreachable', () => {
+    const stack = {
+      id: 'stack-1',
+      worker: 'worker-1',
+      status: 'active',
+      expand: { worker: { id: 'worker-1', status: 'ACTIVE' } },
+    }
+
+    expect(stackVisibleDeployStatus(stack, {
+      'worker-1': { id: 'worker-1', status: 'DEGRADED' },
+    })).toMatchObject({
+      key: 'degraded',
+      label: 'Degraded',
+      icon: 'i-lucide-triangle-alert',
+    })
+  })
+
+  it('is a first-class fleet status, not just a deploy-status-card nuance', () => {
+    const stack = {
+      id: 'stack-1',
+      worker: 'worker-1',
+      status: 'active',
+      expand: { worker: { id: 'worker-1', status: 'ACTIVE' } },
+    }
+    const workersById = { 'worker-1': { id: 'worker-1', status: 'DEGRADED' } }
+
+    expect(stackFleetStatus(stack, workersById)).toBe('degraded')
+    expect(stackStatusBadge(stack, workersById)).toMatchObject({
+      label: 'Degraded',
+      dotClass: 'bg-orange-400',
+      borderClass: expect.stringContaining('border-l-orange-400'),
+    })
+    // an unrelated stack whose worker is fine should not be swept up
+    expect(stackFleetStatus({ ...stack, id: 'stack-2' }, { 'worker-1': { id: 'worker-1', status: 'ACTIVE' } })).toBe('active')
+  })
+
+  it('builds a best-effort PocketBase filter for the degraded bucket, gated on reported telemetry', () => {
+    expect(buildStackStatusFilter('degraded')).toBe(
+      "((status = 'active') || (status = 'syncing' && deployed_at != '')) && worker.docker_online = false && (worker.os != '' || worker.docker_version != '')"
+    )
   })
 })
 

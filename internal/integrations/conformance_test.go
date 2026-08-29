@@ -15,6 +15,7 @@ import (
 	_ "github.com/wireops/wireops/internal/integrations/discord"
 	_ "github.com/wireops/wireops/internal/integrations/dozzle"
 	_ "github.com/wireops/wireops/internal/integrations/github"
+	_ "github.com/wireops/wireops/internal/integrations/gitlab"
 	_ "github.com/wireops/wireops/internal/integrations/infisical"
 	_ "github.com/wireops/wireops/internal/integrations/nginxproxymanager"
 	_ "github.com/wireops/wireops/internal/integrations/ntfy"
@@ -28,7 +29,7 @@ import (
 
 // expectedIntegrationCount must be updated whenever a provider package is
 // added to or removed from the blank imports above.
-const expectedIntegrationCount = 13
+const expectedIntegrationCount = 14
 
 // TestAllRegisteredDescriptorsAreValid runs ValidateDescriptor against every
 // entry in the real global registry (populated by the blank imports above),

@@ -61,7 +61,7 @@ async function handleSubmit() {
         <div class="flex items-center justify-center w-16 h-16 rounded-2xl bg-yellow-400/10 border border-yellow-400/20 mb-4 shadow-[0_0_24px_rgba(255,198,0,0.15)]">
           <UIcon name="i-lucide-zap" class="w-9 h-9 text-yellow-400 drop-shadow-[0_0_8px_rgba(255,198,0,0.7)]" />
         </div>
-        <h1 class="text-3xl font-black tracking-widest uppercase text-yellow-400 drop-shadow-[0_0_12px_rgba(255,198,0,0.4)]">
+        <h1 class="text-3xl font-black tracking-[0.06em] bg-linear-to-r from-yellow-400 via-[#d5cc83] to-wire-400 bg-clip-text text-transparent drop-shadow-[0_0_12px_rgba(255,198,0,0.28)]">
           wireops
         </h1>
         <p class="text-sm text-wire-400 mt-1 tracking-wide">GitOps Orchestrator</p>

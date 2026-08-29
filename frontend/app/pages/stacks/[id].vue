@@ -38,11 +38,13 @@ const canSyncDeploy = computed(() => workerStatus.value.key === 'online')
 const syncDisabledReason = computed(() => {
   switch (workerStatus.value.key) {
     case 'offline':
-      return 'Worker offline'
+      return 'Worker offline. Reconnect the worker before syncing this stack.'
     case 'revoked':
-      return 'Worker revoked'
+      return 'Worker revoked. Reconnect the worker before syncing this stack.'
+    case 'degraded':
+      return 'Docker unreachable on worker. Restore or restart Docker on the worker before syncing this stack.'
     default:
-      return 'Worker unavailable'
+      return 'Worker unavailable. Reconnect the worker before syncing this stack.'
   }
 })
 
@@ -98,7 +100,7 @@ const { data: webhookUrl } = useAsyncData(`webhook_url_${stackId}`, () => getWeb
 
 const workerOptions = computed(() =>
   (workers.value || [])
-    .filter((a: any) => a.status === WORKER_STATUS.ACTIVE || a.status === WORKER_STATUS.OFFLINE)
+    .filter((a: any) => a.status === WORKER_STATUS.ACTIVE || a.status === WORKER_STATUS.DEGRADED || a.status === WORKER_STATUS.OFFLINE)
     .map((a: any) => ({ label: a.hostname, value: a.id }))
 )
 
@@ -353,7 +355,7 @@ function openSyncModal() {
   if (!canSyncDeploy.value) {
     toast.add({
       title: 'Sync unavailable',
-      description: `${syncDisabledReason.value}. Reconnect the worker before syncing this stack.`,
+      description: syncDisabledReason.value,
       color: 'warning',
     })
     return
@@ -370,7 +372,7 @@ async function handleSync() {
   if (!canSyncDeploy.value) {
     toast.add({
       title: 'Sync unavailable',
-      description: `${syncDisabledReason.value}. Reconnect the worker before syncing this stack.`,
+      description: syncDisabledReason.value,
       color: 'warning',
     })
     return
@@ -1400,7 +1402,7 @@ onMounted(() => {
       v-model:open="showSyncModal"
       :stack="stack"
       :disabled="!canSyncDeploy"
-      :disabled-reason="`${syncDisabledReason}. Reconnect the worker before syncing this stack.`"
+      :disabled-reason="syncDisabledReason"
       @synced="onSyncTriggered"
     />
 

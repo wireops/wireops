@@ -14,10 +14,12 @@ import (
 	"github.com/pocketbase/pocketbase/tools/router"
 
 	_ "github.com/wireops/wireops/internal/gitprovider/github"
+	_ "github.com/wireops/wireops/internal/gitprovider/gitlab"
 	_ "github.com/wireops/wireops/internal/integrations/caddy"
 	_ "github.com/wireops/wireops/internal/integrations/discord"
 	_ "github.com/wireops/wireops/internal/integrations/dozzle"
 	_ "github.com/wireops/wireops/internal/integrations/github"
+	_ "github.com/wireops/wireops/internal/integrations/gitlab"
 	_ "github.com/wireops/wireops/internal/integrations/infisical"
 	_ "github.com/wireops/wireops/internal/integrations/nginxproxymanager"
 	_ "github.com/wireops/wireops/internal/integrations/ntfy"
@@ -74,6 +76,7 @@ var goldenExpectedIntegrations = map[string]goldenExpectedIntegration{
 	"s3":                  {"S3 Storage", "Storage Backend"},
 	"sops":                {"SOPS", "Secret Backend"},
 	"github":              {"GitHub", "Source Control"},
+	"gitlab":              {"GitLab", "Source Control"},
 }
 
 // goldenStatusDispatcher is a sync.WorkerDispatcher stub whose Dispatch
@@ -103,6 +106,14 @@ func (d *goldenStatusDispatcher) IsConnected(workerID string) bool {
 func setupIntegrationsGoldenTestApp(t *testing.T, dispatcher *goldenStatusDispatcher) (core.App, http.Handler, *core.Record) {
 	t.Helper()
 	t.Setenv("SECRET_KEY", testSecretBackendKey)
+	// github/gitlab's "enabled" is derived live from provider.Configured(),
+	// which reads these env vars (see registerIntegrationRoutes) — clear them
+	// so an ambient value in the test process can't make the "enabled=false"
+	// assertions below flaky.
+	t.Setenv("GITHUB_OAUTH_CLIENT_ID", "")
+	t.Setenv("GITHUB_OAUTH_CLIENT_SECRET", "")
+	t.Setenv("GITLAB_OAUTH_CLIENT_ID", "")
+	t.Setenv("GITLAB_OAUTH_CLIENT_SECRET", "")
 
 	app := newSetupTestApp(t)
 	clearAllUsers(t, app)
@@ -161,12 +172,12 @@ func decodeGoldenIntegrationList(t *testing.T, rec *httptest.ResponseRecorder) m
 	return bySlug
 }
 
-// TestIntegrationsListReturnsAllSlugsWithMetadata pins the current set of 13
+// TestIntegrationsListReturnsAllSlugsWithMetadata pins the current set of 14
 // registered integration slugs and their exact name/category string
 // literals, and the current locked/enabled defaults:
 //   - "sops" is seeded locked+enabled=true by migration 53.
 //   - every other slug defaults enabled=false with no DB row.
-//   - "sops" and "github" are the only slugs in alwaysLockedIntegrationSlugs.
+//   - "sops", "github" and "gitlab" are the only slugs in alwaysLockedIntegrationSlugs.
 //
 // Assertions are keyed by slug (a map), never by array index/order, since
 // integrations.All() today iterates a Go map and has no stable order.
@@ -179,8 +190,8 @@ func TestIntegrationsListReturnsAllSlugsWithMetadata(t *testing.T) {
 	}
 
 	bySlug := decodeGoldenIntegrationList(t, rec)
-	if len(bySlug) != 13 {
-		t.Fatalf("expected 13 integrations, got %d: %+v", len(bySlug), bySlug)
+	if len(bySlug) != 14 {
+		t.Fatalf("expected 14 integrations, got %d: %+v", len(bySlug), bySlug)
 	}
 
 	for slug, expected := range goldenExpectedIntegrations {
@@ -206,7 +217,7 @@ func TestIntegrationsListReturnsAllSlugsWithMetadata(t *testing.T) {
 			}
 		}
 
-		if slug == "sops" || slug == "github" {
+		if slug == "sops" || slug == "github" || slug == "gitlab" {
 			if !item.Locked {
 				t.Errorf("slug %q: expected locked=true, got false", slug)
 			}
@@ -411,13 +422,13 @@ func TestIntegrationsPutRequiredFieldValidationError(t *testing.T) {
 	}
 }
 
-// TestIntegrationsPutRejectsLockedSlugs covers PUT rejection for the two
-// always-locked slugs (sops, github) — both must 403 with the exact current
-// error message, regardless of the request body.
+// TestIntegrationsPutRejectsLockedSlugs covers PUT rejection for the
+// always-locked slugs (sops, github, gitlab) — all must 403 with the exact
+// current error message, regardless of the request body.
 func TestIntegrationsPutRejectsLockedSlugs(t *testing.T) {
 	_, mux, _ := setupIntegrationsGoldenTestApp(t, nil)
 
-	for _, slug := range []string{"sops", "github"} {
+	for _, slug := range []string{"sops", "github", "gitlab"} {
 		t.Run(slug, func(t *testing.T) {
 			rec := doGoldenJSONRequest(t, mux, http.MethodPut, "/api/custom/integrations/"+slug, map[string]interface{}{
 				"enabled": true,
@@ -443,7 +454,7 @@ func TestIntegrationsPutRejectsLockedSlugs(t *testing.T) {
 func TestIntegrationsDeleteRejectsLockedSlugs(t *testing.T) {
 	_, mux, _ := setupIntegrationsGoldenTestApp(t, nil)
 
-	for _, slug := range []string{"sops", "github"} {
+	for _, slug := range []string{"sops", "github", "gitlab"} {
 		t.Run(slug, func(t *testing.T) {
 			rec := doGoldenJSONRequest(t, mux, http.MethodDelete, "/api/custom/integrations/"+slug, nil)
 			if rec.Code != http.StatusForbidden {

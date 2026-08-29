@@ -5,7 +5,8 @@ import { computed } from 'vue'
 // repository's own page with its provider icon (via RepositoryIcon) and
 // name, so every "which repo is this from" spot in the app looks the same.
 // Text color follows the provider instead of the default link color:
-// GitHub reads as a grayish-white (matching GithubIcon's own tone), any
+// GitHub reads as a grayish-white (matching GithubIcon's own tone), GitLab
+// reads as its own brand orange (matching GitlabIcon's tanuki mark), any
 // other/unrecognized platform (generic git URL) reads as plain gray.
 const props = withDefaults(defineProps<{
   repository?: { id: string, name: string, platform?: string | null } | null
@@ -15,11 +16,16 @@ const props = withDefaults(defineProps<{
   iconClass: 'w-3.5 h-3.5 shrink-0',
 })
 
-const textClass = computed(() =>
-  props.repository?.platform === 'github'
-    ? 'text-gray-600 dark:text-gray-300'
-    : 'text-gray-500 dark:text-gray-400'
-)
+const textClass = computed(() => {
+  switch (props.repository?.platform) {
+    case 'github':
+      return 'text-gray-600 dark:text-gray-300'
+    case 'gitlab':
+      return 'text-orange-600 dark:text-orange-400'
+    default:
+      return 'text-gray-500 dark:text-gray-400'
+  }
+})
 </script>
 
 <template>

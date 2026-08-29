@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { stackEffectiveStatus, stackHasRenderOverrides, stackIsSyncing, stackStatusBadge, stackSyncStatus, stackVisibleDeployStatus, stackWorkerName, stackWorkerStatus } from '../utils/stack-status'
+import { stackFleetStatus, stackHasRenderOverrides, stackIsSyncing, stackStatusBadge, stackSyncStatus, stackVisibleDeployStatus, stackWorkerName, stackWorkerStatus } from '../utils/stack-status'
 
 const props = defineProps<{
   stack: any
   workersById: Record<string, any>
 }>()
 
-const statusBadge = computed(() => stackStatusBadge(props.stack))
-const effectiveStatus = computed(() => stackEffectiveStatus(props.stack))
+const statusBadge = computed(() => stackStatusBadge(props.stack, props.workersById))
+const effectiveStatus = computed(() => stackFleetStatus(props.stack, props.workersById))
 const isSyncing = computed(() => stackIsSyncing(props.stack))
 
 function relativeTime(dateStr?: string): string {
