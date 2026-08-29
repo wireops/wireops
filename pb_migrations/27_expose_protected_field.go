@@ -1,8 +1,6 @@
 package pb_migrations
 
 import (
-	"log"
-
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
 )
@@ -13,7 +11,7 @@ func init() {
 		if err != nil {
 			return err
 		}
-		
+
 		field := col.Fields.GetByName("protected")
 		if field != nil {
 			if boolField, ok := field.(*core.BoolField); ok {
@@ -21,7 +19,7 @@ func init() {
 				if err := app.Save(col); err != nil {
 					return err
 				}
-				log.Println("[MIGRATE] Exposed 'protected' field on users collection")
+				app.Logger().Info("Exposed 'protected' field on users collection")
 			}
 		}
 		return nil

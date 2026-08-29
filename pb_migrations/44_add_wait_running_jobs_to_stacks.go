@@ -1,8 +1,6 @@
 package pb_migrations
 
 import (
-	"log"
-
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
 )
@@ -31,7 +29,7 @@ func init() {
 			return err
 		}
 
-		log.Println("[MIGRATE] Added wait_running_jobs and wait_running_jobs_timeout_seconds to stacks collection")
+		app.Logger().Info("Added wait_running_jobs and wait_running_jobs_timeout_seconds to stacks collection")
 		return nil
 	}, func(app core.App) error {
 		col, err := app.FindCollectionByNameOrId("stacks")

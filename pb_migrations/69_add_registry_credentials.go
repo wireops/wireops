@@ -1,8 +1,6 @@
 package pb_migrations
 
 import (
-	"log"
-
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
 )
@@ -53,7 +51,7 @@ func init() {
 			return err
 		}
 
-		log.Println("[MIGRATE] Created registry_credentials collection and stacks.registry_credential relation")
+		app.Logger().Info("Created registry_credentials collection and stacks.registry_credential relation")
 		return nil
 	}, func(app core.App) error {
 		stacksCol, err := app.FindCollectionByNameOrId("stacks")

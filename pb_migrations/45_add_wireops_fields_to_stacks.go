@@ -1,8 +1,6 @@
 package pb_migrations
 
 import (
-	"log"
-
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
 )
@@ -51,7 +49,7 @@ func init() {
 			return err
 		}
 
-		log.Println("[MIGRATE] Added wireops.yaml-driven fields to stacks collection")
+		app.Logger().Info("Added wireops.yaml-driven fields to stacks collection")
 		return nil
 	}, func(app core.App) error {
 		col, err := app.FindCollectionByNameOrId("stacks")

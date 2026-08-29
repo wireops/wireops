@@ -11,7 +11,7 @@ withDefaults(defineProps<{
 <template>
   <UBadge
     v-if="version"
-    :label="`v${version}`"
+    :label="version.startsWith('v') ? version : `v${version}`"
     variant="subtle"
     color="neutral"
     :size="size"

@@ -1,8 +1,6 @@
 package pb_migrations
 
 import (
-	"log"
-
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
 )
@@ -88,7 +86,7 @@ func init() {
 			return err
 		}
 
-		log.Println("[MIGRATE] Created audit_logs collection and retention settings")
+		app.Logger().Info("Created audit_logs collection and retention settings")
 		return nil
 	}, func(app core.App) error {
 		settings, err := app.FindCollectionByNameOrId("app_settings")

@@ -3,7 +3,6 @@ package pb_migrations
 import (
 	"database/sql"
 	"errors"
-	"log"
 
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
@@ -22,7 +21,7 @@ func init() {
 		if err := app.Delete(col); err != nil {
 			return err
 		}
-		log.Println("[MIGRATE] Dropped collection stack_sync_events")
+		app.Logger().Info("Dropped collection stack_sync_events")
 		return nil
 	}, func(app core.App) error {
 		return nil

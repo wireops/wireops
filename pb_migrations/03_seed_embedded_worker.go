@@ -1,8 +1,6 @@
 package pb_migrations
 
 import (
-	"log"
-
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
@@ -29,7 +27,7 @@ func init() {
 			return err
 		}
 
-		log.Println("[MIGRATE] Created embedded server worker")
+		app.Logger().Info("Created embedded server worker")
 		return nil
 	}, func(app core.App) error {
 		records, _ := app.FindAllRecords("workers", dbx.HashExp{"fingerprint": "embedded"})

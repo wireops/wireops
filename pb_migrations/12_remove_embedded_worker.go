@@ -1,8 +1,6 @@
 package pb_migrations
 
 import (
-	"log"
-
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
@@ -32,7 +30,7 @@ func init() {
 		}
 
 		if len(embeddedWorkers) > 0 {
-			log.Printf("[MIGRATE] Removed %d embedded worker record(s)", len(embeddedWorkers))
+			app.Logger().Info("Removed embedded worker record(s)", "count", len(embeddedWorkers))
 		}
 		return nil
 	}, func(app core.App) error {

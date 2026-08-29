@@ -1,8 +1,6 @@
 package pb_migrations
 
 import (
-	"log"
-
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
 )
@@ -43,7 +41,7 @@ func init() {
 					if err := app.Save(col); err != nil {
 						return err
 					}
-					log.Println("[MIGRATE] Added 'get_container_stats' and 'get_container_logs' to worker_commands.command_type allowed values")
+					app.Logger().Info("Added 'get_container_stats' and 'get_container_logs' to worker_commands.command_type allowed values")
 				}
 			}
 		}

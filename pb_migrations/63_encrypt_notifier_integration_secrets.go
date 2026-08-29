@@ -3,7 +3,6 @@ package pb_migrations
 import (
 	"database/sql"
 	"errors"
-	"log"
 	"os"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -46,7 +45,7 @@ func init() {
 
 func encryptNotifierIntegrationSecrets(app core.App, secretKey []byte) error {
 	if secretKey == nil {
-		log.Println("[MIGRATE] Skipping notifier secret encryption backfill: SECRET_KEY is not set or invalid")
+		app.Logger().Info("Skipping notifier secret encryption backfill: SECRET_KEY is not set or invalid")
 		return nil
 	}
 
@@ -82,7 +81,7 @@ func encryptNotifierIntegrationSecrets(app core.App, secretKey []byte) error {
 		if err := app.Save(rec); err != nil {
 			return err
 		}
-		log.Printf("[MIGRATE] Encrypted %s.%s at rest", slug, field)
+		app.Logger().Info("Encrypted field at rest", "slug", slug, "field", field)
 	}
 
 	return nil

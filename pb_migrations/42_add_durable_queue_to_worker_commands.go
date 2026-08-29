@@ -2,7 +2,6 @@ package pb_migrations
 
 import (
 	"fmt"
-	"log"
 
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
@@ -66,7 +65,7 @@ func init() {
 			return err
 		}
 
-		log.Println("[MIGRATE] Added durable queue fields (message_id, idempotency_key, attempt_count, next_attempt_at, queued status) to worker_commands")
+		app.Logger().Info("Added durable queue fields (message_id, idempotency_key, attempt_count, next_attempt_at, queued status) to worker_commands")
 		return nil
 	}, func(app core.App) error {
 		col, err := app.FindCollectionByNameOrId("worker_commands")

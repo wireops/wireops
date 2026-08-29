@@ -1,8 +1,6 @@
 package pb_migrations
 
 import (
-	"log"
-
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
 )
@@ -33,7 +31,7 @@ func init() {
 			return err
 		}
 
-		log.Println("[MIGRATE] Added sync_interval_seconds to repositories collection (repo-level fetch tick override; 0 = global SCAN_PERIOD)")
+		app.Logger().Info("Added sync_interval_seconds to repositories collection (repo-level fetch tick override; 0 = global SCAN_PERIOD)")
 		return nil
 	}, func(app core.App) error {
 		col, err := app.FindCollectionByNameOrId("repositories")

@@ -1,8 +1,6 @@
 package pb_migrations
 
 import (
-	"log"
-
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
 )
@@ -18,7 +16,7 @@ func init() {
 			col, err := app.FindCollectionByNameOrId(name)
 			if err != nil {
 				if optionalCollections[name] {
-					log.Printf("[MIGRATE] Warning: Optional collection %s not found, skipping: %v", name, err)
+					app.Logger().Warn("Optional collection not found, skipping", "collection", name, "error", err)
 					continue
 				}
 				return err
@@ -41,7 +39,7 @@ func init() {
 						if err := app.Save(col); err != nil {
 							return err
 						}
-						log.Printf("[MIGRATE] Added 'monitoring' to %s.role allowed values", name)
+						app.Logger().Info("Added 'monitoring' to role allowed values", "collection", name)
 					}
 				}
 			}

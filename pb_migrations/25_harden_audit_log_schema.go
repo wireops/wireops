@@ -2,7 +2,6 @@ package pb_migrations
 
 import (
 	"fmt"
-	"log"
 
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
@@ -58,7 +57,7 @@ func init() {
 			}
 		}
 
-		log.Println("[MIGRATE] Hardened audit_logs schema with origin and metadata")
+		app.Logger().Info("Hardened audit_logs schema with origin and metadata")
 		return nil
 	}, func(app core.App) error {
 		col, err := app.FindCollectionByNameOrId("audit_logs")

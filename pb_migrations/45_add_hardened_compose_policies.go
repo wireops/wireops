@@ -1,8 +1,6 @@
 package pb_migrations
 
 import (
-	"log"
-
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
 )
@@ -40,7 +38,7 @@ func init() {
 			return err
 		}
 
-		log.Println("[MIGRATE] Added privileged/host-network/host-pid/host-ipc/docker-socket policy flags and cap_add/devices/security_opt allowlists")
+		app.Logger().Info("Added privileged/host-network/host-pid/host-ipc/docker-socket policy flags and cap_add/devices/security_opt allowlists")
 		return nil
 	}, func(app core.App) error {
 		workers, err := app.FindCollectionByNameOrId("workers")

@@ -3,7 +3,6 @@ package pb_migrations
 import (
 	"database/sql"
 	"fmt"
-	"log"
 
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
@@ -43,7 +42,7 @@ func init() {
 			return err
 		}
 
-		log.Println("[MIGRATE] Added unique index on repository_keys.repository")
+		app.Logger().Info("Added unique index on repository_keys.repository")
 		return nil
 	}, func(app core.App) error {
 		col, err := app.FindCollectionByNameOrId("repository_keys")

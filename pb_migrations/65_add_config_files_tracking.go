@@ -1,8 +1,6 @@
 package pb_migrations
 
 import (
-	"log"
-
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
 )
@@ -15,7 +13,7 @@ func init() {
 		if err := createJobConfigFiles(app); err != nil {
 			return err
 		}
-		log.Println("[MIGRATE] Added stack_config_files and job_config_files collections")
+		app.Logger().Info("Added stack_config_files and job_config_files collections")
 		return nil
 	}, func(app core.App) error {
 		for _, name := range []string{"stack_config_files", "job_config_files"} {

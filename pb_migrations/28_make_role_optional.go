@@ -1,8 +1,6 @@
 package pb_migrations
 
 import (
-	"log"
-
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
 	"github.com/wireops/wireops/internal/oidc"
@@ -28,7 +26,7 @@ func init() {
 				}
 			}
 		}
-		log.Println("[MIGRATE] Made role field optional on users and sso_users to fix OAuth2 signups")
+		app.Logger().Info("Made role field optional on users and sso_users to fix OAuth2 signups")
 		return nil
 	}, func(app core.App) error {
 		return nil

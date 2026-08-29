@@ -1,8 +1,6 @@
 package pb_migrations
 
 import (
-	"log"
-
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
 )
@@ -27,11 +25,11 @@ func init() {
 		for _, rec := range records {
 			rec.Set("enabled", true)
 			if err := app.Save(rec); err != nil {
-				log.Printf("[MIGRATE] Failed to update worker_policies record %s: %v", rec.Id, err)
+				app.Logger().Error("Failed to update worker_policies record", "id", rec.Id, "error", err)
 			}
 		}
 
-		log.Println("[MIGRATE] Added enabled field to worker_policies and set existing to true")
+		app.Logger().Info("Added enabled field to worker_policies and set existing to true")
 		return nil
 	}, func(app core.App) error {
 		pol, err := app.FindCollectionByNameOrId("worker_policies")
