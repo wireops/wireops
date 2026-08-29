@@ -26,10 +26,17 @@ func init() {
 		log.Println("[MIGRATE] Enabled cascade delete on stack_config_files.stack and job_config_files.job")
 		return nil
 	}, func(app core.App) error {
-		if err := enableConfigFilesCascade(app, "stack_config_files", "stack", false); err != nil {
-			return err
-		}
-		return enableConfigFilesCascade(app, "job_config_files", "job", false)
+		// Rollback is a no-op. Migration 65's source was itself edited to set
+		// CascadeDelete: true after it had already run on deployed instances
+		// (see the comment above), so on any install created from the current
+		// source — fresh installs, and every instance created after that fix
+		// landed — migration 65 already leaves this true and this migration's
+		// up() is a no-op. Unconditionally setting it back to false here would
+		// silently break those installs' stack/job deletion, and even on the
+		// legacy instances this migration actually fixes, false is the bug
+		// being fixed, not a state worth restoring (same rationale as the
+		// notifier-secret-encryption rollback in migration 63).
+		return nil
 	})
 }
 

@@ -202,7 +202,11 @@ export function buildStackStatusFilter(effectiveStatus: string): string | null {
       // which does use the live-computed worker status) is the accurate
       // signal; this filter only needs to be a reasonable approximation for
       // narrowing the paginated query.
-      return "((status = 'active') || (status = 'syncing' && deployed_at != '')) && worker.docker_online = false"
+      // Also require telemetry to have been reported at least once, mirroring
+      // the DEGRADED gate in internal/routes/worker.go — otherwise a worker
+      // that just connected and hasn't sent its first heartbeat yet (docker_online
+      // defaults to false) would incorrectly match here.
+      return "((status = 'active') || (status = 'syncing' && deployed_at != '')) && worker.docker_online = false && (worker.os != '' || worker.docker_version != '')"
     default:
       return null
   }

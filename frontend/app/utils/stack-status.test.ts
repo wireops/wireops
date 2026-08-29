@@ -117,9 +117,9 @@ describe('stack status helpers', () => {
     expect(stackFleetStatus({ ...stack, id: 'stack-2' }, { 'worker-1': { id: 'worker-1', status: 'ACTIVE' } })).toBe('active')
   })
 
-  it('builds a best-effort PocketBase filter for the degraded bucket', () => {
+  it('builds a best-effort PocketBase filter for the degraded bucket, gated on reported telemetry', () => {
     expect(buildStackStatusFilter('degraded')).toBe(
-      "((status = 'active') || (status = 'syncing' && deployed_at != '')) && worker.docker_online = false"
+      "((status = 'active') || (status = 'syncing' && deployed_at != '')) && worker.docker_online = false && (worker.os != '' || worker.docker_version != '')"
     )
   })
 })

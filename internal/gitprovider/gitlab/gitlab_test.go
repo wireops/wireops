@@ -359,6 +359,45 @@ func TestHTTPClientRejectsHTTPSToHTTPDowngrade(t *testing.T) {
 	}
 }
 
+// TestHTTPClientRejectsCrossHostRedirect covers postToken (used by
+// ExchangeCode/RefreshToken): a 307 redirect preserves the POST method and
+// body, so a malicious or hijacked self-hosted instance redirecting the
+// token endpoint to a different host must not cause client_secret to be
+// resent there.
+func TestHTTPClientRejectsCrossHostRedirect(t *testing.T) {
+	var attackerHits int32
+	attacker := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&attackerHits, 1)
+		_ = r.ParseForm()
+		if r.FormValue("client_secret") != "" {
+			t.Error("client_secret must never be sent to the redirect target")
+		}
+	}))
+	defer attacker.Close()
+
+	origin := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, attacker.URL+"/oauth/token", http.StatusTemporaryRedirect)
+	}))
+	defer origin.Close()
+
+	setEnv(t, origin.URL)
+	p := &Provider{}
+
+	client := origin.Client()
+	client.Transport.(*http.Transport).TLSClientConfig.InsecureSkipVerify = true
+	originalTransport := httpClient.Transport
+	httpClient.Transport = client.Transport
+	defer func() { httpClient.Transport = originalTransport }()
+
+	if _, err := p.postToken(context.Background(), url.Values{}); err == nil {
+		t.Error("expected postToken() to reject the cross-host redirect")
+	}
+
+	if atomic.LoadInt32(&attackerHits) != 0 {
+		t.Fatalf("expected the cross-host redirect target to never be reached, got %d hit(s)", attackerHits)
+	}
+}
+
 func TestGetPropagatesHTTPErrors(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v4/user", func(w http.ResponseWriter, r *http.Request) {

@@ -83,7 +83,7 @@ describe('WorkerSystemInfoCard', () => {
   })
 
   it('shows docker offline warning when worker has reported info but docker is down', () => {
-    const worker = { status: 'ACTIVE', os: 'linux', docker_version: '27.0.0', docker_online: false }
+    const worker = { status: 'DEGRADED', os: 'linux', docker_version: '27.0.0', docker_online: false }
     const wrapper = mount(WorkerSystemInfoCard, { props: { worker }, global: { stubs } })
 
     const alerts = wrapper.findAll('.u-alert')

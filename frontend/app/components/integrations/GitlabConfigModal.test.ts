@@ -20,6 +20,8 @@ function setupGlobals(overrides: {
   vi.stubGlobal('useToast', () => ({ add: addToast }))
   vi.stubGlobal('useApi', () => ({ listGitProviders }))
   vi.stubGlobal('useIntegrations', () => ({ testGitlabIntegration }))
+  vi.stubGlobal('useCopy', () => ({ copy: vi.fn() }))
+  vi.stubGlobal('useNuxtApp', () => ({ $pb: { baseURL: 'http://localhost:8090' } }))
 
   return { addToast, listGitProviders, testGitlabIntegration }
 }

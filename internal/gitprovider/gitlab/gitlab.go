@@ -28,7 +28,11 @@ import (
 // make Go's client resend the Authorization/client_secret in plaintext);
 // self-hosted instances deliberately configured for http throughout (see
 // config.GetGitLabBaseURL) are unaffected since there's no https leg to
-// downgrade from.
+// downgrade from. It also blocks a cross-host redirect: a 307/308 preserves
+// the request method and body, so without this check a malicious/hijacked
+// self-hosted instance could redirect the token POST (client_secret in the
+// body) to an attacker-controlled host and Go would resend it there — Go's
+// client only strips sensitive *headers* on cross-host redirects, not the body.
 var httpClient = &http.Client{
 	Timeout: 15 * time.Second,
 	CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -37,6 +41,9 @@ var httpClient = &http.Client{
 		}
 		if via[0].URL.Scheme == "https" && req.URL.Scheme != "https" {
 			return fmt.Errorf("gitlab: refusing to follow redirect from https to %s", req.URL.Scheme)
+		}
+		if req.URL.Host != via[0].URL.Host {
+			return fmt.Errorf("gitlab: refusing to follow cross-host redirect from %s to %s", via[0].URL.Host, req.URL.Host)
 		}
 		return nil
 	},
