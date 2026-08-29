@@ -228,6 +228,78 @@ describe('StacksPanel', () => {
     expect(getList.mock.calls[0]![2]).toMatchObject({ sort: 'name' })
   })
 
+  // The "degraded" bucket is filtered server-side on worker.docker_online, so
+  // a worker flipping online/offline can change page membership without any
+  // stack record changing - the 'workers' realtime subscription has to force
+  // its own reload in that case instead of relying on the 'stacks' channel.
+  async function mountAndCaptureWorkersHandler(getList: ReturnType<typeof vi.fn>) {
+    let workersHandler: (() => void) | undefined
+    ;(globalThis as any).useNuxtApp = () => ({
+      $pb: {
+        filter: (raw: string) => raw,
+        collection: () => ({
+          getFullList: vi.fn().mockResolvedValue([stackFixture]),
+          getList,
+        }),
+      },
+    })
+    ;(globalThis as any).useApi = () => ({
+      getWorkers: vi.fn(),
+      listOrphans: vi.fn(),
+      purgeOrphan: vi.fn(),
+    })
+    ;(globalThis as any).useRealtime = () => ({
+      subscribe: vi.fn((channel: string, handler: () => void) => {
+        if (channel === 'workers') workersHandler = handler
+      }),
+    })
+    ;(globalThis as any).useToast = () => ({ add: vi.fn() })
+    ;(globalThis as any).useA11yAnnouncer = () => ({ announce: vi.fn() })
+    ;(globalThis as any).usePermissions = () => ({ isViewer: ref(false) })
+    ;(globalThis as any).useRepositoryPlatform = () => ({ platformIconUrl: vi.fn() })
+    ;(globalThis as any).useRoute = () => ({ query: {} })
+    ;(globalThis as any).useAsyncData = (key: string) => ({
+      data: ref(key === 'stack_card_workers' ? [] : [stackFixture]),
+      refresh: vi.fn(),
+    })
+
+    const wrapper = mount(StacksPanel, {
+      global: {
+        components: { StackCard, GitProviderBadge, RepositoryIcon, GithubIcon, GenericIcon },
+        stubs: dropdownStubs,
+      },
+    })
+    await flushPromises()
+
+    return { wrapper, workersHandler: workersHandler! }
+  }
+
+  it('reloads the paginated stack list on a worker event when the status filter is degraded', async () => {
+    const getList = vi.fn().mockResolvedValue({ items: [stackFixture], totalItems: 1 })
+    const { wrapper, workersHandler } = await mountAndCaptureWorkersHandler(getList)
+    ;(wrapper.vm as any).statusFilter = 'degraded'
+    await flushPromises()
+
+    const callsBeforeEvent = getList.mock.calls.length
+    workersHandler()
+    await flushPromises()
+
+    expect(getList.mock.calls.length).toBeGreaterThan(callsBeforeEvent)
+  })
+
+  it('does not reload the paginated stack list on a worker event for a non-degraded status filter', async () => {
+    const getList = vi.fn().mockResolvedValue({ items: [stackFixture], totalItems: 1 })
+    const { wrapper, workersHandler } = await mountAndCaptureWorkersHandler(getList)
+    ;(wrapper.vm as any).statusFilter = 'active'
+    await flushPromises()
+
+    const callsBeforeEvent = getList.mock.calls.length
+    workersHandler()
+    await flushPromises()
+
+    expect(getList.mock.calls.length).toBe(callsBeforeEvent)
+  })
+
   it('selects Import and Manage Orphans from the actions dropdown', async () => {
     const listOrphans = vi.fn().mockResolvedValue([
       { dir_name: 'orphan-1', compose_file: 'docker-compose.yml', has_compose: true },
