@@ -879,7 +879,14 @@ func (rr routeRegistrar) registerStackDeleteRoute() {
 			secretKey := crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))
 			envVars, envLoadErr := envvars.LoadStack(e.Request.Context(), rr.app, secrets.NewDefaultRegistry(rr.app, secretKey), stackID)
 			if envLoadErr != nil {
-				return e.JSON(http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("failed to load env vars for teardown: %v", envLoadErr)})
+				// `docker compose down` doesn't need working secret values —
+				// unlike a deploy, it only needs the compose file to know which
+				// containers/networks/volumes belong to the project. A stale or
+				// unresolvable secret (e.g. a rotated SOPS age key) shouldn't
+				// block deleting the stack, so this is a warning, not a hard
+				// failure: teardown proceeds without an env file.
+				log.Printf("[routes] stack %s: warning: could not resolve env vars for teardown, proceeding without them: %v", stackID, envLoadErr)
+				envVars = nil
 			}
 			if len(envVars) > 0 {
 				var b64Err error
