@@ -153,6 +153,60 @@ func TestExchangeCodeProviderError(t *testing.T) {
 	}
 }
 
+func TestExchangeCodeFetchUserFails(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/oauth/token", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "access-123"})
+	})
+	mux.HandleFunc("/api/v4/user", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	server := gitlabTestServer(t, mux)
+	setEnv(t, server.URL)
+
+	p := &Provider{}
+	_, err := p.ExchangeCode(context.Background(), "the-code", "https://wireops.example.com/callback")
+	if err == nil || !strings.Contains(err.Error(), "fetch authenticated user") {
+		t.Fatalf("expected fetch authenticated user error, got %v", err)
+	}
+}
+
+func TestRefreshTokenProviderError(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/oauth/token", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error":             "invalid_grant",
+			"error_description": "refresh token expired",
+		})
+	})
+	server := gitlabTestServer(t, mux)
+	setEnv(t, server.URL)
+
+	p := &Provider{}
+	_, err := p.RefreshToken(context.Background(), "expired-refresh")
+	if err == nil || !strings.Contains(err.Error(), "invalid_grant") {
+		t.Fatalf("expected invalid_grant error, got %v", err)
+	}
+}
+
+func TestRefreshTokenFetchUserFails(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/oauth/token", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "new-access"})
+	})
+	mux.HandleFunc("/api/v4/user", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	server := gitlabTestServer(t, mux)
+	setEnv(t, server.URL)
+
+	p := &Provider{}
+	_, err := p.RefreshToken(context.Background(), "old-refresh")
+	if err == nil || !strings.Contains(err.Error(), "fetch authenticated user") {
+		t.Fatalf("expected fetch authenticated user error, got %v", err)
+	}
+}
+
 func TestRefreshTokenSuccess(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/oauth/token", func(w http.ResponseWriter, r *http.Request) {
@@ -184,6 +238,36 @@ func TestRefreshTokenSuccess(t *testing.T) {
 	}
 	if token.AccessToken != "new-access" || token.RefreshToken != "new-refresh" {
 		t.Fatalf("unexpected refreshed token: %+v", token)
+	}
+}
+
+func TestPostTokenRejectsMalformedJSON(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/oauth/token", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("not json"))
+	})
+	server := gitlabTestServer(t, mux)
+	setEnv(t, server.URL)
+
+	p := &Provider{}
+	_, err := p.postToken(context.Background(), url.Values{})
+	if err == nil || !strings.Contains(err.Error(), "decode token response") {
+		t.Fatalf("expected decode error, got %v", err)
+	}
+}
+
+func TestPostTokenRejectsMissingAccessToken(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/oauth/token", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"token_type": "Bearer"})
+	})
+	server := gitlabTestServer(t, mux)
+	setEnv(t, server.URL)
+
+	p := &Provider{}
+	_, err := p.postToken(context.Background(), url.Values{})
+	if err == nil || !strings.Contains(err.Error(), "no access_token") {
+		t.Fatalf("expected no-access_token error, got %v", err)
 	}
 }
 

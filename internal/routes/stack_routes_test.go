@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
@@ -362,6 +363,47 @@ func TestStackDeleteProceedsWithEmptyEnvWhenLoadStackFails(t *testing.T) {
 
 	if _, err := app.FindRecordById("stacks", stack.Id); err == nil {
 		t.Fatal("expected stack record to be deleted after successful teardown dispatch")
+	}
+}
+
+// TestStackDeleteIncludesEnvFileWhenLoadStackSucceeds covers the sibling
+// success path of TestStackDeleteProceedsWithEmptyEnvWhenLoadStackFails: when
+// env var resolution succeeds, teardown must build and send a real env file
+// rather than leaving EnvFileB64 empty.
+func TestStackDeleteIncludesEnvFileWhenLoadStackSucceeds(t *testing.T) {
+	t.Setenv("DATA_DIR", t.TempDir())
+	dispatcher := &capturingTeardownDispatcher{connected: true}
+	app, mux, _ := setupStackDeleteTestApp(t, dispatcher)
+
+	repo, worker := createOverridesTestRepoAndWorker(t, app)
+	stack := createTeardownTestStack(t, app, repo.Id, worker.Id)
+
+	envVarCol, err := app.FindCollectionByNameOrId("stack_env_vars")
+	if err != nil {
+		t.Fatalf("find stack_env_vars collection: %v", err)
+	}
+	envVar := core.NewRecord(envVarCol)
+	envVar.Set("stack", stack.Id)
+	envVar.Set("key", "APP_ENV")
+	envVar.Set("value", "production")
+	if err := app.Save(envVar); err != nil {
+		t.Fatalf("create plain env var: %v", err)
+	}
+
+	rec := doDeleteStackRequest(t, mux, stack.Id)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if dispatcher.lastCmd.EnvFileB64 == "" {
+		t.Fatal("expected non-empty EnvFileB64 when env resolution succeeds")
+	}
+	decoded, err := base64.StdEncoding.DecodeString(dispatcher.lastCmd.EnvFileB64)
+	if err != nil {
+		t.Fatalf("decode EnvFileB64: %v", err)
+	}
+	if !strings.Contains(string(decoded), "APP_ENV=production") {
+		t.Fatalf("expected env file to contain APP_ENV=production, got %q", decoded)
 	}
 }
 

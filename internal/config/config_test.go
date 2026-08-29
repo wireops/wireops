@@ -422,6 +422,30 @@ func TestGetWebhookURL(t *testing.T) {
 	}
 }
 
+func TestGetGitLabOAuthClientID(t *testing.T) {
+	t.Setenv("GITLAB_OAUTH_CLIENT_ID", "")
+	if got := GetGitLabOAuthClientID(); got != "" {
+		t.Errorf("GetGitLabOAuthClientID() = %q, want empty when unset", got)
+	}
+
+	t.Setenv("GITLAB_OAUTH_CLIENT_ID", "  my-client-id  ")
+	if got := GetGitLabOAuthClientID(); got != "my-client-id" {
+		t.Errorf("GetGitLabOAuthClientID() = %q, want trimmed value", got)
+	}
+}
+
+func TestGetGitLabOAuthClientSecret(t *testing.T) {
+	t.Setenv("GITLAB_OAUTH_CLIENT_SECRET", "")
+	if got := GetGitLabOAuthClientSecret(); got != "" {
+		t.Errorf("GetGitLabOAuthClientSecret() = %q, want empty when unset", got)
+	}
+
+	t.Setenv("GITLAB_OAUTH_CLIENT_SECRET", "  my-secret  ")
+	if got := GetGitLabOAuthClientSecret(); got != "my-secret" {
+		t.Errorf("GetGitLabOAuthClientSecret() = %q, want trimmed value", got)
+	}
+}
+
 func TestGetGitLabBaseURL(t *testing.T) {
 	tests := []struct {
 		name     string
