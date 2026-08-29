@@ -2,7 +2,6 @@ package pb_migrations
 
 import (
 	"fmt"
-	"log"
 
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
@@ -28,7 +27,7 @@ func init() {
 			return err
 		}
 
-		log.Println("[MIGRATE] Enabled cascade delete on sync_log_phases.sync_log")
+		app.Logger().Info("Enabled cascade delete on sync_log_phases.sync_log")
 		return nil
 	}, func(app core.App) error {
 		col, err := app.FindCollectionByNameOrId("sync_log_phases")

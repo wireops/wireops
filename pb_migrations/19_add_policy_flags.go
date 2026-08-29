@@ -1,8 +1,6 @@
 package pb_migrations
 
 import (
-	"log"
-
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
 )
@@ -34,7 +32,7 @@ func init() {
 			return err
 		}
 
-		log.Println("[MIGRATE] Added prevent_latest_images + block_host_volumes to worker_policies and policy_flags to workers")
+		app.Logger().Info("Added prevent_latest_images + block_host_volumes to worker_policies and policy_flags to workers")
 		return nil
 	}, func(app core.App) error {
 		// Remove policy_flags from workers.

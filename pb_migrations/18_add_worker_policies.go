@@ -1,8 +1,6 @@
 package pb_migrations
 
 import (
-	"log"
-
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
 )
@@ -49,7 +47,7 @@ func init() {
 			return err
 		}
 
-		log.Println("[MIGRATE] Created worker_policies collection and added policy fields to workers")
+		app.Logger().Info("Created worker_policies collection and added policy fields to workers")
 		return nil
 	}, func(app core.App) error {
 		// Remove policy fields from workers.

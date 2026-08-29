@@ -1,8 +1,6 @@
 package pb_migrations
 
 import (
-	"log"
-
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
 )
@@ -22,7 +20,7 @@ func init() {
 			return err
 		}
 
-		log.Println("[MIGRATE] Added secret_error to stacks collection (marks stacks failing on secret fetch/decrypt so cron stops retrying until the user fixes the secret and triggers a manual sync)")
+		app.Logger().Info("Added secret_error to stacks collection (marks stacks failing on secret fetch/decrypt so cron stops retrying until the user fixes the secret and triggers a manual sync)")
 		return nil
 	}, func(app core.App) error {
 		col, err := app.FindCollectionByNameOrId("stacks")

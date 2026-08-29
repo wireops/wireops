@@ -1,8 +1,6 @@
 package pb_migrations
 
 import (
-	"log"
-
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
 )
@@ -30,7 +28,7 @@ func init() {
 			return err
 		}
 
-		log.Println("[MIGRATE] Added started_at, queue_time_ms, and execution_time_ms fields to job_runs")
+		app.Logger().Info("Added started_at, queue_time_ms, and execution_time_ms fields to job_runs")
 		return nil
 	}, func(app core.App) error {
 		col, err := app.FindCollectionByNameOrId("job_runs")

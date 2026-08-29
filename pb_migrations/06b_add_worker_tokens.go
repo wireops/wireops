@@ -1,8 +1,6 @@
 package pb_migrations
 
 import (
-	"log"
-
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
 )
@@ -46,7 +44,7 @@ func init() {
 			return err
 		}
 
-		log.Println("[MIGRATE] Created worker_tokens collection")
+		app.Logger().Info("Created worker_tokens collection")
 		return nil
 	}, func(app core.App) error {
 		col, err := app.FindCollectionByNameOrId("worker_tokens")

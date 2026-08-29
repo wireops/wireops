@@ -1,8 +1,6 @@
 package pb_migrations
 
 import (
-	"log"
-
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
 )
@@ -29,7 +27,7 @@ func init() {
 			return err
 		}
 
-		log.Println("[MIGRATE] Added name and description fields to scheduled_jobs")
+		app.Logger().Info("Added name and description fields to scheduled_jobs")
 		return nil
 	}, func(app core.App) error {
 		col, err := app.FindCollectionByNameOrId("scheduled_jobs")

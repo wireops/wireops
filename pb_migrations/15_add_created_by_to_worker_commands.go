@@ -1,8 +1,6 @@
 package pb_migrations
 
 import (
-	"log"
-
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
 )
@@ -22,7 +20,7 @@ func init() {
 			return err
 		}
 
-		log.Println("[MIGRATE] Added created_by field to worker_commands")
+		app.Logger().Info("Added created_by field to worker_commands")
 		return nil
 	}, func(app core.App) error {
 		col, err := app.FindCollectionByNameOrId("worker_commands")

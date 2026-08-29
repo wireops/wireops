@@ -2,7 +2,6 @@ package pb_migrations
 
 import (
 	"fmt"
-	"log"
 
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
@@ -49,7 +48,7 @@ func init() {
 			return err
 		}
 
-		log.Println("[MIGRATE] Denormalized terminal_sessions and relaxed its stack/user/worker relations")
+		app.Logger().Info("Denormalized terminal_sessions and relaxed its stack/user/worker relations")
 		return nil
 	}, func(app core.App) error {
 		col, err := app.FindCollectionByNameOrId("terminal_sessions")

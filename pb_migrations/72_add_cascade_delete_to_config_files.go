@@ -2,7 +2,6 @@ package pb_migrations
 
 import (
 	"fmt"
-	"log"
 
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
@@ -23,7 +22,7 @@ func init() {
 		if err := enableConfigFilesCascade(app, "job_config_files", "job", true); err != nil {
 			return err
 		}
-		log.Println("[MIGRATE] Enabled cascade delete on stack_config_files.stack and job_config_files.job")
+		app.Logger().Info("Enabled cascade delete on stack_config_files.stack and job_config_files.job")
 		return nil
 	}, func(app core.App) error {
 		// Rollback is a no-op. Migration 65's source was itself edited to set

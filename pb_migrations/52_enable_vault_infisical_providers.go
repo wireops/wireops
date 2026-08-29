@@ -2,7 +2,6 @@ package pb_migrations
 
 import (
 	"fmt"
-	"log"
 
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
@@ -31,7 +30,7 @@ func init() {
 			return err
 		}
 
-		log.Println("[MIGRATE] Enabled vault/infisical secret providers")
+		app.Logger().Info("Enabled vault/infisical secret providers")
 		return nil
 	}, func(app core.App) error {
 		// stack_env_vars originally had Pattern = "^(internal|)$" (migration 07);

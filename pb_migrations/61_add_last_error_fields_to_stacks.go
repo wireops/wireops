@@ -1,8 +1,6 @@
 package pb_migrations
 
 import (
-	"log"
-
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
 )
@@ -32,7 +30,7 @@ func init() {
 			return err
 		}
 
-		log.Println("[MIGRATE] Added last_error_category/last_error_message/last_error_at to stacks collection (denormalized so the UI can show a sync-vs-deploy error card without joining sync_logs/sync_log_phases)")
+		app.Logger().Info("Added last_error_category/last_error_message/last_error_at to stacks collection (denormalized so the UI can show a sync-vs-deploy error card without joining sync_logs/sync_log_phases)")
 		return nil
 	}, func(app core.App) error {
 		col, err := app.FindCollectionByNameOrId("stacks")

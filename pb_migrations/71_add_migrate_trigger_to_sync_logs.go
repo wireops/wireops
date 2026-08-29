@@ -2,7 +2,6 @@ package pb_migrations
 
 import (
 	"fmt"
-	"log"
 
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
@@ -41,7 +40,7 @@ func init() {
 			if err := app.Save(col); err != nil {
 				return err
 			}
-			log.Println("[MIGRATE] Added 'migrate' to sync_logs.trigger allowed values")
+			app.Logger().Info("Added 'migrate' to sync_logs.trigger allowed values")
 		}
 		return nil
 	}, func(app core.App) error {

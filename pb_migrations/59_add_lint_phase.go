@@ -1,8 +1,6 @@
 package pb_migrations
 
 import (
-	"log"
-
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
 )
@@ -38,7 +36,7 @@ func init() {
 			return err
 		}
 
-		log.Println("[MIGRATE] Added lint to sync_log_phases.phase enum")
+		app.Logger().Info("Added lint to sync_log_phases.phase enum")
 		return nil
 	}, func(app core.App) error {
 		col, err := app.FindCollectionByNameOrId("sync_log_phases")

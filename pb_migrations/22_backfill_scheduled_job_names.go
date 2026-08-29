@@ -1,7 +1,6 @@
 package pb_migrations
 
 import (
-	"log"
 	"path/filepath"
 	"strings"
 	"unicode"
@@ -29,7 +28,7 @@ func init() {
 			updated++
 		}
 
-		log.Printf("[MIGRATE] Backfilled names for %d scheduled_jobs record(s)", updated)
+		app.Logger().Info("Backfilled names for scheduled_jobs record(s)", "count", updated)
 		return nil
 	}, func(app core.App) error {
 		// Down migration is intentionally a no-op. Reversing the up migration (the backfill of

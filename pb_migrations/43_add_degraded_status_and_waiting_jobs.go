@@ -2,7 +2,6 @@ package pb_migrations
 
 import (
 	"fmt"
-	"log"
 
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
@@ -70,7 +69,7 @@ func init() {
 			}
 		}
 
-		log.Println("[MIGRATE] Added 'degraded' status to stacks and sync_logs, and 'waiting_jobs' to sync_logs")
+		app.Logger().Info("Added 'degraded' status to stacks and sync_logs, and 'waiting_jobs' to sync_logs")
 		return nil
 	}, func(app core.App) error {
 		stacksCol, err := app.FindCollectionByNameOrId("stacks")

@@ -1,8 +1,6 @@
 package pb_migrations
 
 import (
-	"log"
-
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
 )
@@ -21,7 +19,7 @@ func init() {
 			return err
 		}
 
-		log.Println("[MIGRATE] Added cert_not_after and cert_serial to workers collection")
+		app.Logger().Info("Added cert_not_after and cert_serial to workers collection")
 		return nil
 	}, func(app core.App) error {
 		col, err := app.FindCollectionByNameOrId("workers")

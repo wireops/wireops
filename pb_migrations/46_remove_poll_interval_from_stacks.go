@@ -1,8 +1,6 @@
 package pb_migrations
 
 import (
-	"log"
-
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
 )
@@ -22,7 +20,7 @@ func init() {
 			return err
 		}
 
-		log.Println("[MIGRATE] Removed poll_interval from stacks collection (replaced by global SCAN_PERIOD config)")
+		app.Logger().Info("Removed poll_interval from stacks collection (replaced by global SCAN_PERIOD config)")
 		return nil
 	}, func(app core.App) error {
 		col, err := app.FindCollectionByNameOrId("stacks")

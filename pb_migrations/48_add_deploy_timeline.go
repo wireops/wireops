@@ -1,8 +1,6 @@
 package pb_migrations
 
 import (
-	"log"
-
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
 
@@ -112,7 +110,7 @@ func init() {
 			return err
 		}
 
-		log.Println("[MIGRATE] Added deploy timeline: sync_logs.correlation_id, worker_commands.acked_at, sync_log_phases collection")
+		app.Logger().Info("Added deploy timeline: sync_logs.correlation_id, worker_commands.acked_at, sync_log_phases collection")
 		return nil
 	}, func(app core.App) error {
 		if col, err := app.FindCollectionByNameOrId("sync_log_phases"); err == nil {

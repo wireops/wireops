@@ -1,8 +1,6 @@
 package pb_migrations
 
 import (
-	"log"
-
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
 )
@@ -34,7 +32,7 @@ func init() {
 			return err
 		}
 
-		log.Println("[MIGRATE] Added render_overrides to stacks and allow_render_overrides to worker_policies")
+		app.Logger().Info("Added render_overrides to stacks and allow_render_overrides to worker_policies")
 		return nil
 	}, func(app core.App) error {
 		stacks, err := app.FindCollectionByNameOrId("stacks")

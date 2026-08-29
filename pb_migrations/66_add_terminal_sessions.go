@@ -1,8 +1,6 @@
 package pb_migrations
 
 import (
-	"log"
-
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
 )
@@ -92,7 +90,7 @@ func init() {
 			}
 		}
 
-		log.Println("[MIGRATE] Created terminal_sessions collection and retention setting")
+		app.Logger().Info("Created terminal_sessions collection and retention setting")
 		return nil
 	}, func(app core.App) error {
 		settings, err := app.FindCollectionByNameOrId("app_settings")

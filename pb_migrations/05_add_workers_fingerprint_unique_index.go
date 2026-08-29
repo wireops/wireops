@@ -1,8 +1,6 @@
 package pb_migrations
 
 import (
-	"log"
-
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
 )
@@ -28,7 +26,7 @@ func init() {
 			return err
 		}
 
-		log.Println("[MIGRATE] Added unique index on workers.fingerprint")
+		app.Logger().Info("Added unique index on workers.fingerprint")
 		return nil
 	}, func(app core.App) error {
 		col, err := app.FindCollectionByNameOrId("workers")

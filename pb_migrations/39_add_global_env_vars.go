@@ -1,8 +1,6 @@
 package pb_migrations
 
 import (
-	"log"
-
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
 )
@@ -19,7 +17,7 @@ func init() {
 			return err
 		}
 
-		log.Println("[MIGRATE] Added global environment variables")
+		app.Logger().Info("Added global environment variables")
 		return nil
 	}, func(app core.App) error {
 		for _, name := range []string{"job_global_env_vars", "stack_global_env_vars", "global_env_vars"} {

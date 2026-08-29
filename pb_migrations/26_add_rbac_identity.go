@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"log"
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
@@ -49,7 +48,7 @@ func init() {
 			return err
 		}
 
-		log.Println("[MIGRATE] Added RBAC users, service accounts and SSO group role mappings")
+		app.Logger().Info("Added RBAC users, service accounts and SSO group role mappings")
 		return nil
 	}, func(app core.App) error {
 		for _, name := range []string{"service_accounts", "sso_group_roles", "users"} {
@@ -137,7 +136,7 @@ func createServiceAccounts(app core.App) error {
 	col.Fields.Add(serviceAccountRoleSelectField())
 	col.Fields.Add(&core.BoolField{Name: "enabled"})
 	col.Fields.Add(&core.RelationField{Name: "created_by", CollectionId: users.Id, MaxSelect: 1})
-	
+
 	// Embedded API Key fields
 	col.Fields.Add(&core.TextField{Name: "key_hash", Hidden: true})
 	col.Fields.Add(&core.TextField{Name: "key_prefix"})

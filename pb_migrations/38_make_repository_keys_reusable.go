@@ -2,7 +2,6 @@ package pb_migrations
 
 import (
 	"fmt"
-	"log"
 	"strings"
 
 	"github.com/pocketbase/dbx"
@@ -106,6 +105,6 @@ func migrateReusableRepositoryKeys(app core.App) error {
 		return err
 	}
 
-	log.Println("[MIGRATE] Made repository keys reusable across repositories")
+	app.Logger().Info("Made repository keys reusable across repositories")
 	return nil
 }

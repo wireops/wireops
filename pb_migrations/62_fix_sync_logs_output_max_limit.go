@@ -1,8 +1,6 @@
 package pb_migrations
 
 import (
-	"log"
-
 	"github.com/pocketbase/pocketbase/core"
 	m "github.com/pocketbase/pocketbase/migrations"
 
@@ -16,7 +14,7 @@ func init() {
 		for _, colName := range []string{"sync_logs", "job_runs"} {
 			col, err := app.FindCollectionByNameOrId(colName)
 			if err != nil {
-				log.Printf("[MIGRATE] Warning: collection %s not found: %v", colName, err)
+				app.Logger().Warn("Collection not found", "collection", colName, "error", err)
 				continue
 			}
 
@@ -28,7 +26,7 @@ func init() {
 						if err := app.Save(col); err != nil {
 							return err
 						}
-						log.Printf("[MIGRATE] Set max character limit on %s.output to %d", colName, syncLogOutputMax)
+						app.Logger().Info("Set max character limit on output field", "collection", colName, "max", syncLogOutputMax)
 					}
 				}
 			}
