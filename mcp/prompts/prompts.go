@@ -116,7 +116,24 @@ Always look up current information, never rely on memorized/training-data knowle
 
 Once you have the image(s) and their verified, up-to-date ports/volumes/environment variables, call the scaffold_stack tool with a service definition for each container. Do not invent image names, tags, or configuration you have not verified against an official source.
 
-If you know which wireops worker this stack will run on, pass its worker_id to scaffold_stack so the generated compose file is checked against that worker's deploy security policy before you present it.`, appDescription, imageHint)
+If you know which wireops worker this stack will run on, pass its worker_id to scaffold_stack so the generated compose file is checked against that worker's deploy security policy before you present it.
+
+scaffold_stack's structured input has no field for labels or annotations, so apply these two optional wireops compose conventions by hand-editing the returned compose YAML before you present or commit it, only where they're actually wanted:
+
+- customization.image.slug — a label (or annotation, at the service level or under deploy:) giving the service a proper icon in the wireops UI instead of a generic one. Its value must match an existing slug in the selfh.st/icons catalog (https://selfh.st/icons/) — do not invent one. Example:
+    services:
+      app:
+        image: nginx:1.31.4-alpine
+        labels:
+          - "customization.image.slug=nginx"
+
+- dev.wireops.config.<name> — a service-level annotation (not a label; put it under an "annotations:" map, not "labels:") that mounts a git-tracked config file or directory straight into the container. <name> is an arbitrary identifier distinguishing multiple such annotations on one service (letters/digits/-/_, no path separators or leading dot); its value is "<repo-relative source>:<absolute in-container target>". source may name a single file or a directory (every file under it is mounted, preserving its relative layout under target). wireops synthesizes the compose top-level configs: block and each service's configs: list from this annotation at render time — never write configs: yourself, and never invent a wireops.yaml field for it, since none exists. Example, mapping a committed nginx.conf to its in-container path:
+    services:
+      app:
+        image: nginx:1.31.4-alpine
+        annotations:
+          dev.wireops.config.nginx-conf: "conf/nginx.conf:/etc/nginx/nginx.conf"
+  The source path (conf/nginx.conf above) must actually exist in the repository being committed to, or the next sync will fail.`, appDescription, imageHint)
 
 		return &mcp.GetPromptResult{
 			Description: "Research-grounded scaffolding for a new wireops stack from a natural-language description.",
