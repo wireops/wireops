@@ -17,6 +17,7 @@ const route = useRoute()
 const searchQuery = ref('')
 const searchInputRef = ref<{ $el?: HTMLElement } | HTMLElement | null>(null)
 const statusFilter = ref('all')
+const workerFilter = ref('all')
 const sortBy = ref('name')
 
 function groupQueryToFilterValue(val: unknown): string {
@@ -55,6 +56,9 @@ function buildStacksFilter() {
     const statusClause = buildStackStatusFilter(statusFilter.value)
     if (statusClause) clauses.push(statusClause)
   }
+  if (workerFilter.value !== 'all') {
+    clauses.push($pb.filter('(worker = {:w})', { w: workerFilter.value }))
+  }
   if (groupFilter.value !== GROUP_ALL) {
     clauses.push(groupFilter.value === GROUP_UNGROUPED
       ? "(group = '' || group = null)"
@@ -80,7 +84,7 @@ const {
     })
     return { items: result.items, totalItems: result.totalItems }
   },
-  { perPage: 24, sort: sortParam, watchDebounced: [searchQuery, statusFilter, groupFilter] }
+  { perPage: 24, sort: sortParam, watchDebounced: [searchQuery, statusFilter, workerFilter, groupFilter] }
 )
 
 // Fleet-wide aggregate used only for the group dropdown and the status
@@ -229,6 +233,14 @@ const stackStatusSegments: AvailabilitySegment[] = [
 const stacksForAvailability = computed(() =>
   (stacksAggregate.value || []).map((s: any) => ({ ...s, status: stackFleetStatus(s, workersById.value) }))
 )
+
+const workerOptions = computed(() => {
+  const items = [{ label: 'All workers', value: 'all' }]
+  for (const w of workers.value || []) {
+    items.push({ label: w.hostname || w.id, value: w.id })
+  }
+  return items
+})
 
 const groupOptions = computed(() => {
   const groups = new Set((stacksAggregate.value || []).map((s: any) => s.group).filter(Boolean))
@@ -406,6 +418,15 @@ async function handlePurge(dirName: string) {
             content-width
             class="sm:min-w-28"
             aria-label="Filter stacks by group"
+          />
+          <AppSelectInput
+            v-if="workerOptions.length > 1"
+            v-model="workerFilter"
+            :items="workerOptions"
+            placeholder="Filter by worker"
+            content-width
+            class="sm:min-w-28"
+            aria-label="Filter stacks by worker"
           />
         </div>
 
