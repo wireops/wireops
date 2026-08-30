@@ -21,6 +21,19 @@ export interface EnvFileParseResult {
 
 const KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
 
+// A pending (not-yet-persisted) env var row, as edited in a creation wizard
+// before the owning stack/job exists — see EnvironmentVariablesPendingEditor.vue.
+export interface PendingEnvVar {
+  key: string
+  value: string
+  secret: boolean
+  secret_provider: string
+}
+
+export function isValidEnvKey(key: string): boolean {
+  return KEY_PATTERN.test(key)
+}
+
 function unquote(value: string): string {
   const trimmed = value.trim()
   if (trimmed.length >= 2) {

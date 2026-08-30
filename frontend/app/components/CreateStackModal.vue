@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import type { PendingEnvVar } from '../utils/envFileParser'
 const route = useRoute()
 const router = useRouter()
 
@@ -11,7 +12,7 @@ const emit = defineEmits<{
 }>()
 
 const { $pb } = useNuxtApp()
-const { getStackFiles, getWireopsFiles, getWireopsDefinitionFromFile, getWorkers, createStackFromWireops, lintCompose } = useApi()
+const { getStackFiles, getWireopsFiles, getWireopsDefinitionFromFile, getWorkers, createStackFromWireops, lintCompose, customPost } = useApi()
 const { validateComposePath, validateComposeFile } = useValidation()
 const toast = useToast()
 
@@ -46,6 +47,8 @@ const repoFiles = ref<string[]>([])
 const loadingFiles = ref(false)
 const saving = ref(false)
 const createErrors = ref<{ worker?: string; compose_path?: string; compose_file?: string; selected_file?: string; wireops_file?: string; lint?: string }>({})
+
+const pendingEnvVars = ref<PendingEnvVar[]>([])
 
 const wireopsFiles = ref<string[]>([])
 const loadingWireopsFiles = ref(false)
@@ -130,6 +133,7 @@ watch(() => props.open, async (val) => {
     wireopsDefinition.value = null
     definitionErrors.value = []
     createErrors.value = {}
+    pendingEnvVars.value = []
     lintReport.value = null
     lintContent.value = ''
     lintFilename.value = ''
@@ -304,6 +308,13 @@ const stepperItems = computed(() => [
     disabled: !canProceedToStep2.value,
   },
   {
+    title: 'Environment Variables',
+    description: 'Optional',
+    icon: currentStep.value > 3 ? 'i-lucide-check' : 'i-lucide-variable',
+    ui: stepUi(3),
+    disabled: !canProceedToStep3.value,
+  },
+  {
     title: 'Review',
     description: 'Compose checks',
     icon: 'i-lucide-shield-check',
@@ -334,8 +345,8 @@ const activeStep = computed({
 function nextStep() {
   const target = currentStep.value + 1
   if (target > stepperItems.value.length) return
-  // Surface the reason the Review step is out of reach instead of having the
-  // button silently do nothing.
+  // Surface the reason the step after Configuration is out of reach instead
+  // of having the button silently do nothing.
   if (target === 3 && !form.value.worker) {
     createErrors.value.worker = 'Please select a worker'
     return
@@ -402,7 +413,7 @@ watch(
     () => composeTarget.value && `${composeTarget.value.compose_path}/${composeTarget.value.compose_file}`,
   ],
   ([step]) => {
-    if (step === 3) runLint()
+    if (step === 4) runLint()
   },
 )
 
@@ -440,8 +451,17 @@ async function handleSubmit() {
     return
   }
 
+  // If the wizard has pending env vars, the stack is created paused instead
+  // of pending — the first auto-deploy (triggered unconditionally on create,
+  // see OnRecordAfterCreateSuccess("stacks") in internal/hooks/pb_hooks.go)
+  // would otherwise race the env-vars bulk save below and could run without
+  // them. Once the vars are saved, the stack is resumed and a sync is
+  // triggered immediately instead of waiting for the next cron tick.
+  const hasPendingEnvVars = pendingEnvVars.value.length > 0
+
   saving.value = true
   try {
+    let stackId: string
     if (creationMode.value === 'wireops_file') {
       const def = wireopsDefinition.value
       if (!def || def.resolution_error) {
@@ -453,11 +473,13 @@ async function handleSubmit() {
       // computed server-side by re-parsing the file — the client only picks
       // repository/worker and points at the file path. This preview (`def`)
       // is display-only and never sent as the source of truth.
-      await createStackFromWireops({
+      const created = await createStackFromWireops({
         repository: form.value.repository,
         worker: form.value.worker,
         wireops_file: selectedWireopsFile.value,
+        paused: hasPendingEnvVars,
       })
+      stackId = created.id
     } else {
       const target = composeTarget.value
       if (!target) {
@@ -474,7 +496,7 @@ async function handleSubmit() {
       if (fileErr) createErrors.value.compose_file = fileErr
       if (pathErr || fileErr) return
 
-      await $pb.collection('stacks').create({
+      const created = await $pb.collection('stacks').create({
         name: form.value.name,
         repository: form.value.repository,
         worker: form.value.worker,
@@ -482,10 +504,43 @@ async function handleSubmit() {
         compose_path: form.value.compose_path,
         compose_file: form.value.compose_file,
         auto_sync: true,
-        status: 'pending',
+        status: hasPendingEnvVars ? 'paused' : 'pending',
         config_source: 'manual',
       })
+      stackId = created.id
     }
+
+    if (hasPendingEnvVars) {
+      let envVarsSaved = false
+      try {
+        await customPost(`/api/custom/stacks/${stackId}/env-vars/bulk`, {
+          mode: 'replace',
+          vars: pendingEnvVars.value,
+        })
+        envVarsSaved = true
+      } catch (envErr: any) {
+        toast.add({
+          title: 'Stack created, but environment variables failed to save',
+          description: `${envErr?.data?.error || envErr?.message || 'Unknown error'} — the stack was left paused. Add the variables from the Variables tab and resume it manually.`,
+          color: 'warning',
+        })
+      }
+
+      if (envVarsSaved) {
+        try {
+          await $pb.collection('stacks').update(stackId, { status: 'active' })
+          await customPost(`/api/custom/stacks/${stackId}/sync`)
+          toast.add({ title: 'Stack created', description: 'Environment variables saved — deploying now.', color: 'success' })
+        } catch {
+          toast.add({
+            title: 'Stack created and variables saved, but could not resume automatically',
+            description: 'Resume the stack manually from its page to deploy it.',
+            color: 'warning',
+          })
+        }
+      }
+    }
+
     emit('update:open', false)
     emit('created')
   } catch (e: any) {
@@ -499,7 +554,7 @@ async function handleSubmit() {
 <template>
   <UModal
     :open="open"
-    :ui="{ content: currentStep === 3 ? 'sm:max-w-5xl w-full' : 'sm:max-w-2xl w-full' }"
+    :ui="{ content: currentStep === 4 ? 'sm:max-w-5xl w-full' : 'sm:max-w-2xl w-full' }"
     @update:open="emit('update:open', $event)"
   >
     <template #content>
@@ -668,7 +723,11 @@ async function handleSubmit() {
               />
             </div>
 
-            <div v-show="currentStep === 3" class="space-y-4 md:space-y-0 md:grid md:grid-cols-2 md:gap-4 md:items-start">
+            <div v-show="currentStep === 3" class="space-y-4">
+              <EnvironmentVariablesPendingEditor v-model="pendingEnvVars" />
+            </div>
+
+            <div v-show="currentStep === 4" class="space-y-4 md:space-y-0 md:grid md:grid-cols-2 md:gap-4 md:items-start">
               <div class="space-y-2">
                 <p class="text-sm text-gray-700 dark:text-wire-200">
                   Compose file
@@ -734,7 +793,7 @@ async function handleSubmit() {
               />
               <div v-else/>
 
-              <p v-if="currentStep === 3 && createErrors.lint" class="text-xs text-red-500 text-right">
+              <p v-if="currentStep === 4 && createErrors.lint" class="text-xs text-red-500 text-right">
                 {{ createErrors.lint }}
               </p>
 
@@ -742,6 +801,7 @@ async function handleSubmit() {
                 <CancelButton @click="close" />
                 <UButton v-if="currentStep === 1" type="button" label="Next" icon="i-lucide-arrow-right" trailing :disabled="!canProceedToStep2" @click="nextStep" />
                 <UButton v-else-if="currentStep === 2" type="button" label="Next" icon="i-lucide-arrow-right" trailing :disabled="!canProceedToStep3" @click="nextStep" />
+                <UButton v-else-if="currentStep === 3" type="button" label="Next" icon="i-lucide-arrow-right" trailing @click="nextStep" />
                 <UButton v-else type="submit" label="Create" icon="i-lucide-check" :loading="saving" :disabled="lintLoading || lintHasErrors" />
               </div>
             </div>

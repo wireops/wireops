@@ -65,66 +65,76 @@ func (rr routeRegistrar) registerEnvVarRoutes() {
 	}).Bind(apis.BodyLimit(envVarsBulkMaxBytes)).BindFunc(rbac.Require(rbac.CapOperateStacks))
 }
 
-func (rr routeRegistrar) bulkUpsertStackEnvVars(e *core.RequestEvent) error {
-	stackID := e.Request.PathValue("id")
-	stack, err := rr.app.FindRecordById("stacks", stackID)
-	if err != nil {
-		return e.JSON(http.StatusNotFound, map[string]string{"error": "stack not found"})
-	}
+// bulkEnvVarsResult is the {created, updated, deleted} outcome shared by the
+// stack and job bulk-upsert routes.
+type bulkEnvVarsResult struct {
+	Created, Updated, Deleted int
+}
 
+// parseBulkEnvVarsRequest decodes and validates a bulk-upsert request body
+// (mode, key shape, duplicate keys) — shared by the stack and job routes so
+// both reject malformed input identically.
+func parseBulkEnvVarsRequest(r *http.Request) (bulkEnvVarsRequest, map[string]bool, error) {
 	var body bulkEnvVarsRequest
-	if err := json.NewDecoder(e.Request.Body).Decode(&body); err != nil {
-		return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid body"})
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		return body, nil, errors.New("invalid body")
 	}
 	if body.Mode != "replace" && body.Mode != "append" {
-		return e.JSON(http.StatusBadRequest, map[string]string{"error": "mode must be \"replace\" or \"append\""})
+		return body, nil, errors.New(`mode must be "replace" or "append"`)
 	}
 
 	seen := map[string]bool{}
 	for _, v := range body.Vars {
 		key := strings.TrimSpace(v.Key)
 		if key == "" {
-			return e.JSON(http.StatusBadRequest, map[string]string{"error": "variable keys cannot be empty"})
+			return body, nil, errors.New("variable keys cannot be empty")
 		}
 		if !envVarKeyPattern.MatchString(key) {
-			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid key: " + key})
+			return body, nil, errors.New("invalid key: " + key)
 		}
 		if seen[key] {
-			return e.JSON(http.StatusBadRequest, map[string]string{"error": "duplicate key in payload: " + key})
+			return body, nil, errors.New("duplicate key in payload: " + key)
 		}
 		seen[key] = true
 	}
+	return body, seen, nil
+}
 
-	existing, err := rr.app.FindAllRecords("stack_env_vars", dbx.HashExp{"stack": stack.Id})
+// runBulkUpsertEnvVars performs the atomic multi-row upsert against
+// envVarsCollection, scoped to a single target record via targetField (e.g.
+// "stack"/"stack_env_vars" or "job"/"job_env_vars"). Shared by
+// bulkUpsertStackEnvVars and bulkUpsertJobEnvVars.
+func runBulkUpsertEnvVars(app core.App, envVarsCollection, targetField, targetID string, body bulkEnvVarsRequest, seen map[string]bool) (bulkEnvVarsResult, error) {
+	existing, err := app.FindAllRecords(envVarsCollection, dbx.HashExp{targetField: targetID})
 	if err != nil {
-		return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return bulkEnvVarsResult{}, err
 	}
 	byKey := make(map[string]*core.Record, len(existing))
 	for _, rec := range existing {
 		byKey[rec.GetString("key")] = rec
 	}
 
-	col, err := rr.app.FindCollectionByNameOrId("stack_env_vars")
+	col, err := app.FindCollectionByNameOrId(envVarsCollection)
 	if err != nil {
-		return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return bulkEnvVarsResult{}, err
 	}
 
-	var created, updated, deleted int
-	txErr := rr.app.RunInTransaction(func(txApp core.App) error {
+	var result bulkEnvVarsResult
+	txErr := app.RunInTransaction(func(txApp core.App) error {
 		// RunInTransaction may retry the callback (e.g. on a busy-DB
 		// conflict) — reset counters each attempt so a retried run doesn't
 		// double-count against the response.
-		created, updated, deleted = 0, 0, 0
+		result = bulkEnvVarsResult{}
 		for _, v := range body.Vars {
 			key := strings.TrimSpace(v.Key)
 			rec, isExisting := byKey[key]
 			if !isExisting {
 				rec = core.NewRecord(col)
-				rec.Set("stack", stack.Id)
+				rec.Set(targetField, targetID)
 				rec.Set("key", key)
-				created++
+				result.Created++
 			} else {
-				updated++
+				result.Updated++
 			}
 
 			// A blank value for an existing internal-provider secret means
@@ -157,13 +167,32 @@ func (rr routeRegistrar) bulkUpsertStackEnvVars(e *core.RequestEvent) error {
 				if err := txApp.Delete(rec); err != nil {
 					return err
 				}
-				deleted++
+				result.Deleted++
 			}
 		}
 		return nil
 	})
 	if txErr != nil {
-		return e.JSON(http.StatusBadRequest, map[string]string{"error": txErr.Error()})
+		return bulkEnvVarsResult{}, txErr
+	}
+	return result, nil
+}
+
+func (rr routeRegistrar) bulkUpsertStackEnvVars(e *core.RequestEvent) error {
+	stackID := e.Request.PathValue("id")
+	stack, err := rr.app.FindRecordById("stacks", stackID)
+	if err != nil {
+		return e.JSON(http.StatusNotFound, map[string]string{"error": "stack not found"})
+	}
+
+	body, seen, err := parseBulkEnvVarsRequest(e.Request)
+	if err != nil {
+		return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+
+	result, err := runBulkUpsertEnvVars(rr.app, "stack_env_vars", "stack", stack.Id, body, seen)
+	if err != nil {
+		return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
 
 	audit.RecordRequest(rr.app, e, audit.Event{
@@ -173,7 +202,37 @@ func (rr routeRegistrar) bulkUpsertStackEnvVars(e *core.RequestEvent) error {
 		Metadata:     map[string]any{"count": len(body.Vars), "mode": body.Mode},
 	})
 
-	return e.JSON(http.StatusOK, map[string]int{"created": created, "updated": updated, "deleted": deleted})
+	return e.JSON(http.StatusOK, map[string]int{"created": result.Created, "updated": result.Updated, "deleted": result.Deleted})
+}
+
+// bulkUpsertJobEnvVars mirrors bulkUpsertStackEnvVars for job_env_vars,
+// registered from RegisterJobRoutes (internal/routes/jobs.go) since job
+// routes aren't wired through routeRegistrar.
+func bulkUpsertJobEnvVars(app core.App, e *core.RequestEvent) error {
+	jobID := e.Request.PathValue("id")
+	jobRecord, err := app.FindRecordById("scheduled_jobs", jobID)
+	if err != nil {
+		return e.JSON(http.StatusNotFound, map[string]string{"error": "job not found"})
+	}
+
+	body, seen, err := parseBulkEnvVarsRequest(e.Request)
+	if err != nil {
+		return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+
+	result, err := runBulkUpsertEnvVars(app, "job_env_vars", "job", jobRecord.Id, body, seen)
+	if err != nil {
+		return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+
+	audit.RecordRequest(app, e, audit.Event{
+		Action:       "job.env_vars.bulk_update",
+		ResourceType: "job",
+		ResourceID:   jobRecord.Id,
+		Metadata:     map[string]any{"count": len(body.Vars), "mode": body.Mode},
+	})
+
+	return e.JSON(http.StatusOK, map[string]int{"created": result.Created, "updated": result.Updated, "deleted": result.Deleted})
 }
 
 func (rr routeRegistrar) copyStackEnvVars(e *core.RequestEvent) error {

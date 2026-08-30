@@ -12,10 +12,11 @@ function setupGlobals() {
   ;(globalThis as any).useRouter = () => ({ push, replace })
 
   const createStack = vi.fn().mockResolvedValue({ id: 'stack-1' })
+  const updateStack = vi.fn().mockResolvedValue({ id: 'stack-1' })
   ;(globalThis as any).useNuxtApp = () => ({
     $pb: {
       collection: (name: string) => {
-        if (name === 'stacks') return { create: createStack }
+        if (name === 'stacks') return { create: createStack, update: updateStack }
         if (name === 'repositories') return { getFullList: vi.fn().mockResolvedValue([{ id: 'repo-1', name: 'repo', git_url: 'git@x' }]) }
         return { getFullList: vi.fn().mockResolvedValue([]) }
       },
@@ -35,6 +36,7 @@ function setupGlobals() {
   const lintCompose = vi.fn().mockResolvedValue({
     report: { findings: [], errors: 0, warnings: 0, infos: 0 },
   })
+  const customPost = vi.fn().mockResolvedValue({})
   ;(globalThis as any).useApi = () => ({
     getStackFiles,
     getWireopsFiles,
@@ -42,19 +44,21 @@ function setupGlobals() {
     createStackFromWireops,
     getWorkers,
     lintCompose,
+    customPost,
   })
   ;(globalThis as any).useValidation = () => ({
     validateComposePath: vi.fn().mockReturnValue(''),
     validateComposeFile: vi.fn().mockReturnValue(''),
   })
-  ;(globalThis as any).useToast = () => ({ add: vi.fn() })
+  const toastAdd = vi.fn()
+  ;(globalThis as any).useToast = () => ({ add: toastAdd })
   ;(globalThis as any).useAsyncData = (_key: string, fn: () => Promise<any>) => {
     const data = ref<any[]>([])
     const refresh = async () => { data.value = await fn() }
     return { data, refresh }
   }
 
-  return { createStack, getWireopsFiles, getWireopsDefinitionFromFile, getStackFiles, getWorkers, createStackFromWireops, lintCompose }
+  return { createStack, updateStack, getWireopsFiles, getWireopsDefinitionFromFile, getStackFiles, getWorkers, createStackFromWireops, lintCompose, customPost, toastAdd }
 }
 
 const stubs = {
@@ -120,14 +124,35 @@ const stubs = {
       ])
     },
   },
+  // The pending env vars editor is exercised by its own component tests —
+  // here it's just a v-model passthrough so tests can push rows into it.
+  EnvironmentVariablesPendingEditor: {
+    props: ['modelValue'],
+    emits: ['update:modelValue'],
+    setup(_props: unknown, { emit }: { emit: (event: 'update:modelValue', value: unknown[]) => void }) {
+      return () => h('div', { class: 'env-vars-pending-editor' }, [
+        h('button', {
+          type: 'button',
+          class: 'add-fake-env-var',
+          onClick: () => emit('update:modelValue', [{ key: 'FOO', value: 'bar', secret: false, secret_provider: '' }]),
+        }, 'Add fake env var'),
+      ])
+    },
+  },
 }
 
-// Advances from the Configuration step to the Review step, where the lint
-// runs.
-async function goToReviewStep(wrapper: any) {
+// Advances one step forward (clicks "Next" once).
+async function goToNextStep(wrapper: any) {
   const nextButton = wrapper.findAll('button').find((b: any) => b.text() === 'Next')
   await nextButton!.trigger('click')
   await flushPromises()
+}
+
+// From the Configuration step, skips the (empty, optional) Environment
+// Variables step and lands on the Review step, where the lint runs.
+async function skipEnvVarsIntoReviewStep(wrapper: any) {
+  await goToNextStep(wrapper)
+  await goToNextStep(wrapper)
 }
 
 async function openInWireopsMode() {
@@ -243,7 +268,7 @@ describe('CreateStackModal', () => {
     expect(workerSelect!.findAll('option').some(o => o.text() === 'worker-b')).toBe(false)
     await workerSelect!.setValue('worker-1')
 
-    await goToReviewStep(wrapper)
+    await skipEnvVarsIntoReviewStep(wrapper)
     await wrapper.find('form').trigger('submit.prevent')
     await flushPromises()
 
@@ -251,6 +276,7 @@ describe('CreateStackModal', () => {
       repository: 'repo-1',
       worker: 'worker-1',
       wireops_file: 'wireops.yaml',
+      paused: false,
     })
   })
 
@@ -293,7 +319,7 @@ describe('CreateStackModal', () => {
     expect(workerSelect!.findAll('option').some(o => o.text() === 'worker-b')).toBe(true)
     await workerSelect!.setValue('worker-1')
 
-    await goToReviewStep(wrapper)
+    await skipEnvVarsIntoReviewStep(wrapper)
     await wrapper.find('form').trigger('submit.prevent')
     await flushPromises()
 
@@ -301,6 +327,7 @@ describe('CreateStackModal', () => {
       repository: 'repo-1',
       worker: 'worker-1',
       wireops_file: 'wireops.yaml',
+      paused: false,
     })
   })
 
@@ -329,7 +356,7 @@ describe('CreateStackModal', () => {
     const workerSelect = wrapper.findAll('select').find(s => s.findAll('option').some(o => o.text() === 'worker-a'))
     await workerSelect!.setValue('worker-1')
 
-    await goToReviewStep(wrapper)
+    await skipEnvVarsIntoReviewStep(wrapper)
     await wrapper.find('form').trigger('submit.prevent')
     await flushPromises()
 
@@ -366,14 +393,14 @@ describe('CreateStackModal', () => {
     await wrapper.findAll('select')[0]!.setValue('repo-1')
     await flushPromises()
 
-    await goToReviewStep(wrapper)
+    await goToNextStep(wrapper)
 
     const fileSelect = wrapper.findAll('select').find(s => s.findAll('option').some(o => o.text() === 'docker-compose.yml'))
     await fileSelect!.setValue('docker-compose.yml')
     const workerSelect = wrapper.findAll('select').find(s => s.findAll('option').some(o => o.text() === 'worker-a'))
     await workerSelect!.setValue('worker-1')
 
-    await goToReviewStep(wrapper)
+    await skipEnvVarsIntoReviewStep(wrapper)
 
     expect(lintCompose).toHaveBeenCalledWith({
       repository: 'repo-1',
@@ -407,14 +434,14 @@ describe('CreateStackModal', () => {
     await wrapper.findAll('select')[0]!.setValue('repo-1')
     await flushPromises()
 
-    await goToReviewStep(wrapper)
+    await goToNextStep(wrapper)
 
     const fileSelect = wrapper.findAll('select').find(s => s.findAll('option').some(o => o.text() === 'docker-compose.yml'))
     await fileSelect!.setValue('docker-compose.yml')
     const workerSelect = wrapper.findAll('select').find(s => s.findAll('option').some(o => o.text() === 'worker-a'))
     await workerSelect!.setValue('worker-1')
 
-    await goToReviewStep(wrapper)
+    await skipEnvVarsIntoReviewStep(wrapper)
     await wrapper.find('form').trigger('submit.prevent')
     await flushPromises()
 
@@ -442,14 +469,14 @@ describe('CreateStackModal', () => {
     await wrapper.findAll('select')[0]!.setValue('repo-1')
     await flushPromises()
 
-    await goToReviewStep(wrapper)
+    await goToNextStep(wrapper)
 
     const fileSelect = wrapper.findAll('select').find(s => s.findAll('option').some(o => o.text() === 'docker-compose.yml'))
     await fileSelect!.setValue('docker-compose.yml')
     const workerSelect = wrapper.findAll('select').find(s => s.findAll('option').some(o => o.text() === 'worker-a'))
     await workerSelect!.setValue('worker-1')
 
-    await goToReviewStep(wrapper)
+    await skipEnvVarsIntoReviewStep(wrapper)
 
     expect(wrapper.find('.lint-config-error').text()).toContain('mapping values are not allowed')
   })
@@ -480,14 +507,14 @@ describe('CreateStackModal', () => {
     await wrapper.findAll('select')[0]!.setValue('repo-1')
     await flushPromises()
 
-    await goToReviewStep(wrapper)
+    await goToNextStep(wrapper)
 
     const fileSelect = wrapper.findAll('select').find(s => s.findAll('option').some(o => o.text() === 'docker-compose.yml'))
     await fileSelect!.setValue('docker-compose.yml')
     const workerSelect = wrapper.findAll('select').find(s => s.findAll('option').some(o => o.text() === 'worker-a'))
     await workerSelect!.setValue('worker-1')
 
-    await goToReviewStep(wrapper)
+    await skipEnvVarsIntoReviewStep(wrapper)
 
     const preview = wrapper.find('.compose-preview')
     expect(preview.exists()).toBe(true)
@@ -513,14 +540,14 @@ describe('CreateStackModal', () => {
     await wrapper.findAll('select')[0]!.setValue('repo-1')
     await flushPromises()
 
-    await goToReviewStep(wrapper)
+    await goToNextStep(wrapper)
 
     const fileSelect = wrapper.findAll('select').find(s => s.findAll('option').some(o => o.text() === 'docker-compose.yml'))
     await fileSelect!.setValue('docker-compose.yml')
     const workerSelect = wrapper.findAll('select').find(s => s.findAll('option').some(o => o.text() === 'worker-a'))
     await workerSelect!.setValue('worker-1')
 
-    await goToReviewStep(wrapper)
+    await skipEnvVarsIntoReviewStep(wrapper)
 
     expect(wrapper.find('.compose-preview').exists()).toBe(false)
     // The report itself must still render — a missing preview is not a failure.
@@ -548,7 +575,7 @@ describe('CreateStackModal', () => {
     await wrapper.findAll('select')[0]!.setValue('repo-1')
     await flushPromises()
 
-    await goToReviewStep(wrapper)
+    await goToNextStep(wrapper)
 
     const fileSelect = wrapper.findAll('select').find(s => s.findAll('option').some(o => o.text() === 'docker-compose.yml'))
     await fileSelect!.setValue('docker-compose.yml')
@@ -558,11 +585,11 @@ describe('CreateStackModal', () => {
     // First lint fires on entering Review. The re-run button is disabled
     // while a lint is in flight, so the way two requests actually overlap is
     // leaving and re-entering the step before the first one settles.
-    await goToReviewStep(wrapper)
+    await skipEnvVarsIntoReviewStep(wrapper)
     const back = wrapper.findAll('button').find(b => b.text() === 'Back')
     await back!.trigger('click')
     await flushPromises()
-    await goToReviewStep(wrapper)
+    await goToNextStep(wrapper)
 
     expect(lintCompose).toHaveBeenCalledTimes(2)
 
@@ -597,7 +624,7 @@ describe('CreateStackModal', () => {
     await wrapper.findAll('select')[0]!.setValue('repo-1')
     await flushPromises()
 
-    await goToReviewStep(wrapper)
+    await goToNextStep(wrapper)
 
     const fileSelect = wrapper.findAll('select').find(s => s.findAll('option').some(o => o.text() === 'docker-compose.yml'))
     await fileSelect!.setValue('docker-compose.yml')
@@ -605,5 +632,83 @@ describe('CreateStackModal', () => {
 
     const nextButton = wrapper.findAll('button').find(b => b.text() === 'Next')
     expect(nextButton?.attributes('disabled')).toBeDefined()
+  })
+
+  async function fillManualStackThroughConfiguration(wrapper: any) {
+    const manualButton = wrapper.findAll('button').find((b: any) => b.text() === 'Manual')
+    await manualButton!.trigger('click')
+    await flushPromises()
+
+    await wrapper.find('input').setValue('my-stack')
+    await wrapper.findAll('select')[0]!.setValue('repo-1')
+    await flushPromises()
+
+    await goToNextStep(wrapper)
+
+    const fileSelect = wrapper.findAll('select').find((s: any) => s.findAll('option').some((o: any) => o.text() === 'docker-compose.yml'))
+    await fileSelect!.setValue('docker-compose.yml')
+    const workerSelect = wrapper.findAll('select').find((s: any) => s.findAll('option').some((o: any) => o.text() === 'worker-a'))
+    await workerSelect!.setValue('worker-1')
+  }
+
+  it('creates the stack paused, then saves env vars and resumes it automatically', async () => {
+    const { createStack, updateStack, customPost } = setupGlobals()
+    const wrapper = await openInWireopsMode()
+
+    await fillManualStackThroughConfiguration(wrapper)
+    await goToNextStep(wrapper) // Configuration -> Environment Variables
+
+    const addEnvVarButton = wrapper.find('.add-fake-env-var')
+    expect(addEnvVarButton.exists()).toBe(true)
+    await addEnvVarButton.trigger('click')
+    await flushPromises()
+
+    await goToNextStep(wrapper) // Environment Variables -> Review
+    await wrapper.find('form').trigger('submit.prevent')
+    await flushPromises()
+
+    // Created paused, not pending — the unconditional first auto-deploy must
+    // not race the env-vars save below.
+    expect(createStack).toHaveBeenCalledWith(expect.objectContaining({ status: 'paused' }))
+    expect(customPost).toHaveBeenCalledWith('/api/custom/stacks/stack-1/env-vars/bulk', {
+      mode: 'replace',
+      vars: [{ key: 'FOO', value: 'bar', secret: false, secret_provider: '' }],
+    })
+    expect(updateStack).toHaveBeenCalledWith('stack-1', { status: 'active' })
+    expect(customPost).toHaveBeenCalledWith('/api/custom/stacks/stack-1/sync')
+  })
+
+  it('creates the stack pending and never touches the env-vars endpoint when none were added', async () => {
+    const { createStack, updateStack, customPost } = setupGlobals()
+    const wrapper = await openInWireopsMode()
+
+    await fillManualStackThroughConfiguration(wrapper)
+    await skipEnvVarsIntoReviewStep(wrapper)
+    await wrapper.find('form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createStack).toHaveBeenCalledWith(expect.objectContaining({ status: 'pending' }))
+    expect(customPost).not.toHaveBeenCalled()
+    expect(updateStack).not.toHaveBeenCalled()
+  })
+
+  it('leaves the stack paused and warns instead of resuming when the env-vars save fails', async () => {
+    const { createStack, updateStack, customPost, toastAdd } = setupGlobals()
+    customPost.mockRejectedValueOnce(new Error('boom'))
+    const wrapper = await openInWireopsMode()
+
+    await fillManualStackThroughConfiguration(wrapper)
+    await goToNextStep(wrapper) // Configuration -> Environment Variables
+    await wrapper.find('.add-fake-env-var').trigger('click')
+    await flushPromises()
+    await goToNextStep(wrapper) // Environment Variables -> Review
+    await wrapper.find('form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createStack).toHaveBeenCalledWith(expect.objectContaining({ status: 'paused' }))
+    expect(updateStack).not.toHaveBeenCalled()
+    expect(toastAdd).toHaveBeenCalledWith(expect.objectContaining({ color: 'warning' }))
+    // Creating the stack itself still succeeds — only the env vars failed.
+    expect(wrapper.emitted('created')).toBeTruthy()
   })
 })
