@@ -300,6 +300,100 @@ describe('StacksPanel', () => {
     expect(getList.mock.calls.length).toBe(callsBeforeEvent)
   })
 
+  async function mountWithWorkers(getList: ReturnType<typeof vi.fn>, workersData: any[]) {
+    const workersRef = ref(workersData)
+    ;(globalThis as any).useNuxtApp = () => ({
+      $pb: {
+        filter: (raw: string) => raw,
+        collection: () => ({
+          getFullList: vi.fn().mockResolvedValue([stackFixture]),
+          getList,
+        }),
+      },
+    })
+    ;(globalThis as any).useApi = () => ({
+      getWorkers: vi.fn(),
+      listOrphans: vi.fn(),
+      purgeOrphan: vi.fn(),
+    })
+    ;(globalThis as any).useRealtime = () => ({ subscribe: vi.fn() })
+    ;(globalThis as any).useToast = () => ({ add: vi.fn() })
+    ;(globalThis as any).useA11yAnnouncer = () => ({ announce: vi.fn() })
+    ;(globalThis as any).usePermissions = () => ({ isViewer: ref(false) })
+    ;(globalThis as any).useRepositoryPlatform = () => ({ platformIconUrl: vi.fn() })
+    ;(globalThis as any).useRoute = () => ({ query: {} })
+    ;(globalThis as any).useAsyncData = (key: string) => ({
+      data: key === 'stack_card_workers' ? workersRef : ref([stackFixture]),
+      refresh: vi.fn(),
+    })
+
+    const wrapper = mount(StacksPanel, {
+      global: {
+        components: { StackCard, GitProviderBadge, RepositoryIcon, GithubIcon, GenericIcon },
+        stubs: dropdownStubs,
+      },
+    })
+    await flushPromises()
+
+    return { wrapper, workersRef }
+  }
+
+  // buildStacksFilter/statusFilter/workerFilter/groupFilter changes go
+  // through usePaginatedList's watchDebounced (see usePaginatedList.ts),
+  // which waits 400ms before refetching - flushPromises alone doesn't
+  // advance that real timer.
+  async function waitForDebouncedReload() {
+    await new Promise(resolve => setTimeout(resolve, 450))
+    await flushPromises()
+  }
+
+  it('omits the worker filter clause when set to "All workers"', async () => {
+    const getList = vi.fn().mockResolvedValue({ items: [stackFixture], totalItems: 1 })
+    await mountWithWorkers(getList, [{ id: 'worker-1', hostname: 'worker-a' }])
+
+    const lastFilter = getList.mock.calls.at(-1)![2].filter
+    expect(lastFilter).not.toContain('worker = {:w}')
+  })
+
+  it('adds the worker filter clause once a worker is selected, and reloads on change', async () => {
+    const getList = vi.fn().mockResolvedValue({ items: [stackFixture], totalItems: 1 })
+    const { wrapper } = await mountWithWorkers(getList, [
+      { id: 'worker-1', hostname: 'worker-a' },
+      { id: 'worker-2', hostname: 'worker-b' },
+    ])
+
+    const callsBeforeSelect = getList.mock.calls.length
+    ;(wrapper.vm as any).workerFilter = 'worker-1'
+    await waitForDebouncedReload()
+
+    expect(getList.mock.calls.length).toBeGreaterThan(callsBeforeSelect)
+    expect(getList.mock.calls.at(-1)![2].filter).toContain('worker = {:w}')
+
+    const callsBeforeChange = getList.mock.calls.length
+    ;(wrapper.vm as any).workerFilter = 'worker-2'
+    await waitForDebouncedReload()
+
+    expect(getList.mock.calls.length).toBeGreaterThan(callsBeforeChange)
+    expect(getList.mock.calls.at(-1)![2].filter).toContain('worker = {:w}')
+  })
+
+  it('resets the worker filter to "all" when the selected worker disappears from the options', async () => {
+    const getList = vi.fn().mockResolvedValue({ items: [stackFixture], totalItems: 1 })
+    const { wrapper, workersRef } = await mountWithWorkers(getList, [
+      { id: 'worker-1', hostname: 'worker-a' },
+    ])
+
+    ;(wrapper.vm as any).workerFilter = 'worker-1'
+    await flushPromises()
+    expect((wrapper.vm as any).workerFilter).toBe('worker-1')
+
+    workersRef.value = []
+    await waitForDebouncedReload()
+
+    expect((wrapper.vm as any).workerFilter).toBe('all')
+    expect(getList.mock.calls.at(-1)![2].filter).not.toContain('worker = {:w}')
+  })
+
   it('selects Import and Manage Orphans from the actions dropdown', async () => {
     const listOrphans = vi.fn().mockResolvedValue([
       { dir_name: 'orphan-1', compose_file: 'docker-compose.yml', has_compose: true },

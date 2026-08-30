@@ -96,9 +96,18 @@ const { data: stacksAggregate, refresh: refreshStacksAggregate } = useAsyncData(
   $pb.collection('stacks').getFullList({ fields: 'id,status,group,deployed_at,worker', requestKey: null })
 )
 
-const { data: workers, refresh: refreshWorkers } = useAsyncData('stack_card_workers', () =>
-  getWorkers().catch(() => [])
-)
+// A transient getWorkers() failure shouldn't wipe out a previously-loaded
+// worker list (and with it, the worker filter dropdown/selection) - fall
+// back to whatever was last fetched successfully instead of [].
+let lastWorkers: any[] = []
+const { data: workers, refresh: refreshWorkers } = useAsyncData('stack_card_workers', async () => {
+  try {
+    lastWorkers = await getWorkers()
+    return lastWorkers
+  } catch {
+    return lastWorkers
+  }
+})
 const { data: repos, refresh: refreshRepos } = useAsyncData('repos_for_stacks_empty', () =>
   $pb.collection('repositories').getFullList({ fields: 'id', requestKey: null })
 )
@@ -240,6 +249,16 @@ const workerOptions = computed(() => {
     items.push({ label: w.hostname || w.id, value: w.id })
   }
   return items
+})
+
+// If the selected worker disappears from the options (deleted, or an empty
+// refresh) the AppSelectInput itself is hidden by its v-if, which would
+// otherwise leave a stale worker id silently filtering the list with no
+// visible control left to clear it.
+watch(workerOptions, (options) => {
+  if (workerFilter.value !== 'all' && !options.some(o => o.value === workerFilter.value)) {
+    workerFilter.value = 'all'
+  }
 })
 
 const groupOptions = computed(() => {

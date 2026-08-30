@@ -30,7 +30,7 @@ const lastSyncedLabel = computed(() => relativeTime(props.stack?.last_synced_at)
     :class="statusBadge.borderClass"
   >
     <div class="relative">
-      <div class="absolute right-0 top-0 z-10 flex max-w-[70%] shrink-0 flex-wrap items-center justify-end gap-1.5">
+      <div class="absolute right-0 top-0 z-10 flex shrink-0 items-center gap-1.5">
         <UIcon
           v-if="isSyncing"
           name="i-lucide-loader-2"
@@ -40,7 +40,10 @@ const lastSyncedLabel = computed(() => relativeTime(props.stack?.last_synced_at)
         />
         <OverridedBadge v-if="stackHasRenderOverrides(stack)" />
         <UTooltip v-if="stack.expand?.worker?.hostname" :text="stackWorkerName(stack)">
-          <span class="inline-flex max-w-[110px] shrink-0 items-center gap-1 overflow-hidden rounded-md border border-gray-300 px-1.5 py-0.5 text-gray-500 dark:border-carbon-600 dark:text-wire-200/55">
+          <span
+            class="inline-flex max-w-[110px] shrink-0 items-center gap-1 overflow-hidden rounded-md border border-gray-300 px-1.5 py-0.5 text-gray-500 dark:border-carbon-600 dark:text-wire-200/55"
+            :title="stackWorkerName(stack)"
+          >
             <UIcon name="i-lucide-server" class="h-3 w-3 shrink-0" aria-hidden="true" />
             <span class="min-w-0 truncate text-[11px] font-medium">{{ stackWorkerName(stack) }}</span>
           </span>
