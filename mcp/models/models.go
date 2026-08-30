@@ -96,6 +96,9 @@ type WorkerIDInput struct {
 	WorkerID string `json:"worker_id" jsonschema:"The wireops worker record id."`
 }
 
+// GetGlobalWorkerPolicyInput is the input for the get_global_worker_policy tool.
+type GetGlobalWorkerPolicyInput struct{}
+
 // GenerateWireopsYAMLInput is the input for the generate_wireops_yaml tool.
 // Fields mirror internal/manifest.Definition.
 type GenerateWireopsYAMLInput struct {

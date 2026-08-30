@@ -138,6 +138,16 @@ func Register(server *mcp.Server, c *client.Client) {
 	}, getWorkerMetrics(c))
 
 	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_worker_policy",
+		Description: "Get a wireops worker's deploy security policy: its local override fields, whether it inherits the global policy (inherit=true), and the fully resolved 'effective' policy actually enforced on deploy (allowed images/volumes/networks/capabilities/devices, and the block_* flags for privileged/host-network/host-PID/host-IPC/docker-socket). Use this to explain why a compose file would be accepted or rejected by this worker, or before calling scaffold_stack with worker_id. Requires manage-settings capability on the caller's API key.",
+	}, getWorkerPolicy(c))
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_global_worker_policy",
+		Description: "Get the instance-wide default deploy security policy — the same shape as get_worker_policy's 'effective' field, but the fallback every worker inherits from unless it sets its own local override (inherit=false in get_worker_policy). Requires manage-settings capability on the caller's API key.",
+	}, getGlobalWorkerPolicy(c))
+
+	mcp.AddTool(server, &mcp.Tool{
 		Name:        "list_integrations",
 		Description: "List all wireops integration plugins (Traefik, Dozzle, notification providers, etc.), whether each is enabled, and its (secret-masked) config. Requires manage-settings capability on the caller's API key. For per-stack resolved container actions instead, use get_stack_integration_actions.",
 	}, listIntegrations(c))
@@ -164,7 +174,7 @@ func Register(server *mcp.Server, c *client.Client) {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "scaffold_stack",
-		Description: "Generate a docker-compose.yml and matching wireops.yaml for a new stack from structured service definitions, ready to commit to a repository. If worker_id is given, validates the compose file against that worker's effective deploy security policy and reports violations instead of silently returning a file that would be rejected at deploy time. Does not create or import any stack. Before calling this tool, look up the current image tag, ports, volumes, and required environment variables for each service using a web search against the application's official site, official image registry page, or official GitHub repository — do not rely on memorized/training-data knowledge, which may be outdated.",
+		Description: "Generate a docker-compose.yml and matching wireops.yaml for a new stack from structured service definitions, ready to commit to a repository. If worker_id is given, validates the compose file against that worker's effective deploy security policy and reports violations instead of silently returning a file that would be rejected at deploy time. Does not create or import any stack. Before calling this tool, look up the current image tag, ports, volumes, and required environment variables for each service using a web search against the application's official site, official image registry page, or official GitHub repository — do not rely on memorized/training-data knowledge, which may be outdated. ComposeServiceInput has no labels/annotations field, so the two wireops compose conventions — the `customization.image.slug` label (custom UI icon) and the `dev.wireops.config.<name>` annotation (mounts a git-tracked file/directory into the container, source:target) — must be hand-added to the returned YAML before committing, if wanted.",
 	}, scaffoldStack(c))
 }
 
@@ -721,6 +731,35 @@ func getWorkerMetrics(c *client.Client) mcp.ToolHandlerFor[models.WorkerIDInput,
 		var out any
 		path := "/api/custom/workers/" + url.PathEscape(in.WorkerID) + "/metrics"
 		if err := c.Get(ctx, apiKey, path, nil, &out); err != nil {
+			return nil, nil, err
+		}
+		return nil, out, nil
+	}
+}
+
+func getWorkerPolicy(c *client.Client) mcp.ToolHandlerFor[models.WorkerIDInput, any] {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, in models.WorkerIDInput) (*mcp.CallToolResult, any, error) {
+		apiKey, err := apiKeyFrom(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		var out any
+		path := "/api/custom/workers/" + url.PathEscape(in.WorkerID) + "/policy"
+		if err := c.Get(ctx, apiKey, path, nil, &out); err != nil {
+			return nil, nil, err
+		}
+		return nil, out, nil
+	}
+}
+
+func getGlobalWorkerPolicy(c *client.Client) mcp.ToolHandlerFor[models.GetGlobalWorkerPolicyInput, any] {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, _ models.GetGlobalWorkerPolicyInput) (*mcp.CallToolResult, any, error) {
+		apiKey, err := apiKeyFrom(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		var out any
+		if err := c.Get(ctx, apiKey, "/api/custom/settings/worker-policy", nil, &out); err != nil {
 			return nil, nil, err
 		}
 		return nil, out, nil
