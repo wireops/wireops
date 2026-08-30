@@ -163,6 +163,25 @@ func TestScaffoldNewStackWithImageHintEmbedsIt(t *testing.T) {
 	}
 }
 
+func TestScaffoldNewStackExplainsConfigMountRules(t *testing.T) {
+	handler := scaffoldNewStack()
+	result, err := handler(context.Background(), &mcp.GetPromptRequest{
+		Params: &mcp.GetPromptParams{Name: "scaffold_new_stack", Arguments: map[string]string{"app_description": "a blog"}},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text, ok := result.Messages[0].Content.(*mcp.TextContent)
+	if !ok {
+		t.Fatalf("expected TextContent, got %T", result.Messages[0].Content)
+	}
+	for _, want := range []string{"directory", "recursively", "symlink", "1MB", "5MB", "\"../\""} {
+		if !strings.Contains(text.Text, want) {
+			t.Fatalf("expected prompt to explain config mount rule %q, got: %s", want, text.Text)
+		}
+	}
+}
+
 func TestScaffoldNewStackReferencesWorkerPolicyTools(t *testing.T) {
 	handler := scaffoldNewStack()
 	result, err := handler(context.Background(), &mcp.GetPromptRequest{

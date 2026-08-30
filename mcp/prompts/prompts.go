@@ -134,13 +134,18 @@ scaffold_stack's structured input has no field for labels or annotations, so app
         labels:
           - "customization.image.slug=nginx"
 
-- dev.wireops.config.<name> — a service-level annotation (not a label; put it under an "annotations:" map, not "labels:") that mounts a git-tracked config file or directory straight into the container. <name> is an arbitrary identifier distinguishing multiple such annotations on one service (letters/digits/-/_, no path separators or leading dot); its value is "<repo-relative source>:<absolute in-container target>". source may name a single file or a directory (every file under it is mounted, preserving its relative layout under target). wireops synthesizes the compose top-level configs: block and each service's configs: list from this annotation at render time — never write configs: yourself, and never invent a wireops.yaml field for it, since none exists. Example, mapping a committed nginx.conf to its in-container path:
+- dev.wireops.config.<name> — a service-level annotation (not a label; put it under an "annotations:" map, not "labels:") that mounts a git-tracked config file or directory straight into the container. <name> is an arbitrary identifier distinguishing multiple such annotations on one service (letters/digits/-/_, no path separators or leading dot); its value is "<repo-relative source>:<absolute in-container target>". wireops synthesizes the compose top-level configs: block and each service's configs: list from this annotation at render time — never write configs: yourself, and never invent a wireops.yaml field for it, since none exists. Example, mapping a committed nginx.conf to its in-container path:
     services:
       app:
         image: nginx:1.31.4-alpine
         annotations:
           dev.wireops.config.nginx-conf: "conf/nginx.conf:/etc/nginx/nginx.conf"
-  The source path (conf/nginx.conf above) must actually exist in the repository being committed to, or the next sync will fail.`, appDescription, imageHint)
+  Rules enforced at sync/render time, so the stack fails to sync if violated:
+  - source must exist in the repository being committed to.
+  - source may name a single file, or a whole directory — a directory is expanded recursively into one mounted file per entry, preserving its relative layout under target (e.g. source "conf/" containing "conf/site.conf" and "conf/certs/a.pem" mounts to "target/site.conf" and "target/certs/a.pem"). You do not need to list files individually.
+  - source must stay inside the repository (no absolute path, no "../" escaping it) and must not be or contain a symlink — both are rejected outright, not silently followed.
+  - each resolved file is capped at 1MB, and the combined size of every config resolved for the stack is capped at 5MB — keep large/binary assets out of this mechanism.
+  - target must be a clean absolute in-container path (e.g. "/etc/nginx/nginx.conf"), never relative and never containing "..".`, appDescription, imageHint)
 
 		return &mcp.GetPromptResult{
 			Description: "Research-grounded scaffolding for a new wireops stack from a natural-language description.",
