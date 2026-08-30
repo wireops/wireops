@@ -17,6 +17,7 @@ const route = useRoute()
 const searchQuery = ref('')
 const searchInputRef = ref<{ $el?: HTMLElement } | HTMLElement | null>(null)
 const statusFilter = ref('all')
+const workerFilter = ref('all')
 const sortBy = ref('name')
 
 function groupQueryToFilterValue(val: unknown): string {
@@ -55,6 +56,9 @@ function buildStacksFilter() {
     const statusClause = buildStackStatusFilter(statusFilter.value)
     if (statusClause) clauses.push(statusClause)
   }
+  if (workerFilter.value !== 'all') {
+    clauses.push($pb.filter('(worker = {:w})', { w: workerFilter.value }))
+  }
   if (groupFilter.value !== GROUP_ALL) {
     clauses.push(groupFilter.value === GROUP_UNGROUPED
       ? "(group = '' || group = null)"
@@ -80,7 +84,7 @@ const {
     })
     return { items: result.items, totalItems: result.totalItems }
   },
-  { perPage: 24, sort: sortParam, watchDebounced: [searchQuery, statusFilter, groupFilter] }
+  { perPage: 24, sort: sortParam, watchDebounced: [searchQuery, statusFilter, workerFilter, groupFilter] }
 )
 
 // Fleet-wide aggregate used only for the group dropdown and the status
@@ -92,9 +96,18 @@ const { data: stacksAggregate, refresh: refreshStacksAggregate } = useAsyncData(
   $pb.collection('stacks').getFullList({ fields: 'id,status,group,deployed_at,worker', requestKey: null })
 )
 
-const { data: workers, refresh: refreshWorkers } = useAsyncData('stack_card_workers', () =>
-  getWorkers().catch(() => [])
-)
+// A transient getWorkers() failure shouldn't wipe out a previously-loaded
+// worker list (and with it, the worker filter dropdown/selection) - fall
+// back to whatever was last fetched successfully instead of [].
+let lastWorkers: any[] = []
+const { data: workers, refresh: refreshWorkers } = useAsyncData('stack_card_workers', async () => {
+  try {
+    lastWorkers = await getWorkers()
+    return lastWorkers
+  } catch {
+    return lastWorkers
+  }
+})
 const { data: repos, refresh: refreshRepos } = useAsyncData('repos_for_stacks_empty', () =>
   $pb.collection('repositories').getFullList({ fields: 'id', requestKey: null })
 )
@@ -229,6 +242,24 @@ const stackStatusSegments: AvailabilitySegment[] = [
 const stacksForAvailability = computed(() =>
   (stacksAggregate.value || []).map((s: any) => ({ ...s, status: stackFleetStatus(s, workersById.value) }))
 )
+
+const workerOptions = computed(() => {
+  const items = [{ label: 'All workers', value: 'all' }]
+  for (const w of workers.value || []) {
+    items.push({ label: w.hostname || w.id, value: w.id })
+  }
+  return items
+})
+
+// If the selected worker disappears from the options (deleted, or an empty
+// refresh) the AppSelectInput itself is hidden by its v-if, which would
+// otherwise leave a stale worker id silently filtering the list with no
+// visible control left to clear it.
+watch(workerOptions, (options) => {
+  if (workerFilter.value !== 'all' && !options.some(o => o.value === workerFilter.value)) {
+    workerFilter.value = 'all'
+  }
+})
 
 const groupOptions = computed(() => {
   const groups = new Set((stacksAggregate.value || []).map((s: any) => s.group).filter(Boolean))
@@ -406,6 +437,15 @@ async function handlePurge(dirName: string) {
             content-width
             class="sm:min-w-28"
             aria-label="Filter stacks by group"
+          />
+          <AppSelectInput
+            v-if="workerOptions.length > 1"
+            v-model="workerFilter"
+            :items="workerOptions"
+            placeholder="Filter by worker"
+            content-width
+            class="sm:min-w-28"
+            aria-label="Filter stacks by worker"
           />
         </div>
 
