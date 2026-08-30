@@ -1192,7 +1192,7 @@ func (rr routeRegistrar) registerCreateFromWireopsRoute() {
 		}
 
 		log.Printf("[routes] create-from-wireops stack=%s repository=%s worker=%s file=%s", stack.Id, body.Repository, workerRecord.GetString("hostname"), body.WireopsFile)
-		return e.JSON(http.StatusOK, map[string]string{"id": stack.Id, "name": def.Name, "status": "pending"})
+		return e.JSON(http.StatusOK, map[string]string{"id": stack.Id, "name": def.Name, "status": stack.GetString("status")})
 	}).BindFunc(rbac.Require(rbac.CapManageRepos))
 }
 
