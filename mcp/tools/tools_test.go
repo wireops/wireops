@@ -949,6 +949,72 @@ func TestGetWorkerMetricsPath(t *testing.T) {
 	}
 }
 
+func TestGetWorkerPolicyPath(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Write([]byte(`{"inherit":true,"effective":{"enabled":true}}`))
+	}))
+	defer srv.Close()
+
+	handler := getWorkerPolicy(client.New(srv.URL))
+	_, out, err := handler(ctxWithKey(), nil, models.WorkerIDInput{WorkerID: "worker1"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotPath != "/api/custom/workers/worker1/policy" {
+		t.Fatalf("unexpected path: %s", gotPath)
+	}
+	obj, ok := out.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected object output, got %T", out)
+	}
+	if obj["inherit"] != true {
+		t.Fatalf("expected inherit to be preserved, got %#v", obj["inherit"])
+	}
+}
+
+func TestGetWorkerPolicyMissingAPIKey(t *testing.T) {
+	handler := getWorkerPolicy(client.New("http://unused"))
+	_, _, err := handler(context.Background(), nil, models.WorkerIDInput{WorkerID: "worker1"})
+	if err == nil {
+		t.Fatal("expected error when API key missing from context")
+	}
+}
+
+func TestGetGlobalWorkerPolicyPath(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Write([]byte(`{"enabled":true,"block_privileged":true}`))
+	}))
+	defer srv.Close()
+
+	handler := getGlobalWorkerPolicy(client.New(srv.URL))
+	_, out, err := handler(ctxWithKey(), nil, models.GetGlobalWorkerPolicyInput{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotPath != "/api/custom/settings/worker-policy" {
+		t.Fatalf("unexpected path: %s", gotPath)
+	}
+	obj, ok := out.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected object output, got %T", out)
+	}
+	if obj["block_privileged"] != true {
+		t.Fatalf("expected block_privileged to be preserved, got %#v", obj["block_privileged"])
+	}
+}
+
+func TestGetGlobalWorkerPolicyMissingAPIKey(t *testing.T) {
+	handler := getGlobalWorkerPolicy(client.New("http://unused"))
+	_, _, err := handler(context.Background(), nil, models.GetGlobalWorkerPolicyInput{})
+	if err == nil {
+		t.Fatal("expected error when API key missing from context")
+	}
+}
+
 func TestGenerateWireopsYAMLValidInput(t *testing.T) {
 	handler := generateWireopsYAML()
 	_, out, err := handler(context.Background(), nil, models.GenerateWireopsYAMLInput{

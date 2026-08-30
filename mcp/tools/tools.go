@@ -138,6 +138,16 @@ func Register(server *mcp.Server, c *client.Client) {
 	}, getWorkerMetrics(c))
 
 	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_worker_policy",
+		Description: "Get a wireops worker's deploy security policy: its local override fields, whether it inherits the global policy (inherit=true), and the fully resolved 'effective' policy actually enforced on deploy (allowed images/volumes/networks/capabilities/devices, and the block_* flags for privileged/host-network/host-PID/host-IPC/docker-socket). Use this to explain why a compose file would be accepted or rejected by this worker, or before calling scaffold_stack with worker_id. Requires manage-settings capability on the caller's API key.",
+	}, getWorkerPolicy(c))
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_global_worker_policy",
+		Description: "Get the instance-wide default deploy security policy — the same shape as get_worker_policy's 'effective' field, but the fallback every worker inherits from unless it sets its own local override (inherit=false in get_worker_policy). Requires manage-settings capability on the caller's API key.",
+	}, getGlobalWorkerPolicy(c))
+
+	mcp.AddTool(server, &mcp.Tool{
 		Name:        "list_integrations",
 		Description: "List all wireops integration plugins (Traefik, Dozzle, notification providers, etc.), whether each is enabled, and its (secret-masked) config. Requires manage-settings capability on the caller's API key. For per-stack resolved container actions instead, use get_stack_integration_actions.",
 	}, listIntegrations(c))
@@ -721,6 +731,35 @@ func getWorkerMetrics(c *client.Client) mcp.ToolHandlerFor[models.WorkerIDInput,
 		var out any
 		path := "/api/custom/workers/" + url.PathEscape(in.WorkerID) + "/metrics"
 		if err := c.Get(ctx, apiKey, path, nil, &out); err != nil {
+			return nil, nil, err
+		}
+		return nil, out, nil
+	}
+}
+
+func getWorkerPolicy(c *client.Client) mcp.ToolHandlerFor[models.WorkerIDInput, any] {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, in models.WorkerIDInput) (*mcp.CallToolResult, any, error) {
+		apiKey, err := apiKeyFrom(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		var out any
+		path := "/api/custom/workers/" + url.PathEscape(in.WorkerID) + "/policy"
+		if err := c.Get(ctx, apiKey, path, nil, &out); err != nil {
+			return nil, nil, err
+		}
+		return nil, out, nil
+	}
+}
+
+func getGlobalWorkerPolicy(c *client.Client) mcp.ToolHandlerFor[models.GetGlobalWorkerPolicyInput, any] {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, _ models.GetGlobalWorkerPolicyInput) (*mcp.CallToolResult, any, error) {
+		apiKey, err := apiKeyFrom(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		var out any
+		if err := c.Get(ctx, apiKey, "/api/custom/settings/worker-policy", nil, &out); err != nil {
 			return nil, nil, err
 		}
 		return nil, out, nil
