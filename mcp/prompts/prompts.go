@@ -81,7 +81,7 @@ Current stack status:
 Last 5 sync log entries (most recent first):
 %v
 
-Identify the most likely root cause (e.g. missing/invalid env var, port conflict, image not found, compose syntax error, worker offline). If the sync log output references a specific container, call get_container_logs for that container to confirm before concluding. State your hypothesis and the evidence for it; do not take any write action.`, stackID, status, logs)
+Identify the most likely root cause (e.g. missing/invalid env var, port conflict, image not found, compose syntax error, worker offline, deploy rejected by the worker's security policy). If the sync log output references a specific container, call get_container_logs for that container to confirm before concluding. If the failure looks like a policy rejection (an image/volume/network/capability/device not allowed, a disallowed privileged/host-network/host-PID/host-IPC/docker-socket setting, an untagged/":latest" image, or a host bind-mount), call get_worker_policy for the stack's worker to confirm which rule it violates. State your hypothesis and the evidence for it; do not take any write action.`, stackID, status, logs)
 
 		return &mcp.GetPromptResult{
 			Description: "Root-cause diagnosis for a failing wireops stack, grounded in its current status and recent sync history.",
@@ -116,7 +116,14 @@ Always look up current information, never rely on memorized/training-data knowle
 
 Once you have the image(s) and their verified, up-to-date ports/volumes/environment variables, call the scaffold_stack tool with a service definition for each container. Do not invent image names, tags, or configuration you have not verified against an official source.
 
-If you know which wireops worker this stack will run on, pass its worker_id to scaffold_stack so the generated compose file is checked against that worker's deploy security policy before you present it.
+Before designing service definitions, check the deploy security policy that will actually enforce them: call get_worker_policy if you know which wireops worker this stack will run on (its "effective" field is what gets enforced), or get_global_worker_policy otherwise for the instance-wide default every worker falls back to. Design every service to already comply, rather than discovering violations after generating the file:
+- An empty allowlist (allowed_images/allowed_volumes/allowed_networks/allowed_cap_add/allowed_devices/allowed_security_opt) means unrestricted for that dimension; a non-empty one means every image/volume-source/network/cap_add/device/security_opt you use must match one of its entries.
+- If prevent_latest_images is true, always pin an explicit version tag — never ":latest" or a tag-less image reference.
+- If block_host_volumes is true, do not bind-mount host paths — use named volumes instead.
+- Never set privileged: true, network_mode: host, pid: host, ipc: host, or mount the Docker socket (/var/run/docker.sock) when the matching flag (block_privileged, block_host_network, block_host_pid, block_host_ipc, block_docker_socket) is true.
+- If enabled is false (worker) or the whole policy predictably resolves as disabled, none of the above is actually enforced on deploy — but keep following it anyway as a safety default unless the user asks otherwise.
+
+Then still pass worker_id to scaffold_stack: it re-validates the generated compose file against the same effective policy as a final check and reports any violation you missed, instead of silently returning a file that would be rejected at deploy time.
 
 scaffold_stack's structured input has no field for labels or annotations, so apply these two optional wireops compose conventions by hand-editing the returned compose YAML before you present or commit it, only where they're actually wanted:
 

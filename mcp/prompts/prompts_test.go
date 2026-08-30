@@ -162,3 +162,49 @@ func TestScaffoldNewStackWithImageHintEmbedsIt(t *testing.T) {
 		t.Fatalf("expected prompt to embed the given image hint, got: %s", text.Text)
 	}
 }
+
+func TestScaffoldNewStackReferencesWorkerPolicyTools(t *testing.T) {
+	handler := scaffoldNewStack()
+	result, err := handler(context.Background(), &mcp.GetPromptRequest{
+		Params: &mcp.GetPromptParams{Name: "scaffold_new_stack", Arguments: map[string]string{"app_description": "a blog"}},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text, ok := result.Messages[0].Content.(*mcp.TextContent)
+	if !ok {
+		t.Fatalf("expected TextContent, got %T", result.Messages[0].Content)
+	}
+	if !strings.Contains(text.Text, "get_worker_policy") || !strings.Contains(text.Text, "get_global_worker_policy") {
+		t.Fatalf("expected prompt to instruct checking worker policy before designing services, got: %s", text.Text)
+	}
+	if !strings.Contains(text.Text, "block_privileged") || !strings.Contains(text.Text, "prevent_latest_images") {
+		t.Fatalf("expected prompt to name specific policy fields to comply with, got: %s", text.Text)
+	}
+}
+
+func TestDiagnoseStackFailureReferencesWorkerPolicy(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/sync_logs/") {
+			w.Write([]byte(`{"items":[]}`))
+			return
+		}
+		w.Write([]byte(`{"id":"stack1"}`))
+	}))
+	defer srv.Close()
+
+	handler := diagnoseStackFailure(client.New(srv.URL))
+	result, err := handler(ctxWithKey(), &mcp.GetPromptRequest{
+		Params: &mcp.GetPromptParams{Name: "diagnose_stack_failure", Arguments: map[string]string{"stack_id": "stack1"}},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text, ok := result.Messages[0].Content.(*mcp.TextContent)
+	if !ok {
+		t.Fatalf("expected TextContent, got %T", result.Messages[0].Content)
+	}
+	if !strings.Contains(text.Text, "get_worker_policy") {
+		t.Fatalf("expected prompt to point at get_worker_policy for policy-rejection hypotheses, got: %s", text.Text)
+	}
+}
