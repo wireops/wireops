@@ -39,7 +39,7 @@ function resetNewRow() {
 
 function addRow() {
   const key = newKey.value.trim()
-  if (!key || newKeyError.value) return
+  if (!key || newKeyError.value || !newValue.value.trim()) return
   rows.value = [
     ...rows.value,
     { key, value: newValue.value, secret: newSecret.value, secret_provider: newSecret.value ? newProvider.value : '' },
@@ -228,7 +228,7 @@ function onImportFileSelected(e: Event) {
           color="success"
           size="xs"
           class="h-8 w-8 justify-center p-0"
-          :disabled="!newKey.trim() || !!newKeyError"
+          :disabled="!newKey.trim() || !!newKeyError || !newValue.trim()"
           aria-label="Add environment variable"
         />
       </form>

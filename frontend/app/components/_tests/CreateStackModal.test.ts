@@ -793,7 +793,16 @@ describe('CreateStackModal', () => {
     await flushPromises()
 
     expect(createStack).not.toHaveBeenCalled()
-    expect(wrapper.text()).toContain('Fix or clear the invalid environment variable before continuing.')
+
+    // The error text lives only inside the step-3 (Environment Variables)
+    // v-show block. Asserting via wrapper.text() would pass even if that
+    // block stayed hidden, since v-show leaves the element in the DOM —
+    // check the actual visible state (and that submit routed the user back
+    // to step 3, where the message actually renders) instead.
+    expect(queryState.query.stack_step).toBe('3')
+    const draftError = wrapper.findAll('p').find(p => p.text() === 'Fix or clear the invalid environment variable before continuing.')
+    expect(draftError).toBeTruthy()
+    expect((draftError!.element.parentElement as HTMLElement).style.display).not.toBe('none')
   })
 
   it('creates the stack pending and never touches the env-vars endpoint when none were added', async () => {

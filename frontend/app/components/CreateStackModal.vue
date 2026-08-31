@@ -472,6 +472,10 @@ async function handleSubmit() {
   envVarsEditor.value?.commitDraft()
   if (envVarsEditor.value?.hasInvalidDraft) {
     createErrors.value.env_vars = 'Fix or clear the invalid environment variable before continuing.'
+    // Jumping straight from Environment Variables to Review (via the
+    // stepper) bypasses nextStep(), so the error message above only lives
+    // on step 3's template — send the user back there to see it.
+    goToStep(3)
     return
   }
   createErrors.value.env_vars = undefined
@@ -558,16 +562,29 @@ async function handleSubmit() {
       }
 
       if (envVarsSaved) {
+        let activated = false
         try {
           await $pb.collection('stacks').update(stackId, { status: 'active' })
-          await customPost(`/api/custom/stacks/${stackId}/sync`)
-          toast.add({ title: 'Stack created', description: 'Environment variables saved — deploying now.', color: 'success' })
+          activated = true
         } catch {
           toast.add({
-            title: 'Stack created and variables saved, but could not deploy automatically',
-            description: 'The stack is active — trigger a manual sync from its page to deploy it.',
+            title: 'Stack created and variables saved, but activation failed',
+            description: 'The stack is still paused — check its status and resume it manually from its page.',
             color: 'warning',
           })
+        }
+
+        if (activated) {
+          try {
+            await customPost(`/api/custom/stacks/${stackId}/sync`)
+            toast.add({ title: 'Stack created', description: 'Environment variables saved — deploying now.', color: 'success' })
+          } catch {
+            toast.add({
+              title: 'Stack created and variables saved, but could not deploy automatically',
+              description: 'The stack is active — trigger a manual sync from its page to deploy it.',
+              color: 'warning',
+            })
+          }
         }
       }
     }
