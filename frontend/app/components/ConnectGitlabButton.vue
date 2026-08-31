@@ -3,6 +3,12 @@
 // triggered both from RepositoryCreateModal.vue's org/repo picker and from
 // the GitLab card's dialog on Settings → Integrations, without duplicating
 // the click handler.
+const props = withDefaults(defineProps<{
+  label?: string
+}>(), {
+  label: 'Connect GitLab',
+})
+
 const emit = defineEmits<{
   connected: [{ keyId: string, login: string }]
 }>()
@@ -30,7 +36,7 @@ async function handleClick() {
 
 <template>
   <UButton
-    label="Connect GitLab"
+    :label="props.label"
     icon="i-lucide-gitlab"
     variant="outline"
     color="neutral"

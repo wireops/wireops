@@ -112,4 +112,27 @@ describe('GitlabConfigModal', () => {
     expect(addToast).toHaveBeenCalledWith(expect.objectContaining({ title: 'Connection failed', description: 'boom', color: 'error' }))
     expect((wrapper.vm as any).testing).toBe(false)
   })
+
+  it('handleConnected (reconnect flow) refreshes status and emits saved only after the refresh completes', async () => {
+    const listGitProviders = vi.fn()
+      .mockResolvedValueOnce([{ slug: 'gitlab', connected: true, account_login: 'octocat' }])
+      .mockResolvedValueOnce([{ slug: 'gitlab', connected: true, account_login: 'new-account' }])
+    const { addToast } = setupGlobals({ listGitProviders })
+
+    const wrapper = mount(GitlabConfigModal, {
+      props: { integration: { enabled: true }, open: false },
+      shallow: true,
+    })
+    await wrapper.setProps({ open: true })
+    await flushPromises()
+    expect((wrapper.vm as any).accountLogin).toBe('octocat')
+
+    await (wrapper.vm as any).handleConnected()
+    await flushPromises()
+
+    expect(listGitProviders).toHaveBeenCalledTimes(2)
+    expect((wrapper.vm as any).accountLogin).toBe('new-account')
+    expect(wrapper.emitted('saved')).toHaveLength(1)
+    expect(addToast).toHaveBeenCalledWith(expect.objectContaining({ title: 'GitLab connected', color: 'success' }))
+  })
 })

@@ -85,9 +85,16 @@ function close() {
         <div v-if="loading" class="text-sm text-gray-500">Loading status...</div>
 
         <template v-else>
-          <div v-if="connected" class="flex items-center gap-2">
-            <UIcon name="i-lucide-check-circle-2" class="w-4 h-4 text-success-500" />
-            <span class="text-sm">Connected as <strong>@{{ accountLogin }}</strong></span>
+          <div v-if="connected" class="space-y-3">
+            <div class="flex items-center gap-2">
+              <UIcon name="i-lucide-check-circle-2" class="w-4 h-4 text-success-500" />
+              <span class="text-sm">Connected as <strong>@{{ accountLogin }}</strong></span>
+            </div>
+            <p class="text-xs text-gray-400">
+              If the connection breaks (e.g. token revoked in GitLab), reconnect below — it re-authenticates the same
+              credential in place, so existing repositories, stacks and jobs keep working without changes.
+            </p>
+            <ConnectGitlabButton label="Reconnect GitLab" @connected="handleConnected" />
           </div>
           <div v-else class="space-y-3">
             <div class="flex items-center gap-2">
