@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import type { PendingEnvVar } from '../utils/envFileParser'
 
 const route = useRoute()
 const router = useRouter()
 const { $pb } = useNuxtApp()
-const { getJobFiles, getJobDefinitionFromFile } = useApi()
+const { getJobFiles, getJobDefinitionFromFile, customPost } = useApi()
 const toast = useToast()
 
 const props = withDefaults(
@@ -43,6 +44,8 @@ const repoFiles = ref<string[]>([])
 const loadingFiles = ref(false)
 const submitting = ref(false)
 const errorMsg = ref('')
+const pendingEnvVars = ref<PendingEnvVar[]>([])
+const envVarsEditor = ref<{ commitDraft: () => void } | null>(null)
 
 const repoItems = computed(() =>
   props.repos.map((r: any) => ({ label: `${r.name} (${r.git_url})`, value: r.id }))
@@ -67,6 +70,7 @@ watch(() => props.open, (val) => {
     }
     repoFiles.value = []
     errorMsg.value = ''
+    pendingEnvVars.value = []
     const q = { ...route.query }
     delete q.job_step
     router.replace({ query: q })
@@ -124,6 +128,9 @@ function nextStep() {
   if (currentStep.value === 1) {
     if (!form.value.repository) return
     router.push({ query: { ...route.query, job_step: '2' } })
+  } else if (currentStep.value === 2) {
+    if (nameError.value || !form.value.job_file || !form.value.name) return
+    router.push({ query: { ...route.query, job_step: '3' } })
   }
 }
 
@@ -134,10 +141,13 @@ function prevStep() {
 }
 
 async function submit() {
-  if (currentStep.value === 1) {
+  if (currentStep.value < 3) {
     nextStep()
     return
   }
+
+  // Commit any typed-but-not-added env var row before submitting.
+  envVarsEditor.value?.commitDraft()
 
   errorMsg.value = ''
   if (!form.value.repository || !form.value.job_file) {
@@ -152,14 +162,49 @@ async function submit() {
 
   submitting.value = true
   try {
-    await $pb.collection('scheduled_jobs').create({
+    const hasPendingEnvVars = pendingEnvVars.value.length > 0
+
+    const job = await $pb.collection('scheduled_jobs').create({
       repository: form.value.repository,
       job_file: form.value.job_file,
-      enabled: form.value.enabled,
+      // Created disabled when there are env vars still to persist, so a
+      // failed bulk save below can never leave the job eligible for
+      // scheduling without the variables it depends on at runtime.
+      enabled: hasPendingEnvVars ? false : form.value.enabled,
       name: form.value.name.trim(),
       description: form.value.description.trim(),
       status: 'active',
     })
+
+    if (hasPendingEnvVars) {
+      let envVarsSaved = false
+      try {
+        await customPost(`/api/custom/jobs/${job.id}/env-vars/bulk`, {
+          mode: 'replace',
+          vars: pendingEnvVars.value,
+        })
+        envVarsSaved = true
+      } catch (envErr: any) {
+        toast.add({
+          title: 'Job created, but environment variables failed to save',
+          description: `${envErr?.data?.error || envErr?.message || 'Unknown error'} — the job was left disabled. Add the variables from the job's page and enable it manually.`,
+          color: 'warning',
+        })
+      }
+
+      if (envVarsSaved && form.value.enabled) {
+        try {
+          await $pb.collection('scheduled_jobs').update(job.id, { enabled: true })
+        } catch (enableErr: any) {
+          toast.add({
+            title: 'Job created and variables saved, but could not enable it automatically',
+            description: `${enableErr?.data?.error || enableErr?.message || 'Unknown error'} — enable it manually from the job's page.`,
+            color: 'warning',
+          })
+        }
+      }
+    }
+
     toast.add({ title: 'Job created', color: 'success' })
     emit('created')
     emit('update:open', false)
@@ -194,7 +239,7 @@ async function submit() {
 
         <form class="space-y-4" @submit.prevent="submit">
           <p class="text-sm text-gray-500 dark:text-wire-200/60 mb-2">
-            {{ currentStep === 1 ? 'Step 1: Select a repository' : 'Step 2: Configuration' }}
+            {{ currentStep === 1 ? 'Step 1: Select a repository' : currentStep === 2 ? 'Step 2: Configuration' : 'Step 3: Environment Variables (optional)' }}
           </p>
 
           <div v-show="currentStep === 1">
@@ -248,6 +293,10 @@ async function submit() {
             </UFormField>
           </div>
 
+          <div v-show="currentStep === 3" class="space-y-4">
+            <EnvironmentVariablesPendingEditor ref="envVarsEditor" v-model="pendingEnvVars" />
+          </div>
+
           <div v-if="errorMsg" class="flex items-start gap-3 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 mt-4">
             <UIcon name="i-lucide-circle-x" class="w-5 h-5 text-red-500 mt-0.5 shrink-0" />
             <p class="text-sm text-red-500">{{ errorMsg }}</p>
@@ -261,12 +310,20 @@ async function submit() {
               <CancelButton @click="emit('update:open', false)" />
               <UButton v-if="currentStep === 1" type="button" label="Next" icon="i-lucide-arrow-right" trailing :disabled="!form.repository" @click="nextStep" />
               <UButton
+                v-else-if="currentStep === 2"
+                type="button"
+                label="Next"
+                icon="i-lucide-arrow-right"
+                trailing
+                :disabled="!form.repository || !form.job_file || !form.name || !!nameError"
+                @click="nextStep"
+              />
+              <UButton
                 v-else
                 type="submit"
                 label="Create Job"
                 icon="i-lucide-check"
                 :loading="submitting"
-                :disabled="!form.repository || !form.job_file || !form.name || !!nameError"
               />
             </div>
           </div>

@@ -135,7 +135,7 @@ export function useApi() {
     customGet<string[]>(`/api/custom/repositories/${repoId}/wireops-files`)
   const getWireopsDefinitionFromFile = (repoId: string, file: string) =>
     customGet<WireopsDefinition>(`/api/custom/repositories/${repoId}/wireops-definition?file=${encodeURIComponent(file)}`)
-  type CreateStackFromWireopsBody = { repository: string; worker: string; wireops_file: string }
+  type CreateStackFromWireopsBody = { repository: string; worker: string; wireops_file: string; paused?: boolean }
   const createStackFromWireops = (body: CreateStackFromWireopsBody) =>
     customPost<{ id: string; name: string; status: string }>('/api/custom/stacks/from-wireops', body)
   const testCredentials = (body: any) => customPost('/api/custom/credentials/test', body)

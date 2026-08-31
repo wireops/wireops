@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/pocketbase/dbx"
+	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/router"
 	"github.com/pocketbase/pocketbase/tools/search"
@@ -389,4 +390,10 @@ func RegisterJobRoutes(r *router.Router[*core.RequestEvent], app core.App, sched
 		// but typically jobs transition to "stalled" via the scheduler. For now, just delete the run.
 		return e.JSON(http.StatusOK, map[string]string{"status": "deleted"})
 	}).BindFunc(rbac.Require(rbac.CapManageJobs))
+
+	// Bulk-upsert a job's env vars (atomic create/update/delete), mirroring
+	// POST /api/custom/stacks/{id}/env-vars/bulk in internal/routes/env_var_routes.go.
+	r.POST("/api/custom/jobs/{id}/env-vars/bulk", func(e *core.RequestEvent) error {
+		return bulkUpsertJobEnvVars(app, e)
+	}).Bind(apis.BodyLimit(envVarsBulkMaxBytes)).BindFunc(rbac.Require(rbac.CapManageJobs))
 }

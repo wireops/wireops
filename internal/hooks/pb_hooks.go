@@ -189,8 +189,8 @@ func validateWireopsFieldsImmutable(app core.App, record *core.Record) error {
 	return nil
 }
 
-func loadRepositoryTransportAuth(app core.App, repoID string) (transport.AuthMethod, bool, error) {
-	credential, err := git.LoadRepositoryCredential(app, repoID)
+func loadRepositoryTransportAuth(ctx context.Context, app core.App, repoID string) (transport.AuthMethod, bool, error) {
+	credential, err := git.LoadRepositoryCredential(ctx, app, repoID)
 	if err != nil {
 		return nil, false, err
 	}
@@ -207,7 +207,10 @@ func triggerRepositoryBackgroundClone(app core.App, repoID, gitURL, branch strin
 	}
 
 	go func() {
-		auth, hasCred, err := loadRepositoryTransportAuth(app, repoID)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+
+		auth, hasCred, err := loadRepositoryTransportAuth(ctx, app, repoID)
 		if err != nil {
 			log.Printf("[hooks] failed to resolve git auth for repo %s", repoID)
 			return
@@ -217,9 +220,6 @@ func triggerRepositoryBackgroundClone(app core.App, repoID, gitURL, branch strin
 			log.Printf("[hooks] background clone deferred for repo %s: waiting for SSH credentials", repoID)
 			return
 		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-		defer cancel()
 
 		_, err = git.CloneOrFetchContext(ctx, repoID, gitURL, branch, auth, config.GetReposWorkspace())
 		if err != nil {

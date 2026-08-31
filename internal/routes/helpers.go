@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"context"
 	"path/filepath"
 
 	"github.com/go-git/go-git/v5/plumbing/transport"
@@ -45,6 +46,6 @@ func toTransportAuth(auth interface{}) transport.AuthMethod {
 	return nil
 }
 
-func loadRepositoryCredential(app core.App, repoID string) (*git.Credential, error) {
-	return git.LoadRepositoryCredential(app, repoID)
+func loadRepositoryCredential(ctx context.Context, app core.App, repoID string) (*git.Credential, error) {
+	return git.LoadRepositoryCredential(ctx, app, repoID)
 }

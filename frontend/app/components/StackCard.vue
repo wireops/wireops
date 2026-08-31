@@ -39,15 +39,6 @@ const lastSyncedLabel = computed(() => relativeTime(props.stack?.last_synced_at)
           aria-label="Sync in progress"
         />
         <OverridedBadge v-if="stackHasRenderOverrides(stack)" />
-        <UTooltip v-if="stack.expand?.worker?.hostname" :text="stackWorkerName(stack)">
-          <span
-            class="inline-flex max-w-[110px] shrink-0 items-center gap-1 overflow-hidden rounded-md border border-gray-300 px-1.5 py-0.5 text-gray-500 dark:border-carbon-600 dark:text-wire-200/55"
-            :title="stackWorkerName(stack)"
-          >
-            <UIcon name="i-lucide-server" class="h-3 w-3 shrink-0" aria-hidden="true" />
-            <span class="min-w-0 truncate text-[11px] font-medium">{{ stackWorkerName(stack) }}</span>
-          </span>
-        </UTooltip>
         <BadgeStatus :status="effectiveStatus" />
       </div>
 
@@ -56,7 +47,7 @@ const lastSyncedLabel = computed(() => relativeTime(props.stack?.last_synced_at)
         class="group block rounded-md focus:outline-none"
         :aria-label="`Open stack ${stack.name}`"
       >
-        <div class="mb-2 sm:mb-3 min-w-0 pr-44">
+        <div class="mb-2 sm:mb-3 min-w-0 pr-28">
           <div class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
             <UIcon name="i-lucide-layers" class="h-4 w-4 shrink-0 text-gray-400 dark:text-wire-200/40" />
             <h3 class="truncate text-base font-bold tracking-tight text-gray-950 transition-colors group-hover:text-yellow-500 group-focus-visible:text-yellow-500 dark:text-white">
@@ -125,6 +116,15 @@ const lastSyncedLabel = computed(() => relativeTime(props.stack?.last_synced_at)
                 />
               </UTooltip>
               <span class="truncate font-medium text-gray-900 dark:text-wire-200">{{ stackWorkerStatus(stack, workersById).label }}</span>
+              <UTooltip v-if="stack.expand?.worker?.hostname" :text="stackWorkerName(stack)">
+                <span
+                  class="inline-flex min-w-0 shrink items-center gap-1 overflow-hidden rounded-md border border-gray-300 px-1.5 py-0.5 text-gray-500 dark:border-carbon-700/60 dark:text-wire-200/55"
+                  :title="stackWorkerName(stack)"
+                >
+                  <UIcon name="i-lucide-server" class="h-3 w-3 shrink-0" aria-hidden="true" />
+                  <span class="min-w-0 truncate text-[11px] font-medium">{{ stackWorkerName(stack) }}</span>
+                </span>
+              </UTooltip>
             </div>
           </div>
 

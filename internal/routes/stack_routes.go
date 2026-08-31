@@ -1123,6 +1123,13 @@ func (rr routeRegistrar) registerCreateFromWireopsRoute() {
 			Repository  string `json:"repository"`
 			Worker      string `json:"worker"`
 			WireopsFile string `json:"wireops_file"`
+			// Paused, when true, creates the stack with status "paused"
+			// instead of "pending" — used by the frontend when the create
+			// wizard has pending env vars to save, so the unconditional
+			// first auto-deploy (OnRecordAfterCreateSuccess in
+			// internal/hooks/pb_hooks.go) can't race that save. The client
+			// resumes the stack itself once the vars are persisted.
+			Paused bool `json:"paused"`
 		}
 		if err := json.NewDecoder(e.Request.Body).Decode(&body); err != nil {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid body"})
@@ -1166,7 +1173,11 @@ func (rr routeRegistrar) registerCreateFromWireopsRoute() {
 		stack.Set("compose_path", def.ResolvedComposePath)
 		stack.Set("compose_file", def.ResolvedComposeFile)
 		stack.Set("auto_sync", true)
-		stack.Set("status", "pending")
+		if body.Paused {
+			stack.Set("status", "paused")
+		} else {
+			stack.Set("status", "pending")
+		}
 		stack.Set("remove_orphans", removeOrphans)
 		stack.Set("force_pull", forcePull)
 		stack.Set("deploy_timeout_seconds", def.DeployTimeoutSeconds)
@@ -1181,7 +1192,7 @@ func (rr routeRegistrar) registerCreateFromWireopsRoute() {
 		}
 
 		log.Printf("[routes] create-from-wireops stack=%s repository=%s worker=%s file=%s", stack.Id, body.Repository, workerRecord.GetString("hostname"), body.WireopsFile)
-		return e.JSON(http.StatusOK, map[string]string{"id": stack.Id, "name": def.Name, "status": "pending"})
+		return e.JSON(http.StatusOK, map[string]string{"id": stack.Id, "name": def.Name, "status": stack.GetString("status")})
 	}).BindFunc(rbac.Require(rbac.CapManageRepos))
 }
 

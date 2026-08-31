@@ -282,7 +282,7 @@ func (rr routeRegistrar) repoFilesSetupByIDContext(e *core.RequestEvent, ctx con
 	}
 	workspace := config.GetReposWorkspace()
 	var auth transport.AuthMethod
-	if cred, err := loadRepositoryCredential(rr.app, repoID); err == nil && cred != nil {
+	if cred, err := loadRepositoryCredential(ctx, rr.app, repoID); err == nil && cred != nil {
 		resolvedAuth, err := git.ResolveTransportAuth(*cred)
 		if err != nil {
 			_ = e.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid repository credential: %v", err)})
@@ -493,7 +493,7 @@ func (rr routeRegistrar) registerRepositoryRoutes() {
 
 		workspace := config.GetReposWorkspace()
 		var auth transport.AuthMethod
-		if cred, err := loadRepositoryCredential(rr.app, repoID); err == nil && cred != nil {
+		if cred, err := loadRepositoryCredential(e.Request.Context(), rr.app, repoID); err == nil && cred != nil {
 			resolvedAuth, err := git.ResolveTransportAuth(*cred)
 			if err != nil {
 				return e.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid repository credential: %v", err)})
@@ -1008,7 +1008,7 @@ func (rr routeRegistrar) testGitProviderConnection(e *core.RequestEvent, provide
 		return e.JSON(http.StatusOK, map[string]string{"success": "false", "error": "not connected yet — connect from a repository first"})
 	}
 
-	_, token, err := git.LoadOAuthToken(rr.app, key.Id)
+	_, token, err := git.LoadOAuthToken(e.Request.Context(), rr.app, key.Id)
 	if err != nil {
 		return e.JSON(http.StatusOK, map[string]string{"success": "false", "error": err.Error()})
 	}

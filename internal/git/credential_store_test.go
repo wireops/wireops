@@ -2,8 +2,10 @@ package git
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
@@ -54,7 +56,7 @@ func TestLoadRepositoryCredentialWithoutKeyUsesPublicAuth(t *testing.T) {
 		t.Fatalf("save repository: %v", err)
 	}
 
-	credential, err := LoadRepositoryCredential(app, repository.Id)
+	credential, err := LoadRepositoryCredential(context.Background(), app, repository.Id)
 	if err != nil {
 		t.Fatalf("load credential: %v", err)
 	}
@@ -87,7 +89,7 @@ func TestLoadRepositoryCredentialDecryptsReusableBasicKey(t *testing.T) {
 		t.Fatalf("save repository: %v", err)
 	}
 
-	credential, err := LoadRepositoryCredential(app, repository.Id)
+	credential, err := LoadRepositoryCredential(context.Background(), app, repository.Id)
 	if err != nil {
 		t.Fatalf("load credential: %v", err)
 	}
@@ -111,6 +113,9 @@ func newCredentialStoreTestApp(t *testing.T) (*tests.TestApp, *core.Collection, 
 	keys.Fields.Add(&core.TextField{Name: "git_password"})
 	keys.Fields.Add(&core.TextField{Name: "oauth_provider"})
 	keys.Fields.Add(&core.TextField{Name: "oauth_token"})
+	keys.Fields.Add(&core.TextField{Name: "oauth_refresh_token"})
+	keys.Fields.Add(&core.TextField{Name: "oauth_account_login"})
+	keys.Fields.Add(&core.DateField{Name: "oauth_token_expires_at"})
 	if err := app.Save(keys); err != nil {
 		t.Fatalf("save keys collection: %v", err)
 	}
@@ -151,7 +156,7 @@ func TestLoadCredentialByIDOAuthToken(t *testing.T) {
 		t.Setenv("SECRET_KEY", secret)
 		key := newKey(t, app, keys, "fake-provider", "gho_token-value")
 
-		credential, err := LoadCredentialByID(app, key.Id)
+		credential, err := LoadCredentialByID(context.Background(), app, key.Id)
 		if err != nil {
 			t.Fatalf("load credential: %v", err)
 		}
@@ -168,7 +173,7 @@ func TestLoadCredentialByIDOAuthToken(t *testing.T) {
 		t.Setenv("SECRET_KEY", secret)
 		key := newKey(t, app, keys, "does-not-exist", "gho_token-value")
 
-		if _, err := LoadCredentialByID(app, key.Id); err == nil {
+		if _, err := LoadCredentialByID(context.Background(), app, key.Id); err == nil {
 			t.Fatal("expected error for unknown git provider, got nil")
 		}
 	})
@@ -178,7 +183,7 @@ func TestLoadCredentialByIDOAuthToken(t *testing.T) {
 		t.Setenv("SECRET_KEY", secret)
 		key := newKey(t, app, keys, "fake-provider", "")
 
-		if _, err := LoadCredentialByID(app, key.Id); err == nil {
+		if _, err := LoadCredentialByID(context.Background(), app, key.Id); err == nil {
 			t.Fatal("expected error for missing oauth token, got nil")
 		}
 	})
@@ -203,7 +208,7 @@ func TestLoadOAuthToken(t *testing.T) {
 			t.Fatalf("save key: %v", err)
 		}
 
-		provider, token, err := LoadOAuthToken(app, key.Id)
+		provider, token, err := LoadOAuthToken(context.Background(), app, key.Id)
 		if err != nil {
 			t.Fatalf("load oauth token: %v", err)
 		}
@@ -222,7 +227,7 @@ func TestLoadOAuthToken(t *testing.T) {
 			t.Fatalf("save key: %v", err)
 		}
 
-		if _, _, err := LoadOAuthToken(app, key.Id); err == nil {
+		if _, _, err := LoadOAuthToken(context.Background(), app, key.Id); err == nil {
 			t.Fatal("expected error for non-oauth key, got nil")
 		}
 	})
@@ -238,8 +243,203 @@ func TestLoadOAuthToken(t *testing.T) {
 			t.Fatalf("save key: %v", err)
 		}
 
-		if _, _, err := LoadOAuthToken(app, key.Id); err == nil {
+		if _, _, err := LoadOAuthToken(context.Background(), app, key.Id); err == nil {
 			t.Fatal("expected error for missing oauth token, got nil")
+		}
+	})
+}
+
+// countingRefreshProvider is a gitprovider.Provider whose RefreshToken counts
+// invocations and sleeps briefly, widening the window for concurrent callers
+// to race on the same refresh_token if the caller doesn't serialize them.
+type countingRefreshProvider struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (p *countingRefreshProvider) callCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.calls
+}
+
+func (p *countingRefreshProvider) Slug() string                    { return "counting-provider" }
+func (p *countingRefreshProvider) Name() string                    { return "Counting Provider" }
+func (p *countingRefreshProvider) Configured() bool                { return true }
+func (p *countingRefreshProvider) BasicAuthUsername() string       { return "oauth2" }
+func (p *countingRefreshProvider) AuthorizeURL(_, _ string) string { return "" }
+func (p *countingRefreshProvider) ExchangeCode(_ context.Context, _, _ string) (*gitprovider.Token, error) {
+	return nil, nil
+}
+func (p *countingRefreshProvider) RefreshToken(_ context.Context, refreshToken string) (*gitprovider.Token, error) {
+	p.mu.Lock()
+	p.calls++
+	p.mu.Unlock()
+	if refreshToken == "" {
+		return nil, gitprovider.ErrRefreshNotSupported
+	}
+	time.Sleep(20 * time.Millisecond)
+	return &gitprovider.Token{
+		AccessToken:  "refreshed-token",
+		RefreshToken: "refreshed-refresh-token",
+		ExpiresAt:    time.Now().Add(time.Hour),
+		AccountLogin: "octocat",
+	}, nil
+}
+func (p *countingRefreshProvider) ListOrganizations(_ context.Context, _ string) ([]gitprovider.Org, error) {
+	return nil, nil
+}
+func (p *countingRefreshProvider) ListRepositories(_ context.Context, _, _ string) ([]gitprovider.Repo, error) {
+	return nil, nil
+}
+func (p *countingRefreshProvider) ListBranches(_ context.Context, _, _ string) ([]gitprovider.Branch, error) {
+	return nil, nil
+}
+
+// TestLoadCredentialByIDDedupesConcurrentRefresh guards against the race
+// where several repos sharing one provider's credential all notice the same
+// expired token at once: without singleflight, each would redeem the same
+// refresh_token independently, and since GitLab rotates refresh tokens on
+// use, all but one redeem — and any Save() that lands after a later one —
+// would corrupt the stored credential. Every concurrent caller here must
+// observe exactly one RefreshToken call and the same refreshed access token.
+func TestLoadCredentialByIDDedupesConcurrentRefresh(t *testing.T) {
+	secret := "0123456789abcdef0123456789abcdef"
+	app, _, keys := newCredentialStoreTestApp(t)
+	t.Setenv("SECRET_KEY", secret)
+
+	provider := &countingRefreshProvider{}
+	gitprovider.Register(provider)
+
+	encryptedAccess, err := crypto.Encrypt([]byte("stale-token"), []byte(secret))
+	if err != nil {
+		t.Fatalf("encrypt access token: %v", err)
+	}
+	encryptedRefresh, err := crypto.Encrypt([]byte("stale-refresh"), []byte(secret))
+	if err != nil {
+		t.Fatalf("encrypt refresh token: %v", err)
+	}
+
+	key := core.NewRecord(keys)
+	key.Set("name", "OAuth key")
+	key.Set("auth_type", string(AuthTypeOAuthToken))
+	key.Set("oauth_provider", provider.Slug())
+	key.Set("oauth_token", encryptedAccess)
+	key.Set("oauth_refresh_token", encryptedRefresh)
+	key.Set("oauth_token_expires_at", time.Now().Add(-time.Minute))
+	if err := app.Save(key); err != nil {
+		t.Fatalf("save key: %v", err)
+	}
+
+	const concurrency = 20
+	var wg sync.WaitGroup
+	results := make([]string, concurrency)
+	errs := make([]error, concurrency)
+	for i := 0; i < concurrency; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			cred, err := LoadCredentialByID(context.Background(), app, key.Id)
+			if err != nil {
+				errs[i] = err
+				return
+			}
+			results[i] = cred.GitPassword
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("goroutine %d: unexpected error: %v", i, err)
+		}
+	}
+	for i, got := range results {
+		if got != "refreshed-token" {
+			t.Fatalf("goroutine %d: got access token %q, want %q", i, got, "refreshed-token")
+		}
+	}
+	if got := provider.callCount(); got != 1 {
+		t.Fatalf("RefreshToken called %d times, want exactly 1", got)
+	}
+}
+
+// alwaysFailRefreshProvider is a gitprovider.Provider whose RefreshToken
+// always errors, used to exercise refreshOAuthTokenIfNeeded's fallback: a
+// transient refresh failure must not break a token that is still actually
+// valid, only one whose real expiry has passed with no usable fallback.
+type alwaysFailRefreshProvider struct{}
+
+func (alwaysFailRefreshProvider) Slug() string                    { return "always-fail-refresh-provider" }
+func (alwaysFailRefreshProvider) Name() string                    { return "Always Fail Refresh Provider" }
+func (alwaysFailRefreshProvider) Configured() bool                { return true }
+func (alwaysFailRefreshProvider) BasicAuthUsername() string       { return "oauth2" }
+func (alwaysFailRefreshProvider) AuthorizeURL(_, _ string) string { return "" }
+func (alwaysFailRefreshProvider) ExchangeCode(_ context.Context, _, _ string) (*gitprovider.Token, error) {
+	return nil, nil
+}
+func (alwaysFailRefreshProvider) RefreshToken(_ context.Context, _ string) (*gitprovider.Token, error) {
+	return nil, errors.New("refresh endpoint unavailable")
+}
+func (alwaysFailRefreshProvider) ListOrganizations(_ context.Context, _ string) ([]gitprovider.Org, error) {
+	return nil, nil
+}
+func (alwaysFailRefreshProvider) ListRepositories(_ context.Context, _, _ string) ([]gitprovider.Repo, error) {
+	return nil, nil
+}
+func (alwaysFailRefreshProvider) ListBranches(_ context.Context, _, _ string) ([]gitprovider.Branch, error) {
+	return nil, nil
+}
+
+func TestRefreshOAuthTokenIfNeededFallsBackWhenNotYetExpired(t *testing.T) {
+	secret := "0123456789abcdef0123456789abcdef"
+	app, _, keys := newCredentialStoreTestApp(t)
+	t.Setenv("SECRET_KEY", secret)
+
+	provider := alwaysFailRefreshProvider{}
+	gitprovider.Register(provider)
+
+	encryptedAccess, err := crypto.Encrypt([]byte("still-valid-token"), []byte(secret))
+	if err != nil {
+		t.Fatalf("encrypt access token: %v", err)
+	}
+	encryptedRefresh, err := crypto.Encrypt([]byte("refresh-value"), []byte(secret))
+	if err != nil {
+		t.Fatalf("encrypt refresh token: %v", err)
+	}
+
+	newKeyRecord := func(t *testing.T, expiresAt time.Time) *core.Record {
+		t.Helper()
+		key := core.NewRecord(keys)
+		key.Set("name", "OAuth key")
+		key.Set("auth_type", string(AuthTypeOAuthToken))
+		key.Set("oauth_provider", provider.Slug())
+		key.Set("oauth_token", encryptedAccess)
+		key.Set("oauth_refresh_token", encryptedRefresh)
+		key.Set("oauth_token_expires_at", expiresAt)
+		if err := app.Save(key); err != nil {
+			t.Fatalf("save key: %v", err)
+		}
+		return key
+	}
+
+	t.Run("still within actual validity: returns the current token instead of failing", func(t *testing.T) {
+		key := newKeyRecord(t, time.Now().Add(5*time.Minute)) // inside the 15m grace window, not yet expired
+
+		cred, err := LoadCredentialByID(context.Background(), app, key.Id)
+		if err != nil {
+			t.Fatalf("expected fallback to the current token, got error: %v", err)
+		}
+		if cred.GitPassword != "still-valid-token" {
+			t.Fatalf("got token %q, want the still-valid current token", cred.GitPassword)
+		}
+	})
+
+	t.Run("actually expired: propagates the refresh error", func(t *testing.T) {
+		key := newKeyRecord(t, time.Now().Add(-time.Minute)) // already past expiry
+
+		if _, _, err := LoadOAuthToken(context.Background(), app, key.Id); err == nil {
+			t.Fatal("expected refresh error to propagate once the token has actually expired, got nil")
 		}
 	})
 }
