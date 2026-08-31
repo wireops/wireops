@@ -329,16 +329,25 @@ onMounted(async () => {
     <div v-if="activeTab === 'sso-mappings' && isAdmin" class="space-y-6">
       <AppPanelCard>
         <template #header>
+          <h3 class="font-semibold">SSO Groups Claim</h3>
+          <p class="text-xs text-gray-500 mt-0.5">Name of the claim in the SSO token that contains the user's group memberships.</p>
+        </template>
+        <UFormField label="Groups Claim">
+          <div class="flex gap-2">
+            <div class="flex-1 min-w-0 max-w-sm">
+              <AppTextInput v-model="appSettings.sso_groups_claim" placeholder="groups" />
+            </div>
+            <UButton label="Save Claim" class="shrink-0" :loading="appSettingsSaving" @click="handleSaveAppSettings({ title: 'SSO claim saved', description: 'SSO group claim mapping was updated.' })" />
+          </div>
+        </UFormField>
+      </AppPanelCard>
+
+      <AppPanelCard>
+        <template #header>
           <h3 class="font-semibold">SSO Group Role Mapping</h3>
           <p class="text-xs text-gray-500 mt-0.5">Map identity provider groups to fixed WireOps roles. No match means SSO login is denied.</p>
         </template>
         <div class="space-y-4">
-          <UFormField label="Groups Claim">
-            <div class="flex gap-2">
-              <AppTextInput v-model="appSettings.sso_groups_claim" placeholder="groups" class="max-w-sm" />
-              <UButton label="Save Claim" :loading="appSettingsSaving" @click="handleSaveAppSettings({ title: 'SSO claim saved', description: 'SSO group claim mapping was updated.' })" />
-            </div>
-          </UFormField>
           <form class="flex flex-col gap-2 sm:flex-row" @submit.prevent="createSSOGroupRole">
             <AppTextInput v-model="ssoGroupRoleForm.group" placeholder="wireops-admins" aria-label="SSO group name" class="flex-1" />
             <USelectMenu v-model="ssoGroupRoleForm.role" :items="roleOptions" value-key="value" class="w-full sm:w-40" />
