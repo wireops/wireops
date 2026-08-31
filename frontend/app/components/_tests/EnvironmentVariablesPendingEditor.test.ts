@@ -179,6 +179,29 @@ describe('EnvironmentVariablesPendingEditor', () => {
     ])
   })
 
+  it('commitDraft persists a typed-but-not-added row', async () => {
+    const wrapper = mountEditor([])
+
+    await wrapper.find('input[placeholder="KEY"]').setValue('FOO')
+    await wrapper.find('input[placeholder="value"]').setValue('bar')
+    ;(wrapper.vm as unknown as { commitDraft: () => void }).commitDraft()
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.emitted('update:modelValue')![0]![0]).toEqual([
+      { key: 'FOO', value: 'bar', secret: false, secret_provider: '' },
+    ])
+  })
+
+  it('commitDraft is a no-op when the draft key or value is empty', async () => {
+    const wrapper = mountEditor([])
+
+    await wrapper.find('input[placeholder="KEY"]').setValue('FOO')
+    ;(wrapper.vm as unknown as { commitDraft: () => void }).commitDraft()
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.emitted('update:modelValue')).toBeFalsy()
+  })
+
   it('reports parse errors for malformed pasted lines without emitting', async () => {
     const wrapper = mountEditor([])
 

@@ -74,13 +74,30 @@ const stubs = {
   EnvironmentVariablesPendingEditor: {
     props: ['modelValue'],
     emits: ['update:modelValue'],
-    setup(_props: unknown, { emit }: { emit: (event: 'update:modelValue', value: unknown[]) => void }) {
+    setup(props: { modelValue?: unknown[] }, { emit, expose }: { emit: (event: 'update:modelValue', value: unknown[]) => void, expose: (exposed: Record<string, unknown>) => void }) {
+      // Mimics the real component's separation between a typed draft row
+      // and committed rows: `type-draft-env-var` only fills the draft, and
+      // `commitDraft` (exposed, called by the parent before Next/Submit)
+      // is what actually pushes it into the model.
+      const draft = { key: '', value: '' }
+      function commitDraft() {
+        if (!draft.key || !draft.value) return
+        emit('update:modelValue', [...(props.modelValue || []), { key: draft.key, value: draft.value, secret: false, secret_provider: '' }])
+        draft.key = ''
+        draft.value = ''
+      }
+      expose({ commitDraft })
       return () => h('div', { class: 'env-vars-pending-editor' }, [
         h('button', {
           type: 'button',
           class: 'add-fake-env-var',
-          onClick: () => emit('update:modelValue', [{ key: 'FOO', value: 'bar', secret: false, secret_provider: '' }]),
+          onClick: () => emit('update:modelValue', [...(props.modelValue || []), { key: 'FOO', value: 'bar', secret: false, secret_provider: '' }]),
         }, 'Add fake env var'),
+        h('button', {
+          type: 'button',
+          class: 'type-draft-env-var',
+          onClick: () => { draft.key = 'DRAFT'; draft.value = 'uncommitted' },
+        }, 'Type draft env var'),
       ])
     },
   },
@@ -185,6 +202,23 @@ describe('JobCreateModal', () => {
     expect(customPost).toHaveBeenCalledWith('/api/custom/jobs/job-1/env-vars/bulk', {
       mode: 'replace',
       vars: [{ key: 'FOO', value: 'bar', secret: false, secret_provider: '' }],
+    })
+  })
+
+  it('persists a typed-but-not-added env var row when Create is clicked without pressing the row add button', async () => {
+    const { createJob, customPost } = setupGlobals()
+    const wrapper = await openModal()
+
+    await fillJobThroughConfiguration(wrapper)
+    await wrapper.find('.type-draft-env-var').trigger('click')
+
+    await wrapper.find('form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createJob).toHaveBeenCalled()
+    expect(customPost).toHaveBeenCalledWith('/api/custom/jobs/job-1/env-vars/bulk', {
+      mode: 'replace',
+      vars: [{ key: 'DRAFT', value: 'uncommitted', secret: false, secret_provider: '' }],
     })
   })
 

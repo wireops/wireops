@@ -51,6 +51,17 @@ function removeRow(index: number) {
   rows.value = rows.value.filter((_, i) => i !== index)
 }
 
+// Commits the in-progress key/value draft row (if any) so it isn't
+// silently lost when the wizard advances without clicking the row's
+// own add button.
+function commitDraft() {
+  if (newKey.value.trim() && newValue.value.trim() && !newKeyError.value) {
+    addRow()
+  }
+}
+
+defineExpose({ commitDraft })
+
 function openPasteMode() {
   pasteContent.value = ''
   pasteErrors.value = []

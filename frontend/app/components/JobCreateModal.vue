@@ -45,6 +45,7 @@ const loadingFiles = ref(false)
 const submitting = ref(false)
 const errorMsg = ref('')
 const pendingEnvVars = ref<PendingEnvVar[]>([])
+const envVarsEditor = ref<{ commitDraft: () => void } | null>(null)
 
 const repoItems = computed(() =>
   props.repos.map((r: any) => ({ label: `${r.name} (${r.git_url})`, value: r.id }))
@@ -144,6 +145,9 @@ async function submit() {
     nextStep()
     return
   }
+
+  // Commit any typed-but-not-added env var row before submitting.
+  envVarsEditor.value?.commitDraft()
 
   errorMsg.value = ''
   if (!form.value.repository || !form.value.job_file) {
@@ -271,7 +275,7 @@ async function submit() {
           </div>
 
           <div v-show="currentStep === 3" class="space-y-4">
-            <EnvironmentVariablesPendingEditor v-model="pendingEnvVars" />
+            <EnvironmentVariablesPendingEditor ref="envVarsEditor" v-model="pendingEnvVars" />
           </div>
 
           <div v-if="errorMsg" class="flex items-start gap-3 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 mt-4">

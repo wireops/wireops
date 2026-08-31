@@ -49,6 +49,7 @@ const saving = ref(false)
 const createErrors = ref<{ worker?: string; compose_path?: string; compose_file?: string; selected_file?: string; wireops_file?: string; lint?: string }>({})
 
 const pendingEnvVars = ref<PendingEnvVar[]>([])
+const envVarsEditor = ref<{ commitDraft: () => void } | null>(null)
 
 const wireopsFiles = ref<string[]>([])
 const loadingWireopsFiles = ref(false)
@@ -350,6 +351,10 @@ function nextStep() {
   if (target === 3 && !form.value.worker) {
     createErrors.value.worker = 'Please select a worker'
     return
+  }
+  // Commit any typed-but-not-added env var row before leaving that step.
+  if (currentStep.value === 3) {
+    envVarsEditor.value?.commitDraft()
   }
   goToStep(target)
 }
@@ -724,7 +729,7 @@ async function handleSubmit() {
             </div>
 
             <div v-show="currentStep === 3" class="space-y-4">
-              <EnvironmentVariablesPendingEditor v-model="pendingEnvVars" />
+              <EnvironmentVariablesPendingEditor ref="envVarsEditor" v-model="pendingEnvVars" />
             </div>
 
             <div v-show="currentStep === 4" class="space-y-4 md:space-y-0 md:grid md:grid-cols-2 md:gap-4 md:items-start">
