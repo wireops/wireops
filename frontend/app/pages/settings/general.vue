@@ -172,14 +172,15 @@ async function runKeyscan() {
       <form class="flex flex-col sm:flex-row gap-2" @submit.prevent="runKeyscan">
         <AppTextInput v-model="keyscanHost" placeholder="github.com" class="flex-1" />
         <div class="flex gap-2">
-          <AppTextInput
-            :model-value="keyscanPort"
-            type="number"
-            placeholder="22"
-            class="w-20"
-            @update:model-value="(v) => keyscanPort = String(v)"
-          />
-          <UButton type="submit" label="Scan" :loading="keyscanLoading" :disabled="!canRunKeyscan" />
+          <div class="w-20 shrink-0">
+            <AppTextInput
+              :model-value="keyscanPort"
+              type="number"
+              placeholder="22"
+              @update:model-value="(v) => keyscanPort = String(v)"
+            />
+          </div>
+          <UButton type="submit" label="Scan" :loading="keyscanLoading" :disabled="!canRunKeyscan" class="shrink-0" />
         </div>
       </form>
       <div v-if="keyscanResult" class="mt-3">
