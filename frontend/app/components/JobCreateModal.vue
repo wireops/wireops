@@ -177,20 +177,31 @@ async function submit() {
     })
 
     if (hasPendingEnvVars) {
+      let envVarsSaved = false
       try {
         await customPost(`/api/custom/jobs/${job.id}/env-vars/bulk`, {
           mode: 'replace',
           vars: pendingEnvVars.value,
         })
-        if (form.value.enabled) {
-          await $pb.collection('scheduled_jobs').update(job.id, { enabled: true })
-        }
+        envVarsSaved = true
       } catch (envErr: any) {
         toast.add({
           title: 'Job created, but environment variables failed to save',
           description: `${envErr?.data?.error || envErr?.message || 'Unknown error'} — the job was left disabled. Add the variables from the job's page and enable it manually.`,
           color: 'warning',
         })
+      }
+
+      if (envVarsSaved && form.value.enabled) {
+        try {
+          await $pb.collection('scheduled_jobs').update(job.id, { enabled: true })
+        } catch (enableErr: any) {
+          toast.add({
+            title: 'Job created and variables saved, but could not enable it automatically',
+            description: `${enableErr?.data?.error || enableErr?.message || 'Unknown error'} — enable it manually from the job's page.`,
+            color: 'warning',
+          })
+        }
       }
     }
 

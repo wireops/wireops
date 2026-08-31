@@ -135,13 +135,14 @@ const stubs = {
       // `commitDraft` (exposed, called by the parent before Next/Submit)
       // is what actually pushes it into the model.
       const draft = { key: '', value: '' }
+      const hasInvalidDraft = ref(false)
       function commitDraft() {
-        if (!draft.key || !draft.value) return
+        if (hasInvalidDraft.value || !draft.key || !draft.value) return
         emit('update:modelValue', [...(props.modelValue || []), { key: draft.key, value: draft.value, secret: false, secret_provider: '' }])
         draft.key = ''
         draft.value = ''
       }
-      expose({ commitDraft })
+      expose({ commitDraft, hasInvalidDraft })
       return () => h('div', { class: 'env-vars-pending-editor' }, [
         h('button', {
           type: 'button',
@@ -153,6 +154,16 @@ const stubs = {
           class: 'type-draft-env-var',
           onClick: () => { draft.key = 'DRAFT'; draft.value = 'uncommitted' },
         }, 'Type draft env var'),
+        h('button', {
+          type: 'button',
+          class: 'type-invalid-draft',
+          onClick: () => { hasInvalidDraft.value = true },
+        }, 'Type invalid draft'),
+        h('button', {
+          type: 'button',
+          class: 'clear-invalid-draft',
+          onClick: () => { hasInvalidDraft.value = false },
+        }, 'Clear invalid draft'),
       ])
     },
   },
@@ -740,6 +751,49 @@ describe('CreateStackModal', () => {
       vars: [{ key: 'DRAFT', value: 'uncommitted', secret: false, secret_provider: '' }],
     })
     expect(updateStack).toHaveBeenCalledWith('stack-1', { status: 'active' })
+  })
+
+  it('blocks leaving Environment Variables while the draft is invalid, and unblocks once cleared', async () => {
+    setupGlobals()
+    const wrapper = await openInWireopsMode()
+
+    await fillManualStackThroughConfiguration(wrapper)
+    await goToNextStep(wrapper) // Configuration -> Environment Variables
+
+    await wrapper.find('.type-invalid-draft').trigger('click')
+    await goToNextStep(wrapper) // attempted Environment Variables -> Review
+
+    // Still on Environment Variables: the "Next" button (step 3's) is still
+    // there, "Create" (step 4's submit) isn't reachable yet.
+    expect(wrapper.findAll('button').some(b => b.text() === 'Next')).toBe(true)
+    expect(wrapper.findAll('button').some(b => b.text() === 'Create')).toBe(false)
+    expect(wrapper.text()).toContain('Fix or clear the invalid environment variable before continuing.')
+
+    await wrapper.find('.clear-invalid-draft').trigger('click')
+    await goToNextStep(wrapper) // Environment Variables -> Review
+
+    expect(wrapper.findAll('button').some(b => b.text() === 'Create')).toBe(true)
+    expect(wrapper.text()).not.toContain('Fix or clear the invalid environment variable before continuing.')
+  })
+
+  it('blocks final submission from Review when the draft is invalid via direct stepper navigation', async () => {
+    const { createStack, push, queryState } = setupGlobals()
+    const wrapper = await openInWireopsMode()
+
+    await fillManualStackThroughConfiguration(wrapper)
+    await goToNextStep(wrapper) // Configuration -> Environment Variables
+
+    await wrapper.find('.type-invalid-draft').trigger('click')
+
+    // Jump straight to Review, bypassing the Next-button block above.
+    push({ query: { ...queryState.query, stack_step: '4' } })
+    await flushPromises()
+
+    await wrapper.find('form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createStack).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('Fix or clear the invalid environment variable before continuing.')
   })
 
   it('creates the stack pending and never touches the env-vars endpoint when none were added', async () => {

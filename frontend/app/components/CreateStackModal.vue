@@ -46,10 +46,10 @@ const form = ref(defaultForm())
 const repoFiles = ref<string[]>([])
 const loadingFiles = ref(false)
 const saving = ref(false)
-const createErrors = ref<{ worker?: string; compose_path?: string; compose_file?: string; selected_file?: string; wireops_file?: string; lint?: string }>({})
+const createErrors = ref<{ worker?: string; compose_path?: string; compose_file?: string; selected_file?: string; wireops_file?: string; lint?: string; env_vars?: string }>({})
 
 const pendingEnvVars = ref<PendingEnvVar[]>([])
-const envVarsEditor = ref<{ commitDraft: () => void } | null>(null)
+const envVarsEditor = ref<{ commitDraft: () => void; hasInvalidDraft: boolean } | null>(null)
 
 const wireopsFiles = ref<string[]>([])
 const loadingWireopsFiles = ref(false)
@@ -355,6 +355,11 @@ function nextStep() {
   // Commit any typed-but-not-added env var row before leaving that step.
   if (currentStep.value === 3) {
     envVarsEditor.value?.commitDraft()
+    if (envVarsEditor.value?.hasInvalidDraft) {
+      createErrors.value.env_vars = 'Fix or clear the invalid environment variable before continuing.'
+      return
+    }
+    createErrors.value.env_vars = undefined
   }
   goToStep(target)
 }
@@ -435,6 +440,11 @@ watch(lintHasErrors, (hasErrors) => {
 })
 
 function close() {
+  // A submit already in flight has snapshotted its own env vars, but closing
+  // (and a parent reopening the modal) would still reset pendingEnvVars and
+  // other form state out from under it — block user-initiated closes until
+  // that submission finishes.
+  if (saving.value) return
   emit('update:open', false)
 }
 
@@ -460,6 +470,17 @@ async function handleSubmit() {
   // leaving step 3 via Next, but the stepper also allows jumping straight
   // from Environment Variables to Review, bypassing that call entirely.
   envVarsEditor.value?.commitDraft()
+  if (envVarsEditor.value?.hasInvalidDraft) {
+    createErrors.value.env_vars = 'Fix or clear the invalid environment variable before continuing.'
+    return
+  }
+  createErrors.value.env_vars = undefined
+
+  // Snapshotted now, before any await: closing the modal mid-submit resets
+  // pendingEnvVars (and is itself blocked while saving, see close()), but
+  // this keeps the payload below tied to what the user actually submitted
+  // rather than whatever pendingEnvVars holds by the time it's read.
+  const envVarsSnapshot = pendingEnvVars.value.slice()
 
   // If the wizard has pending env vars, the stack is created paused instead
   // of pending — the first auto-deploy (triggered unconditionally on create,
@@ -467,7 +488,7 @@ async function handleSubmit() {
   // would otherwise race the env-vars bulk save below and could run without
   // them. Once the vars are saved, the stack is resumed and a sync is
   // triggered immediately instead of waiting for the next cron tick.
-  const hasPendingEnvVars = pendingEnvVars.value.length > 0
+  const hasPendingEnvVars = envVarsSnapshot.length > 0
 
   saving.value = true
   try {
@@ -525,7 +546,7 @@ async function handleSubmit() {
       try {
         await customPost(`/api/custom/stacks/${stackId}/env-vars/bulk`, {
           mode: 'replace',
-          vars: pendingEnvVars.value,
+          vars: envVarsSnapshot,
         })
         envVarsSaved = true
       } catch (envErr: any) {
@@ -565,7 +586,7 @@ async function handleSubmit() {
   <UModal
     :open="open"
     :ui="{ content: currentStep === 4 ? 'sm:max-w-5xl w-full' : 'sm:max-w-2xl w-full' }"
-    @update:open="emit('update:open', $event)"
+    @update:open="(val: boolean) => { if (val === false && saving) return; emit('update:open', val) }"
   >
     <template #content>
       <form class="w-full" @submit.prevent="handleSubmit">
@@ -735,6 +756,7 @@ async function handleSubmit() {
 
             <div v-show="currentStep === 3" class="space-y-4">
               <EnvironmentVariablesPendingEditor ref="envVarsEditor" v-model="pendingEnvVars" />
+              <p v-if="createErrors.env_vars" class="text-xs text-red-500">{{ createErrors.env_vars }}</p>
             </div>
 
             <div v-show="currentStep === 4" class="space-y-4 md:space-y-0 md:grid md:grid-cols-2 md:gap-4 md:items-start">

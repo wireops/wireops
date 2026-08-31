@@ -202,6 +202,19 @@ describe('EnvironmentVariablesPendingEditor', () => {
     expect(wrapper.emitted('update:modelValue')).toBeFalsy()
   })
 
+  it('exposes hasInvalidDraft so a caller can block navigation instead of silently dropping an invalid key', async () => {
+    const wrapper = mountEditor([])
+    const vm = wrapper.vm as unknown as { hasInvalidDraft: boolean }
+
+    expect(vm.hasInvalidDraft).toBe(false)
+
+    await wrapper.find('input[placeholder="KEY"]').setValue('123bad')
+    expect(vm.hasInvalidDraft).toBe(true)
+
+    await wrapper.find('input[placeholder="KEY"]').setValue('')
+    expect(vm.hasInvalidDraft).toBe(false)
+  })
+
   it('reports parse errors for malformed pasted lines without emitting', async () => {
     const wrapper = mountEditor([])
 

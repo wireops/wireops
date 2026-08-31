@@ -262,4 +262,33 @@ describe('JobCreateModal', () => {
     expect(toastAdd).toHaveBeenCalledWith(expect.objectContaining({ color: 'warning' }))
     expect(wrapper.emitted('created')).toBeTruthy()
   })
+
+  it('reports variables as saved (not lost) when only the enable step fails after a successful env-vars save', async () => {
+    const { createJob, updateJob, customPost, toastAdd } = setupGlobals()
+    updateJob.mockRejectedValueOnce(new Error('boom'))
+    const wrapper = await openModal()
+
+    await fillJobThroughConfiguration(wrapper)
+    await wrapper.find('.add-fake-env-var').trigger('click')
+    await flushPromises()
+
+    await wrapper.find('form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createJob).toHaveBeenCalledWith(expect.objectContaining({ enabled: false }))
+    expect(customPost).toHaveBeenCalledWith('/api/custom/jobs/job-1/env-vars/bulk', {
+      mode: 'replace',
+      vars: [{ key: 'FOO', value: 'bar', secret: false, secret_provider: '' }],
+    })
+    expect(updateJob).toHaveBeenCalledWith('job-1', { enabled: true })
+    expect(toastAdd).toHaveBeenCalledWith(expect.objectContaining({
+      color: 'warning',
+      title: expect.stringContaining('could not enable it automatically'),
+    }))
+    // Must not claim the variables themselves failed to save — they didn't.
+    expect(toastAdd).not.toHaveBeenCalledWith(expect.objectContaining({
+      title: expect.stringContaining('environment variables failed to save'),
+    }))
+    expect(wrapper.emitted('created')).toBeTruthy()
+  })
 })

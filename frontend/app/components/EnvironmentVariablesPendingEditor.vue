@@ -60,7 +60,12 @@ function commitDraft() {
   }
 }
 
-defineExpose({ commitDraft })
+// True when the draft key can't be committed because it's invalid or a
+// duplicate — callers use this to block navigation instead of silently
+// dropping it via commitDraft() above.
+const hasInvalidDraft = computed(() => !!newKey.value.trim() && !!newKeyError.value)
+
+defineExpose({ commitDraft, hasInvalidDraft })
 
 function openPasteMode() {
   pasteContent.value = ''
