@@ -62,7 +62,7 @@ func createJobEnvVarRow(t *testing.T, app core.App, jobID, key, value string, se
 	return rec
 }
 
-func TestBulkUpsertJobEnvVars_ReplaceMode(t *testing.T) {
+func TestBulkUpsertJobEnvVarsReplaceMode(t *testing.T) {
 	app, operator := envVarTestApp(t)
 	repo := createTestRepository(t, app, "job-bulk-replace-repo")
 	job := createTestScheduledJob(t, app, repo.Id, "job-bulk-replace", "active")
@@ -111,7 +111,7 @@ func TestBulkUpsertJobEnvVars_ReplaceMode(t *testing.T) {
 	}
 }
 
-func TestBulkUpsertJobEnvVars_PreservesUnchangedSecret(t *testing.T) {
+func TestBulkUpsertJobEnvVarsPreservesUnchangedSecret(t *testing.T) {
 	app, operator := envVarTestApp(t)
 	repo := createTestRepository(t, app, "job-bulk-secret-repo")
 	job := createTestScheduledJob(t, app, repo.Id, "job-bulk-secret", "active")
@@ -144,7 +144,7 @@ func TestBulkUpsertJobEnvVars_PreservesUnchangedSecret(t *testing.T) {
 	}
 }
 
-func TestBulkUpsertJobEnvVars_RejectsDuplicateKeysInPayload(t *testing.T) {
+func TestBulkUpsertJobEnvVarsRejectsDuplicateKeysInPayload(t *testing.T) {
 	app, operator := envVarTestApp(t)
 	repo := createTestRepository(t, app, "job-bulk-dup-repo")
 	job := createTestScheduledJob(t, app, repo.Id, "job-bulk-dup", "active")
@@ -163,7 +163,7 @@ func TestBulkUpsertJobEnvVars_RejectsDuplicateKeysInPayload(t *testing.T) {
 	}
 }
 
-func TestBulkUpsertJobEnvVars_RejectsInvalidKey(t *testing.T) {
+func TestBulkUpsertJobEnvVarsRejectsInvalidKey(t *testing.T) {
 	app, operator := envVarTestApp(t)
 	repo := createTestRepository(t, app, "job-bulk-invalid-key-repo")
 	job := createTestScheduledJob(t, app, repo.Id, "job-bulk-invalid-key", "active")
@@ -181,7 +181,7 @@ func TestBulkUpsertJobEnvVars_RejectsInvalidKey(t *testing.T) {
 	}
 }
 
-func TestBulkUpsertJobEnvVars_DowngradeToNonSecretClearsValue(t *testing.T) {
+func TestBulkUpsertJobEnvVarsDowngradeToNonSecretClearsValue(t *testing.T) {
 	app, operator := envVarTestApp(t)
 	repo := createTestRepository(t, app, "job-bulk-downgrade-repo")
 	job := createTestScheduledJob(t, app, repo.Id, "job-bulk-downgrade", "active")
@@ -214,7 +214,7 @@ func TestBulkUpsertJobEnvVars_DowngradeToNonSecretClearsValue(t *testing.T) {
 	}
 }
 
-func TestBulkUpsertJobEnvVars_RejectsEmptyKey(t *testing.T) {
+func TestBulkUpsertJobEnvVarsRejectsEmptyKey(t *testing.T) {
 	app, operator := envVarTestApp(t)
 	repo := createTestRepository(t, app, "job-bulk-empty-repo")
 	job := createTestScheduledJob(t, app, repo.Id, "job-bulk-empty", "active")
@@ -232,7 +232,7 @@ func TestBulkUpsertJobEnvVars_RejectsEmptyKey(t *testing.T) {
 	}
 }
 
-func TestBulkUpsertJobEnvVars_JobNotFound(t *testing.T) {
+func TestBulkUpsertJobEnvVarsJobNotFound(t *testing.T) {
 	app, operator := envVarTestApp(t)
 	mux := jobEnvVarRoutesMux(t, app, operator)
 
@@ -243,7 +243,7 @@ func TestBulkUpsertJobEnvVars_JobNotFound(t *testing.T) {
 	}
 }
 
-func TestBulkUpsertJobEnvVars_RequiresManageJobsCapability(t *testing.T) {
+func TestBulkUpsertJobEnvVarsRequiresManageJobsCapability(t *testing.T) {
 	app, _ := envVarTestApp(t)
 	viewer := createTestUser(t, app, "job-envvar-viewer@example.com", "Password1!", rbac.RoleViewer)
 	repo := createTestRepository(t, app, "job-bulk-viewer-repo")

@@ -162,25 +162,33 @@ async function submit() {
 
   submitting.value = true
   try {
+    const hasPendingEnvVars = pendingEnvVars.value.length > 0
+
     const job = await $pb.collection('scheduled_jobs').create({
       repository: form.value.repository,
       job_file: form.value.job_file,
-      enabled: form.value.enabled,
+      // Created disabled when there are env vars still to persist, so a
+      // failed bulk save below can never leave the job eligible for
+      // scheduling without the variables it depends on at runtime.
+      enabled: hasPendingEnvVars ? false : form.value.enabled,
       name: form.value.name.trim(),
       description: form.value.description.trim(),
       status: 'active',
     })
 
-    if (pendingEnvVars.value.length) {
+    if (hasPendingEnvVars) {
       try {
         await customPost(`/api/custom/jobs/${job.id}/env-vars/bulk`, {
           mode: 'replace',
           vars: pendingEnvVars.value,
         })
+        if (form.value.enabled) {
+          await $pb.collection('scheduled_jobs').update(job.id, { enabled: true })
+        }
       } catch (envErr: any) {
         toast.add({
           title: 'Job created, but environment variables failed to save',
-          description: envErr?.data?.error || envErr?.message,
+          description: `${envErr?.data?.error || envErr?.message || 'Unknown error'} — the job was left disabled. Add the variables from the job's page and enable it manually.`,
           color: 'warning',
         })
       }

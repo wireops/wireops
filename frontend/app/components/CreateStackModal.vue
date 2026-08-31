@@ -538,8 +538,8 @@ async function handleSubmit() {
           toast.add({ title: 'Stack created', description: 'Environment variables saved — deploying now.', color: 'success' })
         } catch {
           toast.add({
-            title: 'Stack created and variables saved, but could not resume automatically',
-            description: 'Resume the stack manually from its page to deploy it.',
+            title: 'Stack created and variables saved, but could not deploy automatically',
+            description: 'The stack is active — trigger a manual sync from its page to deploy it.',
             color: 'warning',
           })
         }

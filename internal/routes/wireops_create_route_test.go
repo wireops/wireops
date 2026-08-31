@@ -65,7 +65,7 @@ type createFromWireopsResponse struct {
 	Status string `json:"status"`
 }
 
-func TestCreateFromWireops_DefaultsToPendingAndDeploysImmediately(t *testing.T) {
+func TestCreateFromWireopsDefaultsToPendingAndDeploysImmediately(t *testing.T) {
 	app, mux, repo, worker := setupWireopsCreateTest(t)
 
 	body := map[string]any{
@@ -101,7 +101,7 @@ func TestCreateFromWireops_DefaultsToPendingAndDeploysImmediately(t *testing.T) 
 	}
 }
 
-func TestCreateFromWireops_PausedCreatesPausedStack(t *testing.T) {
+func TestCreateFromWireopsPausedCreatesPausedStack(t *testing.T) {
 	app, mux, repo, worker := setupWireopsCreateTest(t)
 
 	// Mirrors what the create-stack wizard sends when it has pending env vars
@@ -134,7 +134,7 @@ func TestCreateFromWireops_PausedCreatesPausedStack(t *testing.T) {
 	}
 }
 
-func TestCreateFromWireops_RequiresRepositoryWorkerAndFile(t *testing.T) {
+func TestCreateFromWireopsRequiresRepositoryWorkerAndFile(t *testing.T) {
 	_, mux, repo, worker := setupWireopsCreateTest(t)
 
 	cases := []map[string]any{
@@ -150,7 +150,7 @@ func TestCreateFromWireops_RequiresRepositoryWorkerAndFile(t *testing.T) {
 	}
 }
 
-func TestCreateFromWireops_WorkerNotFound(t *testing.T) {
+func TestCreateFromWireopsWorkerNotFound(t *testing.T) {
 	_, mux, repo, _ := setupWireopsCreateTest(t)
 
 	body := map[string]any{

@@ -83,7 +83,9 @@ function applyPaste() {
   }
   rows.value = Array.from(merged.values())
   toast.add({ title: `Added ${vars.length} variable${vars.length === 1 ? '' : 's'}`, color: 'success' })
-  closePasteMode()
+  // Partial import: keep paste mode open so pasteErrors stays visible
+  // instead of silently discarding the lines that failed to parse.
+  if (!errors.length) closePasteMode()
 }
 
 function triggerFileImport() {

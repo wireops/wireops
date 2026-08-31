@@ -12,10 +12,11 @@ function setupGlobals() {
   ;(globalThis as any).useRouter = () => ({ push, replace })
 
   const createJob = vi.fn().mockResolvedValue({ id: 'job-1' })
+  const updateJob = vi.fn().mockResolvedValue({})
   ;(globalThis as any).useNuxtApp = () => ({
     $pb: {
       collection: (name: string) => {
-        if (name === 'scheduled_jobs') return { create: createJob }
+        if (name === 'scheduled_jobs') return { create: createJob, update: updateJob }
         return {}
       },
     },
@@ -33,13 +34,34 @@ function setupGlobals() {
   const toastAdd = vi.fn()
   ;(globalThis as any).useToast = () => ({ add: toastAdd })
 
-  return { createJob, getJobFiles, getJobDefinitionFromFile, customPost, toastAdd }
+  return { createJob, updateJob, getJobFiles, getJobDefinitionFromFile, customPost, toastAdd }
 }
 
 const stubs = {
-  UModal: { template: '<div><slot name="content" /></div>' },
-  AppPanelCard: { template: '<div><slot name="header" /><slot /><slot name="footer" /></div>' },
-  UFormField: { props: ['label', 'error', 'required'], template: '<div><label>{{ label }}</label><slot /><div class="field-error">{{ error }}</div></div>' },
+  UModal: {
+    setup(_props: unknown, { slots }: { slots: Record<string, () => unknown> }) {
+      return () => h('div', slots.content ? [slots.content()] : [])
+    },
+  },
+  AppPanelCard: {
+    setup(_props: unknown, { slots }: { slots: Record<string, () => unknown> }) {
+      return () => h('div', [
+        slots.header ? slots.header() : null,
+        slots.default ? slots.default() : null,
+        slots.footer ? slots.footer() : null,
+      ])
+    },
+  },
+  UFormField: {
+    props: ['label', 'error', 'required'],
+    setup(props: { label?: string, error?: string }, { slots }: { slots: Record<string, () => unknown> }) {
+      return () => h('div', [
+        h('label', {}, props.label),
+        slots.default ? slots.default() : null,
+        h('div', { class: 'field-error' }, props.error),
+      ])
+    },
+  },
   AppSelectInput: {
     props: ['modelValue', 'items', 'disabled'],
     emits: ['update:modelValue'],
@@ -187,8 +209,8 @@ describe('JobCreateModal', () => {
     expect(customPost).not.toHaveBeenCalled()
   })
 
-  it('saves pending env vars via the bulk endpoint after creating the job', async () => {
-    const { createJob, customPost } = setupGlobals()
+  it('saves pending env vars via the bulk endpoint after creating the job, then enables it', async () => {
+    const { createJob, updateJob, customPost } = setupGlobals()
     const wrapper = await openModal()
 
     await fillJobThroughConfiguration(wrapper)
@@ -198,11 +220,12 @@ describe('JobCreateModal', () => {
     await wrapper.find('form').trigger('submit.prevent')
     await flushPromises()
 
-    expect(createJob).toHaveBeenCalled()
+    expect(createJob).toHaveBeenCalledWith(expect.objectContaining({ enabled: false }))
     expect(customPost).toHaveBeenCalledWith('/api/custom/jobs/job-1/env-vars/bulk', {
       mode: 'replace',
       vars: [{ key: 'FOO', value: 'bar', secret: false, secret_provider: '' }],
     })
+    expect(updateJob).toHaveBeenCalledWith('job-1', { enabled: true })
   })
 
   it('persists a typed-but-not-added env var row when Create is clicked without pressing the row add button', async () => {
@@ -222,8 +245,8 @@ describe('JobCreateModal', () => {
     })
   })
 
-  it('still creates the job and warns instead of failing when the env-vars save fails', async () => {
-    const { createJob, customPost, toastAdd } = setupGlobals()
+  it('still creates the job disabled and warns instead of failing when the env-vars save fails', async () => {
+    const { createJob, updateJob, customPost, toastAdd } = setupGlobals()
     customPost.mockRejectedValueOnce(new Error('boom'))
     const wrapper = await openModal()
 
@@ -234,7 +257,8 @@ describe('JobCreateModal', () => {
     await wrapper.find('form').trigger('submit.prevent')
     await flushPromises()
 
-    expect(createJob).toHaveBeenCalled()
+    expect(createJob).toHaveBeenCalledWith(expect.objectContaining({ enabled: false }))
+    expect(updateJob).not.toHaveBeenCalled()
     expect(toastAdd).toHaveBeenCalledWith(expect.objectContaining({ color: 'warning' }))
     expect(wrapper.emitted('created')).toBeTruthy()
   })
