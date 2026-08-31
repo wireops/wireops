@@ -6,18 +6,18 @@ import (
 	"testing"
 
 	"github.com/pocketbase/dbx"
-	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/router"
 
 	"github.com/wireops/wireops/internal/crypto"
+	"github.com/wireops/wireops/internal/jobscheduler"
 	"github.com/wireops/wireops/internal/rbac"
 )
 
-// jobEnvVarRoutesMux registers only the job env-vars bulk route directly
-// (bulkUpsertJobEnvVars is a plain function, not a routeRegistrar method,
-// since RegisterJobRoutes needs a *jobscheduler.Scheduler this test doesn't
-// need to construct just to exercise this one route).
+// jobEnvVarRoutesMux wires the job env-vars bulk route through the real
+// RegisterJobRoutes (rather than registering it standalone), so the test
+// also exercises the actual production route-registration path — a nil
+// WorkerDispatcher is fine since none of these tests trigger a job run.
 func jobEnvVarRoutesMux(t *testing.T, app core.App, auth *core.Record) http.Handler {
 	t.Helper()
 
@@ -29,9 +29,8 @@ func jobEnvVarRoutesMux(t *testing.T, app core.App, auth *core.Record) http.Hand
 		}, nil
 	})
 
-	r.POST("/api/custom/jobs/{id}/env-vars/bulk", func(e *core.RequestEvent) error {
-		return bulkUpsertJobEnvVars(app, e)
-	}).Bind(apis.BodyLimit(envVarsBulkMaxBytes)).BindFunc(rbac.Require(rbac.CapManageJobs))
+	sched := jobscheduler.NewScheduler(app, nil, t.TempDir())
+	RegisterJobRoutes(r, app, sched)
 
 	mux, err := r.BuildMux()
 	if err != nil {
