@@ -164,7 +164,7 @@ func (rr routeRegistrar) resolveGitProviderToken(e *core.RequestEvent) (gitprovi
 		return nil, "", e.JSON(http.StatusBadRequest, map[string]string{"error": "missing key parameter"})
 	}
 
-	tokenProviderSlug, token, err := git.LoadOAuthToken(rr.app, keyID)
+	tokenProviderSlug, token, err := git.LoadOAuthToken(e.Request.Context(), rr.app, keyID)
 	if err != nil {
 		return nil, "", e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}

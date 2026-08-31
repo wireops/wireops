@@ -46,9 +46,9 @@ func (rr routeRegistrar) registerCredentialRoutes() {
 			var savedCred *git.Credential
 			var err error
 			if body.RepositoryKey != "" {
-				savedCred, err = git.LoadCredentialByID(rr.app, body.RepositoryKey)
+				savedCred, err = git.LoadCredentialByID(e.Request.Context(), rr.app, body.RepositoryKey)
 			} else {
-				savedCred, err = loadRepositoryCredential(rr.app, body.RepositoryID)
+				savedCred, err = loadRepositoryCredential(e.Request.Context(), rr.app, body.RepositoryID)
 			}
 			if err != nil {
 				log.Printf("TestConnection: failed to load credentials: %v", err)

@@ -1225,7 +1225,7 @@ func (r *Reconciler) fetchRepo(ctx context.Context, repoID string, blocking bool
 		return false, "", fmt.Errorf("repository %s not found: %w", repoID, err)
 	}
 
-	gitAuth, authErr := r.resolveGitAuth(repoID)
+	gitAuth, authErr := r.resolveGitAuth(ctx, repoID)
 	if authErr != nil {
 		log.Printf("[reconciler] failed to resolve auth for repo %s; continuing without auth", repoID)
 	}
@@ -1676,16 +1676,16 @@ func (r *Reconciler) reposWorkspace() string {
 	return config.GetReposWorkspace()
 }
 
-func (r *Reconciler) resolveGitAuth(repoID string) (transport.AuthMethod, error) {
-	cred, err := r.loadCredential(repoID)
+func (r *Reconciler) resolveGitAuth(ctx context.Context, repoID string) (transport.AuthMethod, error) {
+	cred, err := r.loadCredential(ctx, repoID)
 	if err != nil {
 		return nil, err
 	}
 	return gitpkg.ResolveTransportAuth(*cred)
 }
 
-func (r *Reconciler) loadCredential(repoID string) (*gitpkg.Credential, error) {
-	return gitpkg.LoadRepositoryCredential(r.app, repoID)
+func (r *Reconciler) loadCredential(ctx context.Context, repoID string) (*gitpkg.Credential, error) {
+	return gitpkg.LoadRepositoryCredential(ctx, r.app, repoID)
 }
 
 // gitFetchAttemptTimeout bounds a single clone/fetch attempt. It is deliberately
