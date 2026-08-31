@@ -20,6 +20,12 @@ import (
 // for a slow cron tick or a long-running fetch to still redeem it in time.
 const refreshGraceWindow = 15 * time.Minute
 
+// refreshTimeout bounds a single refresh's network round trip + DB save,
+// independent of any individual caller's own context deadline (see
+// refreshOAuthTokenIfNeeded). 20s comfortably covers the GitLab provider's
+// own 15s HTTP client timeout plus the surrounding record read/save.
+const refreshTimeout = 20 * time.Second
+
 // refreshGroup collapses concurrent refresh attempts for the same
 // repository_keys row into a single in-flight call. Without this, two repos
 // sharing one provider's credential (all repos under a provider reuse the
@@ -154,10 +160,28 @@ func refreshOAuthTokenIfNeeded(ctx context.Context, app core.App, record *core.R
 		return currentToken, nil
 	}
 
+	// refreshCtx carries values from ctx (e.g. tracing) but not its
+	// cancellation, and gets its own bounded deadline: this call runs inside
+	// refreshGroup, shared by every concurrent caller on this credential, so
+	// one caller's request being cancelled (client disconnect, its own
+	// shorter timeout) must not abort the network round trip for the others
+	// still waiting on the result.
+	refreshCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), refreshTimeout)
+	defer cancel()
+
 	result, err, _ := refreshGroup.Do(record.Id, func() (any, error) {
-		return doRefreshOAuthToken(ctx, app, record.Id, provider, secretKey)
+		return doRefreshOAuthToken(refreshCtx, app, record.Id, provider, secretKey)
 	})
 	if err != nil {
+		// The token is still within the grace window but not yet actually
+		// expired — a transient refresh failure (network blip, provider
+		// hiccup) shouldn't break every credential load for the next
+		// refreshGraceWindow; fall back to the still-valid current token and
+		// let the next load retry. Only once the real expiry has passed is
+		// there no usable fallback and the error must propagate.
+		if time.Now().Before(expiresAt) {
+			return currentToken, nil
+		}
 		return "", err
 	}
 	return result.(string), nil

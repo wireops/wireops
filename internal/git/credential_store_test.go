@@ -2,6 +2,7 @@ package git
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -361,4 +362,84 @@ func TestLoadCredentialByIDDedupesConcurrentRefresh(t *testing.T) {
 	if got := provider.callCount(); got != 1 {
 		t.Fatalf("RefreshToken called %d times, want exactly 1", got)
 	}
+}
+
+// alwaysFailRefreshProvider is a gitprovider.Provider whose RefreshToken
+// always errors, used to exercise refreshOAuthTokenIfNeeded's fallback: a
+// transient refresh failure must not break a token that is still actually
+// valid, only one whose real expiry has passed with no usable fallback.
+type alwaysFailRefreshProvider struct{}
+
+func (alwaysFailRefreshProvider) Slug() string                    { return "always-fail-refresh-provider" }
+func (alwaysFailRefreshProvider) Name() string                    { return "Always Fail Refresh Provider" }
+func (alwaysFailRefreshProvider) Configured() bool                { return true }
+func (alwaysFailRefreshProvider) BasicAuthUsername() string       { return "oauth2" }
+func (alwaysFailRefreshProvider) AuthorizeURL(_, _ string) string { return "" }
+func (alwaysFailRefreshProvider) ExchangeCode(_ context.Context, _, _ string) (*gitprovider.Token, error) {
+	return nil, nil
+}
+func (alwaysFailRefreshProvider) RefreshToken(_ context.Context, _ string) (*gitprovider.Token, error) {
+	return nil, errors.New("refresh endpoint unavailable")
+}
+func (alwaysFailRefreshProvider) ListOrganizations(_ context.Context, _ string) ([]gitprovider.Org, error) {
+	return nil, nil
+}
+func (alwaysFailRefreshProvider) ListRepositories(_ context.Context, _, _ string) ([]gitprovider.Repo, error) {
+	return nil, nil
+}
+func (alwaysFailRefreshProvider) ListBranches(_ context.Context, _, _ string) ([]gitprovider.Branch, error) {
+	return nil, nil
+}
+
+func TestRefreshOAuthTokenIfNeededFallsBackWhenNotYetExpired(t *testing.T) {
+	secret := "0123456789abcdef0123456789abcdef"
+	app, _, keys := newCredentialStoreTestApp(t)
+	t.Setenv("SECRET_KEY", secret)
+
+	provider := alwaysFailRefreshProvider{}
+	gitprovider.Register(provider)
+
+	encryptedAccess, err := crypto.Encrypt([]byte("still-valid-token"), []byte(secret))
+	if err != nil {
+		t.Fatalf("encrypt access token: %v", err)
+	}
+	encryptedRefresh, err := crypto.Encrypt([]byte("refresh-value"), []byte(secret))
+	if err != nil {
+		t.Fatalf("encrypt refresh token: %v", err)
+	}
+
+	newKeyRecord := func(t *testing.T, expiresAt time.Time) *core.Record {
+		t.Helper()
+		key := core.NewRecord(keys)
+		key.Set("name", "OAuth key")
+		key.Set("auth_type", string(AuthTypeOAuthToken))
+		key.Set("oauth_provider", provider.Slug())
+		key.Set("oauth_token", encryptedAccess)
+		key.Set("oauth_refresh_token", encryptedRefresh)
+		key.Set("oauth_token_expires_at", expiresAt)
+		if err := app.Save(key); err != nil {
+			t.Fatalf("save key: %v", err)
+		}
+		return key
+	}
+
+	t.Run("still within actual validity: returns the current token instead of failing", func(t *testing.T) {
+		key := newKeyRecord(t, time.Now().Add(5*time.Minute)) // inside the 15m grace window, not yet expired
+
+		cred, err := LoadCredentialByID(context.Background(), app, key.Id)
+		if err != nil {
+			t.Fatalf("expected fallback to the current token, got error: %v", err)
+		}
+		if cred.GitPassword != "still-valid-token" {
+			t.Fatalf("got token %q, want the still-valid current token", cred.GitPassword)
+		}
+	})
+
+	t.Run("actually expired: propagates the refresh error", func(t *testing.T) {
+		key := newKeyRecord(t, time.Now().Add(-time.Minute)) // already past expiry
+
+		if _, _, err := LoadOAuthToken(context.Background(), app, key.Id); err == nil {
+			t.Fatal("expected refresh error to propagate once the token has actually expired, got nil")
+		}
+	})
 }

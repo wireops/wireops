@@ -456,6 +456,11 @@ async function handleSubmit() {
     return
   }
 
+  // Commit any typed-but-not-added env var row: nextStep() does this when
+  // leaving step 3 via Next, but the stepper also allows jumping straight
+  // from Environment Variables to Review, bypassing that call entirely.
+  envVarsEditor.value?.commitDraft()
+
   // If the wizard has pending env vars, the stack is created paused instead
   // of pending — the first auto-deploy (triggered unconditionally on create,
   // see OnRecordAfterCreateSuccess("stacks") in internal/hooks/pb_hooks.go)

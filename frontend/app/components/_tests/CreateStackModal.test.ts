@@ -58,7 +58,7 @@ function setupGlobals() {
     return { data, refresh }
   }
 
-  return { createStack, updateStack, getWireopsFiles, getWireopsDefinitionFromFile, getStackFiles, getWorkers, createStackFromWireops, lintCompose, customPost, toastAdd }
+  return { createStack, updateStack, getWireopsFiles, getWireopsDefinitionFromFile, getStackFiles, getWorkers, createStackFromWireops, lintCompose, customPost, toastAdd, push, queryState }
 }
 
 const stubs = {
@@ -704,6 +704,32 @@ describe('CreateStackModal', () => {
 
     await wrapper.find('.type-draft-env-var').trigger('click')
     await goToNextStep(wrapper) // Environment Variables -> Review
+
+    await wrapper.find('form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createStack).toHaveBeenCalledWith(expect.objectContaining({ status: 'paused' }))
+    expect(customPost).toHaveBeenCalledWith('/api/custom/stacks/stack-1/env-vars/bulk', {
+      mode: 'replace',
+      vars: [{ key: 'DRAFT', value: 'uncommitted', secret: false, secret_provider: '' }],
+    })
+    expect(updateStack).toHaveBeenCalledWith('stack-1', { status: 'active' })
+  })
+
+  it('commits an uncommitted env var draft when jumping directly from Environment Variables to Review', async () => {
+    const { createStack, updateStack, customPost, push, queryState } = setupGlobals()
+    const wrapper = await openInWireopsMode()
+
+    await fillManualStackThroughConfiguration(wrapper)
+    await goToNextStep(wrapper) // Configuration -> Environment Variables
+
+    await wrapper.find('.type-draft-env-var').trigger('click')
+
+    // Simulate clicking the "Review" step directly on the stepper instead of
+    // Next — that path (UStepper's v-model) never runs nextStep()'s
+    // commitDraft() call.
+    push({ query: { ...queryState.query, stack_step: '4' } })
+    await flushPromises()
 
     await wrapper.find('form').trigger('submit.prevent')
     await flushPromises()
