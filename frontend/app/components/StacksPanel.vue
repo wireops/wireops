@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { stackFleetStatus, buildStackStatusFilter } from '../utils/stack-status'
 import { GROUP_ALL, GROUP_UNGROUPED, encodeGroupValue, decodeGroupValue } from '../utils/job-filter'
 import { usePaginatedList } from '../composables/usePaginatedList'
+import { useListDensity } from '../composables/useListDensity'
 import type { AvailabilitySegment } from './StatusAvailabilityBar.vue'
 
 const { $pb } = useNuxtApp()
@@ -11,6 +12,7 @@ const { subscribe } = useRealtime()
 const toast = useToast()
 const { announce } = useA11yAnnouncer()
 const { isViewer } = usePermissions()
+const { isCompact, toggleDensity } = useListDensity()
 
 const route = useRoute()
 
@@ -386,6 +388,16 @@ async function handlePurge(dirName: string) {
             <span v-if="totalStacks" class="ml-1.5 text-yellow-400">({{ totalStacks }})</span>
           </h3>
           <div class="flex items-center gap-3">
+            <UTooltip :text="isCompact ? 'Switch to comfortable view' : 'Switch to compact view'">
+              <UButton
+                :icon="isCompact ? 'i-lucide-rows-3' : 'i-lucide-list'"
+                variant="ghost"
+                color="neutral"
+                size="xs"
+                :aria-label="isCompact ? 'Switch to comfortable view' : 'Switch to compact view'"
+                @click="toggleDensity"
+              />
+            </UTooltip>
             <RefreshButton @click="refreshList()" />
           </div>
         </div>
@@ -463,7 +475,15 @@ async function handlePurge(dirName: string) {
         </div>
 
         <template v-else>
-          <div class="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-3">
+          <div v-if="isCompact" class="space-y-2">
+            <StackRow
+              v-for="stack in stacks"
+              :key="stack.id"
+              :stack="stack"
+              :workers-by-id="workersById"
+            />
+          </div>
+          <div v-else class="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-3">
             <StackCard
               v-for="stack in stacks"
               :key="stack.id"

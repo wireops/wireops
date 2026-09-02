@@ -1,12 +1,14 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { h, ref } from 'vue'
 import StacksPanel from '../StacksPanel.vue'
 import StackCard from '../StackCard.vue'
+import StackRow from '../StackRow.vue'
 import GitProviderBadge from '../GitProviderBadge.vue'
 import RepositoryIcon from '../RepositoryIcon.vue'
 import GithubIcon from '../GithubIcon.vue'
 import GenericIcon from '../GenericIcon.vue'
+import { useListDensity } from '../../composables/useListDensity'
 
 const stackFixture = {
   id: 'stack-1',
@@ -23,6 +25,10 @@ const stackFixture = {
 }
 
 describe('StacksPanel', () => {
+  afterEach(() => {
+    useListDensity().setDensity('comfortable')
+  })
+
   it('renders a keyboard-focusable link for each stack with a status badge', async () => {
     const refresh = vi.fn()
     ;(globalThis as any).useNuxtApp = () => ({
@@ -75,6 +81,7 @@ describe('StacksPanel', () => {
       global: {
         components: {
           StackCard,
+          StackRow,
           GitProviderBadge,
           RepositoryIcon,
           GithubIcon,
@@ -217,7 +224,7 @@ describe('StacksPanel', () => {
 
     mount(StacksPanel, {
       global: {
-        components: { StackCard, GitProviderBadge, RepositoryIcon, GithubIcon, GenericIcon },
+        components: { StackCard, StackRow, GitProviderBadge, RepositoryIcon, GithubIcon, GenericIcon },
         stubs: dropdownStubs,
       },
     })
@@ -265,7 +272,7 @@ describe('StacksPanel', () => {
 
     const wrapper = mount(StacksPanel, {
       global: {
-        components: { StackCard, GitProviderBadge, RepositoryIcon, GithubIcon, GenericIcon },
+        components: { StackCard, StackRow, GitProviderBadge, RepositoryIcon, GithubIcon, GenericIcon },
         stubs: dropdownStubs,
       },
     })
@@ -329,7 +336,7 @@ describe('StacksPanel', () => {
 
     const wrapper = mount(StacksPanel, {
       global: {
-        components: { StackCard, GitProviderBadge, RepositoryIcon, GithubIcon, GenericIcon },
+        components: { StackCard, StackRow, GitProviderBadge, RepositoryIcon, GithubIcon, GenericIcon },
         stubs: dropdownStubs,
       },
     })
@@ -426,7 +433,7 @@ describe('StacksPanel', () => {
 
     const wrapper = mount(StacksPanel, {
       global: {
-        components: { StackCard, GitProviderBadge, RepositoryIcon, GithubIcon, GenericIcon },
+        components: { StackCard, StackRow, GitProviderBadge, RepositoryIcon, GithubIcon, GenericIcon },
         stubs: dropdownStubs,
       },
     })
@@ -453,5 +460,237 @@ describe('StacksPanel', () => {
 
     expect(purgeOrphan).toHaveBeenCalledWith('orphan-1')
     expect(wrapper.text()).not.toContain('orphan-1')
+  })
+
+  it('renders dense StackRow items instead of StackCard when compact view is active', async () => {
+    useListDensity().setDensity('compact')
+
+    const getList = vi.fn().mockResolvedValue({ items: [stackFixture], totalItems: 1 })
+    ;(globalThis as any).useNuxtApp = () => ({
+      $pb: {
+        filter: (raw: string) => raw,
+        collection: () => ({
+          getFullList: vi.fn().mockResolvedValue([stackFixture]),
+          getList,
+        }),
+      },
+    })
+    ;(globalThis as any).useApi = () => ({
+      getWorkers: vi.fn(),
+      listOrphans: vi.fn(),
+      purgeOrphan: vi.fn(),
+    })
+    ;(globalThis as any).useRealtime = () => ({ subscribe: vi.fn() })
+    ;(globalThis as any).useToast = () => ({ add: vi.fn() })
+    ;(globalThis as any).useA11yAnnouncer = () => ({ announce: vi.fn() })
+    ;(globalThis as any).usePermissions = () => ({ isViewer: ref(false) })
+    ;(globalThis as any).useRepositoryPlatform = () => ({ platformIconUrl: vi.fn() })
+    ;(globalThis as any).useRoute = () => ({ query: {} })
+    ;(globalThis as any).useAsyncData = (key: string) => ({
+      data: ref(key === 'stack_card_workers' ? [] : [stackFixture]),
+      refresh: vi.fn(),
+    })
+
+    const wrapper = mount(StacksPanel, {
+      global: {
+        components: { StackCard, StackRow, GitProviderBadge, RepositoryIcon, GithubIcon, GenericIcon },
+        stubs: dropdownStubs,
+      },
+    })
+
+    await flushPromises()
+
+    expect(wrapper.findComponent(StackRow).exists()).toBe(true)
+    expect(wrapper.findComponent(StackCard).exists()).toBe(false)
+  })
+
+  function mountStacksPanel(opts: {
+    asyncData?: Record<string, any[]>
+    listOrphans?: ReturnType<typeof vi.fn>
+    purgeOrphan?: ReturnType<typeof vi.fn>
+  } = {}) {
+    ;(globalThis as any).WORKER_STATUS = { PENDING: 'PENDING', REVOKED: 'REVOKED', ACTIVE: 'ACTIVE', DEGRADED: 'DEGRADED', OFFLINE: 'OFFLINE' }
+    const getList = vi.fn().mockResolvedValue({ items: [stackFixture], totalItems: 1 })
+    const getFullList = vi.fn().mockResolvedValue([stackFixture])
+    ;(globalThis as any).useNuxtApp = () => ({
+      $pb: { filter: (raw: string) => raw, collection: () => ({ getFullList, getList }) },
+    })
+    ;(globalThis as any).useApi = () => ({
+      getWorkers: vi.fn(),
+      listOrphans: opts.listOrphans ?? vi.fn(),
+      purgeOrphan: opts.purgeOrphan ?? vi.fn(),
+    })
+    const subscribeHandlers: Record<string, (data?: any) => void> = {}
+    const subscribe = vi.fn((channel: string, handler: (data?: any) => void) => {
+      subscribeHandlers[channel] = handler
+    })
+    ;(globalThis as any).useRealtime = () => ({ subscribe })
+    const toastAdd = vi.fn()
+    ;(globalThis as any).useToast = () => ({ add: toastAdd })
+    const announce = vi.fn()
+    ;(globalThis as any).useA11yAnnouncer = () => ({ announce })
+    ;(globalThis as any).usePermissions = () => ({ isViewer: ref(false) })
+    ;(globalThis as any).useRepositoryPlatform = () => ({ platformIconUrl: vi.fn() })
+    ;(globalThis as any).useRoute = () => ({ query: {} })
+    const navigateTo = vi.fn()
+    ;(globalThis as any).navigateTo = navigateTo
+
+    const defaults: Record<string, any[]> = {
+      stacks_aggregate: [stackFixture],
+      stack_card_workers: [],
+      repos_for_stacks_empty: [{ id: 'repo-1' }],
+    }
+    const asyncDataRefs: Record<string, { data: any, refresh: ReturnType<typeof vi.fn> }> = {}
+    ;(globalThis as any).useAsyncData = (key: string, fn?: () => Promise<any>) => {
+      const data = ref(opts.asyncData?.[key] ?? defaults[key] ?? [])
+      const refresh = vi.fn(async () => {
+        if (fn) data.value = await fn()
+      })
+      asyncDataRefs[key] = { data, refresh }
+      return { data, refresh }
+    }
+
+    const wrapper = mount(StacksPanel, {
+      global: {
+        components: { StackCard, StackRow, GitProviderBadge, RepositoryIcon, GithubIcon, GenericIcon },
+        stubs: dropdownStubs,
+      },
+    })
+
+    return { wrapper, getList, getFullList, subscribeHandlers, toastAdd, announce, navigateTo, asyncDataRefs }
+  }
+
+  it('reports empty-state steps from the underlying repos/workers data', async () => {
+    const noRepos = mountStacksPanel({
+      asyncData: { stacks_aggregate: [], stack_card_workers: [], repos_for_stacks_empty: [] },
+    })
+    await flushPromises()
+    expect((noRepos.wrapper.vm as any).emptyStateStep.ctaLabel).toBe('Add Repository')
+
+    const noWorkers = mountStacksPanel({
+      asyncData: { stacks_aggregate: [], stack_card_workers: [], repos_for_stacks_empty: [{ id: 'repo-1' }] },
+    })
+    await flushPromises()
+    expect((noWorkers.wrapper.vm as any).emptyStateStep.ctaLabel).toBe('Add Worker')
+    ;(noWorkers.wrapper.vm as any).emptyStateStep.action()
+    expect(noWorkers.navigateTo).toHaveBeenCalledWith('/workers')
+
+    const ready = mountStacksPanel({
+      asyncData: {
+        stacks_aggregate: [],
+        stack_card_workers: [{ id: 'worker-1', status: 'ACTIVE' }],
+        repos_for_stacks_empty: [{ id: 'repo-1' }],
+      },
+    })
+    await flushPromises()
+    expect((ready.wrapper.vm as any).emptyStateStep.ctaLabel).toBe('Add Stack')
+    ;(ready.wrapper.vm as any).emptyStateStep.action()
+    expect((ready.wrapper.vm as any).showCreate).toBe(true)
+  })
+
+  it('reacts to realtime stacks and repositories events', async () => {
+    const { subscribeHandlers, getList, getFullList, announce } = mountStacksPanel()
+    await flushPromises()
+
+    const getListCallsBefore = getList.mock.calls.length
+    subscribeHandlers.stacks!()
+    await flushPromises()
+
+    expect(getList.mock.calls.length).toBeGreaterThan(getListCallsBefore)
+    expect(announce).toHaveBeenCalledWith('Stacks list updating')
+
+    // debouncedRefreshStacksAggregate (300ms) + the isUpdating settle timer (500ms).
+    await new Promise(resolve => setTimeout(resolve, 600))
+    expect(announce).toHaveBeenCalledWith('Stacks list updated')
+
+    const getFullListCallsBefore = getFullList.mock.calls.length
+    const getListCallsBeforeRepo = getList.mock.calls.length
+    subscribeHandlers.repositories!()
+    await new Promise(resolve => setTimeout(resolve, 350))
+    await flushPromises()
+
+    expect(getList.mock.calls.length).toBeGreaterThan(getListCallsBeforeRepo)
+    expect(getFullList.mock.calls.length).toBeGreaterThan(getFullListCallsBefore)
+  })
+
+  it('opens and closes the delete-stack modal', async () => {
+    const { wrapper } = mountStacksPanel()
+    await flushPromises()
+
+    ;(wrapper.vm as any).openDelete(stackFixture)
+    expect((wrapper.vm as any).showDelete).toBe(true)
+    expect((wrapper.vm as any).deleteTarget).toEqual(stackFixture)
+
+    ;(wrapper.vm as any).onDeleted()
+    expect((wrapper.vm as any).showDelete).toBe(false)
+    expect((wrapper.vm as any).deleteTarget).toBe(null)
+  })
+
+  it('closes the import modal and refreshes the list once a stack is imported', async () => {
+    const { wrapper, getList } = mountStacksPanel()
+    await flushPromises()
+    ;(wrapper.vm as any).showImport = true
+
+    const before = getList.mock.calls.length
+    ;(wrapper.vm as any).onImported('new-stack-id')
+    await flushPromises()
+
+    expect((wrapper.vm as any).showImport).toBe(false)
+    expect(getList.mock.calls.length).toBeGreaterThan(before)
+  })
+
+  it('builds group filter options from the fleet-wide aggregate, including ungrouped', async () => {
+    const { wrapper } = mountStacksPanel({
+      asyncData: {
+        stacks_aggregate: [
+          { ...stackFixture, group: 'infra' },
+          { ...stackFixture, id: 'stack-2', group: '' },
+        ],
+      },
+    })
+    await flushPromises()
+
+    const labels = (wrapper.vm as any).groupOptions.map((o: any) => o.label)
+    expect(labels).toEqual(['All groups', 'Ungrouped', 'infra'])
+  })
+
+  it('reports a toast and announcement when purging an orphan fails', async () => {
+    const purgeOrphan = vi.fn().mockRejectedValue(new Error('boom'))
+    const listOrphans = vi.fn().mockResolvedValue([
+      { dir_name: 'orphan-1', compose_file: 'docker-compose.yml', has_compose: true },
+    ])
+    const { wrapper, toastAdd, announce } = mountStacksPanel({ listOrphans, purgeOrphan })
+    await flushPromises()
+
+    await (wrapper.vm as any).openOrphans()
+    await (wrapper.vm as any).handlePurge('orphan-1')
+
+    expect(purgeOrphan).toHaveBeenCalledWith('orphan-1')
+    expect(toastAdd).toHaveBeenCalledWith({ title: 'Failed to purge orphan-1', color: 'error' })
+    expect(announce).toHaveBeenCalledWith('Failed to remove orphan directory orphan-1', 'assertive')
+    expect((wrapper.vm as any).purgingDir).toBe('')
+  })
+
+  it('focuses the search input on "/" unless a typing target is already active', async () => {
+    const { wrapper, announce } = mountStacksPanel()
+    await flushPromises()
+
+    const input = wrapper.find('input')
+    const focusSpy = vi.spyOn(input.element as HTMLInputElement, 'focus')
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '/' }))
+    await flushPromises()
+
+    expect(focusSpy).toHaveBeenCalled()
+    expect(announce).toHaveBeenCalledWith('Stack search focused')
+
+    focusSpy.mockClear()
+    const textarea = document.createElement('textarea')
+    document.body.appendChild(textarea)
+    textarea.dispatchEvent(new KeyboardEvent('keydown', { key: '/', bubbles: true }))
+    await flushPromises()
+
+    expect(focusSpy).not.toHaveBeenCalled()
+    textarea.remove()
   })
 })

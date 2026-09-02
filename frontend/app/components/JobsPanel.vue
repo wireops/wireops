@@ -1,13 +1,16 @@
 <script setup lang="ts">
+import { computed, onMounted, ref, watch } from 'vue'
 import type { AvailabilitySegment } from './StatusAvailabilityBar.vue'
 import { GROUP_ALL, GROUP_UNGROUPED, encodeGroupValue, decodeGroupValue } from '../utils/job-filter'
 import { usePaginatedList } from '../composables/usePaginatedList'
+import { useListDensity } from '../composables/useListDensity'
 
 const { $pb } = useNuxtApp()
 const { listJobs, listJobGroups, triggerJobRun, getWorkers } = useApi()
 const { subscribe } = useRealtime()
 const toast = useToast()
 const { isViewer } = usePermissions()
+const { isCompact, toggleDensity } = useListDensity()
 
 const { data: repos, refresh: refreshRepos } = useAsyncData('repos_for_jobs', () =>
   $pb.collection('repositories').getFullList({ sort: 'name' })
@@ -178,16 +181,6 @@ const jobStatusSegments: AvailabilitySegment[] = [
   { key: 'paused', label: 'Paused', barClass: 'bg-gray-300 dark:bg-carbon-600', dotClass: 'bg-gray-300 dark:bg-carbon-600', statuses: ['paused'] },
 ]
 
-function statusColor(status: string) {
-  switch (status) {
-    case 'active': return 'success'
-    case 'stalled': return 'warning'
-    case 'error': return 'error'
-    case 'paused': return 'neutral'
-    default: return 'neutral'
-  }
-}
-
 function statusBorderClass(status: string) {
   switch (status) {
     case 'active': return 'border-l-emerald-400 dark:border-l-emerald-400'
@@ -243,7 +236,19 @@ function formatRelative(dateStr: string) {
       <template #header>
         <div class="flex items-center justify-between">
           <h3 class="font-semibold text-gray-900 dark:text-wire-200">Jobs</h3>
-          <RefreshButton @click="refresh()" />
+          <div class="flex items-center gap-3">
+            <UTooltip :text="isCompact ? 'Switch to comfortable view' : 'Switch to compact view'">
+              <UButton
+                :icon="isCompact ? 'i-lucide-rows-3' : 'i-lucide-list'"
+                variant="ghost"
+                color="neutral"
+                size="xs"
+                :aria-label="isCompact ? 'Switch to comfortable view' : 'Switch to compact view'"
+                @click="toggleDensity"
+              />
+            </UTooltip>
+            <RefreshButton @click="refresh()" />
+          </div>
         </div>
       </template>
 
@@ -319,8 +324,8 @@ function formatRelative(dateStr: string) {
           <div
             v-for="job in jobs"
             :key="job.id"
-            class="flex items-center justify-between p-4 bg-gray-50 dark:bg-carbon-800/40 rounded-xl border border-gray-300 border-l-4 dark:border-carbon-700 hover:shadow-[0_0_0_2px_rgba(255,198,0,0.35),0_0_20px_rgba(255,198,0,0.12)] transition-all"
-            :class="statusBorderClass(job.status)"
+            class="flex items-center justify-between bg-gray-50 dark:bg-carbon-800/40 rounded-xl border border-gray-300 border-l-4 dark:border-carbon-700 hover:shadow-[0_0_0_2px_rgba(255,198,0,0.35),0_0_20px_rgba(255,198,0,0.12)] transition-all"
+            :class="[statusBorderClass(job.status), isCompact ? 'p-2' : 'p-4']"
           >
             <!-- Icon — left, separated -->
             <div class="hidden sm:flex mr-2 border-r border-gray-300 dark:border-carbon-700 pr-4 items-center shrink-0">
@@ -342,7 +347,7 @@ function formatRelative(dateStr: string) {
                 <UBadge v-if="job.definition?.group" :label="job.definition.group" color="neutral" variant="outline" size="xs" class="shrink-0" />
 
                 <!-- Last 5 executions dots -->
-                <div v-if="job.recent_runs && job.recent_runs.length > 0" class="hidden md:flex items-center gap-1 ml-2 shrink-0">
+                <div v-if="!isCompact && job.recent_runs && job.recent_runs.length > 0" class="hidden md:flex items-center gap-1 ml-2 shrink-0">
                   <span class="text-xs text-gray-400 dark:text-wire-200/40 mr-1 select-none">History:</span>
                   <UTooltip
                     v-for="run in job.reversedRecentRuns"
@@ -363,12 +368,12 @@ function formatRelative(dateStr: string) {
                 </div>
               </div>
 
-              <p v-if="job.description || job.definition?.description" class="text-sm text-gray-500 dark:text-wire-200/50 truncate mt-0.5 mb-1.5">
+              <p v-if="!isCompact && (job.description || job.definition?.description)" class="text-sm text-gray-500 dark:text-wire-200/50 truncate mt-0.5 mb-1.5">
                 {{ job.description || job.definition.description }}
               </p>
 
               <div class="hidden sm:flex items-center gap-2 flex-wrap">
-                <span class="text-xs text-gray-400 dark:text-wire-200/40 font-mono flex items-center gap-1 mr-2">
+                <span v-if="!isCompact" class="text-xs text-gray-400 dark:text-wire-200/40 font-mono flex items-center gap-1 mr-2">
                   <UIcon name="i-lucide-git-branch" class="w-3.5 h-3.5" />
                   {{ job.repository.name }} / {{ job.job_file }}
                 </span>
@@ -381,14 +386,14 @@ function formatRelative(dateStr: string) {
                   class="font-mono"
                 />
                 <UBadge
-                  v-if="job.definition?.image"
+                  v-if="!isCompact && job.definition?.image"
                   :label="job.definition.image"
                   variant="subtle"
                   color="info"
                   size="xs"
                   class="font-mono"
                 />
-                <template v-if="job.definition?.tags?.length">
+                <template v-if="!isCompact && job.definition?.tags?.length">
                   <UBadge
                     v-for="tag in job.definition.tags"
                     :key="tag"
@@ -400,7 +405,7 @@ function formatRelative(dateStr: string) {
                   />
                 </template>
                 <UBadge
-                  v-if="job.definition?.network"
+                  v-if="!isCompact && job.definition?.network"
                   :label="`net: ${job.definition.network}`"
                   variant="subtle"
                   color="info"

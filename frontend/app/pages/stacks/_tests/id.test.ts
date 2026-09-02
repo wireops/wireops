@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import * as vue from 'vue'
-import { ref } from 'vue'
+import { h, ref } from 'vue'
 import StackPage from '../[id].vue'
 
 function setupGlobals() {
@@ -65,18 +65,18 @@ function setupGlobals() {
   // Minimal useAsyncData stand-in: fetches immediately like Nuxt's real one
   // (immediate: true by default), and exposes each call's data/error refs
   // keyed by cache key so tests can drive them directly.
-  const asyncDataStore: Record<string, { data: any, error: any, refresh: () => Promise<void> }> = {}
+  const asyncDataStore: Record<string, { data: any, error: any, refresh: ReturnType<typeof vi.fn> }> = {}
   ;(globalThis as any).useAsyncData = (key: string, fn: () => Promise<any>) => {
     const data = ref<any>(null)
     const error = ref<any>(null)
-    const refresh = async () => {
+    const refresh = vi.fn(async () => {
       try {
         data.value = await fn()
         error.value = null
       } catch (e) {
         error.value = e
       }
-    }
+    })
     refresh()
     const entry = { data, error, refresh }
     asyncDataStore[key] = entry
@@ -347,5 +347,413 @@ describe('stacks/[id].vue stack operations and override helpers', () => {
     api.getServices.mockRejectedValueOnce(new Error('offline'))
     await (wrapper.vm as any).loadServices()
     expect((wrapper.vm as any).services).toEqual([])
+  })
+
+  function mountPageWithServicesCardSpy() {
+    const refreshSpy = vi.fn()
+    const wrapper = mount(StackPage, {
+      shallow: true,
+      global: {
+        stubs: {
+          StackServicesCard: {
+            setup(_props: unknown, { expose }: { expose: (exposed: Record<string, unknown>) => void }) {
+              expose({ refresh: refreshSpy })
+              return () => h('div')
+            },
+          },
+        },
+      },
+    })
+    return { wrapper, refreshSpy }
+  }
+
+  it('reloads the stack and services card once an in-flight sync finishes', async () => {
+    const { getOne, asyncDataStore } = setupGlobals()
+    const { refreshSpy } = mountPageWithServicesCardSpy()
+    await flushPromises()
+    asyncDataStore['stack_stack-1'].data.value = { id: 'stack-1', name: 'my-stack', status: 'active' }
+    await flushPromises()
+
+    const getOneCallsBefore = getOne.mock.calls.length
+    const refreshSpyCallsBefore = refreshSpy.mock.calls.length
+
+    // Sync starts: a sync_logs row with status 'running' appears.
+    asyncDataStore['logs_stack-1'].data.value = { items: [{ id: 'log-1', status: 'running' }] }
+    await flushPromises()
+
+    expect(getOne.mock.calls.length).toBe(getOneCallsBefore)
+    expect(refreshSpy.mock.calls.length).toBe(refreshSpyCallsBefore)
+
+    // Sync finishes: the same row settles to a terminal status.
+    asyncDataStore['logs_stack-1'].data.value = { items: [{ id: 'log-1', status: 'success' }] }
+    await flushPromises()
+
+    expect(getOne.mock.calls.length).toBeGreaterThan(getOneCallsBefore)
+    expect(refreshSpy.mock.calls.length).toBeGreaterThan(refreshSpyCallsBefore)
+  })
+
+  it('does not reload on the initial (non-running) sync_logs load', async () => {
+    const { getOne, asyncDataStore } = setupGlobals()
+    const { refreshSpy } = mountPageWithServicesCardSpy()
+    await flushPromises()
+    asyncDataStore['stack_stack-1'].data.value = { id: 'stack-1', name: 'my-stack', status: 'active' }
+    await flushPromises()
+
+    const getOneCallsBefore = getOne.mock.calls.length
+    const refreshSpyCallsBefore = refreshSpy.mock.calls.length
+
+    asyncDataStore['logs_stack-1'].data.value = { items: [{ id: 'log-1', status: 'success' }] }
+    await flushPromises()
+
+    expect(getOne.mock.calls.length).toBe(getOneCallsBefore)
+    expect(refreshSpy.mock.calls.length).toBe(refreshSpyCallsBefore)
+  })
+})
+
+describe('stacks/[id].vue additional handler coverage', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('explains why sync is disabled for every non-online worker state', async () => {
+    const { asyncDataStore } = setupGlobals()
+    const wrapper = await mountPage()
+
+    asyncDataStore['stack_stack-1'].data.value = { id: 'stack-1', name: 'my-stack', worker: 'worker-1', status: 'active' }
+
+    asyncDataStore.workers_for_stacks.data.value = [{ id: 'worker-1', status: 'OFFLINE' }]
+    await flushPromises()
+    expect((wrapper.vm as any).syncDisabledReason).toContain('Worker offline')
+
+    asyncDataStore.workers_for_stacks.data.value = [{ id: 'worker-1', status: 'REVOKED' }]
+    await flushPromises()
+    expect((wrapper.vm as any).syncDisabledReason).toContain('Worker revoked')
+
+    asyncDataStore.workers_for_stacks.data.value = [{ id: 'worker-1', status: 'DEGRADED' }]
+    await flushPromises()
+    expect((wrapper.vm as any).syncDisabledReason).toContain('Docker unreachable')
+
+    asyncDataStore.workers_for_stacks.data.value = []
+    await flushPromises()
+    expect((wrapper.vm as any).syncDisabledReason).toContain('Worker unavailable')
+  })
+
+  it('toggles a timeline entry open and closed', async () => {
+    setupGlobals()
+    const wrapper = await mountPage()
+
+    const openEvent = { target: { open: true } } as unknown as Event
+    ;(wrapper.vm as any).toggleTimeline('log-1', openEvent)
+    expect((wrapper.vm as any).expandedTimelineLogIds.has('log-1')).toBe(true)
+
+    const closeEvent = { target: { open: false } } as unknown as Event
+    ;(wrapper.vm as any).toggleTimeline('log-1', closeEvent)
+    expect((wrapper.vm as any).expandedTimelineLogIds.has('log-1')).toBe(false)
+  })
+
+  it('opens the container logs, action confirmation, and terminal modals', async () => {
+    setupGlobals()
+    const wrapper = await mountPage()
+
+    ;(wrapper.vm as any).openContainerLogs('c1', 'web')
+    expect((wrapper.vm as any).showLogsModal).toBe(true)
+    expect((wrapper.vm as any).logsContainerName).toBe('web')
+
+    ;(wrapper.vm as any).openContainerLogs('c1', '')
+    expect((wrapper.vm as any).logsContainerName).toBe('c1')
+
+    ;(wrapper.vm as any).openContainerActionModal('c1', 'web', 'stop')
+    expect((wrapper.vm as any).showContainerConfirmModal).toBe(true)
+    expect((wrapper.vm as any).containerActionState).toEqual({ id: 'c1', name: 'web', action: 'stop' })
+
+    ;(wrapper.vm as any).openTerminalModal('c1', 'web')
+    expect((wrapper.vm as any).showTerminalModal).toBe(true)
+    expect((wrapper.vm as any).terminalState).toEqual({ id: 'c1', name: 'web' })
+  })
+
+  it('executes a bulk container action, reporting full success and partial failure', async () => {
+    const { api, toastAdd } = setupGlobals()
+    const wrapper = await mountPage()
+
+    ;(wrapper.vm as any).handleBulkContainerAction({
+      containers: [{ containerId: 'c1', containerName: 'web' }],
+      action: 'restart',
+      subject: 'web',
+    })
+    expect((wrapper.vm as any).showBulkActionModal).toBe(true)
+    expect((wrapper.vm as any).bulkActionTitle).toBe('Restart web?')
+
+    api.restartContainer.mockResolvedValue({})
+    await (wrapper.vm as any).executeBulkContainerAction()
+    expect(api.restartContainer).toHaveBeenCalledWith('stack-1', 'c1')
+    expect(toastAdd).toHaveBeenCalledWith(expect.objectContaining({ title: 'Restarted 1 container' }))
+    expect((wrapper.vm as any).showBulkActionModal).toBe(false)
+
+    ;(wrapper.vm as any).handleBulkContainerAction({
+      containers: [
+        { containerId: 'c1', containerName: 'web' },
+        { containerId: 'c2', containerName: 'db' },
+      ],
+      action: 'stop',
+      subject: 'all containers',
+    })
+    api.stopContainer.mockResolvedValueOnce({}).mockRejectedValueOnce(new Error('boom'))
+    await (wrapper.vm as any).executeBulkContainerAction()
+    expect(toastAdd).toHaveBeenCalledWith(expect.objectContaining({ title: '1 succeeded, 1 failed', description: 'db' }))
+  })
+
+  it('loads repo commits only when the stack has a repository, clearing on failure', async () => {
+    const { api, asyncDataStore } = setupGlobals()
+    const wrapper = await mountPage()
+
+    asyncDataStore['stack_stack-1'].data.value = { id: 'stack-1', name: 'my-stack', status: 'active' }
+    await flushPromises()
+    expect(api.getRepoCommits).not.toHaveBeenCalled()
+
+    api.getRepoCommits.mockResolvedValue([{ sha: 'abcdef1234567', message: 'a'.repeat(60), author: 'me', date: '2024-01-01' }])
+    asyncDataStore['stack_stack-1'].data.value = { id: 'stack-1', name: 'my-stack', status: 'active', repository: 'repo-1' }
+    await flushPromises()
+    expect(api.getRepoCommits).toHaveBeenCalledWith('repo-1')
+    expect((wrapper.vm as any).commitOptions[0].label).toContain('abcdef1')
+    expect((wrapper.vm as any).commitOptions[0].label).toContain('...')
+
+    api.getRepoCommits.mockRejectedValueOnce(new Error('nope'))
+    await (wrapper.vm as any).loadRepoCommits()
+    expect((wrapper.vm as any).repoCommits).toEqual([])
+  })
+
+  it('opens the compose viewer and reports a failure toast', async () => {
+    const { api, toastAdd } = setupGlobals()
+    const wrapper = await mountPage()
+
+    api.getComposeFile.mockResolvedValue({ content: 'services: {}', filename: 'docker-compose.yml' })
+    await (wrapper.vm as any).openComposeViewer()
+    expect((wrapper.vm as any).showComposeModal).toBe(true)
+    expect((wrapper.vm as any).composeContent).toBe('services: {}')
+
+    api.getComposeFile.mockRejectedValueOnce(new Error('missing file'))
+    ;(wrapper.vm as any).showComposeModal = false
+    await (wrapper.vm as any).openComposeViewer()
+    expect((wrapper.vm as any).showComposeModal).toBe(false)
+    expect(toastAdd).toHaveBeenCalledWith({ title: 'missing file', color: 'error' })
+  })
+
+  it('starts editing, and saves for both wireops-managed and regular stacks', async () => {
+    const { updateStack, asyncDataStore } = setupGlobals()
+    ;(globalThis as any).useValidation = () => ({
+      validateComposePath: (v: string) => (v ? '' : 'Compose path is required'),
+      validateComposeFile: (v: string) => (v ? '' : 'Compose file is required'),
+    })
+    const wrapper = await mountPage()
+
+    asyncDataStore['stack_stack-1'].data.value = {
+      id: 'stack-1', name: 'my-stack', status: 'active', worker: 'worker-1', config_source: 'wireops_file',
+    }
+    await flushPromises()
+
+    ;(wrapper.vm as any).startEdit()
+    expect((wrapper.vm as any).editing).toBe(true)
+    expect((wrapper.vm as any).editForm.name).toBe('my-stack')
+
+    await (wrapper.vm as any).saveEdit()
+    expect(updateStack).toHaveBeenCalledWith('stack-1', { name: 'my-stack', worker: 'worker-1' })
+    expect((wrapper.vm as any).editing).toBe(false)
+
+    asyncDataStore['stack_stack-1'].data.value = {
+      id: 'stack-1', name: 'my-stack', status: 'active', worker: 'worker-1', compose_path: 'a', compose_file: 'b', group: 'g',
+    }
+    await flushPromises()
+    ;(wrapper.vm as any).startEdit()
+    ;(wrapper.vm as any).editForm.compose_path = ''
+    await (wrapper.vm as any).saveEdit()
+    expect((wrapper.vm as any).editErrors.compose_path).toBeTruthy()
+    expect((wrapper.vm as any).editing).toBe(true)
+
+    updateStack.mockRejectedValueOnce(new Error('save failed'))
+    ;(wrapper.vm as any).editForm.compose_path = 'valid/path'
+    await (wrapper.vm as any).saveEdit()
+    expect((wrapper.vm as any).editing).toBe(true)
+  })
+
+  it('generates and saves a webhook secret, reporting failures', async () => {
+    const { updateStack, toastAdd } = setupGlobals()
+    const wrapper = await mountPage()
+
+    await (wrapper.vm as any).saveWebhookSecret()
+    expect(updateStack).not.toHaveBeenCalled()
+
+    ;(wrapper.vm as any).generateWebhookSecret()
+    expect((wrapper.vm as any).webhookSecretInput).toMatch(/^[0-9a-f]{32}$/)
+
+    await (wrapper.vm as any).saveWebhookSecret()
+    expect(updateStack).toHaveBeenCalledWith('stack-1', expect.objectContaining({ webhook_secret: expect.any(String) }))
+    expect(toastAdd).toHaveBeenCalledWith({ title: 'Webhook secret saved', color: 'success' })
+
+    ;(wrapper.vm as any).generateWebhookSecret()
+    updateStack.mockRejectedValueOnce(new Error('nope'))
+    await (wrapper.vm as any).saveWebhookSecret()
+    expect(toastAdd).toHaveBeenCalledWith({ title: 'Failed to save webhook secret', description: 'nope', color: 'error' })
+  })
+
+  it('pauses and resumes a stack via togglePause/confirmPause', async () => {
+    const { updateStack, asyncDataStore } = setupGlobals()
+    const wrapper = await mountPage()
+    asyncDataStore['stack_stack-1'].data.value = { id: 'stack-1', name: 'my-stack', status: 'active' }
+    await flushPromises()
+
+    await (wrapper.vm as any).togglePause()
+    expect((wrapper.vm as any).showPauseModal).toBe(true)
+
+    await (wrapper.vm as any).confirmPause()
+    expect(updateStack).toHaveBeenCalledWith('stack-1', { status: 'paused' })
+    expect((wrapper.vm as any).showPauseModal).toBe(false)
+
+    asyncDataStore['stack_stack-1'].data.value.status = 'paused'
+    await (wrapper.vm as any).togglePause()
+    expect(updateStack).toHaveBeenLastCalledWith('stack-1', { status: 'active' })
+  })
+
+  it('force-redeploys, reporting failures without resetting form state', async () => {
+    const { api, toastAdd } = setupGlobals()
+    const wrapper = await mountPage()
+
+    await (wrapper.vm as any).handleForceRedeploy()
+    expect(api.forceRedeploy).toHaveBeenCalledWith('stack-1', expect.objectContaining({ pause_after_redeploy: true }))
+    expect((wrapper.vm as any).activeTab).toBe('logs')
+    expect(toastAdd).toHaveBeenCalledWith({ title: 'Force redeploy triggered', color: 'info' })
+
+    api.forceRedeploy.mockRejectedValueOnce(new Error('busy'))
+    await (wrapper.vm as any).handleForceRedeploy()
+    expect(toastAdd).toHaveBeenCalledWith({ title: 'busy', color: 'error' })
+  })
+
+  it('opens the overrides modal pre-filled from git state and containers_list', async () => {
+    const { asyncDataStore } = setupGlobals()
+    const wrapper = await mountPage()
+    asyncDataStore['stack_stack-1'].data.value = {
+      id: 'stack-1', name: 'my-stack', status: 'active',
+      containers_list: [{ name: 'web', slug: 'web-1' }],
+      render_overrides: { web: { image: 'nginx:latest', ports: ['80:80'], networks: ['edge'], scale: 2 } },
+    }
+    await flushPromises()
+
+    ;(wrapper.vm as any).openOverridesModal()
+    expect((wrapper.vm as any).showOverridesModal).toBe(true)
+    expect((wrapper.vm as any).overridesForm.web).toEqual({ image: 'nginx:latest', ports: '80:80', networks: 'edge', scale: '2' })
+    expect((wrapper.vm as any).getOverrideServiceSlug('web')).toBe('web-1')
+  })
+
+  it('warns when applying overrides with nothing filled in', async () => {
+    const { api, toastAdd, asyncDataStore } = setupGlobals()
+    const wrapper = await mountPage()
+    asyncDataStore['stack_stack-1'].data.value = {
+      id: 'stack-1', name: 'my-stack', status: 'active', containers_list: [{ name: 'web' }],
+    }
+    await flushPromises()
+
+    ;(wrapper.vm as any).overridesForm = { web: { image: '', ports: '', networks: '', scale: '' } }
+    await (wrapper.vm as any).handleApplyOverrides()
+    expect(toastAdd).toHaveBeenCalledWith({ title: 'No overrides to apply', color: 'warning' })
+    expect(api.setRenderOverrides).not.toHaveBeenCalled()
+  })
+
+  it('reports a failure toast when applying or clearing overrides fails', async () => {
+    const { api, toastAdd, asyncDataStore } = setupGlobals()
+    const wrapper = await mountPage()
+    asyncDataStore['stack_stack-1'].data.value = {
+      id: 'stack-1', name: 'my-stack', status: 'active', containers_list: [{ name: 'web' }],
+    }
+    await flushPromises()
+
+    api.setRenderOverrides.mockRejectedValueOnce(new Error('rejected'))
+    ;(wrapper.vm as any).overridesForm = { web: { image: 'nginx', ports: '', networks: '', scale: '' } }
+    await (wrapper.vm as any).handleApplyOverrides()
+    expect(toastAdd).toHaveBeenCalledWith({ title: 'rejected', color: 'error' })
+
+    api.clearRenderOverrides.mockRejectedValueOnce(new Error('cannot clear'))
+    await (wrapper.vm as any).handleClearOverrides()
+    expect(toastAdd).toHaveBeenCalledWith({ title: 'cannot clear', color: 'error' })
+  })
+
+  it('navigates away once a stack delete completes', async () => {
+    const { navigateTo } = setupGlobals()
+    const wrapper = await mountPage()
+
+    await (wrapper.vm as any).onStackDeleted()
+    expect((wrapper.vm as any).showDeleteModal).toBe(false)
+    expect(navigateTo).toHaveBeenCalledWith('/stacks')
+  })
+
+  it('builds danger-zone actions, including migrate only for non-local stacks', async () => {
+    const { asyncDataStore } = setupGlobals()
+    const wrapper = await mountPage()
+
+    asyncDataStore['stack_stack-1'].data.value = { id: 'stack-1', name: 'my-stack', status: 'active', source_type: 'git' }
+    await flushPromises()
+    let keys = (wrapper.vm as any).dangerZoneActions.map((a: any) => a.key)
+    expect(keys).toEqual(['transfer', 'migrate', 'remove'])
+
+    asyncDataStore['stack_stack-1'].data.value = { id: 'stack-1', name: 'my-stack', status: 'active', source_type: 'local' }
+    await flushPromises()
+    keys = (wrapper.vm as any).dangerZoneActions.map((a: any) => a.key)
+    expect(keys).toEqual(['transfer', 'remove'])
+
+    const actions = (wrapper.vm as any).dangerZoneActions
+    actions.find((a: any) => a.key === 'transfer').onClick()
+    expect((wrapper.vm as any).showTransferModal).toBe(true)
+    actions.find((a: any) => a.key === 'remove').onClick()
+    expect((wrapper.vm as any).showDeleteModal).toBe(true)
+  })
+
+  it('switches to the logs tab and schedules a refresh once transfer/migrate completes', async () => {
+    setupGlobals()
+    const wrapper = await mountPage()
+    ;(wrapper.vm as any).activeTab = 'overview'
+
+    ;(wrapper.vm as any).onTransferDone()
+    expect((wrapper.vm as any).showTransferModal).toBe(false)
+    expect((wrapper.vm as any).activeTab).toBe('logs')
+
+    ;(wrapper.vm as any).activeTab = 'overview'
+    ;(wrapper.vm as any).onMigrateDone()
+    expect((wrapper.vm as any).showMigrateModal).toBe(false)
+    expect((wrapper.vm as any).activeTab).toBe('logs')
+  })
+
+  it('reacts to realtime sync_logs and workers events, and the Cmd/Ctrl+S shortcut', async () => {
+    const { api, asyncDataStore } = setupGlobals()
+    api.getWorkers.mockResolvedValue([{ id: 'worker-1', status: 'ACTIVE' }])
+    const subscribeHandlers: Record<string, (data?: any) => void> = {}
+    ;(globalThis as any).useRealtime = () => ({
+      subscribe: vi.fn((channel: string, handler: (data?: any) => void) => {
+        subscribeHandlers[channel] = handler
+      }),
+    })
+    const wrapper = await mountPage()
+    asyncDataStore['stack_stack-1'].data.value = { id: 'stack-1', name: 'my-stack', worker: 'worker-1', status: 'active' }
+    asyncDataStore.workers_for_stacks.data.value = [{ id: 'worker-1', status: 'ACTIVE' }]
+    await flushPromises()
+
+    const before = asyncDataStore['logs_stack-1'].refresh.mock.calls.length
+    subscribeHandlers.sync_logs!({ record: { stack: 'stack-1' } })
+    await flushPromises()
+    expect(asyncDataStore['logs_stack-1'].refresh.mock.calls.length).toBeGreaterThan(before)
+
+    subscribeHandlers.sync_logs!({ record: { stack: 'other-stack' } })
+    await flushPromises()
+    expect(asyncDataStore['logs_stack-1'].refresh.mock.calls.length).toBe(before + 1)
+
+    const workersBefore = asyncDataStore.workers_for_stacks.refresh.mock.calls.length
+    subscribeHandlers.workers!()
+    await flushPromises()
+    expect(asyncDataStore.workers_for_stacks.refresh.mock.calls.length).toBeGreaterThan(workersBefore)
+
+    expect((wrapper.vm as any).canSyncDeploy).toBe(true)
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 's', ctrlKey: true }))
+    await flushPromises()
+    expect((wrapper.vm as any).showSyncModal).toBe(true)
   })
 })
