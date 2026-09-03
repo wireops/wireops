@@ -1,6 +1,6 @@
 module github.com/wireops/wireops
 
-go 1.26.0
+go 1.26.6
 
 require (
 	filippo.io/age v1.3.1
