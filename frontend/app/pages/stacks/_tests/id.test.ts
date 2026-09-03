@@ -368,7 +368,7 @@ describe('stacks/[id].vue stack operations and override helpers', () => {
   }
 
   it('reloads the stack, services card, and render-overrides diff once an in-flight sync finishes', async () => {
-    const { api, getOne, asyncDataStore } = setupGlobals()
+    const { api, getOne, toastAdd, asyncDataStore } = setupGlobals()
     const { refreshSpy } = mountPageWithServicesCardSpy()
     await flushPromises()
     asyncDataStore['stack_stack-1'].data.value = {
@@ -394,10 +394,11 @@ describe('stacks/[id].vue stack operations and override helpers', () => {
     expect(getOne.mock.calls.length).toBeGreaterThan(getOneCallsBefore)
     expect(refreshSpy.mock.calls.length).toBeGreaterThan(refreshSpyCallsBefore)
     expect(api.getRenderOverridesDiff.mock.calls.length).toBeGreaterThan(getRenderOverridesDiffCallsBefore)
+    expect(toastAdd).toHaveBeenCalledWith({ title: 'Container list updated', color: 'info' })
   })
 
   it('does not reload on the initial (non-running) sync_logs load', async () => {
-    const { getOne, asyncDataStore } = setupGlobals()
+    const { getOne, toastAdd, asyncDataStore } = setupGlobals()
     const { refreshSpy } = mountPageWithServicesCardSpy()
     await flushPromises()
     asyncDataStore['stack_stack-1'].data.value = { id: 'stack-1', name: 'my-stack', status: 'active' }
@@ -411,6 +412,7 @@ describe('stacks/[id].vue stack operations and override helpers', () => {
 
     expect(getOne.mock.calls.length).toBe(getOneCallsBefore)
     expect(refreshSpy.mock.calls.length).toBe(refreshSpyCallsBefore)
+    expect(toastAdd).not.toHaveBeenCalledWith(expect.objectContaining({ title: 'Container list updated' }))
   })
 })
 

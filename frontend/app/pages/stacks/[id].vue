@@ -787,7 +787,10 @@ function refreshStackView() {
 }
 
 watch(hasRunningLog, (running, wasRunning) => {
-  if (wasRunning && !running) refreshStackView()
+  if (wasRunning && !running) {
+    refreshStackView()
+    toast.add({ title: 'Container list updated', color: 'info' })
+  }
 })
 
 onMounted(() => {
