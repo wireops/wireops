@@ -222,7 +222,7 @@ async function executeBulkContainerAction() {
       })
     }
     servicesCard.value?.clearSelection?.()
-    setTimeout(() => servicesCard.value?.refresh?.(), 1500)
+    setTimeout(() => { loadServices(); servicesCard.value?.refresh?.() }, 1500)
   } finally {
     bulkActionLoading.value = false
   }
@@ -446,7 +446,7 @@ async function handleForceRedeploy() {
     forceOpts.value = { recreate_containers: true, recreate_volumes: false, recreate_networks: false }
     pauseAfterRedeploy.value = true
     refreshLogs()
-    setTimeout(() => { refreshStack(); refreshLogs(); servicesCard.value?.refresh?.() }, 5000)
+    setTimeout(() => { refreshStack(); refreshLogs(); loadServices(); servicesCard.value?.refresh?.() }, 5000)
   } catch (e: any) {
     toast.add({ title: e?.message || 'Force redeploy failed', color: 'error' })
   }
@@ -675,7 +675,7 @@ async function handleApplyOverrides() {
     // The PUT above already persists render_overrides, which the realtime 'stacks'
     // subscribe handler picks up and refreshes the diff for — no need to call
     // loadRenderOverridesDiff() again here.
-    setTimeout(() => { refreshStack(); refreshLogs(); servicesCard.value?.refresh?.() }, 5000)
+    setTimeout(() => { refreshStack(); refreshLogs(); loadServices(); servicesCard.value?.refresh?.() }, 5000)
   } catch (e: any) {
     toast.add({ title: e?.message || 'Failed to apply overrides', color: 'error' })
   }
@@ -690,7 +690,7 @@ async function handleClearOverrides() {
     refreshLogs()
     // Same as apply: the DELETE above already clears render_overrides, and the
     // realtime 'stacks' subscribe handler refreshes the diff for that update.
-    setTimeout(() => { refreshStack(); refreshLogs(); servicesCard.value?.refresh?.() }, 5000)
+    setTimeout(() => { refreshStack(); refreshLogs(); loadServices(); servicesCard.value?.refresh?.() }, 5000)
   } catch (e: any) {
     toast.add({ title: e?.message || 'Failed to clear overrides', color: 'error' })
   }
@@ -782,6 +782,7 @@ watch(() => stack.value?.render_overrides, () => {
 // containers show up without a manual page reload.
 function refreshStackView() {
   refreshStack()
+  loadServices()
   servicesCard.value?.refresh?.()
   loadRenderOverridesDiff()
 }

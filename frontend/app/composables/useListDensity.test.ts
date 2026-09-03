@@ -31,6 +31,12 @@ describe('readStoredListDensity', () => {
   it('reads compact when explicitly stored', () => {
     expect(readStoredListDensity({ getItem: () => 'compact' })).toBe('compact')
   })
+
+  it('falls back to comfortable when storage.getItem throws', () => {
+    expect(readStoredListDensity({
+      getItem: () => { throw new Error('storage blocked') },
+    })).toBe('comfortable')
+  })
 })
 
 describe('useListDensity', () => {
@@ -59,6 +65,20 @@ describe('useListDensity', () => {
 
     setDensity('comfortable')
     expect(fakeStorage.getItem('wireops.listDensity')).toBe('comfortable')
+  })
+
+  it('does not throw when storage.setItem is blocked, and still updates in-memory density', () => {
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      value: {
+        getItem: () => null,
+        setItem: () => { throw new Error('quota exceeded') },
+      },
+    })
+    const { density, setDensity } = useListDensity()
+
+    expect(() => setDensity('compact')).not.toThrow()
+    expect(density.value).toBe('compact')
   })
 
   it('toggleDensity flips back and forth', () => {

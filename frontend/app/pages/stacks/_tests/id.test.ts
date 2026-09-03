@@ -636,6 +636,28 @@ describe('stacks/[id].vue additional handler coverage', () => {
     expect(toastAdd).toHaveBeenCalledWith({ title: 'busy', color: 'error' })
   })
 
+  it('still refreshes containers via loadServices when the services card is unmounted on the Logs tab', async () => {
+    // StackServicesCard (and its exposed refresh()) only exists in the DOM
+    // while activeTab is 'overview' - force-redeploy/apply-overrides/etc all
+    // switch to the Logs tab before their delayed refresh fires, so
+    // servicesCard.value is null by then and refresh() alone would no-op.
+    const { api } = setupGlobals()
+    const wrapper = await mountPage()
+    vi.useFakeTimers()
+    try {
+      const getServicesCallsBefore = api.getServices.mock.calls.length
+
+      await (wrapper.vm as any).handleForceRedeploy()
+      await flushPromises()
+      expect((wrapper.vm as any).servicesCard).toBe(null)
+
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(api.getServices.mock.calls.length).toBeGreaterThan(getServicesCallsBefore)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('opens the overrides modal pre-filled from git state and containers_list', async () => {
     const { asyncDataStore } = setupGlobals()
     const wrapper = await mountPage()
