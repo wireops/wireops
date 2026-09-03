@@ -54,6 +54,7 @@ const lastSyncedLabel = computed(() => stackRelativeTime(props.stack?.last_synce
     <UTooltip :text="stackWorkerName(stack)">
       <span
         class="hidden w-28 shrink-0 items-center gap-1 truncate text-xs text-gray-500 dark:text-wire-200/50 lg:inline-flex"
+        :title="stackWorkerName(stack)"
         :aria-label="`Worker: ${stackWorkerName(stack)}`"
       >
         <UIcon :name="stackWorkerStatus(stack, workersById).icon" class="h-3.5 w-3.5 shrink-0" :class="stackWorkerStatus(stack, workersById).iconClass" aria-hidden="true" />

@@ -5,7 +5,11 @@ export type ListDensity = 'comfortable' | 'compact'
 export const LIST_DENSITY_STORAGE_KEY = 'wireops.listDensity'
 
 export function readStoredListDensity(storage: Pick<Storage, 'getItem'> | null): ListDensity {
-  return storage?.getItem(LIST_DENSITY_STORAGE_KEY) === 'compact' ? 'compact' : 'comfortable'
+  try {
+    return storage?.getItem(LIST_DENSITY_STORAGE_KEY) === 'compact' ? 'compact' : 'comfortable'
+  } catch {
+    return 'comfortable'
+  }
 }
 
 // localStorage access can throw (Safari private browsing, sandboxed iframes,

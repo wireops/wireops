@@ -367,15 +367,18 @@ describe('stacks/[id].vue stack operations and override helpers', () => {
     return { wrapper, refreshSpy }
   }
 
-  it('reloads the stack and services card once an in-flight sync finishes', async () => {
-    const { getOne, asyncDataStore } = setupGlobals()
+  it('reloads the stack, services card, and render-overrides diff once an in-flight sync finishes', async () => {
+    const { api, getOne, asyncDataStore } = setupGlobals()
     const { refreshSpy } = mountPageWithServicesCardSpy()
     await flushPromises()
-    asyncDataStore['stack_stack-1'].data.value = { id: 'stack-1', name: 'my-stack', status: 'active' }
+    asyncDataStore['stack_stack-1'].data.value = {
+      id: 'stack-1', name: 'my-stack', status: 'active', render_overrides: { web: { scale: 2 } },
+    }
     await flushPromises()
 
     const getOneCallsBefore = getOne.mock.calls.length
     const refreshSpyCallsBefore = refreshSpy.mock.calls.length
+    const getRenderOverridesDiffCallsBefore = api.getRenderOverridesDiff.mock.calls.length
 
     // Sync starts: a sync_logs row with status 'running' appears.
     asyncDataStore['logs_stack-1'].data.value = { items: [{ id: 'log-1', status: 'running' }] }
@@ -390,6 +393,7 @@ describe('stacks/[id].vue stack operations and override helpers', () => {
 
     expect(getOne.mock.calls.length).toBeGreaterThan(getOneCallsBefore)
     expect(refreshSpy.mock.calls.length).toBeGreaterThan(refreshSpyCallsBefore)
+    expect(api.getRenderOverridesDiff.mock.calls.length).toBeGreaterThan(getRenderOverridesDiffCallsBefore)
   })
 
   it('does not reload on the initial (non-running) sync_logs load', async () => {

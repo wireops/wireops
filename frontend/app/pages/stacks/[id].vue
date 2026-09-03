@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { IntegrationAction } from '~/composables/useIntegrations'
 import { stackHasRenderOverrides, stackLastError, stackSyncStatus, stackVisibleDeployStatus, stackWorkerStatus } from '../../utils/stack-status'
 import { WORKER_STATUS } from '../../utils/worker'

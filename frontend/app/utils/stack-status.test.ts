@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest'
-import { buildStackStatusFilter, stackDeployStatus, stackFleetStatus, stackHasRenderOverrides, stackIsSyncing, stackLastError, stackSourceStatus, stackStatusBadge, stackSyncStatus, stackVisibleDeployStatus, stackWorkerStatus } from './stack-status'
+import { buildStackStatusFilter, stackDeployStatus, stackFleetStatus, stackHasRenderOverrides, stackIsSyncing, stackLastError, stackRelativeTime, stackSourceStatus, stackStatusBadge, stackSyncStatus, stackVisibleDeployStatus, stackWorkerStatus } from './stack-status'
+
+describe('stackRelativeTime', () => {
+  it('returns an empty string for missing or invalid dates', () => {
+    expect(stackRelativeTime(undefined)).toBe('')
+    expect(stackRelativeTime('')).toBe('')
+    expect(stackRelativeTime('not-a-date')).toBe('')
+  })
+
+  it('formats a recent timestamp as seconds ago', () => {
+    expect(stackRelativeTime(new Date(Date.now() - 5_000).toISOString())).toMatch(/^\ds ago$/)
+  })
+})
 
 describe('stackHasRenderOverrides', () => {
   it('is false when render_overrides is missing or empty', () => {

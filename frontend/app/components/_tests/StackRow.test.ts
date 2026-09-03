@@ -21,9 +21,9 @@ const workersById = {
   'worker-1': { id: 'worker-1', hostname: 'worker-a', status: 'ACTIVE' },
 }
 
-function mountRow() {
+function mountRow(stack: Record<string, unknown> = stackFixture) {
   return mount(StackRow, {
-    props: { stack: stackFixture, workersById },
+    props: { stack, workersById },
     global: {
       stubs: {
         BadgeStatus: {
@@ -64,5 +64,15 @@ describe('StackRow', () => {
     expect(wrapper.find('.badge-status').text()).toBe('active')
     expect(wrapper.text()).toContain('Up to date')
     expect(wrapper.text()).toContain('Online')
+  })
+
+  it('omits the group badge and last-synced label when absent, but still links to the stack', () => {
+    const wrapper = mountRow({ ...stackFixture, group: '', last_synced_at: undefined })
+
+    const link = wrapper.find('a[aria-label="Open stack Payments"]')
+    expect(link.exists()).toBe(true)
+    expect(link.attributes('href')).toBe('/stacks/stack-1')
+    expect(wrapper.find('.badge').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('billing')
   })
 })
