@@ -427,7 +427,7 @@ watch(() => props.services, (services) => {
               >
               <!-- Accordion Header -->
               <div
-                class="flex w-full items-center gap-2 px-3 py-2.5 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/60 text-left"
+                class="flex w-full flex-wrap items-center gap-2 px-3 py-2.5 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/60 text-left"
                 :class="openContainers[container.container_id] ? 'bg-gray-50 dark:bg-gray-800/50' : 'bg-transparent'"
               >
                 <label v-if="canOperate" class="flex shrink-0 cursor-pointer items-center">
@@ -461,7 +461,10 @@ watch(() => props.services, (services) => {
                   />
 
                   <!-- Container Name -->
-                  <span class="font-medium text-sm text-gray-900 dark:text-white truncate flex-1 min-w-0">
+                  <span
+                    class="font-medium text-sm text-gray-900 dark:text-white truncate flex-1 min-w-0"
+                    :title="container.container_name || container.service_name"
+                  >
                     {{ container.container_name || container.service_name }}
                   </span>
 
@@ -496,7 +499,7 @@ watch(() => props.services, (services) => {
                 </div>
 
                 <!-- Action buttons -->
-                <div class="flex items-center gap-0.5 shrink-0 ml-1">
+                <div class="flex items-center gap-0.5 shrink-0">
                   <ContainerIntegrationActions
                     :actions="integrationActions[container.container_id] || []"
                     :container-id="container.container_id"
