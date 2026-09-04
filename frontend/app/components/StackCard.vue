@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { stackFleetStatus, stackHasRenderOverrides, stackIsSyncing, stackStatusBadge, stackSyncStatus, stackVisibleDeployStatus, stackWorkerName, stackWorkerStatus } from '../utils/stack-status'
+import { stackFleetStatus, stackHasRenderOverrides, stackIsSyncing, stackRelativeTime, stackStatusBadge, stackSyncStatus, stackVisibleDeployStatus, stackWorkerName, stackWorkerStatus } from '../utils/stack-status'
 
 const props = defineProps<{
   stack: any
@@ -11,17 +11,7 @@ const statusBadge = computed(() => stackStatusBadge(props.stack, props.workersBy
 const effectiveStatus = computed(() => stackFleetStatus(props.stack, props.workersById))
 const isSyncing = computed(() => stackIsSyncing(props.stack))
 
-function relativeTime(dateStr?: string): string {
-  if (!dateStr) return ''
-  const diff = Date.now() - new Date(dateStr).getTime()
-  if (diff < 0) return 'just now'
-  if (diff < 60_000) return `${Math.floor(diff / 1000)}s ago`
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`
-  return `${Math.floor(diff / 86_400_000)}d ago`
-}
-
-const lastSyncedLabel = computed(() => relativeTime(props.stack?.last_synced_at))
+const lastSyncedLabel = computed(() => stackRelativeTime(props.stack?.last_synced_at))
 </script>
 
 <template>

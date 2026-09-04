@@ -344,6 +344,18 @@ export function stackLastError(stack: any): StackLastErrorInfo | null {
   }
 }
 
+export function stackRelativeTime(dateStr?: string): string {
+  if (!dateStr) return ''
+  const time = new Date(dateStr).getTime()
+  if (Number.isNaN(time)) return ''
+  const diff = Date.now() - time
+  if (diff < 0) return 'just now'
+  if (diff < 60_000) return `${Math.floor(diff / 1000)}s ago`
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`
+  return `${Math.floor(diff / 86_400_000)}d ago`
+}
+
 export function stackWorkerName(stack: any): string {
   return stack?.expand?.worker?.hostname || 'Unknown worker'
 }

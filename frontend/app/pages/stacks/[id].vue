@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { IntegrationAction } from '~/composables/useIntegrations'
 import { stackHasRenderOverrides, stackLastError, stackSyncStatus, stackVisibleDeployStatus, stackWorkerStatus } from '../../utils/stack-status'
 import { WORKER_STATUS } from '../../utils/worker'
@@ -118,6 +119,16 @@ async function loadServices() {
   } catch { services.value = [] }
 }
 
+// StackServicesCard only exists in the DOM while activeTab is 'overview' -
+// its own refresh() already re-triggers loadServices() (via the @refresh
+// emit) plus its volumes/networks fetch, so call that when it's mounted;
+// otherwise the card isn't there to ask, so refetch containers directly -
+// calling both would double-fetch containers every time the card is mounted.
+function refreshContainerList() {
+  if (servicesCard.value) servicesCard.value.refresh?.()
+  else loadServices()
+}
+
 
 const integrationActions = ref<Record<string, IntegrationAction[]>>({})
 
@@ -220,8 +231,8 @@ async function executeBulkContainerAction() {
         color: 'error',
       })
     }
-    servicesCard.value?.clearSelection()
-    setTimeout(() => servicesCard.value?.refresh(), 1500)
+    servicesCard.value?.clearSelection?.()
+    setTimeout(() => refreshContainerList(), 1500)
   } finally {
     bulkActionLoading.value = false
   }
@@ -445,7 +456,7 @@ async function handleForceRedeploy() {
     forceOpts.value = { recreate_containers: true, recreate_volumes: false, recreate_networks: false }
     pauseAfterRedeploy.value = true
     refreshLogs()
-    setTimeout(() => { refreshStack(); refreshLogs(); servicesCard.value?.refresh() }, 5000)
+    setTimeout(() => { refreshStack(); refreshLogs(); refreshContainerList() }, 5000)
   } catch (e: any) {
     toast.add({ title: e?.message || 'Force redeploy failed', color: 'error' })
   }
@@ -674,7 +685,7 @@ async function handleApplyOverrides() {
     // The PUT above already persists render_overrides, which the realtime 'stacks'
     // subscribe handler picks up and refreshes the diff for — no need to call
     // loadRenderOverridesDiff() again here.
-    setTimeout(() => { refreshStack(); refreshLogs(); servicesCard.value?.refresh() }, 5000)
+    setTimeout(() => { refreshStack(); refreshLogs(); refreshContainerList() }, 5000)
   } catch (e: any) {
     toast.add({ title: e?.message || 'Failed to apply overrides', color: 'error' })
   }
@@ -689,7 +700,7 @@ async function handleClearOverrides() {
     refreshLogs()
     // Same as apply: the DELETE above already clears render_overrides, and the
     // realtime 'stacks' subscribe handler refreshes the diff for that update.
-    setTimeout(() => { refreshStack(); refreshLogs(); servicesCard.value?.refresh() }, 5000)
+    setTimeout(() => { refreshStack(); refreshLogs(); refreshContainerList() }, 5000)
   } catch (e: any) {
     toast.add({ title: e?.message || 'Failed to clear overrides', color: 'error' })
   }
@@ -775,18 +786,33 @@ watch(() => stack.value?.render_overrides, () => {
   loadRenderOverridesDiff()
 }, { immediate: true })
 
+// Reload the stack record and its running containers together - used both
+// on any realtime 'stacks' change and below, once an in-flight sync/rollback/
+// redeploy finishes (hasRunningLog flips back to false), so newly started
+// containers show up without a manual page reload.
+function refreshStackView() {
+  refreshStack()
+  refreshContainerList()
+  loadRenderOverridesDiff()
+}
+
+watch(hasRunningLog, (running, wasRunning) => {
+  if (wasRunning && !running) {
+    refreshStackView()
+    toast.add({ title: 'Container list updated', color: 'info' })
+  }
+})
+
 onMounted(() => {
   loadServices()
   const workerRefreshTimer = window.setInterval(() => {
     refreshWorkers()
   }, 15000)
-  
+
   // Subscribe to stack changes
   subscribe('stacks', (e) => {
     if (e.record?.id === stackId) {
-      refreshStack()
-      servicesCard.value?.refresh()
-      loadRenderOverridesDiff()
+      refreshStackView()
     }
   })
 
