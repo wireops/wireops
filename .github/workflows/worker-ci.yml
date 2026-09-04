@@ -58,3 +58,6 @@ jobs:
         run: |
           mkdir -p dist
           go build -o dist/wireops-worker ./worker/main.go
+
+      - name: Build worker Docker image (build-only, not pushed)
+        run: docker build -f Dockerfile.worker -t wireops-worker:ci .
