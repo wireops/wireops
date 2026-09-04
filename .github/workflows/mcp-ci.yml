@@ -58,3 +58,6 @@ jobs:
         run: |
           mkdir -p dist
           go build -o dist/wireops-mcp ./mcp/main.go
+
+      - name: Build mcp Docker image (build-only, not pushed)
+        run: docker build -f Dockerfile.mcp -t wireops-mcp:ci .

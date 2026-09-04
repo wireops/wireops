@@ -8,7 +8,7 @@ RUN npm ci --ignore-scripts
 COPY frontend/ ./
 RUN npm run postinstall && npm run generate
 
-FROM golang:1.25-alpine AS backend-builder
+FROM golang:1.26.6-alpine AS backend-builder
 
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64

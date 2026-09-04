@@ -61,6 +61,9 @@ jobs:
           mkdir -p dist
           go build -o dist/wireops .
 
+      - name: Build server Docker image (build-only, not pushed)
+        run: docker build -f Dockerfile.server -t wireops-server:ci .
+
   frontend:
     runs-on: ubuntu-latest
     permissions:
