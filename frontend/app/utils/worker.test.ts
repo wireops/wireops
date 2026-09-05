@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { filterVisibleWorkers, isWorkerClickable, matchesWorkerSearch, workerStatus } from './worker'
+import { filterVisibleWorkers, isWorkerClickable, isWorkerVersionOutdated, matchesWorkerSearch, workerStatus } from './worker'
 
 const workers = [
   { id: 'abc123', hostname: 'edge-eu-1', tags: ['gpu', 'prod'], status: 'ACTIVE' },
@@ -51,5 +51,28 @@ describe('filterVisibleWorkers', () => {
   it('trims whitespace and treats whitespace-only queries as empty', () => {
     expect(filterVisibleWorkers(workers, { showRevoked: false, searchQuery: '  us  ' }).map(w => w.id)).toEqual(['def456'])
     expect(filterVisibleWorkers(workers, { showRevoked: false, searchQuery: '   ' }).map(w => w.id)).toEqual(['abc123', 'def456'])
+  })
+})
+
+describe('isWorkerVersionOutdated', () => {
+  it('flags a worker version older than the server version', () => {
+    expect(isWorkerVersionOutdated('1.4.0', '1.5.0')).toBe(true)
+    expect(isWorkerVersionOutdated('v1.4.0', 'v1.4.1')).toBe(true)
+    expect(isWorkerVersionOutdated('1.4', '1.4.1')).toBe(true)
+  })
+
+  it('does not flag a worker on the same or newer version', () => {
+    expect(isWorkerVersionOutdated('1.5.0', '1.5.0')).toBe(false)
+    expect(isWorkerVersionOutdated('1.6.0', '1.5.0')).toBe(false)
+  })
+
+  it('ignores non-numeric versions like "dev" builds', () => {
+    expect(isWorkerVersionOutdated('dev', '1.5.0')).toBe(false)
+    expect(isWorkerVersionOutdated('1.4.0', 'dev')).toBe(false)
+  })
+
+  it('returns false when either version is missing', () => {
+    expect(isWorkerVersionOutdated(undefined, '1.5.0')).toBe(false)
+    expect(isWorkerVersionOutdated('1.4.0', null)).toBe(false)
   })
 })

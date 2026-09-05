@@ -25,12 +25,23 @@ var (
 
 func InitWorkerInfo() {
 	CachedWorkerInfo = &protocol.WorkerInfo{
-		Version:        buildinfo.Version,
+		Version:        WorkerVersion(),
 		DockerVersion:  QueryDockerVersion(),
 		ComposeVersion: QueryComposeVersion(),
 		OS:             runtime.GOOS,
 		Arch:           runtime.GOARCH,
 	}
+}
+
+// WorkerVersion returns the version this worker reports to the server.
+// WORKER_VERSION_OVERRIDE lets a dev build fake being on an older/newer
+// version - e.g. to exercise the "worker behind server" UI without needing
+// an actual stale binary.
+func WorkerVersion() string {
+	if override := strings.TrimSpace(os.Getenv("WORKER_VERSION_OVERRIDE")); override != "" {
+		return override
+	}
+	return buildinfo.Version
 }
 
 func QueryDockerVersion() string {

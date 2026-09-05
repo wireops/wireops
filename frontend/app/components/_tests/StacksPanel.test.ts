@@ -170,6 +170,15 @@ describe('StacksPanel', () => {
     BadgeLabel: true,
     DeleteStackModal: true,
     ImportStackModal: true,
+    // Respects the `open` prop, same reasoning as the UModal stub below -
+    // StackBuilderModal owns its own open/close state rather than being
+    // wrapped in a parent UModal.
+    StackBuilderModal: {
+      props: ['open'],
+      setup(props: { open?: boolean }) {
+        return () => (props.open ? h('div', { class: 'stack-builder-modal-stub' }) : null)
+      },
+    },
     StackContainersList: true,
     // Respects the `open` prop so tests can assert whether a modal was
     // actually triggered by a dropdown action, not just that it exists.
@@ -401,7 +410,7 @@ describe('StacksPanel', () => {
     expect(getList.mock.calls.at(-1)![2].filter).not.toContain('worker = {:w}')
   })
 
-  it('selects Import and Manage Orphans from the actions dropdown', async () => {
+  it('selects Stack Builder, Import and Manage Orphans from the actions dropdown', async () => {
     const listOrphans = vi.fn().mockResolvedValue([
       { dir_name: 'orphan-1', compose_file: 'docker-compose.yml', has_compose: true },
     ])
@@ -439,6 +448,12 @@ describe('StacksPanel', () => {
     })
 
     await flushPromises()
+
+    expect(wrapper.find('.stack-builder-modal-stub').exists()).toBe(false)
+    const builderItem = wrapper.findAll('button').find(b => b.text() === 'Stack Builder')
+    await builderItem!.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.stack-builder-modal-stub').exists()).toBe(true)
 
     expect(wrapper.findComponent({ name: 'ImportStackModal' }).exists()).toBe(false)
     const importItem = wrapper.findAll('button').find(b => b.text() === 'Import')

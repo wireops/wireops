@@ -469,7 +469,7 @@ watch(() => props.services, (services) => {
                   </span>
 
                   <!-- Status badge -->
-                  <BadgeStatus :status="container.status" class="shrink-0" />
+                  <BadgeStatus :status="container.status" mobile-icon-only class="shrink-0" />
 
                   <!-- Container ID as code -->
                   <code class="hidden sm:inline-flex text-xs font-mono text-gray-400 dark:text-gray-500 bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded shrink-0">

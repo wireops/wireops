@@ -89,3 +89,27 @@ export function osLabel(os?: string): string {
 export function archIcon(_arch?: string): string {
   return 'i-lucide-cpu'
 }
+
+function parseVersionParts(version: string): number[] | null {
+  const cleaned = version.trim().replace(/^v/i, '')
+  const parts = cleaned.split('.').map(part => Number.parseInt(part, 10))
+  return parts.some(Number.isNaN) ? null : parts
+}
+
+// Compares dotted-numeric versions (e.g. "1.4.2" vs "v1.5.0"); returns false
+// (never flag as outdated) for anything that isn't a plain numeric version -
+// "dev"/build-metadata builds have no meaningful ordering against a release.
+export function isWorkerVersionOutdated(workerVersion?: string | null, serverVersion?: string | null): boolean {
+  if (!workerVersion || !serverVersion) return false
+  const worker = parseVersionParts(workerVersion)
+  const server = parseVersionParts(serverVersion)
+  if (!worker || !server) return false
+
+  const length = Math.max(worker.length, server.length)
+  for (let i = 0; i < length; i++) {
+    const w = worker[i] ?? 0
+    const s = server[i] ?? 0
+    if (w !== s) return w < s
+  }
+  return false
+}
