@@ -312,6 +312,7 @@ function handleSlashShortcut(event: KeyboardEvent) {
 
 const stackActionItems = [
   [
+    { label: 'Stack Builder', icon: 'i-lucide-wrench', onSelect: () => { showBuilder.value = true } },
     { label: 'Import', icon: 'i-lucide-package-plus', onSelect: () => { showImport.value = true } },
     { label: 'Manage Orphans', icon: 'i-lucide-package-search', color: 'warning', onSelect: () => openOrphans() },
   ],
@@ -373,7 +374,6 @@ async function handlePurge(dirName: string) {
       </div>
       <div v-if="!isViewer" class="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
         <ActionButton icon="i-lucide-plus" label="Add Stack" class="w-full justify-center sm:w-auto" @click="openCreate()" />
-        <UButton icon="i-lucide-wrench" label="Stack Builder" variant="outline" class="w-full justify-center sm:w-auto" @click="showBuilder = true" />
         <UDropdownMenu :items="stackActionItems" :content="{ align: 'end' }">
           <UButton icon="i-lucide-ellipsis-vertical" label="Options" variant="outline" class="w-full justify-center sm:w-auto" aria-label="Stack options" />
         </UDropdownMenu>

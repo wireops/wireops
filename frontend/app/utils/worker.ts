@@ -89,3 +89,31 @@ export function osLabel(os?: string): string {
 export function archIcon(_arch?: string): string {
   return 'i-lucide-cpu'
 }
+
+function parseVersionParts(version: string): number[] | null {
+  const cleaned = version.trim().replace(/^v/i, '')
+  const segments = cleaned.split('.')
+  // parseInt("0-dev") returns 0, not NaN - it parses only the leading digits
+  // and silently drops pre-release/build-metadata suffixes (e.g. "-dev",
+  // "+build.1"), which would otherwise make those look like plain releases.
+  if (!segments.every(segment => /^\d+$/.test(segment))) return null
+  return segments.map(segment => Number.parseInt(segment, 10))
+}
+
+// Compares dotted-numeric versions (e.g. "1.4.2" vs "v1.5.0"); returns false
+// (never flag as outdated) for anything that isn't a plain numeric version -
+// "dev"/build-metadata builds have no meaningful ordering against a release.
+export function isWorkerVersionOutdated(workerVersion?: string | null, serverVersion?: string | null): boolean {
+  if (!workerVersion || !serverVersion) return false
+  const worker = parseVersionParts(workerVersion)
+  const server = parseVersionParts(serverVersion)
+  if (!worker || !server) return false
+
+  const length = Math.max(worker.length, server.length)
+  for (let i = 0; i < length; i++) {
+    const w = worker[i] ?? 0
+    const s = server[i] ?? 0
+    if (w !== s) return w < s
+  }
+  return false
+}

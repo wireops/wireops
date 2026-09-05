@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/wireops/wireops/internal/buildinfo"
 	"github.com/wireops/wireops/internal/protocol"
 	wiretls "github.com/wireops/wireops/pkg/tls"
 	"github.com/wireops/wireops/worker/api"
@@ -219,7 +218,7 @@ func RunSession(serverURL, workerToken, hostname, stackDir string, tags []string
 
 	for i := 1; i <= 5; i++ {
 		atomic.AddUint64(&metrics.ConnAttempts, 1)
-		err := api.Register(client, serverURL, workerToken, hostname, buildinfo.Version, tags)
+		err := api.Register(client, serverURL, workerToken, hostname, telemetry.WorkerVersion(), tags)
 		if err == nil {
 			break
 		}

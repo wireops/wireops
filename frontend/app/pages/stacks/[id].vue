@@ -954,7 +954,18 @@ onMounted(() => {
         <template #header>
           <div class="flex justify-between items-center">
             <h3 class="font-semibold">Configuration</h3>
-            <UButton v-if="!editing" icon="i-lucide-pencil" variant="ghost" size="xs" @click="startEdit" />
+            <div v-if="!editing" class="flex items-center gap-1">
+              <UTooltip text="View compose file">
+                <UButton
+                  icon="i-lucide-file-code"
+                  variant="ghost"
+                  size="xs"
+                  aria-label="View compose file"
+                  @click="openComposeViewer"
+                />
+              </UTooltip>
+              <UButton icon="i-lucide-pencil" variant="ghost" size="xs" @click="startEdit" />
+            </div>
           </div>
         </template>
         <div v-if="!editing" class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
@@ -968,13 +979,6 @@ onMounted(() => {
                 <WorkerNameLabel :name="stack?.expand?.worker?.hostname || 'Unknown'" />
               </span>
             </div>
-          <div>
-            <span class="text-gray-500">Compose File:</span>
-            <button
-              class="ml-1 text-yellow-400 hover:text-yellow-300 font-mono underline underline-offset-2 decoration-dotted transition-colors cursor-pointer"
-              @click="openComposeViewer"
-            >{{ stack?.compose_file || 'docker-compose.yml' }}</button>
-          </div>
           <div><span class="text-gray-500">Last Synced:</span> {{ stack?.last_synced_at ? new Date(stack.last_synced_at).toLocaleString() : 'Never' }}</div>
           <div class="col-span-2 flex items-center gap-2">
             <span class="text-gray-500">Revision:</span>
@@ -1470,7 +1474,7 @@ onMounted(() => {
                         {{ new Date(c.date).toLocaleDateString('en-US') }} {{ new Date(c.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }}
                       </td>
                       <td class="px-3 py-2">
-                        <span class="font-mono bg-gray-100 dark:bg-gray-700 px-1.5 py-0.5 rounded inline-block">
+                        <span class="font-mono bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 px-1.5 py-0.5 rounded inline-block">
                           {{ c.sha.slice(0, 7) }}
                         </span>
                       </td>

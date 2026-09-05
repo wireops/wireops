@@ -41,24 +41,61 @@ const lastSyncedLabel = computed(() => stackRelativeTime(props.stack?.last_synce
 
     <BadgeStatus :status="effectiveStatus" class="shrink-0" />
 
+    <UTooltip :text="`Sync: ${stackSyncStatus(stack).label}`">
+      <UIcon
+        :name="stackSyncStatus(stack).icon"
+        class="h-4 w-4 shrink-0 md:hidden"
+        :class="stackSyncStatus(stack).iconClass"
+        :title="`Sync: ${stackSyncStatus(stack).label}`"
+        :aria-label="`Sync: ${stackSyncStatus(stack).label}`"
+      />
+    </UTooltip>
     <span class="hidden w-24 shrink-0 items-center gap-1 text-xs text-gray-500 dark:text-wire-200/50 md:inline-flex">
       <UIcon :name="stackSyncStatus(stack).icon" class="h-3.5 w-3.5 shrink-0" :class="stackSyncStatus(stack).iconClass" aria-hidden="true" />
       <span class="truncate">{{ stackSyncStatus(stack).label }}</span>
     </span>
 
+    <UTooltip :text="`Deploy: ${stackVisibleDeployStatus(stack, workersById).label}`">
+      <UIcon
+        :name="stackVisibleDeployStatus(stack, workersById).icon"
+        class="h-4 w-4 shrink-0 md:hidden"
+        :class="stackVisibleDeployStatus(stack, workersById).iconClass"
+        :title="`Deploy: ${stackVisibleDeployStatus(stack, workersById).label}`"
+        :aria-label="`Deploy: ${stackVisibleDeployStatus(stack, workersById).label}`"
+      />
+    </UTooltip>
     <span class="hidden w-24 shrink-0 items-center gap-1 text-xs text-gray-500 dark:text-wire-200/50 md:inline-flex">
       <UIcon :name="stackVisibleDeployStatus(stack, workersById).icon" class="h-3.5 w-3.5 shrink-0" :class="stackVisibleDeployStatus(stack, workersById).iconClass" aria-hidden="true" />
       <span class="truncate">{{ stackVisibleDeployStatus(stack, workersById).label }}</span>
     </span>
 
+    <UTooltip :text="`${stackWorkerName(stack)} — ${stackWorkerStatus(stack, workersById).label}`">
+      <UIcon
+        :name="stackWorkerStatus(stack, workersById).icon"
+        class="h-4 w-4 shrink-0 lg:hidden"
+        :class="stackWorkerStatus(stack, workersById).iconClass"
+        :title="`${stackWorkerName(stack)} — ${stackWorkerStatus(stack, workersById).label}`"
+        :aria-label="`Worker: ${stackWorkerName(stack)} — ${stackWorkerStatus(stack, workersById).label}`"
+      />
+    </UTooltip>
     <UTooltip :text="stackWorkerName(stack)">
       <span
-        class="hidden w-28 shrink-0 items-center gap-1 truncate text-xs text-gray-500 dark:text-wire-200/50 lg:inline-flex"
+        class="hidden w-24 shrink-0 items-center gap-1 truncate text-xs text-gray-500 dark:text-wire-200/50 lg:inline-flex"
         :title="stackWorkerName(stack)"
         :aria-label="`Worker: ${stackWorkerName(stack)}`"
       >
         <UIcon :name="stackWorkerStatus(stack, workersById).icon" class="h-3.5 w-3.5 shrink-0" :class="stackWorkerStatus(stack, workersById).iconClass" aria-hidden="true" />
         <span class="truncate">{{ stackWorkerStatus(stack, workersById).label }}</span>
+      </span>
+    </UTooltip>
+
+    <UTooltip v-if="stack.expand?.worker?.hostname" :text="stackWorkerName(stack)">
+      <span
+        class="hidden w-32 shrink-0 items-center gap-1 overflow-hidden rounded-md border border-gray-300 px-1.5 py-0.5 text-gray-500 dark:border-carbon-700/60 dark:text-wire-200/55 xl:inline-flex"
+        :title="stackWorkerName(stack)"
+      >
+        <UIcon name="i-lucide-server" class="h-3 w-3 shrink-0" aria-hidden="true" />
+        <span class="min-w-0 truncate text-[11px] font-medium">{{ stackWorkerName(stack) }}</span>
       </span>
     </UTooltip>
 

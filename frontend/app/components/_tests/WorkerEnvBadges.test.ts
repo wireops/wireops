@@ -1,7 +1,9 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { h } from 'vue'
+import { computed, h } from 'vue'
 import WorkerEnvBadges from '../WorkerEnvBadges.vue'
+
+vi.stubGlobal('useServerVersion', () => ({ serverVersion: computed(() => null) }))
 
 describe('WorkerEnvBadges', () => {
   const stubs = {
