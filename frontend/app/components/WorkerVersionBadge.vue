@@ -23,6 +23,8 @@ const isOutdated = computed(() => isWorkerVersionOutdated(props.version, serverV
       color="warning"
       :size="size"
       class="font-mono"
+      :title="`Worker is behind server version ${serverVersion}`"
+      :aria-label="`Worker is behind server version ${serverVersion}`"
     />
   </UTooltip>
   <UBadge

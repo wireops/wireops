@@ -92,8 +92,12 @@ export function archIcon(_arch?: string): string {
 
 function parseVersionParts(version: string): number[] | null {
   const cleaned = version.trim().replace(/^v/i, '')
-  const parts = cleaned.split('.').map(part => Number.parseInt(part, 10))
-  return parts.some(Number.isNaN) ? null : parts
+  const segments = cleaned.split('.')
+  // parseInt("0-dev") returns 0, not NaN - it parses only the leading digits
+  // and silently drops pre-release/build-metadata suffixes (e.g. "-dev",
+  // "+build.1"), which would otherwise make those look like plain releases.
+  if (!segments.every(segment => /^\d+$/.test(segment))) return null
+  return segments.map(segment => Number.parseInt(segment, 10))
 }
 
 // Compares dotted-numeric versions (e.g. "1.4.2" vs "v1.5.0"); returns false

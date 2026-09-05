@@ -71,6 +71,15 @@ describe('isWorkerVersionOutdated', () => {
     expect(isWorkerVersionOutdated('1.4.0', 'dev')).toBe(false)
   })
 
+  it('does not parse a pre-release or build-metadata suffix as a plain numeric segment', () => {
+    // parseInt("0-dev") / parseInt("0+build") return 0, not NaN - guard
+    // against silently treating these as ordinary releases.
+    expect(isWorkerVersionOutdated('1.4.0-dev', '1.5.0')).toBe(false)
+    expect(isWorkerVersionOutdated('1.4.0+build.1', '1.5.0')).toBe(false)
+    expect(isWorkerVersionOutdated('1.4.0', '1.5.0-dev')).toBe(false)
+    expect(isWorkerVersionOutdated('1.4.0', '1.5.0+build.1')).toBe(false)
+  })
+
   it('returns false when either version is missing', () => {
     expect(isWorkerVersionOutdated(undefined, '1.5.0')).toBe(false)
     expect(isWorkerVersionOutdated('1.4.0', null)).toBe(false)

@@ -6,7 +6,14 @@ export function useServerVersion() {
   const { canManageSettings } = usePermissions()
   const { getSystemInfo } = useApi()
 
-  const { data } = useAsyncData('server_version', async () => {
+  // useAsyncData's cache is keyed and shared across every caller in the app -
+  // a plain 'server_version' key would let a session that lost manage-settings
+  // permission (role downgrade, different user without a full reload) still
+  // read whatever an earlier authorized caller cached. Partition the key by
+  // permission so an unauthorized caller never touches the authorized entry.
+  const cacheKey = canManageSettings.value ? 'server_version' : 'server_version_unauthorized'
+
+  const { data } = useAsyncData(cacheKey, async () => {
     if (!canManageSettings.value) return null
     try {
       const info = await getSystemInfo()
