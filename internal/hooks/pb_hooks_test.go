@@ -180,6 +180,65 @@ func TestEnvSecretMaskedUpdatePreservesEncryptedValue(t *testing.T) {
 	}
 }
 
+// TestEnvSecretPlaintextResemblingCiphertextIsStillEncrypted guards against a
+// regression where crypto.IsEncrypted's "already encrypted" heuristic
+// false-positived on ordinary plaintext secrets that happen to be valid
+// base64 of a length longer than a GCM nonce (e.g. a 20-character
+// alphanumeric password/token). That caused prepareEnvSecretRecord to skip
+// encryption entirely, storing the secret as plaintext under secret=true —
+// Resolve() then failed at deploy time with an AES-GCM auth error.
+func TestEnvSecretPlaintextResemblingCiphertextIsStillEncrypted(t *testing.T) {
+	t.Setenv("SECRET_KEY", "12345678901234567890123456789012")
+
+	app, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatalf("new test app: %v", err)
+	}
+	t.Cleanup(func() { app.Cleanup() })
+
+	envVars := core.NewBaseCollection("stack_env_vars")
+	envVars.Fields.Add(&core.TextField{Name: "key"})
+	envVars.Fields.Add(&core.TextField{Name: "value"})
+	envVars.Fields.Add(&core.BoolField{Name: "secret"})
+	envVars.Fields.Add(&core.TextField{Name: "secret_provider"})
+	if err := app.Save(envVars); err != nil {
+		t.Fatalf("save stack_env_vars collection: %v", err)
+	}
+
+	Register(app, nil, nil, logstream.New())
+
+	// 20 lowercase letters: valid base64 alphabet, decodes cleanly to 15
+	// bytes (>12), which is exactly the shape the old ">12" heuristic
+	// mistook for real ciphertext.
+	plaintext := "abcdefghijklmnopqrst"
+
+	rec := core.NewRecord(envVars)
+	rec.Set("key", "TOKEN")
+	rec.Set("value", plaintext)
+	rec.Set("secret", true)
+	if err := app.Save(rec); err != nil {
+		t.Fatalf("save secret env var: %v", err)
+	}
+
+	saved, err := app.FindRecordById("stack_env_vars", rec.Id)
+	if err != nil {
+		t.Fatalf("find saved secret env var: %v", err)
+	}
+	stored := saved.GetString("value")
+	if stored == plaintext {
+		t.Fatalf("plaintext secret resembling ciphertext was stored unencrypted: %q", stored)
+	}
+
+	secretKey := crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))
+	decrypted, err := crypto.Decrypt(stored, secretKey)
+	if err != nil {
+		t.Fatalf("stored value could not be decrypted: %v", err)
+	}
+	if string(decrypted) != plaintext {
+		t.Fatalf("decrypted value = %q, want %q", decrypted, plaintext)
+	}
+}
+
 // TestEnvSecretExternalProviderValueNotEncrypted guards against a
 // regression where prepareEnvSecretRecord unconditionally AES-GCM encrypted
 // "value" for any secret=true record. Only the "internal" provider decrypts
