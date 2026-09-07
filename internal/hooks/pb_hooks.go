@@ -1299,7 +1299,7 @@ func encryptField(record *core.Record, field string, key []byte) error {
 	if val == "" || val == "••••••••" {
 		return nil
 	}
-	if crypto.IsEncrypted(val) {
+	if crypto.IsEncrypted(val, key) {
 		return nil
 	}
 	encrypted, err := crypto.Encrypt([]byte(val), key)

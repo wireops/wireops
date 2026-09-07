@@ -54,13 +54,17 @@ func Decrypt(encoded string, key []byte) ([]byte, error) {
 	return gcm.Open(nil, nonce, ciphertext, nil)
 }
 
-func IsEncrypted(value string) bool {
-	if len(value) == 0 {
+// IsEncrypted reports whether value is already AES-GCM ciphertext decryptable
+// with key, so callers can avoid double-encrypting on update. Any
+// length/shape-based heuristic is unreliable — plaintext secrets can
+// legitimately be valid base64 of arbitrary length — so this decrypts value
+// for real and trusts the GCM authentication tag: it only returns true when
+// Decrypt succeeds, which for non-ciphertext input fails with
+// overwhelming probability (a 128-bit tag would have to collide).
+func IsEncrypted(value string, key []byte) bool {
+	if value == "" {
 		return false
 	}
-	decoded, err := base64.StdEncoding.DecodeString(value)
-	if err != nil {
-		return false
-	}
-	return len(decoded) > 12
+	_, err := Decrypt(value, key)
+	return err == nil
 }
