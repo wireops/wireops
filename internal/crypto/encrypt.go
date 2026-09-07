@@ -54,24 +54,17 @@ func Decrypt(encoded string, key []byte) ([]byte, error) {
 	return gcm.Open(nil, nonce, ciphertext, nil)
 }
 
-// gcmMinCiphertextLen is the smallest possible output of Encrypt: a 12-byte
-// GCM nonce plus the 16-byte authentication tag Seal appends even for an
-// empty plaintext. Anything shorter cannot be our ciphertext.
-const gcmMinCiphertextLen = 12 + 16
-
-// IsEncrypted heuristically detects whether value is already AES-GCM
-// ciphertext produced by Encrypt, so callers can avoid double-encrypting on
-// update. It cannot be exact (any sufficiently long base64 string decodes
-// successfully), but rejecting anything shorter than the minimum possible
-// ciphertext length rules out ordinary passwords/tokens, which is the
-// common false-positive case this previously missed with a bare ">12" check.
-func IsEncrypted(value string) bool {
-	if len(value) == 0 {
+// IsEncrypted reports whether value is already AES-GCM ciphertext decryptable
+// with key, so callers can avoid double-encrypting on update. Any
+// length/shape-based heuristic is unreliable — plaintext secrets can
+// legitimately be valid base64 of arbitrary length — so this decrypts value
+// for real and trusts the GCM authentication tag: it only returns true when
+// Decrypt succeeds, which for non-ciphertext input fails with
+// overwhelming probability (a 128-bit tag would have to collide).
+func IsEncrypted(value string, key []byte) bool {
+	if value == "" {
 		return false
 	}
-	decoded, err := base64.StdEncoding.DecodeString(value)
-	if err != nil {
-		return false
-	}
-	return len(decoded) >= gcmMinCiphertextLen
+	_, err := Decrypt(value, key)
+	return err == nil
 }

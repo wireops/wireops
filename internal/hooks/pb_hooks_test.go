@@ -3,6 +3,7 @@ package hooks
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -161,7 +162,8 @@ func TestEnvSecretMaskedUpdatePreservesEncryptedValue(t *testing.T) {
 		t.Fatalf("find saved secret env var: %v", err)
 	}
 	encryptedValue := saved.GetString("value")
-	if encryptedValue == "" || encryptedValue == "initial-secret" || !crypto.IsEncrypted(encryptedValue) {
+	secretKey := crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))
+	if encryptedValue == "" || encryptedValue == "initial-secret" || !crypto.IsEncrypted(encryptedValue, secretKey) {
 		t.Fatalf("secret value was not encrypted: %q", encryptedValue)
 	}
 
@@ -181,12 +183,15 @@ func TestEnvSecretMaskedUpdatePreservesEncryptedValue(t *testing.T) {
 }
 
 // TestEnvSecretPlaintextResemblingCiphertextIsStillEncrypted guards against a
-// regression where crypto.IsEncrypted's "already encrypted" heuristic
-// false-positived on ordinary plaintext secrets that happen to be valid
-// base64 of a length longer than a GCM nonce (e.g. a 20-character
-// alphanumeric password/token). That caused prepareEnvSecretRecord to skip
-// encryption entirely, storing the secret as plaintext under secret=true —
-// Resolve() then failed at deploy time with an AES-GCM auth error.
+// regression where crypto.IsEncrypted's "already encrypted" check inferred
+// encryption from decoded length instead of actually authenticating the
+// value. Ordinary plaintext secrets that happen to be valid base64 satisfied
+// any length-based heuristic — including one requiring at least the 28
+// decoded bytes a real nonce+tag needs — which caused prepareEnvSecretRecord
+// to skip encryption entirely and store the secret as plaintext under
+// secret=true. Resolve() then failed at deploy time with an AES-GCM auth
+// error. IsEncrypted must instead attempt a real decrypt and trust only the
+// GCM authentication result.
 func TestEnvSecretPlaintextResemblingCiphertextIsStillEncrypted(t *testing.T) {
 	t.Setenv("SECRET_KEY", "12345678901234567890123456789012")
 
@@ -206,36 +211,48 @@ func TestEnvSecretPlaintextResemblingCiphertextIsStillEncrypted(t *testing.T) {
 	}
 
 	Register(app, nil, nil, logstream.New())
-
-	// 20 lowercase letters: valid base64 alphabet, decodes cleanly to 15
-	// bytes (>12), which is exactly the shape the old ">12" heuristic
-	// mistook for real ciphertext.
-	plaintext := "abcdefghijklmnopqrst"
-
-	rec := core.NewRecord(envVars)
-	rec.Set("key", "TOKEN")
-	rec.Set("value", plaintext)
-	rec.Set("secret", true)
-	if err := app.Save(rec); err != nil {
-		t.Fatalf("save secret env var: %v", err)
-	}
-
-	saved, err := app.FindRecordById("stack_env_vars", rec.Id)
-	if err != nil {
-		t.Fatalf("find saved secret env var: %v", err)
-	}
-	stored := saved.GetString("value")
-	if stored == plaintext {
-		t.Fatalf("plaintext secret resembling ciphertext was stored unencrypted: %q", stored)
-	}
-
 	secretKey := crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))
-	decrypted, err := crypto.Decrypt(stored, secretKey)
-	if err != nil {
-		t.Fatalf("stored value could not be decrypted: %v", err)
+
+	cases := []struct {
+		name      string
+		plaintext string
+	}{
+		// 20 lowercase letters: valid base64 alphabet, decodes cleanly to 15
+		// bytes — enough to fool a bare ">12 decoded bytes" heuristic.
+		{"15 decoded bytes", "abcdefghijklmnopqrst"},
+		// 40 lowercase letters: valid base64 alphabet, decodes cleanly to 30
+		// bytes — enough to fool a "nonce+tag minimum" (>=28 decoded bytes)
+		// heuristic too, since that's still just a length guess.
+		{"30 decoded bytes", "abcdefghijklmnopqrstabcdefghijklmnopqrst"},
 	}
-	if string(decrypted) != plaintext {
-		t.Fatalf("decrypted value = %q, want %q", decrypted, plaintext)
+
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := core.NewRecord(envVars)
+			rec.Set("key", fmt.Sprintf("TOKEN_%d", i))
+			rec.Set("value", tc.plaintext)
+			rec.Set("secret", true)
+			if err := app.Save(rec); err != nil {
+				t.Fatalf("save secret env var: %v", err)
+			}
+
+			saved, err := app.FindRecordById("stack_env_vars", rec.Id)
+			if err != nil {
+				t.Fatalf("find saved secret env var: %v", err)
+			}
+			stored := saved.GetString("value")
+			if stored == tc.plaintext {
+				t.Fatalf("plaintext secret resembling ciphertext was stored unencrypted: %q", stored)
+			}
+
+			decrypted, err := crypto.Decrypt(stored, secretKey)
+			if err != nil {
+				t.Fatalf("stored value could not be decrypted: %v", err)
+			}
+			if string(decrypted) != tc.plaintext {
+				t.Fatalf("decrypted value = %q, want %q", decrypted, tc.plaintext)
+			}
+		})
 	}
 }
 
@@ -282,7 +299,7 @@ func TestEnvSecretExternalProviderValueNotEncrypted(t *testing.T) {
 	if got := saved.GetString("value"); got != "secret/data/myapp#DB_PASS" {
 		t.Fatalf("vault reference was mangled: got %q, want raw reference", got)
 	}
-	if crypto.IsEncrypted(saved.GetString("value")) {
+	if crypto.IsEncrypted(saved.GetString("value"), crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))) {
 		t.Fatal("vault reference must not be AES-GCM encrypted at rest")
 	}
 
