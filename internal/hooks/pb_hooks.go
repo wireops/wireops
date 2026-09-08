@@ -142,11 +142,13 @@ func validateRepositoryKeyTypeImmutable(app core.App, record *core.Record) error
 }
 
 // wireopsManagedStackFields are the fields sourced from a stack's
-// wireops.yaml at creation time. Once a stack has config_source ==
-// "wireops_file", these become immutable via the API — the only way to
-// change deploy behavior is to edit the wireops.yaml file in the repo and
-// recreate the stack. This is enforced server-side because the stacks
-// collection's Update rule allows any authenticated user to PATCH any field.
+// wireops.yaml (or embedded x-wireops compose block) at creation time. Once
+// a stack has config_source == "wireops_file" or "compose_embedded", these
+// become immutable via the API — the only way to change deploy behavior is
+// to edit the wireops.yaml file or the compose file's x-wireops block in the
+// repo and recreate the stack. This is enforced server-side because the
+// stacks collection's Update rule allows any authenticated user to PATCH any
+// field.
 var wireopsManagedStackFields = []string{
 	"compose_path",
 	"compose_file",
@@ -161,6 +163,13 @@ var wireopsManagedStackFields = []string{
 	"config_source",
 }
 
+// isFileManagedConfigSource reports whether a stack's deploy behavior is
+// sourced from a file in git (wireops.yaml or an embedded x-wireops compose
+// block) rather than manually via the UI/API.
+func isFileManagedConfigSource(configSource string) bool {
+	return configSource == "wireops_file" || configSource == "compose_embedded"
+}
+
 func validateWireopsFieldsImmutable(app core.App, record *core.Record) error {
 	if isMigrationBypass(record.Id) {
 		return nil
@@ -173,7 +182,7 @@ func validateWireopsFieldsImmutable(app core.App, record *core.Record) error {
 		}
 		original = persisted
 	}
-	if original == nil || original.GetString("config_source") != "wireops_file" {
+	if original == nil || !isFileManagedConfigSource(original.GetString("config_source")) {
 		return nil
 	}
 

@@ -1212,3 +1212,42 @@ services:
 		t.Errorf("expected error to wrap sync.ErrUnknownOverrideService, got: %v", err)
 	}
 }
+
+// TestRendererStripsXWireopsExtension verifies that a top-level x-wireops
+// compose extension block (see internal/manifest.ParseComposeManifest) is
+// consumed at stack-creation time only and never leaks into the rendered
+// revision file — `docker compose config` passes x-* keys through verbatim,
+// so the renderer must strip it explicitly before writing/hashing.
+func TestRendererStripsXWireopsExtension(t *testing.T) {
+	app, workDir, composePath := setupRendererTest(t)
+	writeTestComposeFile(t, composePath, `
+name: xwireops_stack
+x-wireops:
+  version: wireops.v1
+  name: xwireops_stack
+  worker:
+    tags: [gpu]
+services:
+  web:
+    image: nginx:alpine
+`)
+
+	repo := createTestRepo(t, app, "xwireops-repo", "main")
+	stack := createTestStack(t, app, repo.Id, "xwireops_stack")
+
+	renderer := sync.NewRenderer(app)
+	ctx := context.Background()
+
+	res, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitA", false, "", "embedded", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	contentStr := readRenderedFile(t, renderer, stack.Id, res.Version)
+	if contains(contentStr, "x-wireops") {
+		t.Errorf("rendered revision file must not contain the x-wireops extension block:\n%s", contentStr)
+	}
+	if !contains(contentStr, `dev.wireops.managed: "true"`) {
+		t.Errorf("missing dev.wireops.managed label")
+	}
+}

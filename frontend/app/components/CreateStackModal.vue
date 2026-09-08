@@ -12,7 +12,7 @@ const emit = defineEmits<{
 }>()
 
 const { $pb } = useNuxtApp()
-const { getStackFiles, getWireopsFiles, getWireopsDefinitionFromFile, getWorkers, createStackFromWireops, lintCompose, customPost } = useApi()
+const { getStackFiles, getWireopsFiles, getWireopsDefinitionFromFile, getComposeWireopsFiles, getComposeDefinitionFromFile, getWorkers, createStackFromWireops, createStackFromCompose, lintCompose, customPost } = useApi()
 const { validateComposePath, validateComposeFile } = useValidation()
 const toast = useToast()
 
@@ -41,7 +41,7 @@ const defaultForm = () => ({
 
 type WireopsDefinition = Awaited<ReturnType<typeof getWireopsDefinitionFromFile>>
 
-const creationMode = ref<'manual' | 'wireops_file'>('wireops_file')
+const creationMode = ref<'manual' | 'wireops_file' | 'compose_embedded'>('wireops_file')
 const form = ref(defaultForm())
 const repoFiles = ref<string[]>([])
 const loadingFiles = ref(false)
@@ -51,6 +51,9 @@ const createErrors = ref<{ worker?: string; compose_path?: string; compose_file?
 const pendingEnvVars = ref<PendingEnvVar[]>([])
 const envVarsEditor = ref<{ commitDraft: () => void; hasInvalidDraft: boolean } | null>(null)
 
+// Shared by both file-driven modes (wireops_file and compose_embedded) —
+// which endpoint backs them is picked by creationMode in loadWireopsFiles /
+// the selectedWireopsFile watcher below.
 const wireopsFiles = ref<string[]>([])
 const loadingWireopsFiles = ref(false)
 const selectedWireopsFile = ref('')
@@ -69,9 +72,10 @@ const composePreview = ref<{ focusOn: (line: number) => void } | null>(null)
 // newer one when the user changes the file or worker mid-flight.
 let lintRequestId = 0
 
-const modeOptions: { label: string; value: 'manual' | 'wireops_file' }[] = [
+const modeOptions: { label: string; value: 'manual' | 'wireops_file' | 'compose_embedded' }[] = [
   { label: 'Manual', value: 'manual' },
   { label: 'From wireops.yaml', value: 'wireops_file' },
+  { label: 'Single file (x-wireops)', value: 'compose_embedded' },
 ]
 
 const repoOptions = computed(() =>
@@ -169,19 +173,25 @@ async function loadStackFiles(repoId: string) {
 
 async function loadWireopsFiles(repoId: string) {
   const requestedRepo = repoId
+  const requestedMode = creationMode.value
   loadingWireopsFiles.value = true
   try {
-    const files = await getWireopsFiles(repoId)
-    if (form.value.repository !== requestedRepo) return
+    const files = requestedMode === 'compose_embedded'
+      ? await getComposeWireopsFiles(repoId)
+      : await getWireopsFiles(repoId)
+    if (form.value.repository !== requestedRepo || creationMode.value !== requestedMode) return
     wireopsFiles.value = files || []
     selectedWireopsFile.value = wireopsFiles.value.length === 1 ? wireopsFiles.value[0]! : ''
   } catch {
-    if (form.value.repository !== requestedRepo) return
-    toast.add({ title: 'Failed to fetch wireops.yaml files', color: 'error' })
+    if (form.value.repository !== requestedRepo || creationMode.value !== requestedMode) return
+    toast.add({
+      title: requestedMode === 'compose_embedded' ? 'Failed to fetch compose files with x-wireops' : 'Failed to fetch wireops.yaml files',
+      color: 'error',
+    })
     wireopsFiles.value = []
     selectedWireopsFile.value = ''
   } finally {
-    if (form.value.repository === requestedRepo) {
+    if (form.value.repository === requestedRepo && creationMode.value === requestedMode) {
       loadingWireopsFiles.value = false
     }
   }
@@ -220,16 +230,19 @@ watch(selectedWireopsFile, async (file) => {
   if (!file || !form.value.repository) return
   const requestedFile = file
   const requestedRepo = form.value.repository
+  const requestedMode = creationMode.value
   loadingDefinition.value = true
   try {
-    const def = await getWireopsDefinitionFromFile(requestedRepo, file)
-    if (selectedWireopsFile.value !== requestedFile || form.value.repository !== requestedRepo) return
+    const def = requestedMode === 'compose_embedded'
+      ? await getComposeDefinitionFromFile(requestedRepo, file)
+      : await getWireopsDefinitionFromFile(requestedRepo, file)
+    if (selectedWireopsFile.value !== requestedFile || form.value.repository !== requestedRepo || creationMode.value !== requestedMode) return
     wireopsDefinition.value = def
   } catch (e: any) {
-    if (selectedWireopsFile.value !== requestedFile || form.value.repository !== requestedRepo) return
-    definitionErrors.value = e?.data?.errors || [e?.message || 'Invalid wireops.yaml']
+    if (selectedWireopsFile.value !== requestedFile || form.value.repository !== requestedRepo || creationMode.value !== requestedMode) return
+    definitionErrors.value = e?.data?.errors || [e?.message || (requestedMode === 'compose_embedded' ? 'Invalid x-wireops block' : 'Invalid wireops.yaml')]
   } finally {
-    if (selectedWireopsFile.value === requestedFile && form.value.repository === requestedRepo) {
+    if (selectedWireopsFile.value === requestedFile && form.value.repository === requestedRepo && creationMode.value === requestedMode) {
       loadingDefinition.value = false
     }
   }
@@ -241,7 +254,7 @@ const currentStep = computed(() => Number(route.query.stack_step) || 1)
 // expects. Derived here rather than only inside handleSubmit so the lint step
 // can point at exactly the file that is about to be created.
 const composeTarget = computed<{ compose_path: string; compose_file: string } | null>(() => {
-  if (creationMode.value === 'wireops_file') {
+  if (creationMode.value !== 'manual') {
     const def = wireopsDefinition.value
     if (!def || def.resolution_error || !def.resolved_compose_file) return null
     return {
@@ -297,7 +310,11 @@ function stepUi(stepNumber: number) {
 const stepperItems = computed(() => [
   {
     title: 'Basic Info',
-    description: creationMode.value === 'manual' ? 'Name & Repository' : 'Repository & wireops.yaml',
+    description: creationMode.value === 'manual'
+      ? 'Name & Repository'
+      : creationMode.value === 'compose_embedded'
+        ? 'Repository & compose file'
+        : 'Repository & wireops.yaml',
     icon: currentStep.value > 1 ? 'i-lucide-check' : 'i-lucide-info',
     ui: stepUi(1),
   },
@@ -497,23 +514,33 @@ async function handleSubmit() {
   saving.value = true
   try {
     let stackId: string
-    if (creationMode.value === 'wireops_file') {
+    if (creationMode.value !== 'manual') {
       const def = wireopsDefinition.value
       if (!def || def.resolution_error) {
-        createErrors.value.wireops_file = def?.resolution_error || 'Select a valid wireops.yaml file'
+        createErrors.value.wireops_file = def?.resolution_error
+          || (creationMode.value === 'compose_embedded' ? 'Select a valid compose file with an x-wireops block' : 'Select a valid wireops.yaml file')
         return
       }
 
-      // Every wireops.yaml-derived field (name, compose path/file, flags) is
-      // computed server-side by re-parsing the file — the client only picks
-      // repository/worker and points at the file path. This preview (`def`)
-      // is display-only and never sent as the source of truth.
-      const created = await createStackFromWireops({
-        repository: form.value.repository,
-        worker: form.value.worker,
-        wireops_file: selectedWireopsFile.value,
-        paused: hasPendingEnvVars,
-      })
+      // Every wireops.yaml/x-wireops-derived field (name, compose path/file,
+      // flags) is computed server-side by re-parsing the file — the client
+      // only picks repository/worker and points at the file path. This
+      // preview (`def`) is display-only and never sent as the source of
+      // truth.
+      const created = creationMode.value === 'compose_embedded'
+        ? await createStackFromCompose({
+            repository: form.value.repository,
+            worker: form.value.worker,
+            compose_path: def.resolved_compose_path || '.',
+            compose_file: def.resolved_compose_file!,
+            paused: hasPendingEnvVars,
+          })
+        : await createStackFromWireops({
+            repository: form.value.repository,
+            worker: form.value.worker,
+            wireops_file: selectedWireopsFile.value,
+            paused: hasPendingEnvVars,
+          })
       stackId = created.id
     } else {
       const target = composeTarget.value
@@ -659,12 +686,12 @@ async function handleSubmit() {
               </template>
 
               <template v-else>
-                <UFormField label="wireops.yaml file" required>
+                <UFormField :label="creationMode === 'compose_embedded' ? 'Compose file (with x-wireops)' : 'wireops.yaml file'" required>
                   <div class="flex items-center gap-2">
                     <AppSelectInput
                       v-model="selectedWireopsFile"
                       :items="wireopsFileOptions"
-                      placeholder="Select a wireops.yaml file"
+                      :placeholder="creationMode === 'compose_embedded' ? 'Select a compose file' : 'Select a wireops.yaml file'"
                       :disabled="!form.repository || loadingWireopsFiles"
                       class="flex-1"
                     />
@@ -675,20 +702,20 @@ async function handleSubmit() {
                   v-if="!loadingWireopsFiles && form.repository && wireopsFiles.length === 0"
                   color="warning"
                   icon="i-lucide-triangle-alert"
-                  title="No wireops.yaml found"
-                  description="No wireops.yaml or wireops.yml file was found in this repository."
+                  :title="creationMode === 'compose_embedded' ? 'No compose file with x-wireops found' : 'No wireops.yaml found'"
+                  :description="creationMode === 'compose_embedded' ? 'No compose file with a top-level x-wireops block was found in this repository.' : 'No wireops.yaml or wireops.yml file was found in this repository.'"
                 />
 
                 <div v-if="loadingDefinition" class="flex items-center gap-2 text-sm text-gray-500">
                   <UIcon name="i-lucide-loader-2" class="w-4 h-4 animate-spin" />
-                  Parsing wireops.yaml...
+                  {{ creationMode === 'compose_embedded' ? 'Parsing x-wireops block...' : 'Parsing wireops.yaml...' }}
                 </div>
 
                 <UAlert
                   v-else-if="definitionErrors.length"
                   color="error"
                   icon="i-lucide-triangle-alert"
-                  title="Invalid wireops.yaml"
+                  :title="creationMode === 'compose_embedded' ? 'Invalid x-wireops block' : 'Invalid wireops.yaml'"
                 >
                   <template #description>
                     <ul class="list-disc list-inside">
@@ -709,7 +736,7 @@ async function handleSubmit() {
                     <div class="flex items-center gap-2 text-gray-900 dark:text-wire-200 font-medium">
                       <UIcon name="i-lucide-tag" class="w-4 h-4" />
                       <span>{{ wireopsDefinition.name }}</span>
-                      <span class="text-xs font-normal text-gray-500">(name is set by wireops.yaml, not editable here)</span>
+                      <span class="text-xs font-normal text-gray-500">(name is set by {{ creationMode === 'compose_embedded' ? 'the x-wireops block' : 'wireops.yaml' }}, not editable here)</span>
                     </div>
                     <div class="flex items-center gap-2 text-gray-700 dark:text-wire-200">
                       <UIcon name="i-lucide-file-code" class="w-4 h-4" />
@@ -833,7 +860,7 @@ async function handleSubmit() {
             <div class="flex justify-between items-center w-full gap-2">
               <UButton v-if="currentStep > 1" label="Back" variant="outline" icon="i-lucide-arrow-left" @click="prevStep" />
               <UButton
-                v-else-if="creationMode === 'wireops_file' && form.repository"
+                v-else-if="creationMode !== 'manual' && form.repository"
                 label="Sync Repository"
                 variant="outline"
                 icon="i-lucide-refresh-cw"

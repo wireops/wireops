@@ -163,6 +163,43 @@ func TestScaffoldNewStackWithImageHintEmbedsIt(t *testing.T) {
 	}
 }
 
+// Default (no two_file argument): the primary, recommended path — single
+// compose file with an embedded x-wireops block, created via from-compose.
+func TestScaffoldNewStackDefaultsToXWireopsAndFromCompose(t *testing.T) {
+	handler := scaffoldNewStack()
+	result, err := handler(context.Background(), &mcp.GetPromptRequest{
+		Params: &mcp.GetPromptParams{Name: "scaffold_new_stack", Arguments: map[string]string{"app_description": "a blog"}},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text, ok := result.Messages[0].Content.(*mcp.TextContent)
+	if !ok {
+		t.Fatalf("expected TextContent, got %T", result.Messages[0].Content)
+	}
+	if !strings.Contains(text.Text, "two_file left false") || !strings.Contains(text.Text, "from-compose") {
+		t.Fatalf("expected prompt to default to two_file left false and from-compose, got: %s", text.Text)
+	}
+}
+
+// two_file: true opts into the legacy two-file layout.
+func TestScaffoldNewStackTwoFileHintsAtSeparateWireopsFile(t *testing.T) {
+	handler := scaffoldNewStack()
+	result, err := handler(context.Background(), &mcp.GetPromptRequest{
+		Params: &mcp.GetPromptParams{Name: "scaffold_new_stack", Arguments: map[string]string{"app_description": "a blog", "two_file": "true"}},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text, ok := result.Messages[0].Content.(*mcp.TextContent)
+	if !ok {
+		t.Fatalf("expected TextContent, got %T", result.Messages[0].Content)
+	}
+	if !strings.Contains(text.Text, "two_file: true") || !strings.Contains(text.Text, "from-wireops") {
+		t.Fatalf("expected prompt to instruct two_file:true and from-wireops, got: %s", text.Text)
+	}
+}
+
 func TestScaffoldNewStackExplainsConfigMountRules(t *testing.T) {
 	handler := scaffoldNewStack()
 	result, err := handler(context.Background(), &mcp.GetPromptRequest{

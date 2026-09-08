@@ -631,6 +631,63 @@ func (rr routeRegistrar) registerRepositoryRoutes() {
 		return e.JSON(http.StatusOK, def)
 	}).BindFunc(rbac.Require(rbac.CapManageRepos))
 
+	rr.r.GET("/api/custom/repositories/{id}/compose-wireops-files", func(e *core.RequestEvent) error {
+		repoDir, ok := rr.repoFilesSetup(e)
+		if !ok {
+			return nil
+		}
+		files, err := rr.listYAMLFiles(repoDir, func(data []byte) bool {
+			return compose.IsComposeFile(data) && manifest.HasEmbeddedXWireops(data)
+		})
+		if err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to list files"})
+		}
+		if files == nil {
+			files = []string{}
+		}
+		return e.JSON(http.StatusOK, files)
+	}).BindFunc(rbac.Require(rbac.CapManageRepos))
+
+	rr.r.GET("/api/custom/repositories/{id}/compose-definition", func(e *core.RequestEvent) error {
+		repoDir, ok := rr.repoFilesSetup(e)
+		if !ok {
+			return nil
+		}
+
+		composeFile := e.Request.URL.Query().Get("file")
+		if composeFile == "" {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "missing file parameter"})
+		}
+		cleanComposeFile, cerr := safepath.CleanRelativePath(composeFile)
+		if cerr != nil {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid file path %q: %v", composeFile, cerr)})
+		}
+
+		data, err := os.ReadFile(filepath.Join(repoDir, cleanComposeFile))
+		if err != nil {
+			return e.JSON(http.StatusNotFound, map[string]string{"error": "compose file not found"})
+		}
+
+		def, err := manifest.ParseComposeManifest(data)
+		if err != nil {
+			return e.JSON(http.StatusUnprocessableEntity, map[string]any{
+				"error":  err.Error(),
+				"errors": wireopsValidationErrors(err),
+			})
+		}
+		if def == nil {
+			return e.JSON(http.StatusUnprocessableEntity, map[string]string{"error": "compose file has no x-wireops block"})
+		}
+
+		def.ResolvedComposePath = filepath.Dir(cleanComposeFile)
+		if def.ResolvedComposePath == "." {
+			def.ResolvedComposePath = ""
+		}
+		def.ResolvedComposeFile = filepath.Base(cleanComposeFile)
+
+		return e.JSON(http.StatusOK, def)
+	}).BindFunc(rbac.Require(rbac.CapManageRepos))
+
 	rr.r.POST("/api/custom/repositories/{id}/sync", func(e *core.RequestEvent) error {
 		repoDir, ok := rr.repoFilesSetup(e)
 		if !ok {

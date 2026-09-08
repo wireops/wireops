@@ -25,8 +25,11 @@ function setupGlobals() {
 
   const getWireopsFiles = vi.fn().mockResolvedValue(['wireops.yaml'])
   const getWireopsDefinitionFromFile = vi.fn()
+  const getComposeWireopsFiles = vi.fn().mockResolvedValue(['docker-compose.yml'])
+  const getComposeDefinitionFromFile = vi.fn()
   const getStackFiles = vi.fn().mockResolvedValue(['docker-compose.yml'])
   const createStackFromWireops = vi.fn().mockResolvedValue({ id: 'stack-1', name: 'api', status: 'pending' })
+  const createStackFromCompose = vi.fn().mockResolvedValue({ id: 'stack-1', name: 'api', status: 'pending' })
   // Worker tags come from the live /api/custom/workers route (reported by
   // the worker agent via WORKER_TAGS), not a raw PocketBase collection field.
   const getWorkers = vi.fn().mockResolvedValue([
@@ -41,7 +44,10 @@ function setupGlobals() {
     getStackFiles,
     getWireopsFiles,
     getWireopsDefinitionFromFile,
+    getComposeWireopsFiles,
+    getComposeDefinitionFromFile,
     createStackFromWireops,
+    createStackFromCompose,
     getWorkers,
     lintCompose,
     customPost,
@@ -58,7 +64,7 @@ function setupGlobals() {
     return { data, refresh }
   }
 
-  return { createStack, updateStack, getWireopsFiles, getWireopsDefinitionFromFile, getStackFiles, getWorkers, createStackFromWireops, lintCompose, customPost, toastAdd, push, queryState }
+  return { createStack, updateStack, getWireopsFiles, getWireopsDefinitionFromFile, getComposeWireopsFiles, getComposeDefinitionFromFile, getStackFiles, getWorkers, createStackFromWireops, createStackFromCompose, lintCompose, customPost, toastAdd, push, queryState }
 }
 
 const stubs = {
@@ -357,6 +363,63 @@ describe('CreateStackModal', () => {
       wireops_file: 'wireops.yaml',
       paused: false,
     })
+  })
+
+  it('compose_embedded mode previews the x-wireops block and submits compose_path/compose_file, never wireops_file', async () => {
+    const { getComposeWireopsFiles, getComposeDefinitionFromFile, createStackFromCompose, createStackFromWireops } = setupGlobals()
+    getComposeDefinitionFromFile.mockResolvedValue({
+      version: 'wireops.v1',
+      name: 'api',
+      deploy_timeout_seconds: 300,
+      compose: { remove_orphans: true, force_pull: false },
+      jobs: { wait_running: false },
+      worker: { tags: [] },
+      resolved_compose_path: '.',
+      resolved_compose_file: 'docker-compose.yml',
+    })
+
+    const wrapper = await openInWireopsMode()
+
+    const singleFileButton = wrapper.findAll('button').find(b => b.text() === 'Single file (x-wireops)')
+    await singleFileButton!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Compose file (with x-wireops)')
+    expect(wrapper.findAll('label').some(l => l.text() === 'Name')).toBe(false)
+
+    const repoSelect = wrapper.findAll('select')[0]!
+    await repoSelect.setValue('repo-1')
+    await flushPromises()
+
+    expect(getComposeWireopsFiles).toHaveBeenCalledWith('repo-1')
+
+    const fileSelect = wrapper.findAll('select').find(s => s.findAll('option').some(o => o.text() === 'docker-compose.yml'))
+    await fileSelect!.setValue('docker-compose.yml')
+    await flushPromises()
+
+    expect(getComposeDefinitionFromFile).toHaveBeenCalledWith('repo-1', 'docker-compose.yml')
+    expect(wrapper.text()).toContain('api')
+    expect(wrapper.text()).toContain('the x-wireops block')
+
+    const nextButton = wrapper.findAll('button').find(b => b.text() === 'Next')
+    await nextButton!.trigger('click')
+    await flushPromises()
+
+    const workerSelect = wrapper.findAll('select').find(s => s.findAll('option').some(o => o.text() === 'worker-a'))
+    await workerSelect!.setValue('worker-1')
+
+    await skipEnvVarsIntoReviewStep(wrapper)
+    await wrapper.find('form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createStackFromCompose).toHaveBeenCalledWith({
+      repository: 'repo-1',
+      worker: 'worker-1',
+      compose_path: '.',
+      compose_file: 'docker-compose.yml',
+      paused: false,
+    })
+    expect(createStackFromWireops).not.toHaveBeenCalled()
   })
 
   it('manual mode still shows an editable Name and creates via the raw stacks collection', async () => {
