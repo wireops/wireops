@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed, nextTick, onMounted, ref } from 'vue'
 import { AUTH_TYPE, GIT_PROVIDER } from '~/constants/repositoryAuth'
 
 const { $pb } = useNuxtApp()
