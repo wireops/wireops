@@ -18,7 +18,7 @@ func TestEvaluatePostCheckAllHealthy(t *testing.T) {
 		{ServiceName: "db", Status: "running", Health: "none"},
 	}
 
-	res := evaluatePostCheck(expected, statuses)
+	res := evaluatePostCheck(expected, nil, statuses)
 	if res.Status != "active" {
 		t.Fatalf("status = %q, want active; detail=%s", res.Status, res.Detail)
 	}
@@ -31,7 +31,7 @@ func TestEvaluatePostCheckMissingContainer(t *testing.T) {
 		// db never came up at all.
 	}
 
-	res := evaluatePostCheck(expected, statuses)
+	res := evaluatePostCheck(expected, nil, statuses)
 	if res.Status != "degraded" {
 		t.Fatalf("status = %q, want degraded; detail=%s", res.Status, res.Detail)
 	}
@@ -47,7 +47,7 @@ func TestEvaluatePostCheckAllMissingIsError(t *testing.T) {
 		{ServiceName: "db", Status: "exited", Health: "none"},
 	}
 
-	res := evaluatePostCheck(expected, statuses)
+	res := evaluatePostCheck(expected, nil, statuses)
 	if res.Status != "error" {
 		t.Fatalf("status = %q, want error; detail=%s", res.Status, res.Detail)
 	}
@@ -60,7 +60,7 @@ func TestEvaluatePostCheckUnhealthyIsDegraded(t *testing.T) {
 		{ServiceName: "db", Status: "running", Health: "unhealthy"},
 	}
 
-	res := evaluatePostCheck(expected, statuses)
+	res := evaluatePostCheck(expected, nil, statuses)
 	if res.Status != "degraded" {
 		t.Fatalf("status = %q, want degraded; detail=%s", res.Status, res.Detail)
 	}
@@ -81,7 +81,7 @@ func TestEvaluatePostCheckRestartLoopIsDegraded(t *testing.T) {
 		},
 	}
 
-	res := evaluatePostCheck(expected, statuses)
+	res := evaluatePostCheck(expected, nil, statuses)
 	if res.Status != "error" {
 		// With only one expected service and it looping, 0/1 are "ok" -> error.
 		t.Fatalf("status = %q, want error (single looping service); detail=%s", res.Status, res.Detail)
@@ -103,7 +103,7 @@ func TestEvaluatePostCheckOldRestartsDoNotCountAsLooping(t *testing.T) {
 		},
 	}
 
-	res := evaluatePostCheck(expected, statuses)
+	res := evaluatePostCheck(expected, nil, statuses)
 	if res.Status != "active" {
 		t.Fatalf("status = %q, want active (restarts are old, container is stable now); detail=%s", res.Status, res.Detail)
 	}
@@ -115,7 +115,7 @@ func TestEvaluatePostCheckNoHealthcheckDefined(t *testing.T) {
 		{ServiceName: "web", Status: "running", Health: "none"},
 	}
 
-	res := evaluatePostCheck(expected, statuses)
+	res := evaluatePostCheck(expected, nil, statuses)
 	if res.Status != "active" {
 		t.Fatalf("status = %q, want active (no healthcheck defined should not block)", res.Status)
 	}
@@ -130,9 +130,107 @@ func TestEvaluatePostCheckOrphanServiceIgnored(t *testing.T) {
 		{ServiceName: "orphan", Status: "running", Health: "healthy"},
 	}
 
-	res := evaluatePostCheck(expected, statuses)
+	res := evaluatePostCheck(expected, nil, statuses)
 	if res.Status != "active" {
 		t.Fatalf("status = %q, want active", res.Status)
+	}
+}
+
+func TestEvaluatePostCheckInitServiceExitZeroIsActive(t *testing.T) {
+	expected := []string{"web", "migrate"}
+	initSet := map[string]bool{"migrate": true}
+	statuses := []compose.ServiceStatus{
+		{ServiceName: "web", Status: "running", Health: "healthy"},
+		{ServiceName: "migrate", Status: "exited", ExitCode: 0},
+	}
+
+	res := evaluatePostCheck(expected, initSet, statuses)
+	if res.Status != "active" {
+		t.Fatalf("status = %q, want active (init container exited cleanly); detail=%s", res.Status, res.Detail)
+	}
+}
+
+func TestEvaluatePostCheckInitServiceAbsentIsActive(t *testing.T) {
+	// Docker removes short-lived containers after exit in some configs, so
+	// the init service may not show up in the status list at all.
+	expected := []string{"web", "migrate"}
+	initSet := map[string]bool{"migrate": true}
+	statuses := []compose.ServiceStatus{
+		{ServiceName: "web", Status: "running", Health: "healthy"},
+	}
+
+	res := evaluatePostCheck(expected, initSet, statuses)
+	if res.Status != "active" {
+		t.Fatalf("status = %q, want active (init container absent = completed); detail=%s", res.Status, res.Detail)
+	}
+}
+
+func TestEvaluatePostCheckInitServiceNonZeroExitIsDegraded(t *testing.T) {
+	expected := []string{"web", "migrate"}
+	initSet := map[string]bool{"migrate": true}
+	statuses := []compose.ServiceStatus{
+		{ServiceName: "web", Status: "running", Health: "healthy"},
+		{ServiceName: "migrate", Status: "exited", ExitCode: 1},
+	}
+
+	res := evaluatePostCheck(expected, initSet, statuses)
+	if res.Status != "degraded" {
+		t.Fatalf("status = %q, want degraded (init container exited non-zero); detail=%s", res.Status, res.Detail)
+	}
+}
+
+func TestEvaluatePostCheckInitServiceRestartLoopIsDegraded(t *testing.T) {
+	expected := []string{"web", "migrate"}
+	initSet := map[string]bool{"migrate": true}
+	statuses := []compose.ServiceStatus{
+		{ServiceName: "web", Status: "running", Health: "healthy"},
+		{
+			ServiceName:  "migrate",
+			Status:       "running",
+			RestartCount: 5,
+			StartedAt:    time.Now().UTC().Format(time.RFC3339Nano),
+		},
+	}
+
+	res := evaluatePostCheck(expected, initSet, statuses)
+	if res.Status != "degraded" {
+		t.Fatalf("status = %q, want degraded (init container restart looping); detail=%s", res.Status, res.Detail)
+	}
+	if !strings.Contains(res.Detail, "restart looping") {
+		t.Fatalf("detail = %q, want it to mention restart looping", res.Detail)
+	}
+}
+
+func TestEvaluatePostCheckInitServiceStillCreatedIsNotYetHealthy(t *testing.T) {
+	// An init container that hasn't started running yet ("created") must not
+	// be treated as healthy just because it isn't "exited" non-zero — that
+	// would let postDeployCheck report "active" before the job even ran.
+	expected := []string{"web", "migrate"}
+	initSet := map[string]bool{"migrate": true}
+	statuses := []compose.ServiceStatus{
+		{ServiceName: "web", Status: "running", Health: "healthy"},
+		{ServiceName: "migrate", Status: "created"},
+	}
+
+	res := evaluatePostCheck(expected, initSet, statuses)
+	if res.Status == "active" {
+		t.Fatalf("status = %q, want not-active (init container hasn't started running yet); detail=%s", res.Status, res.Detail)
+	}
+}
+
+func TestEvaluatePostCheckNonInitServiceExitedStillDegrades(t *testing.T) {
+	// Sanity check: a service not marked as init must not benefit from the
+	// init-container exemption.
+	expected := []string{"web", "worker"}
+	initSet := map[string]bool{}
+	statuses := []compose.ServiceStatus{
+		{ServiceName: "web", Status: "running", Health: "healthy"},
+		{ServiceName: "worker", Status: "exited", ExitCode: 0},
+	}
+
+	res := evaluatePostCheck(expected, initSet, statuses)
+	if res.Status != "degraded" {
+		t.Fatalf("status = %q, want degraded (non-init service exited); detail=%s", res.Status, res.Detail)
 	}
 }
 

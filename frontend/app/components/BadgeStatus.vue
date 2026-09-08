@@ -27,6 +27,7 @@ const statusColor = computed(() => {
     case 'degraded':
       return 'warning'
     case 'noop':
+    case 'completed':
       return 'neutral'
     case 'syncing':
       return 'primary'
@@ -63,6 +64,8 @@ const statusIcon = computed(() => {
       return 'i-lucide-alert-circle'
     case 'noop':
       return 'i-lucide-minus-circle'
+    case 'completed':
+      return 'i-lucide-check-circle-2'
     case 'syncing':
       return 'i-lucide-refresh-cw'
     default:

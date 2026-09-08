@@ -11,6 +11,17 @@ interface ServiceContainer {
   container_name?: string
   status: string
   ports?: PortInfo[]
+  exit_code?: number | null
+  is_init?: boolean | null
+}
+
+// An init/one-shot container that ran to completion (exit 0) is healthy, not
+// "exited" the way a crashed long-running service is - show it as such.
+function displayStatus(container: ServiceContainer): string {
+  if (container.is_init && container.status === 'exited' && container.exit_code === 0) {
+    return 'completed'
+  }
+  return container.status
 }
 
 interface ContainerStats {
@@ -469,7 +480,7 @@ watch(() => props.services, (services) => {
                   </span>
 
                   <!-- Status badge -->
-                  <BadgeStatus :status="container.status" mobile-icon-only class="shrink-0" />
+                  <BadgeStatus :status="displayStatus(container)" mobile-icon-only class="shrink-0" />
 
                   <!-- Container ID as code -->
                   <code class="hidden sm:inline-flex text-xs font-mono text-gray-400 dark:text-gray-500 bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded shrink-0">

@@ -31,6 +31,7 @@ describe('BadgeStatus', () => {
     ['stalled', 'warning'],
     ['degraded', 'warning'],
     ['noop', 'neutral'],
+    ['completed', 'neutral'],
     ['syncing', 'primary'],
     ['something-unknown', 'neutral'],
   ])('maps status %s to color %s', (status, color) => {
@@ -59,6 +60,7 @@ describe('BadgeStatus', () => {
     ['pending', 'i-lucide-clock'],
     ['stalled', 'i-lucide-alert-circle'],
     ['noop', 'i-lucide-minus-circle'],
+    ['completed', 'i-lucide-check-circle-2'],
     ['syncing', 'i-lucide-refresh-cw'],
     ['something-unknown', 'i-lucide-circle'],
   ])('renders an icon-only badge for status %s when mobileIconOnly is set', (status, icon) => {
