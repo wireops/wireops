@@ -1,10 +1,13 @@
 <script setup lang="ts">
+import { computed, nextTick, onMounted, ref } from 'vue'
 import { AUTH_TYPE, GIT_PROVIDER } from '~/constants/repositoryAuth'
 
 const { $pb } = useNuxtApp()
 const { canManageRepos } = usePermissions()
 const { subscribe } = useRealtime()
+const { connect } = useGitProviderOAuth()
 const toast = useToast()
+const reconnectingKeyId = ref<string | undefined>()
 
 const search = ref('')
 const showModal = ref(false)
@@ -70,6 +73,32 @@ function keyMeta(key: Record<string, any>): KeyMeta {
   if (isGithubKey(key)) return GITHUB_META
   if (isGitlabKey(key)) return GITLAB_META
   return AUTH_TYPE_META[key.auth_type] ?? DEFAULT_META
+}
+
+function needsReconnect(key: Record<string, any>): boolean {
+  return (isGithubKey(key) || isGitlabKey(key)) && !!key.oauth_refresh_error
+}
+
+async function reconnectKey(key: Record<string, any>) {
+  if (reconnectingKeyId.value) return
+  reconnectingKeyId.value = key.id
+  try {
+    const result = await connect(key.oauth_provider)
+    if (result) {
+      toast.add({ title: `Reconnected as @${result.login}`, color: 'success' })
+      await refresh()
+    } else {
+      toast.add({ title: 'Reconnect cancelled', color: 'warning' })
+    }
+  } catch (error: any) {
+    toast.add({
+      title: 'Failed to reconnect',
+      description: error?.response?.message || error?.message,
+      color: 'error',
+    })
+  } finally {
+    reconnectingKeyId.value = undefined
+  }
 }
 
 function keySubtitle(key: Record<string, any>): string {
@@ -161,12 +190,23 @@ defineExpose({
             <div class="flex items-center gap-2">
               <h4 class="font-semibold truncate">{{ key.name }}</h4>
               <UBadge color="neutral" variant="soft">{{ keyMeta(key).label }}</UBadge>
+              <UBadge v-if="needsReconnect(key)" color="error" variant="soft">Reconnect required</UBadge>
             </div>
             <p class="text-sm text-gray-500 truncate">
               {{ keySubtitle(key) }} · {{ usage[key.id] || 0 }} repositories
             </p>
           </div>
           <div v-if="canManageRepos" class="flex items-center gap-1">
+            <UButton
+              v-if="needsReconnect(key)"
+              label="Reconnect"
+              icon="i-lucide-refresh-cw"
+              variant="soft"
+              color="error"
+              :loading="reconnectingKeyId === key.id"
+              :disabled="!!reconnectingKeyId && reconnectingKeyId !== key.id"
+              @click="reconnectKey(key)"
+            />
             <UButton
               v-if="key.auth_type !== AUTH_TYPE.OAUTH_TOKEN"
               icon="i-lucide-pencil"

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/pocketbase/pocketbase/core"
 
@@ -23,12 +24,15 @@ import (
 func (rr routeRegistrar) registerGitProviderRoutes() {
 	rr.r.GET("/api/custom/git-providers", func(e *core.RequestEvent) error {
 		type providerOut struct {
-			Slug         string `json:"slug"`
-			Name         string `json:"name"`
-			Configured   bool   `json:"configured"`
-			Connected    bool   `json:"connected"`
-			AccountLogin string `json:"account_login,omitempty"`
-			KeyID        string `json:"key_id,omitempty"`
+			Slug           string `json:"slug"`
+			Name           string `json:"name"`
+			Configured     bool   `json:"configured"`
+			Connected      bool   `json:"connected"`
+			AccountLogin   string `json:"account_login,omitempty"`
+			KeyID          string `json:"key_id,omitempty"`
+			NeedsReconnect bool   `json:"needs_reconnect,omitempty"`
+			TokenExpiresAt string `json:"token_expires_at,omitempty"`
+			LastRefreshAt  string `json:"last_refresh_at,omitempty"`
 		}
 		var out []providerOut
 		for _, p := range gitprovider.All() {
@@ -37,6 +41,20 @@ func (rr routeRegistrar) registerGitProviderRoutes() {
 				item.Connected = true
 				item.KeyID = key.Id
 				item.AccountLogin = key.GetString("oauth_account_login")
+				// oauth_refresh_error is set by the lazy refresh in
+				// credential_store.go and the oauth_token_refresh cron sweep
+				// (internal/git/refresher.go) only once a refresh has
+				// permanently failed past the token's real expiry — a
+				// non-empty value means the stored refresh_token can no
+				// longer redeem a working access token and the user must
+				// reconnect through the OAuth flow.
+				item.NeedsReconnect = key.GetString("oauth_refresh_error") != ""
+				if expiresAt := key.GetDateTime("oauth_token_expires_at"); !expiresAt.IsZero() {
+					item.TokenExpiresAt = expiresAt.String()
+				}
+				if lastRefresh := key.GetDateTime("oauth_last_refresh_at"); !lastRefresh.IsZero() {
+					item.LastRefreshAt = lastRefresh.String()
+				}
 			}
 			out = append(out, item)
 		}
@@ -231,6 +249,11 @@ func (rr routeRegistrar) upsertOAuthRepositoryKey(provider gitprovider.Provider,
 		rec.Set("oauth_provider", provider.Slug())
 		rec.Set("oauth_token", encryptedToken)
 		rec.Set("oauth_account_login", token.AccountLogin)
+		// A fresh manual connect always yields a redeemable token: clear any
+		// stale "reconnect required" state a prior dead refresh_token left
+		// behind, and record the reconnect itself as a refresh.
+		rec.Set("oauth_refresh_error", "")
+		rec.Set("oauth_last_refresh_at", time.Now())
 		if encryptedRefresh != "" {
 			rec.Set("oauth_refresh_token", encryptedRefresh)
 		}

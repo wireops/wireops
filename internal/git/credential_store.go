@@ -2,6 +2,7 @@ package git
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -182,6 +183,14 @@ func refreshOAuthTokenIfNeeded(ctx context.Context, app core.App, record *core.R
 		if time.Now().Before(expiresAt) {
 			return currentToken, nil
 		}
+		// Only a confirmed provider rejection (refresh_token consumed/
+		// invalid) means the credential is actually dead — a transport-level
+		// failure (network blip, provider outage) happening to coincide with
+		// the token's real expiry shouldn't flip "reconnect required" on for
+		// what the very next tick might resolve on its own.
+		if errors.Is(err, gitprovider.ErrRefreshRejected) {
+			persistRefreshError(app, record.Id, expiresAt, err.Error())
+		}
 		return "", err
 	}
 	return result.(string), nil
@@ -251,11 +260,37 @@ func doRefreshOAuthToken(ctx context.Context, app core.App, keyID string, provid
 	if newToken.AccountLogin != "" {
 		record.Set("oauth_account_login", newToken.AccountLogin)
 	}
+	record.Set("oauth_last_refresh_at", time.Now())
+	record.Set("oauth_refresh_error", "")
 	if err := app.Save(record); err != nil {
 		return "", fmt.Errorf("persist refreshed oauth token: %w", err)
 	}
 
 	return newToken.AccessToken, nil
+}
+
+// persistRefreshError records a terminal (provider-rejected) refresh failure
+// on keyID's repository_keys row so callers like the git-providers status
+// API and the background refresher's next tick can tell "reconnect
+// required" apart from a token that's merely due for its next refresh. Best
+// effort: swallows its own save error — losing the status write must never
+// mask the original refresh error being returned to the caller.
+//
+// expectedExpiresAt is the oauth_token_expires_at the failing attempt was
+// acting on; it re-fetches the record fresh and skips the write if that
+// field has since moved (a concurrent manual reconnect or a later
+// successful refresh already fixed the credential), so a slow-to-persist
+// stale failure can't clobber a credential that's already healthy again.
+func persistRefreshError(app core.App, keyID string, expectedExpiresAt time.Time, message string) {
+	record, err := app.FindRecordById("repository_keys", keyID)
+	if err != nil {
+		return
+	}
+	if !record.GetDateTime("oauth_token_expires_at").Time().Equal(expectedExpiresAt) {
+		return
+	}
+	record.Set("oauth_refresh_error", message)
+	_ = app.Save(record)
 }
 
 // decryptRecordField decrypts a single AES-GCM-encrypted field on a

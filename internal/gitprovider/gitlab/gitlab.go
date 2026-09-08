@@ -9,6 +9,7 @@ package gitlab
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -142,6 +143,10 @@ func (p *Provider) RefreshToken(ctx context.Context, refreshToken string) (*gitp
 
 	tokenResp, err := p.postToken(ctx, form)
 	if err != nil {
+		var oauthErr *oauthProviderError
+		if errors.As(err, &oauthErr) {
+			return nil, fmt.Errorf("%w: gitlab: %s", gitprovider.ErrRefreshRejected, oauthErr)
+		}
 		return nil, err
 	}
 
@@ -159,6 +164,19 @@ func (p *Provider) RefreshToken(ctx context.Context, refreshToken string) (*gitp
 		token.ExpiresAt = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
 	}
 	return token, nil
+}
+
+// oauthProviderError is GitLab's /oauth/token endpoint explicitly rejecting
+// a request (e.g. invalid_grant for a consumed/expired refresh_token), kept
+// as a distinct type from a transport/decode failure so RefreshToken can
+// tell a dead credential apart from a transient blip worth retrying.
+type oauthProviderError struct {
+	Code string
+	Desc string
+}
+
+func (e *oauthProviderError) Error() string {
+	return fmt.Sprintf("%s: %s", e.Code, e.Desc)
 }
 
 func (p *Provider) postToken(ctx context.Context, form url.Values) (*tokenResponse, error) {
@@ -185,7 +203,7 @@ func (p *Provider) postToken(ctx context.Context, form url.Values) (*tokenRespon
 		return nil, fmt.Errorf("gitlab: decode token response: %w", err)
 	}
 	if tokenResp.Error != "" {
-		return nil, fmt.Errorf("gitlab: %s: %s", tokenResp.Error, tokenResp.ErrorDesc)
+		return nil, &oauthProviderError{Code: tokenResp.Error, Desc: tokenResp.ErrorDesc}
 	}
 	if tokenResp.AccessToken == "" {
 		return nil, fmt.Errorf("gitlab: token request returned no access_token")

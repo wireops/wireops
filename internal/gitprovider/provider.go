@@ -45,6 +45,15 @@ type Token struct {
 // tokens — the caller should treat the existing access token as long-lived.
 var ErrRefreshNotSupported = errors.New("gitprovider: token refresh not supported by this provider")
 
+// ErrRefreshRejected is wrapped into the error RefreshToken returns when the
+// provider explicitly rejected the refresh_token (e.g. GitLab's
+// invalid_grant for a consumed/expired one) as opposed to a transient
+// transport-level failure (network blip, timeout, malformed response).
+// Callers use errors.Is against this to decide whether a failed refresh
+// means the credential is permanently dead and needs reconnecting, or just
+// needs to be retried on the next tick.
+var ErrRefreshRejected = errors.New("gitprovider: refresh token rejected by provider")
+
 // Provider is the provider-agnostic contract implemented by each git
 // hosting integration. GitHub is the first implementation; Gitea/Forgejo/
 // GitLab add a new package each, registered via init(), with zero changes
