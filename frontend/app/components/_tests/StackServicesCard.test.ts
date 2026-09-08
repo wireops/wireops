@@ -276,4 +276,34 @@ describe('StackServicesCard', () => {
     expect(wrapper.text()).not.toContain('/tcp')
     expect(wrapper.text()).not.toContain('/udp')
   })
+
+  it('shows a completed badge for an init container that exited cleanly, not exited', async () => {
+    getStackResources.mockResolvedValue({ volumes: [], networks: [] })
+
+    const wrapper = mount(StackServicesCard, {
+      props: {
+        stackId: 'stack-1',
+        services: [
+          {
+            service_name: 'migrate', container_id: 'migrate123456789', container_name: 'migrate-1',
+            status: 'exited', exit_code: 0, is_init: true,
+          },
+          {
+            service_name: 'worker', container_id: 'workerfail123456', container_name: 'worker-1',
+            status: 'exited', exit_code: 1, is_init: true,
+          },
+        ],
+        containerStats: {},
+        integrationActions: {},
+      },
+      global: { stubs },
+    })
+
+    await Promise.resolve()
+    await Promise.resolve()
+
+    const badges = wrapper.findAll('.badge-status').map(b => b.text())
+    expect(badges).toContain('completed')
+    expect(badges).toContain('exited')
+  })
 })

@@ -186,7 +186,8 @@ repositories ─── 1:N ──→ scheduled_jobs ─── 1:N ──→ job_
 4. `sync/renderer.go` reads the compose YAML, injects `dev.wireops.*` labels, and writes a versioned revision file to `DATA_DIR/stacks/<id>/v<n>.yml`.
 5. The server base64-encodes the compose file, sends a `DeployCommand` over WebSocket to the worker assigned to the stack, and waits up to 5 minutes for `CommandResult`.
 6. The worker decodes the compose file and executes `docker compose up`.
-7. Persists a `sync_logs` entry, updates stack status, fires webhook/ntfy notification.
+7. `sync/postcheck.go` queries live container state and derives the stack's post-deploy status (`active`/`degraded`/`error`) via `evaluatePostCheck`. A service labeled `customization.init: "true"` is treated as run-to-completion: exiting 0 (or being gone entirely) counts as healthy, so a one-shot migration/seed container doesn't degrade the stack the way a crashed long-running service would — only a non-zero exit or a restart loop does.
+8. Persists a `sync_logs` entry, updates stack status, fires webhook/ntfy notification.
 
 ### Worker Bootstrap & Communication
 1. Admin generates a token via the UI/API.

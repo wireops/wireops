@@ -10,12 +10,21 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/wireops/wireops/internal/config"
 	"github.com/wireops/wireops/internal/safepath"
 )
+
+// initLabel marks a service as a run-to-completion container (init/migration/
+// one-shot job): it is expected to exit 0 and stay stopped, so it must not be
+// treated as "missing" by post-deploy health checks the way a crashed
+// long-running service would be. Deliberately not in the reserved
+// dev.wireops.* namespace (see internal/sync/renderer.go stripWireopsMetadata)
+// so it passes through the renderer untouched, like customization.image.slug.
+const initLabel = "customization.init"
 
 // ConfigOptions represents options for `docker compose config`
 type ConfigOptions struct {
@@ -287,4 +296,64 @@ func ExpectedServiceNames(data []byte) ([]string, error) {
 		names = append(names, name)
 	}
 	return names, nil
+}
+
+// InitServiceNames extracts the names of services labeled with initLabel
+// (customization.init) from a rendered compose file, used by post-deploy
+// checks to exempt run-to-completion containers from the "must be running"
+// rule applied to regular services.
+func InitServiceNames(data []byte) (map[string]bool, error) {
+	var doc struct {
+		Services map[string]struct {
+			Labels any `yaml:"labels"`
+		} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, fmt.Errorf("failed to parse compose services: %w", err)
+	}
+
+	initServices := make(map[string]bool)
+	for name, svc := range doc.Services {
+		if isLabelTruthy(labelsToMap(svc.Labels), initLabel) {
+			initServices[name] = true
+		}
+	}
+	return initServices, nil
+}
+
+// labelsToMap normalizes a compose `labels` block, which may be authored as
+// either a map (`key: value`) or a list (`["key=value"]`), into a map.
+func labelsToMap(input any) map[string]string {
+	result := make(map[string]string)
+	switch v := input.(type) {
+	case map[string]any:
+		for k, val := range v {
+			result[k] = fmt.Sprintf("%v", val)
+		}
+	case []any:
+		for _, item := range v {
+			s, ok := item.(string)
+			if !ok {
+				continue
+			}
+			parts := strings.SplitN(s, "=", 2)
+			if len(parts) == 2 {
+				result[parts[0]] = parts[1]
+			} else {
+				result[parts[0]] = ""
+			}
+		}
+	}
+	return result
+}
+
+// isLabelTruthy reports whether labels[key] is set to a truthy value
+// ("true", "1", "yes", case-insensitive).
+func isLabelTruthy(labels map[string]string, key string) bool {
+	switch strings.ToLower(labels[key]) {
+	case "true", "1", "yes":
+		return true
+	default:
+		return false
+	}
 }

@@ -43,6 +43,9 @@ func (r *Reconciler) postDeployCheck(ctx context.Context, workerID, stackID, wor
 		log.Printf("[reconciler] post-check: could not determine expected services for stack %s, skipping: %v", stackID, err)
 		return postCheckResult{Status: "active", Detail: "post-check skipped: could not parse expected services from compose"}
 	}
+	// Best-effort: if the compose file can't be parsed for init labels, treat
+	// no service as an init container rather than failing the whole check.
+	initSet, _ := compose.InitServiceNames(composeContent)
 
 	projectName := compose.ProjectName(workDir)
 
@@ -66,7 +69,7 @@ func (r *Reconciler) postDeployCheck(ctx context.Context, workerID, stackID, wor
 			} else {
 				queryErr = nil
 				gotStatus = true
-				if evaluatePostCheck(expected, statuses).Status == "active" {
+				if evaluatePostCheck(expected, initSet, statuses).Status == "active" {
 					return postCheckResult{Status: "active", Detail: fmt.Sprintf("post-check passed: %d/%d services running", len(expected), len(expected))}
 				}
 			}
@@ -86,13 +89,16 @@ func (r *Reconciler) postDeployCheck(ctx context.Context, workerID, stackID, wor
 		return postCheckResult{Status: "active", Detail: "post-check skipped: could not query worker status: " + queryErr.Error()}
 	}
 
-	return evaluatePostCheck(expected, statuses)
+	return evaluatePostCheck(expected, initSet, statuses)
 }
 
 // evaluatePostCheck classifies each expected service as healthy, missing
 // (no container, or present but not running), unhealthy (healthcheck
 // failing), or restart-looping, and derives the overall stack status.
-func evaluatePostCheck(expected []string, statuses []compose.ServiceStatus) postCheckResult {
+// Services named in initSet are run-to-completion containers: they pass as
+// long as they either aren't running yet/anymore with a clean exit (0), or
+// are still running — they only fail on a non-zero exit or a restart loop.
+func evaluatePostCheck(expected []string, initSet map[string]bool, statuses []compose.ServiceStatus) postCheckResult {
 	byService := make(map[string][]compose.ServiceStatus, len(statuses))
 	for _, s := range statuses {
 		byService[s.ServiceName] = append(byService[s.ServiceName], s)
@@ -101,6 +107,18 @@ func evaluatePostCheck(expected []string, statuses []compose.ServiceStatus) post
 	var ok, missing, unhealthy, restartLooping []string
 	for _, name := range expected {
 		instances := byService[name]
+
+		if initSet[name] {
+			if evaluateInitService(instances) {
+				ok = append(ok, name)
+			} else if anyRestartLooping(instances) {
+				restartLooping = append(restartLooping, name)
+			} else {
+				unhealthy = append(unhealthy, name)
+			}
+			continue
+		}
+
 		if len(instances) == 0 {
 			missing = append(missing, name)
 			continue
@@ -147,6 +165,39 @@ func evaluatePostCheck(expected []string, statuses []compose.ServiceStatus) post
 	default:
 		return postCheckResult{Status: "degraded", Detail: detail}
 	}
+}
+
+// evaluateInitService reports whether a run-to-completion service is healthy:
+// absent (completed and removed), still running, or exited cleanly (code 0).
+// It is unhealthy if every instance is stuck in a restart loop or exited
+// non-zero.
+func evaluateInitService(instances []compose.ServiceStatus) bool {
+	if len(instances) == 0 {
+		return true
+	}
+	for _, inst := range instances {
+		if isRestartLooping(inst) {
+			continue
+		}
+		if inst.Status == "exited" {
+			if inst.ExitCode == 0 {
+				return true
+			}
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// anyRestartLooping reports whether any instance is stuck in a restart loop.
+func anyRestartLooping(instances []compose.ServiceStatus) bool {
+	for _, inst := range instances {
+		if isRestartLooping(inst) {
+			return true
+		}
+	}
+	return false
 }
 
 // isRestartLooping reports whether a container has restarted suspiciously

@@ -39,6 +39,12 @@ type ServiceStatus struct {
 	// used alongside RestartCount to judge whether restarts are recent.
 	StartedAt string
 
+	// ExitCode is the container's last exit code (from `docker inspect`
+	// State.ExitCode), meaningful only once the container has exited. Used to
+	// distinguish a cleanly-completed one-shot/init container (0) from a crash
+	// (non-zero) — otherwise both map to Status "exited".
+	ExitCode int
+
 	// Ports lists published/exposed container ports, mapped from the
 	// Docker API's container.Summary.Ports. Nil when the container
 	// defines no ports.
@@ -77,7 +83,7 @@ func GetStackStatus(ctx context.Context, cli *dockerclient.Client, projectName s
 			cID = cID[:12]
 		}
 
-		health, restartCount, startedAt := inspectHealthAndRestarts(ctx, cli, c.ID)
+		health, restartCount, startedAt, exitCode := inspectHealthAndRestarts(ctx, cli, c.ID)
 
 		statuses = append(statuses, ServiceStatus{
 			ServiceName:   serviceName,
@@ -88,6 +94,7 @@ func GetStackStatus(ctx context.Context, cli *dockerclient.Client, projectName s
 			Health:        health,
 			RestartCount:  restartCount,
 			StartedAt:     startedAt,
+			ExitCode:      exitCode,
 			Ports:         mapDockerPorts(c.Ports),
 		})
 	}
@@ -118,10 +125,10 @@ func mapDockerPorts(ports []container.Port) []protocol.PortInfo {
 // restart count for a single container. Errors are swallowed (returning
 // zero values) since this augments best-effort status reporting and must
 // not fail the whole status listing if one container disappears mid-inspect.
-func inspectHealthAndRestarts(ctx context.Context, cli *dockerclient.Client, containerID string) (health string, restartCount int, startedAt string) {
+func inspectHealthAndRestarts(ctx context.Context, cli *dockerclient.Client, containerID string) (health string, restartCount int, startedAt string, exitCode int) {
 	inspect, err := cli.ContainerInspect(ctx, containerID)
 	if err != nil || inspect.State == nil {
-		return "none", 0, ""
+		return "none", 0, "", 0
 	}
 
 	health = "none"
@@ -129,7 +136,7 @@ func inspectHealthAndRestarts(ctx context.Context, cli *dockerclient.Client, con
 		health = inspect.State.Health.Status
 	}
 
-	return health, inspect.RestartCount, inspect.State.StartedAt
+	return health, inspect.RestartCount, inspect.State.StartedAt, inspect.State.ExitCode
 }
 
 func GetContainerStats(ctx context.Context, cli *dockerclient.Client, containerID string) (*ContainerStats, error) {
@@ -354,6 +361,7 @@ func filterIntegrationLabels(labels map[string]string) map[string]string {
 		"traefik.enable",
 		"dozzle.enable",
 		"customization.image.slug",
+		"customization.init",
 	}
 
 	filtered := make(map[string]string)

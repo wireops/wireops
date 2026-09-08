@@ -34,7 +34,7 @@ func Register(server *mcp.Server, c *client.Client) {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_stack_status",
-		Description: "Get a single wireops stack record by id, including its current sync/deploy status. If the stack has active render-time overrides, the response carries a _notice field pointing at get_stack_render_overrides. A status of \"paused\" means git sync/reconcile is disabled for that stack — it says nothing about whether the compose containers are running; check get_stack_services for that.",
+		Description: "Get a single wireops stack record by id, including its current sync/deploy status. If the stack has active render-time overrides, the response carries a _notice field pointing at get_stack_render_overrides. A status of \"paused\" means git sync/reconcile is disabled for that stack — it says nothing about whether the compose containers are running; check get_stack_services for that. A status of \"degraded\" means at least one non-init service isn't healthy — services labeled customization.init (see get_stack_services) are exempt from this and exiting 0 does not degrade the stack.",
 	}, getStackStatus(c))
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -44,7 +44,7 @@ func Register(server *mcp.Server, c *client.Client) {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_stack_services",
-		Description: "List the running containers/services for a wireops stack. This reflects actual container/compose state, independent of the stack's sync status — a \"paused\" stack (git sync disabled) can still have running containers, and a stack that is actively syncing can have stopped containers.",
+		Description: "List the running containers/services for a wireops stack. This reflects actual container/compose state, independent of the stack's sync status — a \"paused\" stack (git sync disabled) can still have running containers, and a stack that is actively syncing can have stopped containers. Each entry carries is_init and exit_code: is_init is true when the service is labeled customization.init (a run-to-completion container such as a migration or seed job). For those, status \"exited\" with exit_code 0 is the expected, healthy end state, not a failure — only a non-zero exit_code or repeated restarts indicate a problem.",
 	}, getStackServices(c))
 
 	mcp.AddTool(server, &mcp.Tool{

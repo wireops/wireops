@@ -124,3 +124,75 @@ services: []
 		})
 	}
 }
+
+func TestInitServiceNames(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  map[string]bool
+	}{
+		{
+			name: "MapFormLabels",
+			input: `
+services:
+  web:
+    image: nginx
+  migrate:
+    image: myapp
+    labels:
+      customization.init: "true"
+`,
+			want: map[string]bool{"migrate": true},
+		},
+		{
+			name: "ListFormLabels",
+			input: `
+services:
+  web:
+    image: nginx
+  migrate:
+    image: myapp
+    labels:
+      - "customization.init=true"
+`,
+			want: map[string]bool{"migrate": true},
+		},
+		{
+			name: "FalsyValueIsNotInit",
+			input: `
+services:
+  migrate:
+    image: myapp
+    labels:
+      customization.init: "false"
+`,
+			want: map[string]bool{},
+		},
+		{
+			name: "NoLabelsDefined",
+			input: `
+services:
+  web:
+    image: nginx
+`,
+			want: map[string]bool{},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := InitServiceNames([]byte(tc.input))
+			if err != nil {
+				t.Fatalf("InitServiceNames(%q) error = %v", tc.name, err)
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("InitServiceNames(%q) = %v, want %v", tc.name, got, tc.want)
+			}
+			for name := range tc.want {
+				if !got[name] {
+					t.Errorf("InitServiceNames(%q) missing expected init service %q, got %v", tc.name, name, got)
+				}
+			}
+		})
+	}
+}
