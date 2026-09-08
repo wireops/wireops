@@ -116,6 +116,8 @@ func newCredentialStoreTestApp(t *testing.T) (*tests.TestApp, *core.Collection, 
 	keys.Fields.Add(&core.TextField{Name: "oauth_refresh_token"})
 	keys.Fields.Add(&core.TextField{Name: "oauth_account_login"})
 	keys.Fields.Add(&core.DateField{Name: "oauth_token_expires_at"})
+	keys.Fields.Add(&core.DateField{Name: "oauth_last_refresh_at"})
+	keys.Fields.Add(&core.TextField{Name: "oauth_refresh_error"})
 	if err := app.Save(keys); err != nil {
 		t.Fatalf("save keys collection: %v", err)
 	}
@@ -435,11 +437,102 @@ func TestRefreshOAuthTokenIfNeededFallsBackWhenNotYetExpired(t *testing.T) {
 		}
 	})
 
-	t.Run("actually expired: propagates the refresh error", func(t *testing.T) {
+	t.Run("actually expired: propagates the refresh error and persists oauth_refresh_error", func(t *testing.T) {
 		key := newKeyRecord(t, time.Now().Add(-time.Minute)) // already past expiry
 
 		if _, _, err := LoadOAuthToken(context.Background(), app, key.Id); err == nil {
 			t.Fatal("expected refresh error to propagate once the token has actually expired, got nil")
 		}
+
+		reloaded, err := app.FindRecordById("repository_keys", key.Id)
+		if err != nil {
+			t.Fatalf("reload key: %v", err)
+		}
+		if got := reloaded.GetString("oauth_refresh_error"); got == "" {
+			t.Fatal("expected oauth_refresh_error to be persisted after a terminal refresh failure, got empty string")
+		}
 	})
+}
+
+// alwaysSucceedRefreshProvider is a gitprovider.Provider whose RefreshToken
+// always succeeds, used to exercise the success side of doRefreshOAuthToken's
+// status persistence in isolation from countingRefreshProvider (which
+// TestLoadCredentialByIDDedupesConcurrentRefresh already registers under a
+// different slug in this same test binary).
+type alwaysSucceedRefreshProvider struct{}
+
+func (alwaysSucceedRefreshProvider) Slug() string                    { return "always-succeed-refresh-provider" }
+func (alwaysSucceedRefreshProvider) Name() string                    { return "Always Succeed Refresh Provider" }
+func (alwaysSucceedRefreshProvider) Configured() bool                { return true }
+func (alwaysSucceedRefreshProvider) BasicAuthUsername() string       { return "oauth2" }
+func (alwaysSucceedRefreshProvider) AuthorizeURL(_, _ string) string { return "" }
+func (alwaysSucceedRefreshProvider) ExchangeCode(_ context.Context, _, _ string) (*gitprovider.Token, error) {
+	return nil, nil
+}
+func (alwaysSucceedRefreshProvider) RefreshToken(_ context.Context, _ string) (*gitprovider.Token, error) {
+	return &gitprovider.Token{
+		AccessToken:  "refreshed-token",
+		RefreshToken: "refreshed-refresh-token",
+		ExpiresAt:    time.Now().Add(time.Hour),
+		AccountLogin: "octocat",
+	}, nil
+}
+func (alwaysSucceedRefreshProvider) ListOrganizations(_ context.Context, _ string) ([]gitprovider.Org, error) {
+	return nil, nil
+}
+func (alwaysSucceedRefreshProvider) ListRepositories(_ context.Context, _, _ string) ([]gitprovider.Repo, error) {
+	return nil, nil
+}
+func (alwaysSucceedRefreshProvider) ListBranches(_ context.Context, _, _ string) ([]gitprovider.Branch, error) {
+	return nil, nil
+}
+
+// TestDoRefreshOAuthTokenPersistsSuccessStatus guards the status side of a
+// successful refresh: the git-providers API and the background sweep both
+// rely on oauth_refresh_error being cleared and oauth_last_refresh_at being
+// updated so a credential that recovers (or never had trouble) doesn't keep
+// showing a stale "reconnect required" state.
+func TestDoRefreshOAuthTokenPersistsSuccessStatus(t *testing.T) {
+	secret := "0123456789abcdef0123456789abcdef"
+	app, _, keys := newCredentialStoreTestApp(t)
+	t.Setenv("SECRET_KEY", secret)
+
+	provider := alwaysSucceedRefreshProvider{}
+	gitprovider.Register(provider)
+
+	encryptedAccess, err := crypto.Encrypt([]byte("stale-token"), []byte(secret))
+	if err != nil {
+		t.Fatalf("encrypt access token: %v", err)
+	}
+	encryptedRefresh, err := crypto.Encrypt([]byte("stale-refresh"), []byte(secret))
+	if err != nil {
+		t.Fatalf("encrypt refresh token: %v", err)
+	}
+
+	key := core.NewRecord(keys)
+	key.Set("name", "OAuth key")
+	key.Set("auth_type", string(AuthTypeOAuthToken))
+	key.Set("oauth_provider", provider.Slug())
+	key.Set("oauth_token", encryptedAccess)
+	key.Set("oauth_refresh_token", encryptedRefresh)
+	key.Set("oauth_token_expires_at", time.Now().Add(-time.Minute))
+	key.Set("oauth_refresh_error", "stale failure from a previous attempt")
+	if err := app.Save(key); err != nil {
+		t.Fatalf("save key: %v", err)
+	}
+
+	if _, _, err := LoadOAuthToken(context.Background(), app, key.Id); err != nil {
+		t.Fatalf("load oauth token: %v", err)
+	}
+
+	reloaded, err := app.FindRecordById("repository_keys", key.Id)
+	if err != nil {
+		t.Fatalf("reload key: %v", err)
+	}
+	if got := reloaded.GetString("oauth_refresh_error"); got != "" {
+		t.Fatalf("expected oauth_refresh_error to be cleared after a successful refresh, got %q", got)
+	}
+	if reloaded.GetDateTime("oauth_last_refresh_at").Time().IsZero() {
+		t.Fatal("expected oauth_last_refresh_at to be set after a successful refresh")
+	}
 }

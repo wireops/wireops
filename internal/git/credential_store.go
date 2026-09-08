@@ -182,6 +182,7 @@ func refreshOAuthTokenIfNeeded(ctx context.Context, app core.App, record *core.R
 		if time.Now().Before(expiresAt) {
 			return currentToken, nil
 		}
+		persistRefreshError(app, record.Id, err.Error())
 		return "", err
 	}
 	return result.(string), nil
@@ -251,11 +252,29 @@ func doRefreshOAuthToken(ctx context.Context, app core.App, keyID string, provid
 	if newToken.AccountLogin != "" {
 		record.Set("oauth_account_login", newToken.AccountLogin)
 	}
+	record.Set("oauth_last_refresh_at", time.Now())
+	record.Set("oauth_refresh_error", "")
 	if err := app.Save(record); err != nil {
 		return "", fmt.Errorf("persist refreshed oauth token: %w", err)
 	}
 
 	return newToken.AccessToken, nil
+}
+
+// persistRefreshError records a terminal (no-fallback) refresh failure on
+// keyID's repository_keys row so callers like the git-providers status API
+// and the background refresher's next tick can tell "reconnect required"
+// apart from a token that's merely due for its next refresh. Best effort:
+// re-fetches the record fresh (the one refreshOAuthTokenIfNeeded holds may
+// be stale) and swallows its own save error — losing the status write must
+// never mask the original refresh error being returned to the caller.
+func persistRefreshError(app core.App, keyID, message string) {
+	record, err := app.FindRecordById("repository_keys", keyID)
+	if err != nil {
+		return
+	}
+	record.Set("oauth_refresh_error", message)
+	_ = app.Save(record)
 }
 
 // decryptRecordField decrypts a single AES-GCM-encrypted field on a

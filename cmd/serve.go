@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 	"log"
@@ -25,6 +26,7 @@ import (
 	"github.com/wireops/wireops/internal/backup"
 	"github.com/wireops/wireops/internal/config"
 	"github.com/wireops/wireops/internal/crypto"
+	"github.com/wireops/wireops/internal/git"
 	"github.com/wireops/wireops/internal/hooks"
 	"github.com/wireops/wireops/internal/jobscheduler"
 	"github.com/wireops/wireops/internal/logstream"
@@ -420,6 +422,14 @@ func Execute() error {
 			if err := workerSvc.ExpireStagingTokens(); err != nil {
 				log.Printf("[WORKER] Failed to expire staging tokens: %v", err)
 			}
+		})
+
+		// Proactively refresh GitLab (and any future refresh-token-bearing
+		// provider) OAuth credentials before they expire, independent of
+		// whether a sync/browse request happens to touch them — see
+		// internal/git/refresher.go.
+		app.Cron().Add("oauth_token_refresh", "*/10 * * * *", func() {
+			git.RefreshExpiringOAuthTokens(context.Background(), app)
 		})
 
 		app.Cron().Add("retention_cleanup", "0 3 * * *", func() {
