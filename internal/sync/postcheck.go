@@ -168,9 +168,12 @@ func evaluatePostCheck(expected []string, initSet map[string]bool, statuses []co
 }
 
 // evaluateInitService reports whether a run-to-completion service is healthy:
-// absent (completed and removed), still running, or exited cleanly (code 0).
-// It is unhealthy if every instance is stuck in a restart loop or exited
-// non-zero.
+// absent (completed and removed), currently running, or exited cleanly
+// (code 0). A container still "created"/"paused", or non-looping
+// "restarting", hasn't finished starting yet — it is not yet healthy, which
+// lets the retry loop in postDeployCheck keep polling instead of reporting
+// success prematurely. It is unhealthy if every instance is stuck in a
+// restart loop or exited non-zero.
 func evaluateInitService(instances []compose.ServiceStatus) bool {
 	if len(instances) == 0 {
 		return true
@@ -179,13 +182,14 @@ func evaluateInitService(instances []compose.ServiceStatus) bool {
 		if isRestartLooping(inst) {
 			continue
 		}
-		if inst.Status == "exited" {
+		switch inst.Status {
+		case "running":
+			return true
+		case "exited":
 			if inst.ExitCode == 0 {
 				return true
 			}
-			continue
 		}
-		return true
 	}
 	return false
 }

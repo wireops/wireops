@@ -201,6 +201,23 @@ func TestEvaluatePostCheckInitServiceRestartLoopIsDegraded(t *testing.T) {
 	}
 }
 
+func TestEvaluatePostCheckInitServiceStillCreatedIsNotYetHealthy(t *testing.T) {
+	// An init container that hasn't started running yet ("created") must not
+	// be treated as healthy just because it isn't "exited" non-zero — that
+	// would let postDeployCheck report "active" before the job even ran.
+	expected := []string{"web", "migrate"}
+	initSet := map[string]bool{"migrate": true}
+	statuses := []compose.ServiceStatus{
+		{ServiceName: "web", Status: "running", Health: "healthy"},
+		{ServiceName: "migrate", Status: "created"},
+	}
+
+	res := evaluatePostCheck(expected, initSet, statuses)
+	if res.Status == "active" {
+		t.Fatalf("status = %q, want not-active (init container hasn't started running yet); detail=%s", res.Status, res.Detail)
+	}
+}
+
 func TestEvaluatePostCheckNonInitServiceExitedStillDegrades(t *testing.T) {
 	// Sanity check: a service not marked as init must not benefit from the
 	// init-container exemption.

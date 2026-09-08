@@ -11,8 +11,8 @@ interface ServiceContainer {
   container_name?: string
   status: string
   ports?: PortInfo[]
-  exit_code?: number
-  is_init?: boolean
+  exit_code?: number | null
+  is_init?: boolean | null
 }
 
 // An init/one-shot container that ran to completion (exit 0) is healthy, not

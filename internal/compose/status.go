@@ -42,7 +42,9 @@ type ServiceStatus struct {
 	// ExitCode is the container's last exit code (from `docker inspect`
 	// State.ExitCode), meaningful only once the container has exited. Used to
 	// distinguish a cleanly-completed one-shot/init container (0) from a crash
-	// (non-zero) — otherwise both map to Status "exited".
+	// (non-zero) — otherwise both map to Status "exited". -1 means the exit
+	// code couldn't be determined (the per-container inspect failed) — must
+	// not be read as a clean exit.
 	ExitCode int
 
 	// Ports lists published/exposed container ports, mapped from the
@@ -128,7 +130,8 @@ func mapDockerPorts(ports []container.Port) []protocol.PortInfo {
 func inspectHealthAndRestarts(ctx context.Context, cli *dockerclient.Client, containerID string) (health string, restartCount int, startedAt string, exitCode int) {
 	inspect, err := cli.ContainerInspect(ctx, containerID)
 	if err != nil || inspect.State == nil {
-		return "none", 0, "", 0
+		// -1: unknown, not a clean exit — see ServiceStatus.ExitCode.
+		return "none", 0, "", -1
 	}
 
 	health = "none"

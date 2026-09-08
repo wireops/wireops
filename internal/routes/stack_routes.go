@@ -406,9 +406,10 @@ func (rr routeRegistrar) registerStackInspectionRoutes() {
 				"container_name": s.GetString("container_name"),
 				// exit_code/is_init aren't persisted to stack_services, so this
 				// worker-offline fallback can't know if a stopped container was
-				// an init container that completed cleanly.
-				"exit_code": 0,
-				"is_init":   false,
+				// an init container that completed cleanly — report both as
+				// unknown (null) rather than a fabricated healthy-looking 0/false.
+				"exit_code": nil,
+				"is_init":   nil,
 			})
 		}
 		return e.JSON(http.StatusOK, result)
