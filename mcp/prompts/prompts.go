@@ -29,10 +29,11 @@ func Register(server *mcp.Server, c *client.Client) {
 
 	server.AddPrompt(&mcp.Prompt{
 		Name:        "scaffold_new_stack",
-		Description: "Research and scaffold a new wireops stack (docker-compose.yml + wireops.yaml) for a described application.",
+		Description: "Research and scaffold a new wireops stack for a described application. By default this generates a single docker-compose.yml with an embedded x-wireops block — the primary, recommended way to define a wireops stack.",
 		Arguments: []*mcp.PromptArgument{
 			{Name: "app_description", Description: "What the stack should run, e.g. 'a Postgres database with pgAdmin' or 'Ghost blog behind Traefik'.", Required: true},
 			{Name: "image", Description: "A specific Docker image to use, if already known. Optional — leave empty to have the model research one.", Required: false},
+			{Name: "two_file", Description: "'true' to generate the legacy two-file layout (separate wireops.yaml + docker-compose.yml) instead of the default single compose file with an embedded x-wireops block. Optional — defaults to false (single file).", Required: false},
 		},
 	}, scaffoldNewStack())
 }
@@ -102,10 +103,16 @@ func scaffoldNewStack() mcp.PromptHandler {
 			return nil, fmt.Errorf("app_description argument is required")
 		}
 		image := req.Params.Arguments["image"]
+		twoFile := req.Params.Arguments["two_file"] == "true"
 
 		imageHint := "You do not have a specific image yet — use your own web search tool to find the official Docker image (its official site, official Docker Hub/GHCR page, or official GitHub repository) and its current required configuration (ports, volumes, required environment variables) before proceeding."
 		if image != "" {
 			imageHint = fmt.Sprintf("A candidate image was given: %q. Do not trust this as-is — use your own web search tool to confirm it against the project's official site, official image registry page, or official GitHub repository, and pull its current required configuration (ports, volumes, required environment variables) before proceeding.", image)
+		}
+
+		fileModeHint := "Call scaffold_stack with two_file left false (the default): it embeds the wireops fields as a top-level x-wireops block inside the compose file and returns that one file only — no separate wireops.yaml. This is the primary, recommended way to define a wireops stack. Create the stack via POST /api/custom/stacks/from-compose (compose_path/compose_file)."
+		if twoFile {
+			fileModeHint = "Call scaffold_stack with two_file: true: it returns the legacy layout, a separate wireops.yaml plus docker-compose.yml. Create the stack via POST /api/custom/stacks/from-wireops."
 		}
 
 		text := fmt.Sprintf(`Scaffold a new wireops stack for: %s
@@ -115,6 +122,8 @@ func scaffoldNewStack() mcp.PromptHandler {
 Always look up current information, never rely on memorized/training-data knowledge of the image — versions, default ports, volume paths, and required env vars change over time. Prefer the project's official website, official image registry listing, or official GitHub repository over blog posts, forums, or third-party tutorials.
 
 Once you have the image(s) and their verified, up-to-date ports/volumes/environment variables, call the scaffold_stack tool with a service definition for each container. Do not invent image names, tags, or configuration you have not verified against an official source.
+
+%s
 
 Before designing service definitions, check the deploy security policy that will actually enforce them: call get_worker_policy if you know which wireops worker this stack will run on (its "effective" field is what gets enforced), or get_global_worker_policy otherwise for the instance-wide default every worker falls back to. Design every service to already comply, rather than discovering violations after generating the file:
 - An empty allowlist (allowed_images/allowed_volumes/allowed_networks/allowed_cap_add/allowed_devices/allowed_security_opt) means unrestricted for that dimension; a non-empty one means every image/volume-source/network/cap_add/device/security_opt you use must match one of its entries.
@@ -154,7 +163,7 @@ scaffold_stack's structured input has no field for labels or annotations, so app
         command: ["./migrate", "up"]
         restart: "no"
         labels:
-          - "customization.init=true"`, appDescription, imageHint)
+          - "customization.init=true"`, appDescription, imageHint, fileModeHint)
 
 		return &mcp.GetPromptResult{
 			Description: "Research-grounded scaffolding for a new wireops stack from a natural-language description.",

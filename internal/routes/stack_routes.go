@@ -1204,6 +1204,114 @@ func (rr routeRegistrar) registerCreateFromWireopsRoute() {
 	}).BindFunc(rbac.Require(rbac.CapManageRepos))
 }
 
+// registerCreateFromComposeRoute creates a stack from a compose file whose
+// top-level "x-wireops" extension block carries the same fields as a
+// standalone wireops.yaml (see internal/manifest.ParseComposeManifest). This
+// lets a user/agent maintain a single compose file instead of a compose file
+// plus a separate wireops.yaml. As with registerCreateFromWireopsRoute, the
+// client only supplies repository, worker, and the compose file location —
+// every field derived from x-wireops is computed here by re-parsing the file
+// server-side, never trusted from client input.
+func (rr routeRegistrar) registerCreateFromComposeRoute() {
+	rr.r.POST("/api/custom/stacks/from-compose", func(e *core.RequestEvent) error {
+		var body struct {
+			Repository  string `json:"repository"`
+			Worker      string `json:"worker"`
+			ComposePath string `json:"compose_path"`
+			ComposeFile string `json:"compose_file"`
+			// Paused, when true, creates the stack with status "paused"
+			// instead of "pending" — mirrors from-wireops's Paused flag, see
+			// that handler's comment for why.
+			Paused bool `json:"paused"`
+		}
+		if err := json.NewDecoder(e.Request.Body).Decode(&body); err != nil {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		}
+		if body.Repository == "" || body.Worker == "" {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "repository and worker are required"})
+		}
+
+		workerRecord, err := rr.app.FindRecordById("workers", body.Worker)
+		if err != nil {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "worker not found"})
+		}
+
+		if verr := safepath.ValidateComposePath(body.ComposePath); verr != nil {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": verr.Error()})
+		}
+		composeFile := body.ComposeFile
+		if composeFile == "" {
+			composeFile = "docker-compose.yml"
+		}
+		if verr := safepath.ValidateComposeFile(composeFile); verr != nil {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": verr.Error()})
+		}
+
+		repoDir, ok := rr.repoFilesSetupByID(e, body.Repository)
+		if !ok {
+			return nil
+		}
+
+		root := repoDir
+		workDir := root
+		if body.ComposePath != "" && body.ComposePath != "." {
+			workDir = filepath.Join(root, body.ComposePath)
+		}
+
+		data, _, readErr := compose.ReadFile(root, workDir, composeFile, config.GetComposeMaxBytes())
+		if readErr != nil {
+			if errors.Is(readErr, compose.ErrOutputTooLarge) {
+				return e.JSON(http.StatusUnprocessableEntity, map[string]string{"error": readErr.Error()})
+			}
+			return e.JSON(http.StatusNotFound, map[string]string{"error": "compose file not found"})
+		}
+
+		def, err := manifest.ParseComposeManifest(data)
+		if err != nil {
+			return e.JSON(http.StatusUnprocessableEntity, map[string]any{
+				"error":  err.Error(),
+				"errors": wireopsValidationErrors(err),
+			})
+		}
+		if def == nil {
+			return e.JSON(http.StatusUnprocessableEntity, map[string]string{"error": "compose file has no x-wireops block"})
+		}
+
+		removeOrphans, forcePull, waitRunningJobs, workerTags := resolveWireopsStackFields(def)
+
+		stacksCol, err := rr.app.FindCollectionByNameOrId("stacks")
+		if err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+		stack := core.NewRecord(stacksCol)
+		stack.Set("name", def.Name)
+		stack.Set("repository", body.Repository)
+		stack.Set("worker", body.Worker)
+		stack.Set("compose_path", body.ComposePath)
+		stack.Set("compose_file", composeFile)
+		stack.Set("auto_sync", true)
+		if body.Paused {
+			stack.Set("status", "paused")
+		} else {
+			stack.Set("status", "pending")
+		}
+		stack.Set("remove_orphans", removeOrphans)
+		stack.Set("force_pull", forcePull)
+		stack.Set("deploy_timeout_seconds", def.DeployTimeoutSeconds)
+		stack.Set("sync_interval_seconds", def.SyncIntervalSeconds)
+		stack.Set("wait_running_jobs", waitRunningJobs)
+		stack.Set("worker_tags", workerTags)
+		stack.Set("group", strings.TrimSpace(def.Group))
+		stack.Set("config_source", "compose_embedded")
+		if err := rr.app.Save(stack); err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+
+		log.Printf("[routes] create-from-compose stack=%s repository=%s worker=%s file=%s", stack.Id, body.Repository, workerRecord.GetString("hostname"), composeFile)
+		return e.JSON(http.StatusOK, map[string]string{"id": stack.Id, "name": def.Name, "status": stack.GetString("status")})
+	}).BindFunc(rbac.Require(rbac.CapManageRepos))
+}
+
 // composePortsToShortForm converts a service's "ports" value from `docker compose config`
 // JSON output (long-form objects, e.g. {"published":"8080","target":80,"protocol":"tcp"})
 // into short-syntax strings ("8080:80") comparable to a ServiceOverride.Ports value.

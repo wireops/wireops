@@ -1079,7 +1079,10 @@ func TestGenerateJobYAMLMissingRequiredFieldsFails(t *testing.T) {
 	}
 }
 
-func TestScaffoldStackValidInputNoWorker(t *testing.T) {
+// Default behavior (two_file left false): scaffold_stack embeds the wireops
+// fields as a top-level x-wireops block in the single returned compose
+// file — this is the primary, recommended way to define a wireops stack.
+func TestScaffoldStackDefaultEmbedsXWireopsAndOmitsSeparateFile(t *testing.T) {
 	handler := scaffoldStack(client.New("http://unused"))
 	_, out, err := handler(context.Background(), nil, models.ScaffoldStackInput{
 		Name: "my-stack",
@@ -1094,8 +1097,46 @@ func TestScaffoldStackValidInputNoWorker(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected scaffoldStackOutput, got %T", out)
 	}
-	if result.Wireops.Filename != "wireops.yaml" || !strings.Contains(result.Wireops.Content, "name: my-stack") {
+	if result.Wireops != nil {
+		t.Fatalf("expected no separate wireops file by default, got %+v", result.Wireops)
+	}
+	if result.Compose.Filename != "docker-compose.yml" {
+		t.Fatalf("unexpected compose filename: %q", result.Compose.Filename)
+	}
+	if !strings.Contains(result.Compose.Content, "x-wireops:") {
+		t.Fatalf("expected embedded x-wireops block in compose content:\n%s", result.Compose.Content)
+	}
+	if !strings.Contains(result.Compose.Content, "name: my-stack") {
+		t.Fatalf("expected x-wireops name to be my-stack:\n%s", result.Compose.Content)
+	}
+	if !strings.Contains(result.Compose.Content, "nginx:1.27") {
+		t.Fatalf("expected compose service content:\n%s", result.Compose.Content)
+	}
+}
+
+// two_file: true opts into the legacy two-file layout (separate wireops.yaml
+// + docker-compose.yml).
+func TestScaffoldStackTwoFileGeneratesSeparateWireopsYAML(t *testing.T) {
+	handler := scaffoldStack(client.New("http://unused"))
+	_, out, err := handler(context.Background(), nil, models.ScaffoldStackInput{
+		Name:    "my-stack",
+		TwoFile: true,
+		Services: []models.ComposeServiceInput{
+			{Name: "web", Image: "nginx:1.27", Ports: []string{"80:80"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	result, ok := out.(scaffoldStackOutput)
+	if !ok {
+		t.Fatalf("expected scaffoldStackOutput, got %T", out)
+	}
+	if result.Wireops == nil || result.Wireops.Filename != "wireops.yaml" || !strings.Contains(result.Wireops.Content, "name: my-stack") {
 		t.Fatalf("unexpected wireops file: %+v", result.Wireops)
+	}
+	if strings.Contains(result.Compose.Content, "x-wireops:") {
+		t.Fatalf("expected no embedded x-wireops block when two_file=true:\n%s", result.Compose.Content)
 	}
 	if result.Compose.Filename != "docker-compose.yml" || !strings.Contains(result.Compose.Content, "nginx:1.27") {
 		t.Fatalf("unexpected compose file: %+v", result.Compose)

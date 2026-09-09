@@ -180,7 +180,7 @@ repositories ─── 1:N ──→ scheduled_jobs ─── 1:N ──→ job_
 ## Key Business Flows
 
 ### GitOps Sync
-1. `sync/scheduler.go` polls each stack on an interval set by `SCAN_PERIOD` (default 10s, `internal/config.GetScanPeriod`); a stack's own positive `sync_interval_seconds` (from wireops.yaml's `sync.interval`) overrides this fallback for that stack.
+1. `sync/scheduler.go` polls each stack on an interval set by `SCAN_PERIOD` (default 10s, `internal/config.GetScanPeriod`); a stack's own positive `sync_interval_seconds` (from `wireops.yaml`'s `sync.interval`, or an embedded `x-wireops` block's `sync.interval` — see below) overrides this fallback for that stack.
 2. `sync/reconciler.go` runs `git.CloneOrFetch` and compares the latest commit SHA with the stored one.
 3. `sync/lint.go` runs `internal/lint` over the resolved compose config and records a `lint` phase on the deploy timeline. This run is advisory — it never aborts the reconcile itself, it just gives the timeline a lint summary early. The renderer (step 4) runs its own `lint.Run` after applying render overrides and *does* abort the deploy on any error-severity finding, alongside the worker-policy check it already ran.
 4. `sync/renderer.go` reads the compose YAML, injects `dev.wireops.*` labels, and writes a versioned revision file to `DATA_DIR/stacks/<id>/v<n>.yml`.
@@ -188,6 +188,14 @@ repositories ─── 1:N ──→ scheduled_jobs ─── 1:N ──→ job_
 6. The worker decodes the compose file and executes `docker compose up`.
 7. `sync/postcheck.go` queries live container state and derives the stack's post-deploy status (`active`/`degraded`/`error`) via `evaluatePostCheck`. A service labeled `customization.init: "true"` is treated as run-to-completion: exiting 0 (or being gone entirely) counts as healthy, so a one-shot migration/seed container doesn't degrade the stack the way a crashed long-running service would — only a non-zero exit or a restart loop does.
 8. Persists a `sync_logs` entry, updates stack status, fires webhook/ntfy notification.
+
+### Single-file stacks (`x-wireops`) — the primary way to define a stack
+A stack is normally driven by a compose file alone, not a compose file plus a separate `wireops.yaml`. A top-level `x-wireops:` block in the compose file carries the exact same fields as standalone `wireops.yaml` (`version`, `name`, `group`, `timeout`, `compose.remove_orphans`/`force_pull`, `jobs.wait_running`, `worker.tags`, `sync.interval`) — `internal/manifest.ParseComposeManifest` parses it with the same `manifest.Definition`/`Validate()` used for the standalone file. `x-*` is a [compose extension field](https://docs.docker.com/reference/compose-file/extension/) that `docker compose` itself ignores, so the file stays a valid, directly-runnable compose file. The separate-`wireops.yaml` two-file layout (`/stacks/from-wireops`) still works unchanged and stays fully supported, but is legacy — prefer `x-wireops` for anything new.
+- Create via `POST /stacks/from-compose` (`repository`, `worker`, `compose_path`, `compose_file`); the resulting stack gets `config_source: compose_embedded` and the same field-immutability treatment as `config_source: wireops_file` (`internal/hooks/pb_hooks.go`, `internal/sync/reconciler.go`).
+- `sync/renderer.go` strips the `x-wireops` key from the resolved config before writing the versioned revision file — `docker compose config` passes `x-*` keys through verbatim, but it has no meaning to `docker compose up` and must never reach the worker.
+- No overlap with anything wireops injects at the service level: `x-wireops` is a top-level compose key, while every server-managed identifier (`dev.wireops.managed`, `dev.wireops.stack_id`, `dev.wireops.repository.*`, …) and the user-facing `dev.wireops.config.<name>` mount annotation live under `services.<name>.labels`/`annotations`. Different altitude, same reserved namespace, zero collision.
+- **MCP asserts this as the default.** `mcp/tools`' `scaffold_stack` tool embeds `x-wireops` and returns a single compose file unless the caller explicitly passes `two_file: true` to opt into the legacy layout; `mcp/prompts`' `scaffold_new_stack` prompt follows the same default and points the model at `from-compose`. `generate_wireops_yaml` (standalone `wireops.yaml` only) is documented as the legacy-layout tool.
+- Discovery/preview mirrors the `wireops.yaml` flow: `GET /api/custom/repositories/{id}/compose-wireops-files` lists candidate compose files (sniffed for a top-level `x-wireops` key), `GET /api/custom/repositories/{id}/compose-definition?file=` parses and returns one file's `x-wireops` block as a `Definition`, same shape as `/wireops-definition`.
 
 ### Worker Bootstrap & Communication
 1. Admin generates a token via the UI/API.
@@ -234,6 +242,8 @@ All custom routes are prefixed `/api/custom/`. PocketBase also auto-exposes CRUD
 | `POST` | `/stacks/{id}/container/restart` | Restart a container |
 | `GET` | `/stacks/import/discover` | Discover unmanaged Compose projects |
 | `POST` | `/stacks/import` | Import a local Compose stack |
+| `POST` | `/stacks/from-compose` | **Primary way to create a stack from a file.** Request body carries `repository`, `worker`, `compose_path`, `compose_file`; the stack's deploy-behavior fields (env, cron, etc.) are re-parsed server-side from the top-level `x-wireops` block embedded in that compose file, never trusted from the request. See `internal/manifest.ParseComposeManifest` and "Single-file stacks" below. Sets `config_source: compose_embedded`; those fields become immutable via the API afterward (`internal/hooks/pb_hooks.go`). |
+| `POST` | `/stacks/from-wireops` | Legacy two-file equivalent of `from-compose`: creates a stack from a separate `wireops.yaml` found in a repo (`repository`, `worker`, `wireops_file`) instead of an embedded `x-wireops` block. Sets `config_source: wireops_file`, same re-parse-server-side and immutability rules. Still fully supported; prefer `from-compose` for anything new. |
 
 ### Lint
 

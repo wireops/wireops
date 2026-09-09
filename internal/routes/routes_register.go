@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -200,17 +201,32 @@ func (rr routeRegistrar) listYAMLFiles(repoDir string, filter func([]byte) bool)
 		return nil, err
 	}
 
+	const maxConcurrency = 16
+	maxBytes := config.GetComposeMaxBytes()
+
 	var (
 		mu      stdsync.Mutex
 		wg      stdsync.WaitGroup
 		matched []string
+		sem     = make(chan struct{}, maxConcurrency)
 	)
 	for _, path := range candidates {
 		wg.Add(1)
+		sem <- struct{}{}
 		go func(p string) {
 			defer wg.Done()
-			data, err := os.ReadFile(p)
-			if err != nil || !filter(data) {
+			defer func() { <-sem }()
+
+			f, err := os.Open(p)
+			if err != nil {
+				return
+			}
+			data, err := io.ReadAll(io.LimitReader(f, maxBytes+1))
+			f.Close()
+			if err != nil || int64(len(data)) > maxBytes {
+				return
+			}
+			if !filter(data) {
 				return
 			}
 			rel, err := filepath.Rel(repoDir, p)
@@ -627,6 +643,71 @@ func (rr routeRegistrar) registerRepositoryRoutes() {
 		}
 
 		resolveWireopsComposeFile(repoDir, wireopsFile, def)
+
+		return e.JSON(http.StatusOK, def)
+	}).BindFunc(rbac.Require(rbac.CapManageRepos))
+
+	rr.r.GET("/api/custom/repositories/{id}/compose-wireops-files", func(e *core.RequestEvent) error {
+		repoDir, ok := rr.repoFilesSetup(e)
+		if !ok {
+			return nil
+		}
+		files, err := rr.listYAMLFiles(repoDir, func(data []byte) bool {
+			return compose.IsComposeFile(data) && manifest.HasEmbeddedXWireops(data)
+		})
+		if err != nil {
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to list files"})
+		}
+		if files == nil {
+			files = []string{}
+		}
+		return e.JSON(http.StatusOK, files)
+	}).BindFunc(rbac.Require(rbac.CapManageRepos))
+
+	rr.r.GET("/api/custom/repositories/{id}/compose-definition", func(e *core.RequestEvent) error {
+		repoDir, ok := rr.repoFilesSetup(e)
+		if !ok {
+			return nil
+		}
+
+		composeFile := e.Request.URL.Query().Get("file")
+		if composeFile == "" {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": "missing file parameter"})
+		}
+		cleanComposeFile, cerr := safepath.CleanRelativePath(composeFile)
+		if cerr != nil {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid file path %q: %v", composeFile, cerr)})
+		}
+
+		workDir := repoDir
+		composeDir := filepath.Dir(cleanComposeFile)
+		if composeDir != "." {
+			workDir = filepath.Join(repoDir, composeDir)
+		}
+		data, _, err := compose.ReadFile(repoDir, workDir, filepath.Base(cleanComposeFile), config.GetComposeMaxBytes())
+		if err != nil {
+			if errors.Is(err, compose.ErrOutputTooLarge) {
+				return e.JSON(http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
+			}
+			return e.JSON(http.StatusNotFound, map[string]string{"error": "compose file not found"})
+		}
+
+		def, err := manifest.ParseComposeManifest(data)
+		if err != nil {
+			return e.JSON(http.StatusUnprocessableEntity, map[string]any{
+				"error":  err.Error(),
+				"errors": wireopsValidationErrors(err),
+			})
+		}
+		if def == nil {
+			return e.JSON(http.StatusUnprocessableEntity, map[string]string{"error": "compose file has no x-wireops block"})
+		}
+
+		def.ResolvedComposePath = filepath.Dir(cleanComposeFile)
+		if def.ResolvedComposePath == "." {
+			def.ResolvedComposePath = ""
+		}
+		def.ResolvedComposeFile = filepath.Base(cleanComposeFile)
 
 		return e.JSON(http.StatusOK, def)
 	}).BindFunc(rbac.Require(rbac.CapManageRepos))

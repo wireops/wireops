@@ -114,8 +114,73 @@ func ParseWireopsFile(repoWorkspace, repoID, filePath string) (*Definition, erro
 		return nil, fmt.Errorf("invalid wireops.yaml: multiple YAML documents or invalid trailing content found: %w", err)
 	}
 
-	if err := def.Validate(); err != nil {
+	if err := finalizeDefinition(&def); err != nil {
 		return nil, err
+	}
+
+	return &def, nil
+}
+
+// ExtensionKey is the top-level docker-compose extension field
+// (https://docs.docker.com/reference/compose-file/extension/) that carries
+// the wireops.yaml schema inline in the compose file itself, for stacks that
+// want a single file instead of a compose file plus a separate wireops.yaml.
+// Compose tooling ignores unknown "x-*" top-level keys, so this key is
+// invisible to `docker compose up` — but `docker compose config` passes it
+// through verbatim into the resolved output, so callers rendering that
+// output for deployment (internal/sync/renderer.go) must strip it
+// themselves; exported so they share this exact key rather than duplicating
+// the string.
+const ExtensionKey = "x-wireops"
+
+// ParseComposeManifest extracts and validates a stack Definition embedded in
+// a compose file's top-level "x-wireops" extension block. raw is the raw
+// compose YAML (as committed to git, not the rendered/resolved config). It
+// returns (nil, nil) if the compose file has no x-wireops block at all, so
+// callers can distinguish "not using this feature" from a malformed block.
+func ParseComposeManifest(raw []byte) (*Definition, error) {
+	var root map[string]yaml.Node
+	if err := yaml.Unmarshal(raw, &root); err != nil {
+		return nil, fmt.Errorf("invalid compose file: %w", err)
+	}
+
+	node, ok := root[ExtensionKey]
+	if !ok {
+		return nil, nil
+	}
+
+	var def Definition
+	if err := node.Decode(&def); err != nil {
+		return nil, fmt.Errorf("invalid %s block: %w", ExtensionKey, err)
+	}
+
+	if err := finalizeDefinition(&def); err != nil {
+		return nil, err
+	}
+
+	return &def, nil
+}
+
+// HasEmbeddedXWireops reports whether raw (a candidate compose file's
+// content) has a top-level "x-wireops" key at all, without validating its
+// contents. Used to sniff candidate files during repository discovery
+// (parallel to job.IsJobFile) — full validation happens later, when the
+// caller actually resolves one specific file via ParseComposeManifest.
+func HasEmbeddedXWireops(raw []byte) bool {
+	var root map[string]yaml.Node
+	if err := yaml.Unmarshal(raw, &root); err != nil {
+		return false
+	}
+	_, ok := root[ExtensionKey]
+	return ok
+}
+
+// finalizeDefinition runs the validation and duration-resolution steps
+// shared by every Definition source (standalone wireops.yaml or an embedded
+// x-wireops compose block).
+func finalizeDefinition(def *Definition) error {
+	if err := def.Validate(); err != nil {
+		return err
 	}
 
 	if def.Timeout != "" {
@@ -128,7 +193,7 @@ func ParseWireopsFile(repoWorkspace, repoID, filePath string) (*Definition, erro
 		def.SyncIntervalSeconds = int(d.Seconds())
 	}
 
-	return &def, nil
+	return nil
 }
 
 // IsWireopsFile reports whether filename is exactly "wireops.yaml" or

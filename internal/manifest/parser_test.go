@@ -250,3 +250,177 @@ name: api
 		}
 	}
 }
+
+func TestParseComposeManifestNoExtensionBlock(t *testing.T) {
+	compose := `
+services:
+  web:
+    image: nginx
+`
+	def, err := ParseComposeManifest([]byte(compose))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if def != nil {
+		t.Fatalf("expected nil Definition when x-wireops is absent, got %+v", def)
+	}
+}
+
+func TestParseComposeManifestValid(t *testing.T) {
+	compose := `
+name: myapp
+x-wireops:
+  version: wireops.v1
+  name: myapp
+  group: prod
+  timeout: 5m
+  sync:
+    interval: 30s
+  worker:
+    tags: [gpu, us-east]
+  compose:
+    remove_orphans: true
+services:
+  web:
+    image: nginx
+`
+	def, err := ParseComposeManifest([]byte(compose))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if def == nil {
+		t.Fatal("expected non-nil Definition")
+	}
+	if def.Name != "myapp" {
+		t.Errorf("Name = %q, want %q", def.Name, "myapp")
+	}
+	if def.Group != "prod" {
+		t.Errorf("Group = %q, want %q", def.Group, "prod")
+	}
+	if def.DeployTimeoutSeconds != 300 {
+		t.Errorf("DeployTimeoutSeconds = %d, want 300", def.DeployTimeoutSeconds)
+	}
+	if def.SyncIntervalSeconds != 30 {
+		t.Errorf("SyncIntervalSeconds = %d, want 30", def.SyncIntervalSeconds)
+	}
+	if def.Worker == nil || len(def.Worker.Tags) != 2 || def.Worker.Tags[0] != "gpu" {
+		t.Errorf("Worker.Tags = %+v, want [gpu us-east]", def.Worker)
+	}
+	if def.Compose == nil || def.Compose.RemoveOrphans == nil || !*def.Compose.RemoveOrphans {
+		t.Errorf("Compose.RemoveOrphans not set to true: %+v", def.Compose)
+	}
+}
+
+func TestHasEmbeddedXWireops(t *testing.T) {
+	cases := []struct {
+		name    string
+		compose string
+		want    bool
+	}{
+		{
+			name: "Present",
+			compose: `
+x-wireops:
+  version: wireops.v1
+  name: myapp
+services:
+  web:
+    image: nginx
+`,
+			want: true,
+		},
+		{
+			name: "Absent",
+			compose: `
+services:
+  web:
+    image: nginx
+`,
+			want: false,
+		},
+		{
+			name:    "MalformedYAML",
+			compose: `x-wireops: [this, is, not, a, map`,
+			want:    false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := HasEmbeddedXWireops([]byte(tc.compose)); got != tc.want {
+				t.Errorf("HasEmbeddedXWireops() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseComposeManifestInvalid(t *testing.T) {
+	cases := []struct {
+		name    string
+		compose string
+		wantErr string
+	}{
+		{
+			name: "MissingVersion",
+			compose: `
+x-wireops:
+  name: myapp
+services:
+  web:
+    image: nginx
+`,
+			wantErr: "version is required",
+		},
+		{
+			name: "MissingName",
+			compose: `
+x-wireops:
+  version: wireops.v1
+services:
+  web:
+    image: nginx
+`,
+			wantErr: "name is required",
+		},
+		{
+			name: "BadTimeout",
+			compose: `
+x-wireops:
+  version: wireops.v1
+  name: myapp
+  timeout: not-a-duration
+services:
+  web:
+    image: nginx
+`,
+			wantErr: "timeout is invalid",
+		},
+		{
+			name: "MalformedYAML",
+			compose: `
+x-wireops: [this, is, not, a, map]
+services:
+  web:
+    image: nginx
+`,
+			wantErr: "invalid x-wireops block",
+		},
+		{
+			name:    "NotATopLevelMap",
+			compose: "- just\n- a\n- list\n",
+			wantErr: "invalid compose file",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParseComposeManifest([]byte(tc.compose))
+			if err == nil {
+				t.Fatalf("expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("error = %q, want substring %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}

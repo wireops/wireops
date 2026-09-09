@@ -144,7 +144,8 @@ type ComposeServiceInput struct {
 // ScaffoldStackInput is the input for the scaffold_stack tool.
 type ScaffoldStackInput struct {
 	Name     string                   `json:"name" jsonschema:"Stack name (required)."`
-	Wireops  GenerateWireopsYAMLInput `json:"wireops" jsonschema:"wireops.yaml fields for this stack. 'name' inside this object is optional and defaults to the top-level 'name'."`
+	Wireops  GenerateWireopsYAMLInput `json:"wireops" jsonschema:"wireops fields for this stack. 'name' inside this object is optional and defaults to the top-level 'name'."`
 	Services []ComposeServiceInput    `json:"services" jsonschema:"The docker-compose services to generate (required, at least one)."`
 	WorkerID string                   `json:"worker_id,omitempty" jsonschema:"If set, validates the generated compose file against this worker's effective deploy security policy before returning."`
+	TwoFile  bool                     `json:"two_file,omitempty" jsonschema:"Leave this false (the default and the recommended, primary way to define a wireops stack): the wireops fields are embedded as a top-level 'x-wireops' extension block inside the single returned compose file, ready for POST /api/custom/stacks/from-compose. docker compose ignores unknown top-level 'x-*' keys, and this block never overlaps the service-level dev.wireops.* labels/annotations wireops itself injects or reads. Set true only to generate the legacy two-file layout (a separate wireops.yaml plus docker-compose.yml, for POST /api/custom/stacks/from-wireops) — e.g. to match an existing repository that already uses that layout, or on an explicit user request."`
 }

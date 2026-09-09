@@ -22,6 +22,7 @@ import (
 	"github.com/wireops/wireops/internal/configfiles"
 	"github.com/wireops/wireops/internal/crypto"
 	"github.com/wireops/wireops/internal/lint"
+	"github.com/wireops/wireops/internal/manifest"
 	"github.com/wireops/wireops/internal/policy"
 	"github.com/wireops/wireops/internal/safepath"
 )
@@ -148,6 +149,14 @@ func (r *Renderer) GenerateRevision(
 	if err != nil {
 		return nil, err
 	}
+
+	// `docker compose config` passes the top-level x-wireops extension block
+	// through verbatim into the resolved output. It's already been consumed
+	// (parsed into the stack record at creation time, see
+	// manifest.ParseComposeManifest) and has no meaning to `docker compose
+	// up` itself — strip it so it isn't shipped to the worker or baked into
+	// the versioned revision file.
+	delete(configMap, manifest.ExtensionKey)
 
 	// Validation: ensure top-level name exists
 	if _, ok := configMap["name"]; !ok {

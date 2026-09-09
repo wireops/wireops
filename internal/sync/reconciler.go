@@ -87,7 +87,9 @@ func (r *Reconciler) resolveWorker(stack *core.Record) (workerID, fingerprint st
 func resolveComposeRuntimeFlags(stack *core.Record) (forcePull, removeOrphans bool) {
 	forcePull = stack.GetBool("force_pull")
 	removeOrphans = true
-	if stack.GetString("config_source") == "wireops_file" && !stack.GetBool("remove_orphans") {
+	configSource := stack.GetString("config_source")
+	fileManaged := configSource == "wireops_file" || configSource == "compose_embedded"
+	if fileManaged && !stack.GetBool("remove_orphans") {
 		removeOrphans = false
 	}
 	return forcePull, removeOrphans

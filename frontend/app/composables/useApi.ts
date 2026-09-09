@@ -138,6 +138,16 @@ export function useApi() {
   type CreateStackFromWireopsBody = { repository: string; worker: string; wireops_file: string; paused?: boolean }
   const createStackFromWireops = (body: CreateStackFromWireopsBody) =>
     customPost<{ id: string; name: string; status: string }>('/api/custom/stacks/from-wireops', body)
+  // Single-file variant: same wireops fields, but read from a top-level
+  // "x-wireops" block embedded in the compose file itself instead of a
+  // separate wireops.yaml.
+  const getComposeWireopsFiles = (repoId: string) =>
+    customGet<string[]>(`/api/custom/repositories/${repoId}/compose-wireops-files`)
+  const getComposeDefinitionFromFile = (repoId: string, file: string) =>
+    customGet<WireopsDefinition>(`/api/custom/repositories/${repoId}/compose-definition?file=${encodeURIComponent(file)}`)
+  type CreateStackFromComposeBody = { repository: string; worker: string; compose_path: string; compose_file: string; paused?: boolean }
+  const createStackFromCompose = (body: CreateStackFromComposeBody) =>
+    customPost<{ id: string; name: string; status: string }>('/api/custom/stacks/from-compose', body)
   const testCredentials = (body: any) => customPost('/api/custom/credentials/test', body)
   const keyscan = (host: string, port = 22) => customPost('/api/custom/credentials/keyscan', { host, port })
   const testRegistryCredential = (body: any) => customPost<{ success: boolean, error?: string, warning?: string }>('/api/custom/registry-credentials/test', body)
@@ -519,5 +529,5 @@ export function useApi() {
   const updateSelf = (body: UpdateSelfBody) =>
     customPatch<{ id: string; name: string; email: string }>('/api/custom/users/me', body)
 
-  return { triggerSync, triggerRollback, forceRedeploy, setRenderOverrides, clearRenderOverrides, getRenderOverridesDiff, getServices, getDependencyGraph, getStackResources, stopContainer, restartContainer, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, getRepoFiles, getStackFiles, getJobFiles, getJobDefinitionFromFile, getWireopsFiles, getWireopsDefinitionFromFile, createStackFromWireops, lintCompose, testCredentials, keyscan, testRegistryCredential, listGitProviders, getGitProviderAuthorizeUrl, listGitProviderOrgs, listGitProviderRepos, listGitProviderBranches, listOrphans, purgeOrphan, getSystemInfo, customPost, customGet, customPut, customPatch, customDelete, getWorkers, createWorkerToken, revokeWorker, transferStack, previewMigrateStack, migrateStack, discoverProjects, importStack, listJobs, listJobGroups, triggerJobRun, cancelJobRun, deleteJobRun, getJobDefinition, getJobRaw, getWorkerPolicy, saveWorkerPolicy, resetWorkerPolicy, getGlobalWorkerPolicy, saveGlobalWorkerPolicy, getAppSettings, saveAppSettings, listAuditLogs, listTerminalSessions, listBackups, createBackup, deleteBackup, restoreBackup, syncLocalBackup, getBackupSettings, saveBackupSettings, updateSelf }
+  return { triggerSync, triggerRollback, forceRedeploy, setRenderOverrides, clearRenderOverrides, getRenderOverridesDiff, getServices, getDependencyGraph, getStackResources, stopContainer, restartContainer, deleteStack, getComposeFile, getWebhookUrl, getContainerStats, getContainerLogs, getRepoCommits, getRepoFiles, getStackFiles, getJobFiles, getJobDefinitionFromFile, getWireopsFiles, getWireopsDefinitionFromFile, createStackFromWireops, getComposeWireopsFiles, getComposeDefinitionFromFile, createStackFromCompose, lintCompose, testCredentials, keyscan, testRegistryCredential, listGitProviders, getGitProviderAuthorizeUrl, listGitProviderOrgs, listGitProviderRepos, listGitProviderBranches, listOrphans, purgeOrphan, getSystemInfo, customPost, customGet, customPut, customPatch, customDelete, getWorkers, createWorkerToken, revokeWorker, transferStack, previewMigrateStack, migrateStack, discoverProjects, importStack, listJobs, listJobGroups, triggerJobRun, cancelJobRun, deleteJobRun, getJobDefinition, getJobRaw, getWorkerPolicy, saveWorkerPolicy, resetWorkerPolicy, getGlobalWorkerPolicy, saveGlobalWorkerPolicy, getAppSettings, saveAppSettings, listAuditLogs, listTerminalSessions, listBackups, createBackup, deleteBackup, restoreBackup, syncLocalBackup, getBackupSettings, saveBackupSettings, updateSelf }
 }
