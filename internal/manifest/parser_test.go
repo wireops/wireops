@@ -311,6 +311,49 @@ services:
 	}
 }
 
+func TestHasEmbeddedXWireops(t *testing.T) {
+	cases := []struct {
+		name    string
+		compose string
+		want    bool
+	}{
+		{
+			name: "Present",
+			compose: `
+x-wireops:
+  version: wireops.v1
+  name: myapp
+services:
+  web:
+    image: nginx
+`,
+			want: true,
+		},
+		{
+			name: "Absent",
+			compose: `
+services:
+  web:
+    image: nginx
+`,
+			want: false,
+		},
+		{
+			name:    "MalformedYAML",
+			compose: `x-wireops: [this, is, not, a, map`,
+			want:    false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := HasEmbeddedXWireops([]byte(tc.compose)); got != tc.want {
+				t.Errorf("HasEmbeddedXWireops() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestParseComposeManifestInvalid(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -361,6 +404,11 @@ services:
     image: nginx
 `,
 			wantErr: "invalid x-wireops block",
+		},
+		{
+			name:    "NotATopLevelMap",
+			compose: "- just\n- a\n- list\n",
+			wantErr: "invalid compose file",
 		},
 	}
 
