@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -200,17 +201,32 @@ func (rr routeRegistrar) listYAMLFiles(repoDir string, filter func([]byte) bool)
 		return nil, err
 	}
 
+	const maxConcurrency = 16
+	maxBytes := config.GetComposeMaxBytes()
+
 	var (
 		mu      stdsync.Mutex
 		wg      stdsync.WaitGroup
 		matched []string
+		sem     = make(chan struct{}, maxConcurrency)
 	)
 	for _, path := range candidates {
 		wg.Add(1)
+		sem <- struct{}{}
 		go func(p string) {
 			defer wg.Done()
-			data, err := os.ReadFile(p)
-			if err != nil || !filter(data) {
+			defer func() { <-sem }()
+
+			f, err := os.Open(p)
+			if err != nil {
+				return
+			}
+			data, err := io.ReadAll(io.LimitReader(f, maxBytes+1))
+			f.Close()
+			if err != nil || int64(len(data)) > maxBytes {
+				return
+			}
+			if !filter(data) {
 				return
 			}
 			rel, err := filepath.Rel(repoDir, p)
