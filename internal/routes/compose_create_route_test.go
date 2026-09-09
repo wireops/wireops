@@ -167,83 +167,76 @@ func TestCreateFromComposeWorkerNotFound(t *testing.T) {
 	}
 }
 
-func TestCreateFromComposeInvalidBody(t *testing.T) {
-	_, mux, _, _ := setupComposeCreateTest(t)
+// TestCreateFromComposeRequestValidation covers the route's request-rejection
+// paths as subtests sharing one test app/repo/worker (each spinning up its
+// own app is the dominant cost of this package's test suite — see the sibling
+// TestComposeDefinitionRoute* tests in repository_discovery_routes_test.go
+// for the same reasoning) instead of one full bootstrap per case.
+func TestCreateFromComposeRequestValidation(t *testing.T) {
+	app, mux, repo, worker := setupComposeCreateTest(t)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/custom/stacks/from-compose", strings.NewReader("{not-json"))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 for invalid JSON body, got %d: %s", rec.Code, rec.Body.String())
-	}
-}
-
-func TestCreateFromComposeRejectsPathTraversal(t *testing.T) {
-	_, mux, repo, worker := setupComposeCreateTest(t)
-
-	cases := []map[string]any{
-		{"repository": repo.Id, "worker": worker.Id, "compose_path": "../escape"},
-		{"repository": repo.Id, "worker": worker.Id, "compose_file": "../escape.yml"},
-	}
-	for _, body := range cases {
-		rec := doJSONRequest(t, mux, http.MethodPost, "/api/custom/stacks/from-compose", body)
-		if rec.Code != http.StatusBadRequest {
-			t.Fatalf("expected 400 for body %+v, got %d: %s", body, rec.Code, rec.Body.String())
-		}
-	}
-}
-
-func TestCreateFromComposeFileNotFound(t *testing.T) {
-	_, mux, repo, worker := setupComposeCreateTest(t)
-
-	body := map[string]any{
-		"repository":   repo.Id,
-		"worker":       worker.Id,
-		"compose_file": "does-not-exist.yml",
-	}
-	rec := doJSONRequest(t, mux, http.MethodPost, "/api/custom/stacks/from-compose", body)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("expected 404 for missing compose file, got %d: %s", rec.Code, rec.Body.String())
-	}
-}
-
-func TestCreateFromComposeMalformedXWireopsBlock(t *testing.T) {
-	workspace := t.TempDir()
-	t.Setenv("REPOS_WORKSPACE", workspace)
-	app := newSetupTestApp(t)
-	operator := createTestUser(t, app, "compose-create-malformed@example.com", "Password1!", rbac.RoleOperator)
-
-	fixtureDir := t.TempDir()
-	localGitFixture(t, fixtureDir, map[string]string{
+	malformedFixtureDir := t.TempDir()
+	localGitFixture(t, malformedFixtureDir, map[string]string{
 		"docker-compose.yml": "x-wireops: [this, is, not, a, map]\nservices:\n  web:\n    image: nginx\n",
 	})
-	repo := createMigrateTestRepo(t, app, "compose-create-malformed-repo", fixtureDir)
-	worker := createMigrateTestWorker(t, app)
+	malformedRepo := createMigrateTestRepo(t, app, "compose-create-malformed-repo", malformedFixtureDir)
 
-	mux := composeCreateRoutesMux(t, app, operator)
+	t.Run("InvalidBody", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/custom/stacks/from-compose", strings.NewReader("{not-json"))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 for invalid JSON body, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
 
-	body := map[string]any{
-		"repository": repo.Id,
-		"worker":     worker.Id,
-	}
-	rec := doJSONRequest(t, mux, http.MethodPost, "/api/custom/stacks/from-compose", body)
-	if rec.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("expected 422 for malformed x-wireops block, got %d: %s", rec.Code, rec.Body.String())
-	}
-}
+	t.Run("RejectsPathTraversal", func(t *testing.T) {
+		cases := []map[string]any{
+			{"repository": repo.Id, "worker": worker.Id, "compose_path": "../escape"},
+			{"repository": repo.Id, "worker": worker.Id, "compose_file": "../escape.yml"},
+		}
+		for _, body := range cases {
+			rec := doJSONRequest(t, mux, http.MethodPost, "/api/custom/stacks/from-compose", body)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400 for body %+v, got %d: %s", body, rec.Code, rec.Body.String())
+			}
+		}
+	})
 
-func TestCreateFromComposeRepositoryNotFound(t *testing.T) {
-	_, mux, _, worker := setupComposeCreateTest(t)
+	t.Run("FileNotFound", func(t *testing.T) {
+		body := map[string]any{
+			"repository":   repo.Id,
+			"worker":       worker.Id,
+			"compose_file": "does-not-exist.yml",
+		}
+		rec := doJSONRequest(t, mux, http.MethodPost, "/api/custom/stacks/from-compose", body)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("expected 404 for missing compose file, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
 
-	body := map[string]any{
-		"repository": "does-not-exist",
-		"worker":     worker.Id,
-	}
-	rec := doJSONRequest(t, mux, http.MethodPost, "/api/custom/stacks/from-compose", body)
-	if rec.Code == http.StatusOK {
-		t.Fatalf("expected a non-200 response for a repository that fails to sync, got %d: %s", rec.Code, rec.Body.String())
-	}
+	t.Run("MalformedXWireopsBlock", func(t *testing.T) {
+		body := map[string]any{
+			"repository": malformedRepo.Id,
+			"worker":     worker.Id,
+		}
+		rec := doJSONRequest(t, mux, http.MethodPost, "/api/custom/stacks/from-compose", body)
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("expected 422 for malformed x-wireops block, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("RepositoryNotFound", func(t *testing.T) {
+		body := map[string]any{
+			"repository": "does-not-exist",
+			"worker":     worker.Id,
+		}
+		rec := doJSONRequest(t, mux, http.MethodPost, "/api/custom/stacks/from-compose", body)
+		if rec.Code == http.StatusOK {
+			t.Fatalf("expected a non-200 response for a repository that fails to sync, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
 }
 
 func TestCreateFromComposeMissingXWireopsBlock(t *testing.T) {
