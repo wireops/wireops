@@ -663,8 +663,16 @@ func (rr routeRegistrar) registerRepositoryRoutes() {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid file path %q: %v", composeFile, cerr)})
 		}
 
-		data, err := os.ReadFile(filepath.Join(repoDir, cleanComposeFile))
+		workDir := repoDir
+		composeDir := filepath.Dir(cleanComposeFile)
+		if composeDir != "." {
+			workDir = filepath.Join(repoDir, composeDir)
+		}
+		data, _, err := compose.ReadFile(repoDir, workDir, filepath.Base(cleanComposeFile), config.GetComposeMaxBytes())
 		if err != nil {
+			if errors.Is(err, compose.ErrOutputTooLarge) {
+				return e.JSON(http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
+			}
 			return e.JSON(http.StatusNotFound, map[string]string{"error": "compose file not found"})
 		}
 

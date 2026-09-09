@@ -216,6 +216,8 @@ watch(creationMode, async (mode) => {
   wireopsDefinition.value = null
   definitionErrors.value = []
   createErrors.value = {}
+  loadingDefinition.value = false
+  selectedWireopsFile.value = ''
   if (!form.value.repository) return
   if (mode === 'manual') {
     await loadStackFiles(form.value.repository)

@@ -189,7 +189,7 @@ func validateWireopsFieldsImmutable(app core.App, record *core.Record) error {
 	errs := validation.Errors{}
 	for _, field := range wireopsManagedStackFields {
 		if !reflect.DeepEqual(original.Get(field), record.Get(field)) {
-			errs[field] = validation.NewError("validation_wireops_field_immutable", "This field is managed by wireops.yaml and cannot be edited from the UI.")
+			errs[field] = validation.NewError("validation_wireops_field_immutable", "This field is managed by the stack's wireops definition in git and cannot be edited from the UI.")
 		}
 	}
 	if len(errs) > 0 {

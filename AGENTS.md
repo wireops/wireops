@@ -242,7 +242,7 @@ All custom routes are prefixed `/api/custom/`. PocketBase also auto-exposes CRUD
 | `POST` | `/stacks/{id}/container/restart` | Restart a container |
 | `GET` | `/stacks/import/discover` | Discover unmanaged Compose projects |
 | `POST` | `/stacks/import` | Import a local Compose stack |
-| `POST` | `/stacks/from-compose` | **Primary way to create a stack from a file.** Reads fields from a top-level `x-wireops` block embedded in the compose file itself (`repository`, `worker`, `compose_path`, `compose_file`) — every field is re-parsed server-side from the file, never trusted from the request. See `internal/manifest.ParseComposeManifest` and "Single-file stacks" below. Sets `config_source: compose_embedded`; those fields become immutable via the API afterward (`internal/hooks/pb_hooks.go`). |
+| `POST` | `/stacks/from-compose` | **Primary way to create a stack from a file.** Request body carries `repository`, `worker`, `compose_path`, `compose_file`; the stack's deploy-behavior fields (env, cron, etc.) are re-parsed server-side from the top-level `x-wireops` block embedded in that compose file, never trusted from the request. See `internal/manifest.ParseComposeManifest` and "Single-file stacks" below. Sets `config_source: compose_embedded`; those fields become immutable via the API afterward (`internal/hooks/pb_hooks.go`). |
 | `POST` | `/stacks/from-wireops` | Legacy two-file equivalent of `from-compose`: creates a stack from a separate `wireops.yaml` found in a repo (`repository`, `worker`, `wireops_file`) instead of an embedded `x-wireops` block. Sets `config_source: wireops_file`, same re-parse-server-side and immutability rules. Still fully supported; prefer `from-compose` for anything new. |
 
 ### Lint

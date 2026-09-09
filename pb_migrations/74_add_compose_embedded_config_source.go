@@ -28,6 +28,16 @@ func init() {
 		selectField.Values = []string{"manual", "wireops_file", "compose_embedded"}
 		return app.Save(stacks)
 	}, func(app core.App) error {
+		// Raw update, not app.Save(record): compose_embedded is one of the
+		// wireopsManagedStackFields, so going through the record API would
+		// trip validateWireopsFieldsImmutable (internal/hooks/pb_hooks.go)
+		// on every row and abort the rollback.
+		if _, err := app.DB().NewQuery(
+			"UPDATE stacks SET config_source = 'wireops_file' WHERE config_source = 'compose_embedded'",
+		).Execute(); err != nil {
+			return fmt.Errorf("migration 74 rollback: normalize compose_embedded stacks: %w", err)
+		}
+
 		stacks, err := app.FindCollectionByNameOrId("stacks")
 		if err != nil {
 			return err

@@ -96,7 +96,7 @@ func TestWireopsManagedStackRejectsComposeFieldEdits(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected compose_path edit to be rejected")
 	}
-	if !strings.Contains(err.Error(), "managed by wireops.yaml") {
+	if !strings.Contains(err.Error(), "managed by the stack's wireops definition in git") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
