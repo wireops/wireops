@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import EnvValueInput from './EnvValueInput.vue'
 import { computed, onMounted, ref } from 'vue'
 import { isValidEnvKey, parseEnvFileContent, type PendingEnvVar } from '../utils/envFileParser'
 
@@ -173,7 +174,7 @@ function onImportFileSelected(e: Event) {
           :icon="iconFor(row.secret_provider || 'internal')"
           class="font-mono"
         />
-        <AppTextInput v-else :model-value="row.value" disabled class="font-mono" />
+        <EnvValueInput v-else :model-value="row.value" disabled class="font-mono" />
         <UButton
           icon="i-lucide-trash-2"
           variant="ghost"
@@ -199,7 +200,7 @@ function onImportFileSelected(e: Event) {
           />
           <IntegrationsVaultReferencePicker v-if="newSecret && newProvider === 'vault'" v-model="newValue" />
           <IntegrationsInfisicalReferencePicker v-else-if="newSecret && newProvider === 'infisical'" v-model="newValue" />
-          <AppTextInput
+          <EnvValueInput
             v-else
             v-model="newValue"
             placeholder="value"

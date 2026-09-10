@@ -46,8 +46,8 @@ func RemoveEnvFile(workDir string) error {
 // serializeEnvContent renders envVars as .env file content and returns the
 // result as a string. Each KEY=VALUE pair is written on its own line; values
 // are quoted via quoteEnvValue when they contain special characters.
-// Values that contain literal newlines or carriage returns are rejected because
-// they cannot be represented on a single .env line without breaking parsers.
+// Newlines and carriage returns are escaped, keeping each entry on one physical
+// line while Docker Compose reconstructs the original value.
 func serializeEnvContent(envVars []string) (string, error) {
 	var sb strings.Builder
 	for _, kv := range envVars {
@@ -59,9 +59,6 @@ func serializeEnvContent(envVars []string) (string, error) {
 		val := kv[idx+1:]
 		if err := validateEnvKey(key); err != nil {
 			return "", err
-		}
-		if strings.ContainsAny(val, "\r\n") {
-			return "", fmt.Errorf("key %q contains a multiline value which is not supported in .env files", key)
 		}
 		sb.WriteString(key)
 		sb.WriteByte('=')
@@ -140,13 +137,13 @@ func validateEnvKey(key string) error {
 }
 
 // quoteEnvValue returns a safely quoted .env value.
-//   - Values containing '$' but no single-quote are wrapped in single quotes so
-//     Docker Compose does not interpolate variables.
+//   - Single-line values containing '$' but no single-quote or trailing
+//     backslash are wrapped in single quotes to prevent interpolation.
 //   - Values containing both '$' and a single-quote are wrapped in double quotes
 //     with backslashes, double-quotes, and dollar signs escaped to prevent
 //     interpolation.
 //   - Other values that require quoting are wrapped in double quotes with
-//     backslashes and double-quotes escaped.
+//     backslashes, double-quotes, and control whitespace escaped.
 //   - Simple values with no special characters are returned as-is.
 func quoteEnvValue(val string) string {
 	hasDollar := strings.ContainsRune(val, '$')
@@ -165,11 +162,11 @@ func quoteEnvValue(val string) string {
 	if !needsQuote {
 		return val
 	}
-	if hasDollar && !hasSingleQuote {
+	if hasDollar && !hasSingleQuote && !strings.ContainsAny(val, "\r\n") && !strings.HasSuffix(val, `\`) {
 		// Single-quote wrap: $ is preserved verbatim, no escaping needed.
 		return "'" + val + "'"
 	}
 	// Double-quote wrap: escape \, ", and $ to prevent interpolation.
-	escaped := strings.NewReplacer(`\`, `\\`, `"`, `\"`, `$`, `\$`).Replace(val)
+	escaped := strings.NewReplacer(`\`, `\\`, `"`, `\"`, `$`, `\$`, "\n", `\n`, "\r", `\r`, "\t", `\t`).Replace(val)
 	return `"` + escaped + `"`
 }

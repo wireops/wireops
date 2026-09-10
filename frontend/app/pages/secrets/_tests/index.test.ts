@@ -125,6 +125,22 @@ describe('secrets/index.vue global variables reveal gating', () => {
     vi.unstubAllGlobals()
   })
 
+  it('creates a global multiline secret from pasted JSON', async () => {
+    setupGlobals()
+    const create = vi.fn().mockResolvedValue({})
+    ;(globalThis as any).useRoute = () => ({ query: { create: 'true' } })
+    ;(globalThis as any).useNuxtApp = () => ({ $pb: { collection: () => ({ getFullList: vi.fn().mockResolvedValue([]), create }) } })
+    const wrapper = mount(SecretsPage, { global: { stubs } })
+    await flushPromises()
+    const form = wrapper.get('form')
+    const inputs = form.findAll('input')
+    await inputs[0]!.setValue('GCP_JSON')
+    const value = '{\n"private_key":"FAKE\\nKEY"\n}'
+    await inputs[1]!.trigger('paste', { clipboardData: { getData: () => value } })
+    await form.trigger('submit')
+    expect(create).toHaveBeenCalledWith({ key: 'GCP_JSON', value, secret: true, secret_provider: 'internal' }, expect.anything())
+  })
+
   it('shows the SecretRevealField for an internal secret when the user is admin', async () => {
     setupGlobals({
       isAdmin: true,

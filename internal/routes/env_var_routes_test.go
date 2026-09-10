@@ -114,8 +114,8 @@ func TestBulkUpsertEnvVars_ReplaceMode(t *testing.T) {
 	body := map[string]any{
 		"mode": "replace",
 		"vars": []map[string]any{
-			{"key": "KEEP", "value": "keep-value-changed", "secret": false, "secret_provider": ""},
-			{"key": "NEW", "value": "new-value", "secret": false, "secret_provider": ""},
+			{"key": "KEEP", "value": "keep-value-changed\nnext\n", "secret": false, "secret_provider": ""},
+			{"key": "NEW", "value": "new-value\nlast\\n", "secret": false, "secret_provider": ""},
 		},
 	}
 	rec := doJSONRequest(t, mux, http.MethodPost, "/api/custom/stacks/"+stack.Id+"/env-vars/bulk", body)
@@ -144,10 +144,10 @@ func TestBulkUpsertEnvVars_ReplaceMode(t *testing.T) {
 	if byKey["DROP"] != nil {
 		t.Fatal("expected DROP row to be deleted")
 	}
-	if byKey["KEEP"].GetString("value") != "keep-value-changed" {
+	if byKey["KEEP"].GetString("value") != "keep-value-changed\nnext\n" {
 		t.Fatalf("expected KEEP value updated, got %q", byKey["KEEP"].GetString("value"))
 	}
-	if byKey["NEW"] == nil {
+	if byKey["NEW"] == nil || byKey["NEW"].GetString("value") != "new-value\nlast\\n" {
 		t.Fatal("expected NEW row to be created")
 	}
 }
@@ -308,7 +308,8 @@ func TestCopyEnvVars_DecryptsAndReencrypts(t *testing.T) {
 	target := createEnvVarTestStack(t, app, "copy-secret-target", repo.Id)
 
 	secretKey := crypto.NormalizeSecretKey(testSecretBackendKey)
-	ciphertext, err := crypto.Encrypt([]byte("s3cr3t-copy-me"), secretKey)
+	const secretValue = "s3cr3t-copy-me\nsecond-line\\n\r\n"
+	ciphertext, err := crypto.Encrypt([]byte(secretValue), secretKey)
 	if err != nil {
 		t.Fatalf("crypto.Encrypt: %v", err)
 	}
@@ -340,7 +341,7 @@ func TestCopyEnvVars_DecryptsAndReencrypts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decrypt target ciphertext: %v", err)
 	}
-	if string(plaintext) != "s3cr3t-copy-me" {
+	if string(plaintext) != secretValue {
 		t.Fatalf("expected decrypted plaintext to match source, got %q", plaintext)
 	}
 }
@@ -485,4 +486,3 @@ func TestCopyEnvVars_AllowsSameRepositorySops(t *testing.T) {
 		t.Fatalf("expected 200 for same-repository copy despite SOPS file, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
-

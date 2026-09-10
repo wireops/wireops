@@ -84,4 +84,20 @@ describe('SecretRevealField', () => {
     expect(wrapper.text()).toContain('value is not an internal secret')
     expect((wrapper.find('input').element as HTMLInputElement).value).toBe('••••••••')
   })
+
+  it('reveals a multiline secret for inspection and clears the expanded view on hide', async () => {
+    revealEnvVar.mockResolvedValue({ value: 'first-secret\nsecond-secret\n' })
+    const wrapper = mount(SecretRevealField, {
+      props: { collection: 'global_env_vars', envVarId: 'env-1' },
+      global: { stubs: { ...stubs, UIcon: true } },
+    })
+    await wrapper.get('[aria-label="Reveal value"]').trigger('click')
+    await Promise.resolve()
+    await Promise.resolve()
+    await wrapper.get('[aria-label="Expand value"]').trigger('click')
+    expect((wrapper.get('textarea').element as HTMLTextAreaElement).value).toBe('first-secret\nsecond-secret\n')
+    await wrapper.get('[aria-label="Hide value"]').trigger('click')
+    expect(wrapper.find('textarea').exists()).toBe(false)
+    expect(wrapper.html()).not.toContain('first-secret')
+  })
 })

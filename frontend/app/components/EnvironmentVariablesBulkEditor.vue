@@ -125,7 +125,7 @@ async function submit() {
 <template>
   <div class="space-y-3">
     <p class="text-xs text-gray-500">
-      One <code class="font-mono">KEY=VALUE</code> per line. Leave a secret's value blank to keep it unchanged.
+      Use <code class="font-mono">KEY=VALUE</code>. Wrap multiline values in quotes. Leave a secret's value blank to keep it unchanged.
     </p>
 
     <div v-if="!secretsReady" class="flex items-center gap-2 py-6 text-xs text-gray-500">

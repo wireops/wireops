@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import EnvValueInput from '../../components/EnvValueInput.vue'
 const { $pb } = useNuxtApp()
 const { canOperate, isAdmin } = usePermissions()
 const { subscribe } = useRealtime()
@@ -334,7 +335,7 @@ onMounted(() => {
             />
             <IntegrationsVaultReferencePicker v-if="form.secret && form.secret_provider === 'vault'" v-model="form.value" />
             <IntegrationsInfisicalReferencePicker v-else-if="form.secret && form.secret_provider === 'infisical'" v-model="form.value" />
-            <AppTextInput
+            <EnvValueInput
               v-else
               v-model="form.value"
               placeholder="value"
@@ -377,7 +378,7 @@ onMounted(() => {
               />
               <IntegrationsVaultReferencePicker v-if="editForm.secret && editForm.secret_provider === 'vault'" v-model="editForm.value" />
               <IntegrationsInfisicalReferencePicker v-else-if="editForm.secret && editForm.secret_provider === 'infisical'" v-model="editForm.value" />
-              <AppTextInput
+              <EnvValueInput
                 v-else
                 v-model="editForm.value"
                 :placeholder="editForm.secret ? '(unchanged if empty)' : 'value'"
@@ -423,7 +424,7 @@ onMounted(() => {
               :title="`Stored via ${labelFor(providerOf(variable))}`"
               class="font-mono"
             />
-            <AppTextInput
+            <EnvValueInput
               v-else
               :model-value="variable.value"
               disabled
@@ -499,7 +500,7 @@ onMounted(() => {
             <UFormField label="Value">
               <IntegrationsVaultReferencePicker v-if="form.secret && form.secret_provider === 'vault'" v-model="form.value" />
               <IntegrationsInfisicalReferencePicker v-else-if="form.secret && form.secret_provider === 'infisical'" v-model="form.value" />
-              <AppTextInput
+              <EnvValueInput
                 v-else
                 v-model="form.value"
                 placeholder="value"

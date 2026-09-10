@@ -34,65 +34,74 @@ export function isValidEnvKey(key: string): boolean {
   return KEY_PATTERN.test(key)
 }
 
-function unquote(value: string): string {
-  const trimmed = value.trim()
-  if (trimmed.length >= 2) {
-    const first = trimmed[0]
-    const last = trimmed[trimmed.length - 1]
-    // Double-quoted values are serialized via JSON.stringify (so escapes
-    // like a literal newline become `\n`) — decode with JSON.parse to
-    // reverse that, not a plain slice, or escape sequences round-trip as
-    // literal backslash text instead of the original character.
-    if (first === '"' && last === '"') {
-      try {
-        return JSON.parse(trimmed)
-      } catch {
-        return trimmed.slice(1, -1)
-      }
-    }
-    if (first === '\'' && last === '\'') {
-      return trimmed.slice(1, -1)
-    }
-  }
-  return trimmed
+// Decode quoted input without expanding $VARIABLE expressions. Double quotes
+// accept the existing JSON escapes as well as Compose's escaped dollar sign.
+function decodeQuoted(value: string, quote: string): string {
+  if (quote === "'") return value.replace(/\\'/g, "'")
+  return value.replace(/\\(u[0-9a-fA-F]{4}|[\\"/$nrtbf])/g, (_match, escape: string) => {
+    if (escape.startsWith('u')) return String.fromCharCode(Number.parseInt(escape.slice(1), 16))
+    const escapes: Record<string, string> = { n: '\n', r: '\r', t: '\t', b: '\b', f: '\f' }
+    return escapes[escape] ?? escape
+  })
 }
 
-// Parses KEY=VALUE lines. Blank lines and lines starting with # are skipped.
-// A line with no `=` or a key that isn't a valid env var identifier is
-// reported as an error rather than silently dropped, so the caller can show
-// it to the user instead of writing a truncated set of vars.
 export function parseEnvFileContent(content: string): EnvFileParseResult {
   const vars: ParsedEnvLine[] = []
   const errors: EnvFileParseError[] = []
   const seen = new Set<string>()
-
-  const lines = content.split(/\r?\n/)
+  // Keep CR characters inside quoted values; only trim outside their quotes.
+  const lines = content.split('\n')
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i] ?? ''
+    const line = i + 1
     const trimmed = raw.trim()
-    if (trimmed === '' || trimmed.startsWith('#')) continue
-
-    const eq = trimmed.indexOf('=')
+    if (!trimmed || trimmed.startsWith('#')) continue
+    const eq = raw.indexOf('=')
     if (eq === -1) {
-      errors.push({ line: i + 1, raw, message: 'expected KEY=VALUE' })
+      errors.push({ line, raw, message: 'expected KEY=VALUE' })
       continue
     }
-
-    const key = trimmed.slice(0, eq).trim()
-    const value = unquote(trimmed.slice(eq + 1))
-
+    const key = raw.slice(0, eq).trim()
     if (!KEY_PATTERN.test(key)) {
-      errors.push({ line: i + 1, raw, message: `invalid key "${key}"` })
+      errors.push({ line, raw, message: `invalid key "${key}"` })
       continue
+    }
+    let source = raw.slice(eq + 1).trimStart()
+    let value = source.trim()
+    const quote = source[0]
+    if (quote === '"' || quote === "'") {
+      let cursor = 1
+      let closed = false
+      while (!closed) {
+        for (; cursor < source.length; cursor++) {
+          if (source[cursor] === '\\' && (quote === '"' || source[cursor + 1] === "'")) {
+            cursor++
+          } else if (source[cursor] === quote) {
+            closed = true
+            break
+          }
+        }
+        if (closed || i + 1 >= lines.length) break
+        source += '\n' + lines[++i]
+      }
+      if (!closed) {
+        errors.push({ line, raw, message: 'unterminated quoted value' })
+        continue
+      }
+      const tail = source.slice(cursor + 1).trim()
+      if (tail && !tail.startsWith('#')) {
+        errors.push({ line, raw, message: 'unexpected text after quoted value' })
+        continue
+      }
+      value = decodeQuoted(source.slice(1, cursor), quote)
     }
     if (seen.has(key)) {
-      errors.push({ line: i + 1, raw, message: `duplicate key "${key}"` })
+      errors.push({ line, raw, message: `duplicate key "${key}"` })
       continue
     }
     seen.add(key)
     vars.push({ key, value })
   }
-
   return { vars, errors }
 }
 
@@ -105,7 +114,7 @@ export function serializeEnvLines(vars: ParsedEnvLine[]): string {
     const startsOrEndsQuoted = value.length >= 1 && (
       value[0] === '"' || value[0] === '\'' || value[value.length - 1] === '"' || value[value.length - 1] === '\''
     )
-    const needsQuotes = value !== value.trim() || value.includes('\n') || value.includes('#') || startsOrEndsQuoted
+    const needsQuotes = value !== value.trim() || /[\r\n]/.test(value) || value.includes('#') || startsOrEndsQuoted
     return `${key}=${needsQuotes ? JSON.stringify(value) : value}`
   }).join('\n')
 }

@@ -2,6 +2,8 @@ package executor
 
 import (
 	"encoding/base64"
+	"errors"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -26,6 +28,65 @@ func TestParseEnvValues(t *testing.T) {
 	for _, v := range values {
 		if v == "ab" {
 			t.Errorf("short value %q should have been skipped", v)
+		}
+	}
+}
+
+func TestMultilineRedaction(t *testing.T) {
+	value := "  first-secret\nsecond-secret\r\nquote\" and $TOKEN literal\\n"
+	data := []byte(`VALUE="  first-secret\nsecond-secret\r\nquote\" and \$TOKEN literal\\n"` + "\n")
+	values := parseEnvValues(data)
+	if !slices.Contains(values, value) {
+		t.Fatalf("full decoded value missing: %q", values)
+	}
+	if got := redactSecrets(value, values); got != redactedPlaceholder {
+		t.Fatalf("full output: %q", got)
+	}
+	for _, line := range strings.Split(value, "\n") {
+		if got := redactSecrets(line, values); strings.Contains(got, "secret") || strings.Contains(got, "$TOKEN") {
+			t.Fatalf("streamed line not redacted: %q", got)
+		}
+	}
+	if got := redactSecrets("first-secret", values); got != redactedPlaceholder {
+		t.Fatal("trimmed line leaked")
+	}
+	jobValues := redactionCandidates([]string{value})
+	if got := redactSecrets("second-secret", jobValues); got != redactedPlaceholder {
+		t.Fatal("job line leaked")
+	}
+}
+
+func TestMultilineWorkDirOutputRedaction(t *testing.T) {
+	previousDir := stackDir
+	stackDir = t.TempDir()
+	t.Cleanup(func() { stackDir = previousDir })
+	content := `VALUE="first-secret\nsecond-secret"` + "\n"
+	var lines []string
+	output, err := runInWorkDir("redaction-test", "command", base64.StdEncoding.EncodeToString([]byte("services: {}\n")), base64.StdEncoding.EncodeToString([]byte(content)), "test",
+		func(line string) { lines = append(lines, line) },
+		func(_, _ string, onLine func(string)) (string, error) {
+			onLine("first-secret")
+			onLine("second-secret")
+			return "first-secret\nsecond-secret", errors.New(`failure: first-secret\nsecond-secret`)
+		})
+	if output != redactedPlaceholder || err == nil || err.Error() != "failure: "+redactedPlaceholder {
+		t.Fatalf("output/error redaction failed: %q, %v", output, err)
+	}
+	if !slices.Equal(lines, []string{redactedPlaceholder, redactedPlaceholder}) {
+		t.Fatalf("stream redaction failed: %q", lines)
+	}
+}
+
+func TestDecodeEnvValue(t *testing.T) {
+	for _, tc := range []struct{ input, want string }{
+		{`"one\ntwo\\n"`, "one\ntwo\\n"},
+		{`'literal\n$TOKEN'`, `literal\n$TOKEN`},
+		{`"\"quoted\"\t\$TOKEN\\"`, "\"quoted\"\t$TOKEN\\"},
+		{`plain`, `plain`},
+		{`"unknown\z"`, `unknown\z`},
+	} {
+		if got := decodeEnvValue(tc.input); got != tc.want {
+			t.Errorf("decode %q = %q, want %q", tc.input, got, tc.want)
 		}
 	}
 }

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import EnvValueInput from './EnvValueInput.vue'
 import { ref } from 'vue'
 
 type EnvVarCollection = 'stack_env_vars' | 'job_env_vars' | 'global_env_vars'
@@ -40,7 +41,7 @@ async function toggle() {
 
 <template>
   <div class="flex flex-col gap-1 min-w-0">
-    <AppTextInput
+    <EnvValueInput
       :model-value="revealed ? plaintext : '••••••••'"
       disabled
       :type="revealed ? 'text' : 'password'"
@@ -57,7 +58,7 @@ async function toggle() {
           @click="toggle"
         />
       </template>
-    </AppTextInput>
+    </EnvValueInput>
     <p v-if="error" class="text-xs text-red-600 dark:text-red-400">{{ error }}</p>
   </div>
 </template>

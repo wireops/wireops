@@ -103,6 +103,17 @@ describe('EnvironmentVariablesPendingEditor', () => {
     expect(wrapper.text()).toContain('No environment variables added')
   })
 
+  it('preserves multiline values pasted into the creation wizard', async () => {
+    const wrapper = mountEditor([])
+    const value = '{\n"private_key":"FAKE\\nKEY"\n}'
+    await wrapper.findAll('button').find(b => b.text() === 'Paste .env')!.trigger('click')
+    await wrapper.get('textarea').setValue(`GCP='${value}'`)
+    await wrapper.findAll('button').find(b => b.text() === 'Add variables')!.trigger('click')
+    expect(wrapper.emitted('update:modelValue')![0]![0]).toEqual([
+      { key: 'GCP', value, secret: false, secret_provider: '' },
+    ])
+  })
+
   it('adds a valid row and emits the updated list', async () => {
     const wrapper = mountEditor([])
 
