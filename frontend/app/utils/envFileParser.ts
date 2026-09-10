@@ -72,7 +72,7 @@ export function parseEnvFileContent(content: string): EnvFileParseResult {
     if (quote === '"' || quote === "'") {
       let cursor = 1
       let closed = false
-      while (!closed) {
+      while (true) {
         for (; cursor < source.length; cursor++) {
           if (source[cursor] === '\\' && (quote === '"' || source[cursor + 1] === "'")) {
             cursor++

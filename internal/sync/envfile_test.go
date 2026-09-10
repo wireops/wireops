@@ -72,7 +72,9 @@ func TestEnvFileComposeRoundTrip(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("Docker CLI unavailable")
 	}
-	if err := exec.Command("docker", "compose", "version").Run(); err != nil {
+	probeCtx, cancelProbe := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelProbe()
+	if err := exec.CommandContext(probeCtx, "docker", "compose", "version").Run(); err != nil {
 		t.Skip("Compose unavailable")
 	}
 	for name, value := range multilineValues {
