@@ -2,6 +2,12 @@
 // config file (P1.3). Unlike internal/job's job.yaml, matching a candidate
 // file is done by exact basename ("wireops.yaml" or "wireops.yml"), not by
 // sniffing YAML content — the filename itself is the contract.
+//
+// DEPRECATED: the standalone wireops.yaml/wireops.yml two-file layout is
+// deprecated. Prefer embedding the same fields inline in the compose file
+// under a top-level "x-wireops" key (see ExtensionKey / ParseComposeManifest).
+// The standalone layout still parses and is fully supported, but new stacks
+// should use x-wireops.
 package manifest
 
 import (
@@ -61,7 +67,20 @@ type Definition struct {
 	ResolvedComposePath string `yaml:"-" json:"resolved_compose_path,omitempty"`
 	ResolvedComposeFile string `yaml:"-" json:"resolved_compose_file,omitempty"`
 	ResolutionError     string `yaml:"-" json:"resolution_error,omitempty"`
+
+	// Deprecated is set to true only when this Definition came from a
+	// standalone wireops.yaml/wireops.yml file (ParseWireopsFile), the
+	// deprecated two-file layout. It is never set for an embedded x-wireops
+	// block (ParseComposeManifest), so the primary single-file path stays
+	// clean. DeprecationNotice carries a short human-readable steer.
+	Deprecated        bool   `yaml:"-" json:"deprecated,omitempty"`
+	DeprecationNotice string `yaml:"-" json:"deprecation_notice,omitempty"`
 }
+
+// deprecationNotice is the steer shown for the standalone wireops.yaml layout.
+const deprecationNotice = "The standalone wireops.yaml layout is deprecated. " +
+	"Prefer embedding an 'x-wireops' block in the compose file (single-file stack). " +
+	"Existing stacks keep working."
 
 const supportedVersion = "wireops.v1"
 
@@ -117,6 +136,11 @@ func ParseWireopsFile(repoWorkspace, repoID, filePath string) (*Definition, erro
 	if err := finalizeDefinition(&def); err != nil {
 		return nil, err
 	}
+
+	// Flag the deprecated standalone layout. Set here (not in the shared
+	// finalizeDefinition) so an embedded x-wireops block never inherits it.
+	def.Deprecated = true
+	def.DeprecationNotice = deprecationNotice
 
 	return &def, nil
 }

@@ -33,7 +33,7 @@ func Register(server *mcp.Server, c *client.Client) {
 		Arguments: []*mcp.PromptArgument{
 			{Name: "app_description", Description: "What the stack should run, e.g. 'a Postgres database with pgAdmin' or 'Ghost blog behind Traefik'.", Required: true},
 			{Name: "image", Description: "A specific Docker image to use, if already known. Optional — leave empty to have the model research one.", Required: false},
-			{Name: "two_file", Description: "'true' to generate the legacy two-file layout (separate wireops.yaml + docker-compose.yml) instead of the default single compose file with an embedded x-wireops block. Optional — defaults to false (single file).", Required: false},
+			{Name: "two_file", Description: "'true' to generate the deprecated two-file layout (separate wireops.yaml + docker-compose.yml) instead of the default single compose file with an embedded x-wireops block. Optional — defaults to false (single file).", Required: false},
 		},
 	}, scaffoldNewStack())
 }
@@ -112,7 +112,7 @@ func scaffoldNewStack() mcp.PromptHandler {
 
 		fileModeHint := "Call scaffold_stack with two_file left false (the default): it embeds the wireops fields as a top-level x-wireops block inside the compose file and returns that one file only — no separate wireops.yaml. This is the primary, recommended way to define a wireops stack. Create the stack via POST /api/custom/stacks/from-compose (compose_path/compose_file)."
 		if twoFile {
-			fileModeHint = "Call scaffold_stack with two_file: true: it returns the legacy layout, a separate wireops.yaml plus docker-compose.yml. Create the stack via POST /api/custom/stacks/from-wireops."
+			fileModeHint = "Call scaffold_stack with two_file: true: it returns the deprecated layout, a separate wireops.yaml plus docker-compose.yml. Create the stack via POST /api/custom/stacks/from-wireops. Note this two-file layout is deprecated in favor of the embedded x-wireops block."
 		}
 
 		text := fmt.Sprintf(`Scaffold a new wireops stack for: %s

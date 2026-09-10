@@ -1,6 +1,6 @@
 <script setup lang="ts">
 const { $pb } = useNuxtApp()
-const { canOperate } = usePermissions()
+const { canOperate, isAdmin } = usePermissions()
 const { subscribe } = useRealtime()
 const toast = useToast()
 const route = useRoute()
@@ -407,8 +407,15 @@ onMounted(() => {
 
           <div v-else class="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2rem_2rem_2rem] sm:items-center">
             <AppTextInput :model-value="variable.key" disabled class="font-mono" />
+            <SecretRevealField
+              v-if="isInternalSecret(variable) && isAdmin"
+              collection="global_env_vars"
+              :env-var-id="variable.id"
+              :icon="iconFor(providerOf(variable))"
+              :title="`Stored via ${labelFor(providerOf(variable))}`"
+            />
             <AppTextInput
-              v-if="isInternalSecret(variable)"
+              v-else-if="isInternalSecret(variable)"
               model-value="••••••••"
               disabled
               type="password"

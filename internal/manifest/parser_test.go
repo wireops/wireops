@@ -188,6 +188,12 @@ name: api
 	if def.Worker == nil || len(def.Worker.Tags) != 2 {
 		t.Errorf("expected worker.tags with 2 entries, got: %+v", def.Worker)
 	}
+	if !def.Deprecated {
+		t.Errorf("expected standalone wireops.yaml to be flagged Deprecated")
+	}
+	if def.DeprecationNotice == "" {
+		t.Errorf("expected a deprecation notice for standalone wireops.yaml")
+	}
 
 	if _, err := ParseWireopsFile(tmpDir, "", "multiple/wireops.yaml"); err == nil {
 		t.Errorf("expected error for multiple YAML documents, got nil")
@@ -305,6 +311,9 @@ services:
 	}
 	if def.Worker == nil || len(def.Worker.Tags) != 2 || def.Worker.Tags[0] != "gpu" {
 		t.Errorf("Worker.Tags = %+v, want [gpu us-east]", def.Worker)
+	}
+	if def.Deprecated {
+		t.Errorf("embedded x-wireops block must not be flagged Deprecated")
 	}
 	if def.Compose == nil || def.Compose.RemoveOrphans == nil || !*def.Compose.RemoveOrphans {
 		t.Errorf("Compose.RemoveOrphans not set to true: %+v", def.Compose)

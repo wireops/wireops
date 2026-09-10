@@ -60,9 +60,10 @@ func setupWireopsCreateTest(t *testing.T) (core.App, http.Handler, *core.Record,
 }
 
 type createFromWireopsResponse struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Status string `json:"status"`
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Status     string `json:"status"`
+	Deprecated string `json:"deprecated"`
 }
 
 func TestCreateFromWireopsDefaultsToPendingAndDeploysImmediately(t *testing.T) {
@@ -87,6 +88,9 @@ func TestCreateFromWireopsDefaultsToPendingAndDeploysImmediately(t *testing.T) {
 	}
 	if out.Name != "api" {
 		t.Fatalf("expected name from wireops.yaml, got %q", out.Name)
+	}
+	if out.Deprecated != "true" {
+		t.Fatalf("expected deprecated=true in from-wireops response, got %q", out.Deprecated)
 	}
 
 	stack, err := app.FindRecordById("stacks", out.ID)

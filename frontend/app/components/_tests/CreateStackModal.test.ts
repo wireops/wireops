@@ -209,8 +209,10 @@ describe('CreateStackModal', () => {
     const wrapper = await openInWireopsMode()
 
     expect(wrapper.text()).toContain('Manual')
-    expect(wrapper.text()).toContain('From wireops.yaml')
+    expect(wrapper.text()).toContain('From wireops.yaml (deprecated)')
     expect(wrapper.text()).toContain('wireops.yaml file')
+    // standalone wireops.yaml mode surfaces the deprecation warning
+    expect(wrapper.text()).toContain('Deprecated layout')
     // no Name input in wireops_file mode — name comes from the file
     expect(wrapper.findAll('label').some(l => l.text() === 'Name')).toBe(false)
   })

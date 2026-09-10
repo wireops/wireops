@@ -163,7 +163,7 @@ WORKER_TOKEN=paste-the-token-here WORKER_TAGS=prod,eu-west-1 docker compose up -
 
 The worker connects out to the server, registers with that token, and starts polling for stacks/jobs to run. Check **Workers** in the UI — it should flip to `ACTIVE` within a few seconds.
 
-`WORKER_TAGS` labels what a worker is for (e.g. `prod`, `eu-west-1`) — required, comma-separated, set on the worker itself, not in the UI. Stacks and jobs can require specific tags in their `wireops.yaml`/`job.yaml`, so only matching workers show up as valid targets.
+`WORKER_TAGS` labels what a worker is for (e.g. `prod`, `eu-west-1`) — required, comma-separated, set on the worker itself, not in the UI. Stacks and jobs can require specific tags in their `x-wireops` block (or the deprecated standalone `wireops.yaml`)/`job.yaml`, so only matching workers show up as valid targets.
 
 > **Linux permissions:** the containers run as UID/GID `1000`. Before the first start, create `example/data` and make it writable by that identity. A Linux worker also needs the Docker socket's numeric group in `DOCKER_GID`; `example/.env.example` contains the commands. On Docker Desktop, the data directory must still be writable by the container user and socket permissions depend on the local setup; Linux is the supported production environment.
 

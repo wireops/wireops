@@ -24,6 +24,7 @@ const { customGet } = useApi()
 const { subscribe } = useRealtime()
 const toast = useToast()
 const { load: loadProviderOptions, providerOptions, hasActiveBackends, iconFor, avatarFor, labelFor } = useSecretProviderOptions()
+const { isAdmin } = usePermissions()
 
 // SOPS-managed keys (decrypted from secrets.yaml, GitOps stacks only) are
 // read-only/immutable here: key names only, the server never sends values to
@@ -467,8 +468,15 @@ watch(showCreateModal, (open) => {
           <template v-else>
             <div class="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2rem_2rem_2rem] sm:items-center">
               <AppTextInput :model-value="env.key" disabled class="font-mono" />
+              <SecretRevealField
+                v-if="isInternalSecret(env) && isAdmin"
+                :collection="collection"
+                :env-var-id="env.id"
+                :icon="iconFor(providerOf(env))"
+                :title="`Stored via ${labelFor(providerOf(env))}`"
+              />
               <AppTextInput
-                v-if="isInternalSecret(env)"
+                v-else-if="isInternalSecret(env)"
                 model-value="••••••••"
                 disabled
                 type="password"
