@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import EnvValueInput from './EnvValueInput.vue'
 import { ref, computed, onMounted, watch } from 'vue'
 import { ENV_VAR_TEMPLATES } from '../utils/envVarTemplates'
 import { serializeEnvLines } from '../utils/envFileParser'
@@ -392,7 +393,7 @@ watch(showCreateModal, (open) => {
             />
             <IntegrationsVaultReferencePicker v-if="newEnvSecret && newEnvProvider === 'vault'" v-model="newEnvValue" />
             <IntegrationsInfisicalReferencePicker v-else-if="newEnvSecret && newEnvProvider === 'infisical'" v-model="newEnvValue" />
-            <AppTextInput
+            <EnvValueInput
               v-else
               v-model="newEnvValue"
               placeholder="value"
@@ -436,7 +437,7 @@ watch(showCreateModal, (open) => {
                 />
                 <IntegrationsVaultReferencePicker v-if="editEnvSecret && editEnvProvider === 'vault'" v-model="editEnvValue" />
                 <IntegrationsInfisicalReferencePicker v-else-if="editEnvSecret && editEnvProvider === 'infisical'" v-model="editEnvValue" />
-                <AppTextInput
+                <EnvValueInput
                   v-else
                   v-model="editEnvValue"
                   :placeholder="editEnvSecret ? '(unchanged if empty)' : 'value'"
@@ -484,7 +485,7 @@ watch(showCreateModal, (open) => {
                 :title="`Stored via ${labelFor(providerOf(env))}`"
                 class="font-mono"
               />
-              <AppTextInput
+              <EnvValueInput
                 v-else
                 :model-value="env.value"
                 disabled
@@ -560,7 +561,7 @@ watch(showCreateModal, (open) => {
             <UFormField label="Value">
               <IntegrationsVaultReferencePicker v-if="newEnvSecret && newEnvProvider === 'vault'" v-model="newEnvValue" />
               <IntegrationsInfisicalReferencePicker v-else-if="newEnvSecret && newEnvProvider === 'infisical'" v-model="newEnvValue" />
-              <AppTextInput
+              <EnvValueInput
                 v-else
                 v-model="newEnvValue"
                 placeholder="value"

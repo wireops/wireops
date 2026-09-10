@@ -48,6 +48,42 @@ func TestLoadStackMergesGlobalsAndLocalOverrides(t *testing.T) {
 	}
 }
 
+func TestMultilineGlobalVariables(t *testing.T) {
+	app := newEnvVarsTestApp(t)
+	key := []byte(strings.Repeat("x", 32))
+	registry := secrets.NewDefaultRegistry(app, key)
+	for _, secret := range []bool{false, true} {
+		name := "plain"
+		if secret {
+			name = "secret"
+		}
+		t.Run(name, func(t *testing.T) {
+			stack := mustCreateEnvRecord(t, app, "stacks", map[string]any{"name": name})
+			job := mustCreateEnvRecord(t, app, "scheduled_jobs", map[string]any{"name": name})
+			value := "{\n  \"private_key\": \"FAKE\\nKEY\\n\"\n}\n"
+			stored := value
+			if secret {
+				var err error
+				stored, err = crypto.Encrypt([]byte(value), key)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			global := mustCreateEnvRecord(t, app, "global_env_vars", map[string]any{"key": "GCP_JSON", "value": stored, "secret": secret, "secret_provider": "internal"})
+			mustCreateEnvRecord(t, app, "stack_global_env_vars", map[string]any{"stack": stack.Id, "global_env_var": global.Id})
+			mustCreateEnvRecord(t, app, "job_global_env_vars", map[string]any{"job": job.Id, "global_env_var": global.Id})
+			stackValues, err := LoadStack(context.Background(), app, registry, stack.Id)
+			if err != nil || !reflect.DeepEqual(stackValues, []string{"GCP_JSON=" + value}) {
+				t.Fatalf("stack multiline resolution failed: %v", err)
+			}
+			jobValues, err := LoadJob(context.Background(), app, registry, job.Id)
+			if err != nil || jobValues["GCP_JSON"] != value {
+				t.Fatalf("job multiline resolution failed: %v", err)
+			}
+		})
+	}
+}
+
 func TestLoadJobResolvesGlobalSecret(t *testing.T) {
 	app := newEnvVarsTestApp(t)
 	key := []byte(strings.Repeat("x", 32))

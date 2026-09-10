@@ -331,16 +331,6 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	envVars = overlaySopsEnv(envVars, sopsValues)
 	r.clearSecretError(stack, "stacks")
 
-	// Write .env to the repo workDir NOW so that compose config (called by
-	// GenerateRevision below via compose.Config) can resolve ${VAR} interpolations.
-	// The actual docker compose up runs from the rendered dir — that copy is written later.
-	if envWriteErr := WriteEnvFile(workDir, envVars); envWriteErr != nil {
-		log.Printf("[reconciler] warning: failed to write .env to repo dir for stack %s: %v", stackID, envWriteErr)
-	}
-	if giErr := EnsureGitignoreHasEnv(workDir); giErr != nil {
-		log.Printf("[reconciler] warning: failed to update .gitignore for stack %s: %v", stackID, giErr)
-	}
-
 	// --- lint ---
 	// This run is only for the deploy timeline's phase detail — it never aborts
 	// the reconcile itself. GenerateRevision below runs its own lint.Run over
@@ -685,15 +675,6 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 		return fmt.Errorf("%s", errMsg)
 	}
 
-	// Write .env to workDir so that compose config (called inside
-	// GenerateRevision) can resolve ${VAR} interpolations from the repo file.
-	if envWriteErr := WriteEnvFile(workDir, envVars); envWriteErr != nil {
-		log.Printf("[reconciler] warning: failed to write .env to repo dir for stack %s (rollback): %v", stackID, envWriteErr)
-	}
-	if giErr := EnsureGitignoreHasEnv(workDir); giErr != nil {
-		log.Printf("[reconciler] warning: failed to update .gitignore for stack %s (rollback): %v", stackID, giErr)
-	}
-
 	renderRes, err := r.renderer.GenerateRevision(ctx, stack, repo, workDir, composeFile, envVars, commitSHA, true, workerID, workerFingerprint, LoadRenderOverrides(stack))
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to generate label revision on rollback: %v", err)
@@ -985,15 +966,6 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 	if err != nil {
 		errMsg := fmt.Sprintf("worker resolution failed: %v", err)
 		return failRedeploy(errMsg, time.Since(start).Milliseconds(), "sync")
-	}
-
-	// Write .env to workDir so that compose config (called inside
-	// GenerateRevision) can resolve ${VAR} interpolations from the repo file.
-	if envWriteErr := WriteEnvFile(workDir, envVars); envWriteErr != nil {
-		log.Printf("[reconciler] warning: failed to write .env to repo dir for stack %s (redeploy): %v", stackID, envWriteErr)
-	}
-	if giErr := EnsureGitignoreHasEnv(workDir); giErr != nil {
-		log.Printf("[reconciler] warning: failed to update .gitignore for stack %s (redeploy): %v", stackID, giErr)
 	}
 
 	renderRes, err := r.renderer.GenerateRevision(ctx, stack, repo, workDir, composeFile, envVars, lastSHA, true, workerID, workerFingerprint, LoadRenderOverrides(stack))
@@ -1449,14 +1421,6 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 		return fmt.Errorf("%s", errMsg)
 	}
 	r.clearSecretError(stack, "stacks")
-
-	// Write .env to workDir so that compose config (called inside
-	// GenerateRevision) can resolve ${VAR} interpolations.
-	if envWriteErr := WriteEnvFile(workDir, envVars); envWriteErr != nil {
-		log.Printf("[reconciler] warning: failed to write .env to work dir for stack %s (local sync): %v", stackID, envWriteErr)
-	} else if gitignoreErr := EnsureGitignoreHasEnv(workDir); gitignoreErr != nil {
-		log.Printf("[reconciler] warning: failed to ensure .gitignore for stack %s (local sync): %v", stackID, gitignoreErr)
-	}
 
 	// Local stacks (source_type=local) have only the single compose file
 	// copied from the worker host into workDir, not a git checkout — a

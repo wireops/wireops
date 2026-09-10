@@ -189,9 +189,9 @@ services:
 	renderer := sync.NewRenderer(app)
 	ctx := context.Background()
 
-	// Env vars containing sensible data
+	// Multiline secrets stay in memory while expressions are rendered.
 	envVars := []string{
-		"MY_SECRET=super_secret_value",
+		"MY_SECRET=super_secret_value\nsecond_secret_line\n",
 		"ANOTHER_VAR=my_override",
 	}
 
@@ -201,6 +201,15 @@ services:
 	}
 
 	contentStr := readRenderedFile(t, renderer, stack.Id, res.Version)
+
+	for _, name := range []string{".env", ".gitignore"} {
+		if _, err := os.Stat(filepath.Join(workDir, name)); !os.IsNotExist(err) {
+			t.Fatalf("rendering must not create %s in the repository (stat error: %v)", name, err)
+		}
+	}
+	if contains(contentStr, "second_secret_line") {
+		t.Error("multiline secret was persisted in the rendered compose file")
+	}
 
 	if contains(contentStr, "super_secret_value") {
 		t.Errorf("Security risk: secret value 'super_secret_value' was interpolated into the saved compose file!")

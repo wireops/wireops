@@ -54,7 +54,8 @@ func TestRevealEnvVar(t *testing.T) {
 
 	t.Run("AdminGetsPlaintext", func(t *testing.T) {
 		stack := createEnvVarTestStack(t, app, "reveal-stack-admin", repo.Id)
-		row := createEnvVarRow(t, app, stack.Id, "TOKEN", encryptForReveal(t, "s3cr3t"), true, "internal")
+		const value = "s3cr3t\nprivate-key\\n\r\n"
+		row := createEnvVarRow(t, app, stack.Id, "TOKEN", encryptForReveal(t, value), true, "internal")
 
 		rec := doJSONRequest(t, adminMux, http.MethodGet, "/api/custom/env-vars/stack_env_vars/"+row.Id+"/reveal", nil)
 		if rec.Code != http.StatusOK {
@@ -67,7 +68,7 @@ func TestRevealEnvVar(t *testing.T) {
 		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 			t.Fatalf("decode response: %v", err)
 		}
-		if out.Value != "s3cr3t" {
+		if out.Value != value {
 			t.Fatalf("expected decrypted value, got %q", out.Value)
 		}
 	})

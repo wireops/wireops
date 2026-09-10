@@ -224,6 +224,7 @@ func TestEnvSecretPlaintextResemblingCiphertextIsStillEncrypted(t *testing.T) {
 		// bytes — enough to fool a "nonce+tag minimum" (>=28 decoded bytes)
 		// heuristic too, since that's still just a length guess.
 		{"30 decoded bytes", "abcdefghijklmnopqrstabcdefghijklmnopqrst"},
+		{"multiline JSON", "{\n  \"private_key\": \"FAKE\\nKEY\\n\"\n}\n"},
 	}
 
 	for i, tc := range cases {

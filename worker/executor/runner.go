@@ -655,7 +655,7 @@ func RunJob(ctx context.Context, cmd protocol.RunJobCommand) protocol.JobComplet
 			jobSecrets = append(jobSecrets, v)
 		}
 	}
-	output := redactSecrets(string(out), jobSecrets)
+	output := redactSecrets(string(out), redactionCandidates(jobSecrets))
 
 	elapsed := time.Since(start).Milliseconds()
 	success := runErr == nil

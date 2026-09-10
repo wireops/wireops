@@ -50,6 +50,19 @@ describe('EnvironmentVariablesBulkEditor', () => {
     ;(globalThis as any).usePermissions = () => ({ isAdmin: ref(false) })
   })
 
+  it('imports a multiline secret without changing its JSON escapes', async () => {
+    const value = '{\n"private_key":"FAKE\\nKEY"\n}\n'
+    const wrapper = mount(EnvironmentVariablesBulkEditor, {
+      props: { targetType: 'stack', targetId: 'stack-1', envVars: [], importContent: `GCP='${value}'`, defaultSecretKeys: new Set(['GCP']) },
+      global: { stubs },
+    })
+    await wrapper.findAll('button').find(b => b.text() === 'Save')!.trigger('click')
+    await flushPromises()
+    expect(customPost).toHaveBeenCalledWith('/api/custom/stacks/stack-1/env-vars/bulk', {
+      mode: 'append', vars: [{ key: 'GCP', value, secret: true, secret_provider: 'internal' }],
+    })
+  })
+
   it('prefills the textarea from envVars, masking internal secrets', () => {
     const wrapper = mount(EnvironmentVariablesBulkEditor, {
       props: {

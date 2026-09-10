@@ -165,6 +165,23 @@ describe('EnvironmentVariablesCard', () => {
     expect(wrapper.find('.u-select').exists()).toBe(true)
   })
 
+  it.each(['stack', 'job'] as const)('creates a multiline secret for a %s from pasted JSON', async (targetType) => {
+    const wrapper = mount(EnvironmentVariablesCard, {
+      props: { targetType, targetId: 'target-1' }, global: { stubs },
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    await wrapper.findAll('button').filter(b => b.text() === 'Add')[1]!.trigger('click')
+    const form = wrapper.get('form')
+    const inputs = form.findAll('input')
+    await inputs[0]!.setValue('GCP_JSON')
+    const value = '{\n"private_key":"FAKE\\nKEY"\n}'
+    await inputs[1]!.trigger('paste', { clipboardData: { getData: () => value } })
+    expect(form.find('textarea').exists()).toBe(true)
+    await form.trigger('submit')
+    expect(createFn).toHaveBeenCalledWith({ [targetType]: 'target-1', key: 'GCP_JSON', value, secret: true, secret_provider: 'internal' }, expect.anything())
+  })
+
   it('swaps in the Vault picker when the vault provider is selected, and includes secret_provider on create', async () => {
     const wrapper = mount(EnvironmentVariablesCard, {
       props: { targetType: 'stack', targetId: 'stack-1' },
