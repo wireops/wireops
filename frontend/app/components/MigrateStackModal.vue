@@ -198,7 +198,7 @@ function severityIcon(severity: string) {
       </UFormField>
 
       <template v-if="targetRepository">
-        <UFormField v-if="isWireopsManaged" label="wireops.yaml file" required>
+        <UFormField v-if="isWireopsManaged" label="wireops.yaml file (deprecated)" required>
           <AppSelectInput
             v-model="wireopsFile"
             :items="wireopsFileOptions"

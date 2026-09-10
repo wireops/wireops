@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
-import { h } from 'vue'
+import { mount, flushPromises } from '@vue/test-utils'
+import { h, ref } from 'vue'
 import EnvironmentVariablesBulkEditor from '../EnvironmentVariablesBulkEditor.vue'
 
 type Slots = Record<string, (() => unknown) | undefined>
@@ -34,15 +34,20 @@ const stubs = {
       return () => h('div', slots.default?.())
     },
   },
+  UIcon: { setup: () => () => h('span') },
 }
 
 describe('EnvironmentVariablesBulkEditor', () => {
   const customPost = vi.fn().mockResolvedValue({})
+  const revealStackEnvVars = vi.fn().mockResolvedValue({ values: {} })
 
   beforeEach(() => {
     customPost.mockClear()
-    ;(globalThis as any).useApi = () => ({ customPost })
+    revealStackEnvVars.mockClear()
+    revealStackEnvVars.mockResolvedValue({ values: {} })
+    ;(globalThis as any).useApi = () => ({ customPost, revealStackEnvVars })
     ;(globalThis as any).useToast = () => ({ add: vi.fn() })
+    ;(globalThis as any).usePermissions = () => ({ isAdmin: ref(false) })
   })
 
   it('prefills the textarea from envVars, masking internal secrets', () => {
@@ -177,6 +182,67 @@ describe('EnvironmentVariablesBulkEditor', () => {
       mode: 'append',
       vars: [{ key: 'POSTGRES_PASSWORD', value: 'hunter2', secret: true, secret_provider: 'internal' }],
     })
+  })
+
+  it('prefills decrypted secret values for admins via reveal-all', async () => {
+    ;(globalThis as any).usePermissions = () => ({ isAdmin: ref(true) })
+    revealStackEnvVars.mockResolvedValue({ values: { TOKEN: 's3cr3t' } })
+
+    const wrapper = mount(EnvironmentVariablesBulkEditor, {
+      props: {
+        targetType: 'stack',
+        targetId: 'stack-1',
+        envVars: [
+          { key: 'PLAIN', value: 'hello', secret: false, secret_provider: '' },
+          { key: 'TOKEN', value: 'ignored-ciphertext', secret: true, secret_provider: 'internal' },
+        ],
+      },
+      global: { stubs },
+    })
+    await flushPromises()
+
+    expect(revealStackEnvVars).toHaveBeenCalledWith('stack-1')
+    const text = (wrapper.find('textarea').element as HTMLTextAreaElement).value
+    expect(text).toContain('PLAIN=hello')
+    expect(text).toContain('TOKEN=s3cr3t')
+  })
+
+  it('falls back to a blank secret value and toasts when reveal-all fails', async () => {
+    ;(globalThis as any).usePermissions = () => ({ isAdmin: ref(true) })
+    const addToast = vi.fn()
+    ;(globalThis as any).useToast = () => ({ add: addToast })
+    revealStackEnvVars.mockRejectedValue(new Error('network error'))
+
+    const wrapper = mount(EnvironmentVariablesBulkEditor, {
+      props: {
+        targetType: 'stack',
+        targetId: 'stack-1',
+        envVars: [{ key: 'TOKEN', value: 'ignored-ciphertext', secret: true, secret_provider: 'internal' }],
+      },
+      global: { stubs },
+    })
+    await flushPromises()
+
+    expect(addToast).toHaveBeenCalledWith(expect.objectContaining({ title: 'Failed to load secret values', color: 'error' }))
+    const text = (wrapper.find('textarea').element as HTMLTextAreaElement).value
+    expect(text).toContain('TOKEN=')
+    expect(text).not.toContain('ignored-ciphertext')
+  })
+
+  it('does not fetch decrypted values for non-admins (blank secret prefill unchanged)', async () => {
+    ;(globalThis as any).usePermissions = () => ({ isAdmin: ref(false) })
+
+    mount(EnvironmentVariablesBulkEditor, {
+      props: {
+        targetType: 'stack',
+        targetId: 'stack-1',
+        envVars: [{ key: 'TOKEN', value: 'ignored-ciphertext', secret: true, secret_provider: 'internal' }],
+      },
+      global: { stubs },
+    })
+    await flushPromises()
+
+    expect(revealStackEnvVars).not.toHaveBeenCalled()
   })
 
   it('resets to append mode when importContent changes while mounted', async () => {

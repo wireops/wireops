@@ -1199,8 +1199,8 @@ func (rr routeRegistrar) registerCreateFromWireopsRoute() {
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
 
-		log.Printf("[routes] create-from-wireops stack=%s repository=%s worker=%s file=%s", stack.Id, body.Repository, workerRecord.GetString("hostname"), body.WireopsFile)
-		return e.JSON(http.StatusOK, map[string]string{"id": stack.Id, "name": def.Name, "status": stack.GetString("status")})
+		log.Printf("[routes] create-from-wireops (DEPRECATED layout; prefer from-compose/x-wireops) stack=%s repository=%s worker=%s file=%s", stack.Id, body.Repository, workerRecord.GetString("hostname"), body.WireopsFile)
+		return e.JSON(http.StatusOK, map[string]string{"id": stack.Id, "name": def.Name, "status": stack.GetString("status"), "deprecated": "true"})
 	}).BindFunc(rbac.Require(rbac.CapManageRepos))
 }
 

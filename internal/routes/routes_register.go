@@ -644,6 +644,7 @@ func (rr routeRegistrar) registerRepositoryRoutes() {
 
 		resolveWireopsComposeFile(repoDir, wireopsFile, def)
 
+		log.Printf("[routes] DEPRECATED wireops.yaml definition requested repo=%s file=%s (prefer x-wireops)", repoID, wireopsFile)
 		return e.JSON(http.StatusOK, def)
 	}).BindFunc(rbac.Require(rbac.CapManageRepos))
 

@@ -164,6 +164,8 @@ describe('useApi backup wrappers', () => {
     await api.listAuditLogs({ page: 2, status: 'error' })
     await api.listTerminalSessions({ page: 2, service_name: 'api' })
     await api.updateSelf({ name: 'New name' })
+    await api.revealEnvVar('stack_env_vars', 'env-1')
+    await api.revealStackEnvVars('stack-1')
 
     const paths = fetchMock.mock.calls.map(([url]) => String(url))
     expect(paths).toContain('http://test/api/custom/stacks/stack%20id/container/container%20id/logs?tail=25')
@@ -171,6 +173,8 @@ describe('useApi backup wrappers', () => {
     expect(paths).toContain('http://test/api/custom/jobs?page=2&per_page=10&status=enabled&repository=repo+id&search=backup+task')
     expect(paths).toContain('http://test/api/custom/audit-logs?page=2&status=error')
     expect(paths).toContain('http://test/api/custom/terminal-sessions?page=2&service_name=api')
+    expect(paths).toContain('http://test/api/custom/env-vars/stack_env_vars/env-1/reveal')
+    expect(paths).toContain('http://test/api/custom/stacks/stack-1/env-vars/reveal-all')
   })
 
   it('omits optional query parameters, sends empty auth when logged out, and exposes API errors', async () => {

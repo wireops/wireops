@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { h } from 'vue'
+import { h, ref } from 'vue'
 import EnvironmentVariablesCard from '../EnvironmentVariablesCard.vue'
 
 type Slots = Record<string, (() => unknown) | undefined>
@@ -20,9 +20,13 @@ describe('EnvironmentVariablesCard', () => {
         }),
       },
     })
-    ;(globalThis as any).useApi = () => ({ customGet: vi.fn().mockResolvedValue({ keys: [], available: false }) })
+    ;(globalThis as any).useApi = () => ({
+      customGet: vi.fn().mockResolvedValue({ keys: [], available: false }),
+      revealEnvVar: vi.fn().mockResolvedValue({ value: 'decrypted-value' }),
+    })
     ;(globalThis as any).useRealtime = () => ({ subscribe: vi.fn() })
     ;(globalThis as any).useToast = () => ({ add: vi.fn() })
+    ;(globalThis as any).usePermissions = () => ({ isAdmin: ref(false) })
     ;(globalThis as any).useSecretProviderOptions = () => ({
       load: vi.fn(),
       providerOptions: [{ label: 'Internal', value: 'internal' }, { label: 'Vault', value: 'vault' }],
@@ -139,6 +143,12 @@ describe('EnvironmentVariablesCard', () => {
         return () => null
       },
     },
+    SecretRevealField: {
+      props: ['collection', 'envVarId', 'icon', 'title'],
+      setup(props: { collection: string, envVarId: string }) {
+        return () => h('div', { class: 'secret-reveal-field', 'data-collection': props.collection, 'data-env-var-id': props.envVarId }, 'reveal-field')
+      },
+    },
   }
 
   it('defaults new secret env vars to the internal provider and shows a provider select', async () => {
@@ -215,6 +225,67 @@ describe('EnvironmentVariablesCard', () => {
 
     expect(values).toContain('••••••••')
     expect(values).toContain('secret/data/myapp#DB_PASS')
+  })
+
+  it('shows the reveal control instead of a static mask for admins', async () => {
+    ;(globalThis as any).usePermissions = () => ({ isAdmin: ref(true) })
+    ;(globalThis as any).useNuxtApp = () => ({
+      $pb: {
+        collection: () => ({
+          getFullList: vi.fn().mockResolvedValue([
+            { id: 'env-internal', key: 'INTERNAL_TOKEN', value: '', secret: true, secret_provider: 'internal' },
+            { id: 'env-vault', key: 'DB_PASS', value: 'secret/data/myapp#DB_PASS', secret: true, secret_provider: 'vault' },
+          ]),
+          create: createFn,
+          update: vi.fn().mockResolvedValue({}),
+          delete: vi.fn().mockResolvedValue({}),
+        }),
+      },
+    })
+
+    const wrapper = mount(EnvironmentVariablesCard, {
+      props: { targetType: 'stack', targetId: 'stack-1' },
+      global: { stubs },
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    const revealField = wrapper.find('.secret-reveal-field')
+    expect(revealField.exists()).toBe(true)
+    expect(revealField.attributes('data-collection')).toBe('stack_env_vars')
+    expect(revealField.attributes('data-env-var-id')).toBe('env-internal')
+    // vault/infisical secrets already show their reference — no reveal control needed.
+    const rowInputs = wrapper.findAll('input')
+    const values = rowInputs.map(i => (i.element as HTMLInputElement).value)
+    expect(values).toContain('secret/data/myapp#DB_PASS')
+  })
+
+  it('keeps the static mask for non-admins even though the row is an internal secret', async () => {
+    ;(globalThis as any).usePermissions = () => ({ isAdmin: ref(false) })
+    ;(globalThis as any).useNuxtApp = () => ({
+      $pb: {
+        collection: () => ({
+          getFullList: vi.fn().mockResolvedValue([
+            { id: 'env-internal', key: 'INTERNAL_TOKEN', value: '', secret: true, secret_provider: 'internal' },
+          ]),
+          create: createFn,
+          update: vi.fn().mockResolvedValue({}),
+          delete: vi.fn().mockResolvedValue({}),
+        }),
+      },
+    })
+
+    const wrapper = mount(EnvironmentVariablesCard, {
+      props: { targetType: 'stack', targetId: 'stack-1' },
+      global: { stubs },
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(wrapper.find('.secret-reveal-field').exists()).toBe(false)
+    const rowInputs = wrapper.findAll('input')
+    const values = rowInputs.map(i => (i.element as HTMLInputElement).value)
+    expect(values).toContain('••••••••')
   })
 
   it('does not send a provider when the value is plain text', async () => {

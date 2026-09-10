@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { parseEnvFileContent, serializeEnvLines, type ParsedEnvLine } from '../utils/envFileParser'
 import { isInternalSecret } from '../utils/envVarSecrets'
 
@@ -25,14 +25,25 @@ const emit = defineEmits<{
   cancel: []
 }>()
 
-const { customPost } = useApi()
+const { customPost, revealStackEnvVars } = useApi()
+const { isAdmin } = usePermissions()
 const toast = useToast()
+
+// Admins get real secret values prefilled here (server-side decrypt) instead
+// of blank lines, since bulk edit is otherwise a destructive round-trip: an
+// admin editing one line would silently blank out every other secret with an
+// unfilled value. Only the reveal-all route exists (stacks only, see
+// internal/routes/env_var_routes.go) — job bulk edit still blanks secrets.
+const revealedSecrets = ref<Record<string, string>>({})
+// Import content already carries its own values (pasted/uploaded .env) — no
+// need to fetch and wait on the reveal-all round trip in that flow.
+const secretsReady = ref(props.targetType !== 'stack' || !isAdmin.value || props.importContent !== undefined)
 
 function buildInitialContent(): string {
   if (props.importContent !== undefined) return props.importContent
   const lines: ParsedEnvLine[] = props.envVars.map(env => ({
     key: env.key,
-    value: isInternalSecret(env) ? '' : (env.value ?? ''),
+    value: isInternalSecret(env) ? (revealedSecrets.value[env.key] ?? '') : (env.value ?? ''),
   }))
   return serializeEnvLines(lines)
 }
@@ -45,12 +56,24 @@ const saving = ref(false)
 // Only refresh the textarea from incoming props (e.g. a realtime update to
 // envVars from another tab) when the user hasn't started editing — otherwise
 // an in-progress, unsaved edit would be silently overwritten.
-watch(() => [props.envVars, props.importContent], () => {
+watch(() => [props.envVars, props.importContent, revealedSecrets.value], () => {
   const next = buildInitialContent()
   if (text.value === initialContent.value) {
     text.value = next
   }
   initialContent.value = next
+}, { deep: true })
+
+onMounted(async () => {
+  if (props.targetType !== 'stack' || !isAdmin.value || props.importContent !== undefined) return
+  try {
+    const res = await revealStackEnvVars(props.targetId)
+    revealedSecrets.value = res.values
+  } catch (error: any) {
+    toast.add({ title: 'Failed to load secret values', description: error?.data?.error || error?.message, color: 'error' })
+  } finally {
+    secretsReady.value = true
+  }
 })
 
 // The parent can hand the bulk editor fresh importContent without
@@ -105,7 +128,12 @@ async function submit() {
       One <code class="font-mono">KEY=VALUE</code> per line. Leave a secret's value blank to keep it unchanged.
     </p>
 
+    <div v-if="!secretsReady" class="flex items-center gap-2 py-6 text-xs text-gray-500">
+      <UIcon name="i-lucide-loader-circle" class="h-4 w-4 animate-spin" />
+      Decrypting secret values...
+    </div>
     <UTextarea
+      v-else
       v-model="text"
       :rows="10"
       class="w-full font-mono text-xs"
@@ -133,7 +161,7 @@ async function submit() {
         icon="i-lucide-check"
         color="success"
         :loading="saving"
-        :disabled="parsed.errors.length > 0 || parsed.vars.length === 0"
+        :disabled="!secretsReady || parsed.errors.length > 0 || parsed.vars.length === 0"
         @click="submit"
       />
     </div>

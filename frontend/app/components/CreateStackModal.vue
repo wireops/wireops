@@ -74,7 +74,7 @@ let lintRequestId = 0
 
 const modeOptions: { label: string; value: 'manual' | 'wireops_file' | 'compose_embedded' }[] = [
   { label: 'Manual', value: 'manual' },
-  { label: 'From wireops.yaml', value: 'wireops_file' },
+  { label: 'From wireops.yaml (deprecated)', value: 'wireops_file' },
   { label: 'Single file (x-wireops)', value: 'compose_embedded' },
 ]
 
@@ -688,6 +688,14 @@ async function handleSubmit() {
               </template>
 
               <template v-else>
+                <UAlert
+                  v-if="creationMode === 'wireops_file'"
+                  color="warning"
+                  icon="i-lucide-triangle-alert"
+                  title="Deprecated layout"
+                  description="The standalone wireops.yaml layout is deprecated. Prefer the single-file mode, which embeds an x-wireops block in the compose file. This mode still works and existing stacks keep syncing."
+                />
+
                 <UFormField :label="creationMode === 'compose_embedded' ? 'Compose file (with x-wireops)' : 'wireops.yaml file'" required>
                   <div class="flex items-center gap-2">
                     <AppSelectInput

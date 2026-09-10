@@ -51,10 +51,23 @@ type copyEnvVarsRequest struct {
 	Overwrite   bool     `json:"overwrite"`
 }
 
+// revealableEnvVarCollections allowlists the collections the reveal route may
+// read from — it takes a caller-supplied collection name, so this must be
+// checked before ever reaching FindRecordById.
+var revealableEnvVarCollections = map[string]bool{
+	"stack_env_vars":  true,
+	"job_env_vars":    true,
+	"global_env_vars": true,
+}
+
 // registerEnvVarRoutes exposes bulk-write operations for a stack's
 // stack_env_vars that the auto-generated PocketBase CRUD can't do safely:
 // atomic multi-row upsert (bulk edit / import) and a server-side copy from
 // another stack (secrets never reach the browser to be copied back down).
+// It also exposes admin-only reveal endpoints that decrypt internal secret
+// values server-side — the OnRecordEnrich hooks (internal/hooks/pb_hooks.go)
+// blank secret values on every other read path, so this is the only way to
+// see a stored secret again after it's saved.
 func (rr routeRegistrar) registerEnvVarRoutes() {
 	rr.r.POST("/api/custom/stacks/{id}/env-vars/bulk", func(e *core.RequestEvent) error {
 		return rr.bulkUpsertStackEnvVars(e)
@@ -63,6 +76,121 @@ func (rr routeRegistrar) registerEnvVarRoutes() {
 	rr.r.POST("/api/custom/stacks/{id}/env-vars/copy-from", func(e *core.RequestEvent) error {
 		return rr.copyStackEnvVars(e)
 	}).Bind(apis.BodyLimit(envVarsBulkMaxBytes)).BindFunc(rbac.Require(rbac.CapOperateStacks))
+
+	rr.r.GET("/api/custom/env-vars/{collection}/{id}/reveal", func(e *core.RequestEvent) error {
+		return rr.revealEnvVar(e)
+	}).BindFunc(rbac.Require(rbac.CapManageSecurity))
+
+	rr.r.GET("/api/custom/stacks/{id}/env-vars/reveal-all", func(e *core.RequestEvent) error {
+		return rr.revealStackEnvVars(e)
+	}).BindFunc(rbac.Require(rbac.CapManageSecurity))
+}
+
+// isInternalSecret reports whether rec is a secret whose value is stored as
+// local AES-GCM ciphertext (secret_provider "" or "internal") rather than a
+// vault/infisical reference locator — only internal secrets have a plaintext
+// this server can decrypt.
+func isInternalSecret(rec *core.Record) bool {
+	if !rec.GetBool("secret") {
+		return false
+	}
+	provider := rec.GetString("secret_provider")
+	return provider == "" || provider == "internal"
+}
+
+// decryptEnvValue decrypts rec's stored value with the server's secret key.
+func decryptEnvValue(rec *core.Record, secretKey []byte) (string, error) {
+	plaintext, err := crypto.Decrypt(rec.GetString("value"), secretKey)
+	if err != nil {
+		return "", err
+	}
+	return string(plaintext), nil
+}
+
+// revealEnvVar decrypts and returns a single internal secret's plaintext.
+// Admin-only (see registerEnvVarRoutes) — this is the sole path back to a
+// stored secret's value once OnRecordEnrich has blanked it everywhere else.
+func (rr routeRegistrar) revealEnvVar(e *core.RequestEvent) error {
+	collection := e.Request.PathValue("collection")
+	if !revealableEnvVarCollections[collection] {
+		return e.JSON(http.StatusBadRequest, map[string]string{"error": "unknown collection"})
+	}
+
+	id := e.Request.PathValue("id")
+	rec, err := rr.app.FindRecordById(collection, id)
+	if err != nil {
+		return e.JSON(http.StatusNotFound, map[string]string{"error": "env var not found"})
+	}
+
+	if !isInternalSecret(rec) {
+		return e.JSON(http.StatusBadRequest, map[string]string{"error": "value is not an internal secret"})
+	}
+
+	secretKey := crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))
+	plaintext, err := decryptEnvValue(rec, secretKey)
+	if err != nil {
+		return e.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to decrypt"})
+	}
+
+	audit.RecordRequest(rr.app, e, audit.Event{
+		Action:       "env_vars.revealed",
+		ResourceType: collection,
+		ResourceID:   rec.Id,
+		Metadata:     map[string]any{"key": rec.GetString("key")},
+	})
+
+	// A cache or history entry for this response would keep the decrypted
+	// value around outside the server's control.
+	e.Response.Header().Set("Cache-Control", "no-store")
+	return e.JSON(http.StatusOK, map[string]string{"value": plaintext})
+}
+
+// revealStackEnvVars decrypts every internal secret belonging to a stack, for
+// prefilling the bulk editor with real values instead of blanks. Non-secrets
+// and external (vault/infisical) secrets are omitted — the browser already
+// has their value/reference from the normal list endpoint. Admin-only.
+func (rr routeRegistrar) revealStackEnvVars(e *core.RequestEvent) error {
+	stackID := e.Request.PathValue("id")
+	stack, err := rr.app.FindRecordById("stacks", stackID)
+	if err != nil {
+		return e.JSON(http.StatusNotFound, map[string]string{"error": "stack not found"})
+	}
+
+	rows, err := rr.app.FindAllRecords("stack_env_vars", dbx.HashExp{"stack": stack.Id})
+	if err != nil {
+		return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+
+	secretKey := crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))
+	values := make(map[string]string)
+	for _, rec := range rows {
+		if !isInternalSecret(rec) {
+			continue
+		}
+		plaintext, err := decryptEnvValue(rec, secretKey)
+		if err != nil {
+			// A corrupt/empty ciphertext on one row shouldn't block revealing
+			// the rest of the stack's secrets.
+			continue
+		}
+		values[rec.GetString("key")] = plaintext
+
+		// One event per key (not a single aggregate) so the audit trail says
+		// exactly which secrets were revealed, matching the single-reveal
+		// route's granularity — only after a successful decrypt, and never
+		// carrying the plaintext itself.
+		audit.RecordRequest(rr.app, e, audit.Event{
+			Action:       "stack.env_vars.revealed_all",
+			ResourceType: "stack_env_vars",
+			ResourceID:   rec.Id,
+			Metadata:     map[string]any{"key": rec.GetString("key")},
+		})
+	}
+
+	// A cache or history entry for this response would keep the decrypted
+	// values around outside the server's control.
+	e.Response.Header().Set("Cache-Control", "no-store")
+	return e.JSON(http.StatusOK, map[string]any{"values": values})
 }
 
 // bulkEnvVarsResult is the {created, updated, deleted} outcome shared by the
@@ -316,7 +444,7 @@ func (rr routeRegistrar) copyStackEnvVars(e *core.RequestEvent) error {
 			value := src.GetString("value")
 			secret := src.GetBool("secret")
 			provider := src.GetString("secret_provider")
-			if secret && (provider == "" || provider == "internal") {
+			if isInternalSecret(src) {
 				plaintext, err := crypto.Decrypt(value, secretKey)
 				if err != nil {
 					// A source row with an empty/corrupt ciphertext must not
