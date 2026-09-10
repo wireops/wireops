@@ -139,6 +139,9 @@ func (rr routeRegistrar) revealEnvVar(e *core.RequestEvent) error {
 		Metadata:     map[string]any{"key": rec.GetString("key")},
 	})
 
+	// A cache or history entry for this response would keep the decrypted
+	// value around outside the server's control.
+	e.Response.Header().Set("Cache-Control", "no-store")
 	return e.JSON(http.StatusOK, map[string]string{"value": plaintext})
 }
 
@@ -171,15 +174,22 @@ func (rr routeRegistrar) revealStackEnvVars(e *core.RequestEvent) error {
 			continue
 		}
 		values[rec.GetString("key")] = plaintext
+
+		// One event per key (not a single aggregate) so the audit trail says
+		// exactly which secrets were revealed, matching the single-reveal
+		// route's granularity — only after a successful decrypt, and never
+		// carrying the plaintext itself.
+		audit.RecordRequest(rr.app, e, audit.Event{
+			Action:       "stack.env_vars.revealed_all",
+			ResourceType: "stack_env_vars",
+			ResourceID:   rec.Id,
+			Metadata:     map[string]any{"key": rec.GetString("key")},
+		})
 	}
 
-	audit.RecordRequest(rr.app, e, audit.Event{
-		Action:       "stack.env_vars.revealed_all",
-		ResourceType: "stack",
-		ResourceID:   stack.Id,
-		Metadata:     map[string]any{"count": len(values)},
-	})
-
+	// A cache or history entry for this response would keep the decrypted
+	// values around outside the server's control.
+	e.Response.Header().Set("Cache-Control", "no-store")
 	return e.JSON(http.StatusOK, map[string]any{"values": values})
 }
 
