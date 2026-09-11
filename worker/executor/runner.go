@@ -83,8 +83,10 @@ const (
 // pullThenUp runs `docker compose pull` and the given up step as two
 // separate commands, each bounded by its own deadline derived from ctx —
 // a slow registry/large image download no longer eats into the budget
-// meant for actually starting containers, and vice versa.
-func pullThenUp(ctx context.Context, pullTimeoutSeconds, upTimeoutSeconds int, runOpts compose.RunOptions, up func(context.Context, compose.RunOptions) (string, error)) (string, error) {
+// meant for actually starting containers, and vice versa. upElapsedMs
+// reports only the up step's own duration (0 if pull failed before it ran),
+// matching what protocol.CommandResult.ComposeUpMs documents.
+func pullThenUp(ctx context.Context, pullTimeoutSeconds, upTimeoutSeconds int, runOpts compose.RunOptions, up func(context.Context, compose.RunOptions) (string, error)) (output string, upElapsedMs int64, err error) {
 	pullTimeout := time.Duration(pullTimeoutSeconds) * time.Second
 	if pullTimeout <= 0 {
 		pullTimeout = defaultPullTimeout
@@ -98,13 +100,15 @@ func pullThenUp(ctx context.Context, pullTimeoutSeconds, upTimeoutSeconds int, r
 	defer cancelPull()
 	pullOutput, err := compose.RunPull(pullCtx, runOpts)
 	if err != nil {
-		return pullOutput, err
+		return pullOutput, 0, err
 	}
 
 	upCtx, cancelUp := context.WithTimeout(ctx, upTimeout)
 	defer cancelUp()
+	upStart := time.Now()
 	upOutput, err := up(upCtx, runOpts)
-	return pullOutput + upOutput, err
+	upElapsedMs = time.Since(upStart).Milliseconds()
+	return pullOutput + upOutput, upElapsedMs, err
 }
 
 // Deploy decodes the base64 compose file, writes it to a temp file, and runs
@@ -139,6 +143,7 @@ func Deploy(ctx context.Context, cmd protocol.DeployCommand, onLine func(string)
 	}
 	defer cleanupAuth()
 
+	var upElapsedMs int64
 	output, runErr := runInWorkDir(cmd.StackID, cmd.CommandID, cmd.ComposeFileB64, cmd.EnvFileB64, "deploy", onLine, func(workDir, composeFile string, wrappedOnLine func(string)) (string, error) {
 		runOpts := compose.RunOptions{
 			WorkDir:         workDir,
@@ -148,11 +153,13 @@ func Deploy(ctx context.Context, cmd protocol.DeployCommand, onLine func(string)
 			DockerConfigDir: dockerConfigDir,
 			OnLine:          wrappedOnLine,
 		}
-		return pullThenUp(ctx, cmd.PullTimeoutSeconds, cmd.UpTimeoutSeconds, runOpts, compose.RunUp)
+		out, ms, err := pullThenUp(ctx, cmd.PullTimeoutSeconds, cmd.UpTimeoutSeconds, runOpts, compose.RunUp)
+		upElapsedMs = ms
+		return out, err
 	})
 
 	elapsed := time.Since(start).Milliseconds()
-	result := protocol.CommandResult{CommandID: cmd.CommandID, Output: output, ComposeUpMs: elapsed}
+	result := protocol.CommandResult{CommandID: cmd.CommandID, Output: output, ComposeUpMs: upElapsedMs}
 	if runErr != nil {
 		result.Error = runErr.Error()
 		log.Printf("[executor] deploy error stack=%s trigger=%s elapsed=%dms: %v", cmd.StackID, trigger, elapsed, runErr)
@@ -192,6 +199,7 @@ func Redeploy(ctx context.Context, cmd protocol.RedeployCommand, onLine func(str
 	}
 	defer cleanupAuth()
 
+	var upElapsedMs int64
 	output, runErr := runInWorkDir(cmd.StackID, cmd.CommandID, cmd.ComposeFileB64, cmd.EnvFileB64, "redeploy", onLine, func(workDir, composeFile string, wrappedOnLine func(string)) (string, error) {
 		runOpts := compose.RunOptions{
 			WorkDir:         workDir,
@@ -209,11 +217,13 @@ func Redeploy(ctx context.Context, cmd protocol.RedeployCommand, onLine func(str
 				RecreateNetworks:   cmd.RecreateNetworks,
 			})
 		}
-		return pullThenUp(ctx, cmd.PullTimeoutSeconds, cmd.UpTimeoutSeconds, runOpts, up)
+		out, ms, err := pullThenUp(ctx, cmd.PullTimeoutSeconds, cmd.UpTimeoutSeconds, runOpts, up)
+		upElapsedMs = ms
+		return out, err
 	})
 
 	elapsed := time.Since(start).Milliseconds()
-	result := protocol.CommandResult{CommandID: cmd.CommandID, Output: output, ComposeUpMs: elapsed}
+	result := protocol.CommandResult{CommandID: cmd.CommandID, Output: output, ComposeUpMs: upElapsedMs}
 	if runErr != nil {
 		result.Error = runErr.Error()
 		log.Printf("[executor] redeploy error stack=%s trigger=%s elapsed=%dms: %v", cmd.StackID, trigger, elapsed, runErr)
