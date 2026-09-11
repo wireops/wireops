@@ -112,6 +112,19 @@ type DeployCommand struct {
 	// daemon.json) before attempting a pull, and to relax its own
 	// validation handshake for these hosts.
 	InsecureRegistries []string `json:"insecure_registries,omitempty"`
+
+	// PullTimeoutSeconds bounds the worker's `docker compose pull` step,
+	// independent of UpTimeoutSeconds — a slow registry/large image shouldn't
+	// need a bigger deploy_timeout_seconds just to survive the download.
+	// Sourced from config.GetPullTimeout(); if zero (older/queued command),
+	// the worker falls back to its own conservative default.
+	PullTimeoutSeconds int `json:"pull_timeout_seconds,omitempty"`
+
+	// UpTimeoutSeconds bounds the worker's `docker compose up` step, run
+	// after images are already pulled. Sourced from the stack's own
+	// deploy_timeout_seconds or config.GetDeployTimeout(); if zero, the
+	// worker falls back to its own conservative default.
+	UpTimeoutSeconds int `json:"up_timeout_seconds,omitempty"`
 }
 
 // RedeployCommand extends DeployCommand with force-recreate options.

@@ -71,10 +71,47 @@ func runInWorkDir(stackID, commandID, composeFileB64, envFileB64 string, action 
 	return output, runErr
 }
 
+// Fallback budgets used when a DeployCommand arrives without its own
+// Pull/UpTimeoutSeconds (an older server, or a durable command queued before
+// this field existed). Mirror config.GetPullTimeout/GetDeployTimeout's
+// defaults on the server side.
+const (
+	defaultPullTimeout = 30 * time.Minute
+	defaultUpTimeout   = 5 * time.Minute
+)
+
+// pullThenUp runs `docker compose pull` and the given up step as two
+// separate commands, each bounded by its own deadline derived from ctx —
+// a slow registry/large image download no longer eats into the budget
+// meant for actually starting containers, and vice versa.
+func pullThenUp(ctx context.Context, pullTimeoutSeconds, upTimeoutSeconds int, runOpts compose.RunOptions, up func(context.Context, compose.RunOptions) (string, error)) (string, error) {
+	pullTimeout := time.Duration(pullTimeoutSeconds) * time.Second
+	if pullTimeout <= 0 {
+		pullTimeout = defaultPullTimeout
+	}
+	upTimeout := time.Duration(upTimeoutSeconds) * time.Second
+	if upTimeout <= 0 {
+		upTimeout = defaultUpTimeout
+	}
+
+	pullCtx, cancelPull := context.WithTimeout(ctx, pullTimeout)
+	defer cancelPull()
+	pullOutput, err := compose.RunPull(pullCtx, runOpts)
+	if err != nil {
+		return pullOutput, err
+	}
+
+	upCtx, cancelUp := context.WithTimeout(ctx, upTimeout)
+	defer cancelUp()
+	upOutput, err := up(upCtx, runOpts)
+	return pullOutput + upOutput, err
+}
+
 // Deploy decodes the base64 compose file, writes it to a temp file, and runs
-// `docker compose up`. Environment variables are passed via cmd.Env, never
-// interpolated into the YAML. If EnvFileB64 is set, a .env file is also written
-// to the work directory before the compose command runs.
+// `docker compose pull` followed by `docker compose up`. Environment
+// variables are passed via cmd.Env, never interpolated into the YAML. If
+// EnvFileB64 is set, a .env file is also written to the work directory
+// before the compose commands run.
 func Deploy(ctx context.Context, cmd protocol.DeployCommand, onLine func(string)) protocol.CommandResult {
 	trigger := cmd.Trigger
 	if trigger == "" {
@@ -103,14 +140,15 @@ func Deploy(ctx context.Context, cmd protocol.DeployCommand, onLine func(string)
 	defer cleanupAuth()
 
 	output, runErr := runInWorkDir(cmd.StackID, cmd.CommandID, cmd.ComposeFileB64, cmd.EnvFileB64, "deploy", onLine, func(workDir, composeFile string, wrappedOnLine func(string)) (string, error) {
-		return compose.RunUp(ctx, compose.RunOptions{
+		runOpts := compose.RunOptions{
 			WorkDir:         workDir,
 			ComposeFile:     composeFile,
 			ForcePull:       cmd.ForcePull,
 			RemoveOrphans:   cmd.RemoveOrphans,
 			DockerConfigDir: dockerConfigDir,
 			OnLine:          wrappedOnLine,
-		})
+		}
+		return pullThenUp(ctx, cmd.PullTimeoutSeconds, cmd.UpTimeoutSeconds, runOpts, compose.RunUp)
 	})
 
 	elapsed := time.Since(start).Milliseconds()
@@ -155,19 +193,23 @@ func Redeploy(ctx context.Context, cmd protocol.RedeployCommand, onLine func(str
 	defer cleanupAuth()
 
 	output, runErr := runInWorkDir(cmd.StackID, cmd.CommandID, cmd.ComposeFileB64, cmd.EnvFileB64, "redeploy", onLine, func(workDir, composeFile string, wrappedOnLine func(string)) (string, error) {
-		return compose.RunForceUp(ctx, compose.ForceUpOptions{
-			RunOptions: compose.RunOptions{
-				WorkDir:         workDir,
-				ComposeFile:     composeFile,
-				ForcePull:       cmd.ForcePull,
-				RemoveOrphans:   cmd.RemoveOrphans,
-				DockerConfigDir: dockerConfigDir,
-				OnLine:          wrappedOnLine,
-			},
-			RecreateContainers: cmd.RecreateContainers,
-			RecreateVolumes:    cmd.RecreateVolumes,
-			RecreateNetworks:   cmd.RecreateNetworks,
-		})
+		runOpts := compose.RunOptions{
+			WorkDir:         workDir,
+			ComposeFile:     composeFile,
+			ForcePull:       cmd.ForcePull,
+			RemoveOrphans:   cmd.RemoveOrphans,
+			DockerConfigDir: dockerConfigDir,
+			OnLine:          wrappedOnLine,
+		}
+		up := func(upCtx context.Context, opts compose.RunOptions) (string, error) {
+			return compose.RunForceUp(upCtx, compose.ForceUpOptions{
+				RunOptions:         opts,
+				RecreateContainers: cmd.RecreateContainers,
+				RecreateVolumes:    cmd.RecreateVolumes,
+				RecreateNetworks:   cmd.RecreateNetworks,
+			})
+		}
+		return pullThenUp(ctx, cmd.PullTimeoutSeconds, cmd.UpTimeoutSeconds, runOpts, up)
 	})
 
 	elapsed := time.Since(start).Milliseconds()

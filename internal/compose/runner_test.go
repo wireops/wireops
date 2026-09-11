@@ -11,7 +11,6 @@ func TestBuildUpArgs(t *testing.T) {
 		name          string
 		composeFile   string
 		removeOrphans bool
-		forcePull     bool
 		want          []string
 	}{
 		{
@@ -25,26 +24,43 @@ func TestBuildUpArgs(t *testing.T) {
 			removeOrphans: true,
 			want:          []string{"compose", "-f", "docker-compose.yml", "up", "-d", "--remove-orphans"},
 		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := buildUpArgs(tc.composeFile, tc.removeOrphans)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("buildUpArgs(%q, %v) = %v, want %v", tc.composeFile, tc.removeOrphans, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBuildPullArgs(t *testing.T) {
+	cases := []struct {
+		name        string
+		composeFile string
+		forcePull   bool
+		want        []string
+	}{
 		{
-			name:        "ForcePullOnly",
+			name:        "NoFlags",
 			composeFile: "docker-compose.yml",
-			forcePull:   true,
-			want:        []string{"compose", "-f", "docker-compose.yml", "up", "-d", "--pull", "always"},
+			want:        []string{"compose", "-f", "docker-compose.yml", "pull"},
 		},
 		{
-			name:          "BothFlags",
-			composeFile:   "compose.yml",
-			removeOrphans: true,
-			forcePull:     true,
-			want:          []string{"compose", "-f", "compose.yml", "up", "-d", "--remove-orphans", "--pull", "always"},
+			name:        "ForcePull",
+			composeFile: "compose.yml",
+			forcePull:   true,
+			want:        []string{"compose", "-f", "compose.yml", "pull", "--policy", "always"},
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := buildUpArgs(tc.composeFile, tc.removeOrphans, tc.forcePull)
+			got := buildPullArgs(tc.composeFile, tc.forcePull)
 			if !reflect.DeepEqual(got, tc.want) {
-				t.Errorf("buildUpArgs(%q, %v, %v) = %v, want %v", tc.composeFile, tc.removeOrphans, tc.forcePull, got, tc.want)
+				t.Errorf("buildPullArgs(%q, %v) = %v, want %v", tc.composeFile, tc.forcePull, got, tc.want)
 			}
 		})
 	}

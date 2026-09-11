@@ -93,8 +93,9 @@ func TestWithDeployTimeout(t *testing.T) {
 		if !ok {
 			t.Fatal("expected a deadline (global default) when deploy_timeout_seconds is unset")
 		}
-		if remaining := time.Until(deadline); remaining <= 0 || remaining > config.GetDeployTimeout() {
-			t.Errorf("deadline out of expected range: %v", remaining)
+		want := config.GetPullTimeout() + config.GetDeployTimeout()
+		if remaining := time.Until(deadline); remaining <= 0 || remaining > want {
+			t.Errorf("deadline out of expected range: %v (want <= %v)", remaining, want)
 		}
 	})
 
@@ -108,8 +109,9 @@ func TestWithDeployTimeout(t *testing.T) {
 		if !ok {
 			t.Fatal("expected a deadline when deploy_timeout_seconds > 0")
 		}
-		if remaining := time.Until(deadline); remaining <= 0 || remaining > 30*time.Second {
-			t.Errorf("deadline out of expected range: %v", remaining)
+		want := config.GetPullTimeout() + 30*time.Second
+		if remaining := time.Until(deadline); remaining <= 0 || remaining > want {
+			t.Errorf("deadline out of expected range: %v (want <= %v)", remaining, want)
 		}
 	})
 
