@@ -427,8 +427,15 @@ func (s *WorkerServer) isDuplicateMessage(workerID, messageID string) bool {
 	return false
 }
 
-// Dispatch sends a command to the connected remote worker and
-// blocks until it receives the result (with a 5 minute timeout).
+// dispatchNoDeadlineFallback bounds Dispatch calls whose ctx has no deadline
+// of its own. A var (not a const) so tests can shrink it instead of waiting
+// out the real value. See Dispatch.
+var dispatchNoDeadlineFallback = 5 * time.Minute
+
+// Dispatch sends a command to the connected remote worker and blocks until
+// it receives the result, respecting ctx's own deadline when it has one
+// (e.g. deploy dispatch's pull+up budget); callers with no deadline fall
+// back to a 5 minute timeout.
 func (s *WorkerServer) Dispatch(ctx context.Context, workerID string, cmd interface{}) (protocol.CommandResult, error) {
 	s.connMu.RLock()
 	conn, ok := s.connections[workerID]
@@ -571,12 +578,24 @@ func (s *WorkerServer) Dispatch(ctx context.Context, workerID string, cmd interf
 	var result protocol.CommandResult
 	var dispatchErr error
 
+	// The fallback only applies when ctx carries no deadline of its own (e.g.
+	// some non-deploy commands dispatch with context.Background()). Callers
+	// that already set a deadline — like deploy dispatch, which can
+	// legitimately run well past 5 minutes for a large pull_timeout — must
+	// not be truncated by this fixed fallback on top of their own ctx.Done().
+	var fallbackTimeout <-chan time.Time
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		timer := time.NewTimer(dispatchNoDeadlineFallback)
+		defer timer.Stop()
+		fallbackTimeout = timer.C
+	}
+
 	select {
 	case result = <-pr.ch:
 		// Result received
 	case <-ctx.Done():
 		dispatchErr = ctx.Err()
-	case <-time.After(5 * time.Minute):
+	case <-fallbackTimeout:
 		dispatchErr = fmt.Errorf("timed out waiting for worker %s response (command %s)", workerID, commandID)
 	}
 

@@ -71,10 +71,51 @@ func runInWorkDir(stackID, commandID, composeFileB64, envFileB64 string, action 
 	return output, runErr
 }
 
+// Fallback budgets used when a DeployCommand arrives without its own
+// Pull/UpTimeoutSeconds (an older server, or a durable command queued before
+// this field existed). Mirror config.GetPullTimeout/GetDeployTimeout's
+// defaults on the server side.
+const (
+	defaultPullTimeout = 30 * time.Minute
+	defaultUpTimeout   = 5 * time.Minute
+)
+
+// pullThenUp runs `docker compose pull` and the given up step as two
+// separate commands, each bounded by its own deadline derived from ctx —
+// a slow registry/large image download no longer eats into the budget
+// meant for actually starting containers, and vice versa. upElapsedMs
+// reports only the up step's own duration (0 if pull failed before it ran),
+// matching what protocol.CommandResult.ComposeUpMs documents.
+func pullThenUp(ctx context.Context, pullTimeoutSeconds, upTimeoutSeconds int, runOpts compose.RunOptions, up func(context.Context, compose.RunOptions) (string, error)) (output string, upElapsedMs int64, err error) {
+	pullTimeout := time.Duration(pullTimeoutSeconds) * time.Second
+	if pullTimeout <= 0 {
+		pullTimeout = defaultPullTimeout
+	}
+	upTimeout := time.Duration(upTimeoutSeconds) * time.Second
+	if upTimeout <= 0 {
+		upTimeout = defaultUpTimeout
+	}
+
+	pullCtx, cancelPull := context.WithTimeout(ctx, pullTimeout)
+	defer cancelPull()
+	pullOutput, err := compose.RunPull(pullCtx, runOpts)
+	if err != nil {
+		return pullOutput, 0, err
+	}
+
+	upCtx, cancelUp := context.WithTimeout(ctx, upTimeout)
+	defer cancelUp()
+	upStart := time.Now()
+	upOutput, err := up(upCtx, runOpts)
+	upElapsedMs = time.Since(upStart).Milliseconds()
+	return pullOutput + upOutput, upElapsedMs, err
+}
+
 // Deploy decodes the base64 compose file, writes it to a temp file, and runs
-// `docker compose up`. Environment variables are passed via cmd.Env, never
-// interpolated into the YAML. If EnvFileB64 is set, a .env file is also written
-// to the work directory before the compose command runs.
+// `docker compose pull` followed by `docker compose up`. Environment
+// variables are passed via cmd.Env, never interpolated into the YAML. If
+// EnvFileB64 is set, a .env file is also written to the work directory
+// before the compose commands run.
 func Deploy(ctx context.Context, cmd protocol.DeployCommand, onLine func(string)) protocol.CommandResult {
 	trigger := cmd.Trigger
 	if trigger == "" {
@@ -102,19 +143,23 @@ func Deploy(ctx context.Context, cmd protocol.DeployCommand, onLine func(string)
 	}
 	defer cleanupAuth()
 
+	var upElapsedMs int64
 	output, runErr := runInWorkDir(cmd.StackID, cmd.CommandID, cmd.ComposeFileB64, cmd.EnvFileB64, "deploy", onLine, func(workDir, composeFile string, wrappedOnLine func(string)) (string, error) {
-		return compose.RunUp(ctx, compose.RunOptions{
+		runOpts := compose.RunOptions{
 			WorkDir:         workDir,
 			ComposeFile:     composeFile,
 			ForcePull:       cmd.ForcePull,
 			RemoveOrphans:   cmd.RemoveOrphans,
 			DockerConfigDir: dockerConfigDir,
 			OnLine:          wrappedOnLine,
-		})
+		}
+		out, ms, err := pullThenUp(ctx, cmd.PullTimeoutSeconds, cmd.UpTimeoutSeconds, runOpts, compose.RunUp)
+		upElapsedMs = ms
+		return out, err
 	})
 
 	elapsed := time.Since(start).Milliseconds()
-	result := protocol.CommandResult{CommandID: cmd.CommandID, Output: output, ComposeUpMs: elapsed}
+	result := protocol.CommandResult{CommandID: cmd.CommandID, Output: output, ComposeUpMs: upElapsedMs}
 	if runErr != nil {
 		result.Error = runErr.Error()
 		log.Printf("[executor] deploy error stack=%s trigger=%s elapsed=%dms: %v", cmd.StackID, trigger, elapsed, runErr)
@@ -154,24 +199,31 @@ func Redeploy(ctx context.Context, cmd protocol.RedeployCommand, onLine func(str
 	}
 	defer cleanupAuth()
 
+	var upElapsedMs int64
 	output, runErr := runInWorkDir(cmd.StackID, cmd.CommandID, cmd.ComposeFileB64, cmd.EnvFileB64, "redeploy", onLine, func(workDir, composeFile string, wrappedOnLine func(string)) (string, error) {
-		return compose.RunForceUp(ctx, compose.ForceUpOptions{
-			RunOptions: compose.RunOptions{
-				WorkDir:         workDir,
-				ComposeFile:     composeFile,
-				ForcePull:       cmd.ForcePull,
-				RemoveOrphans:   cmd.RemoveOrphans,
-				DockerConfigDir: dockerConfigDir,
-				OnLine:          wrappedOnLine,
-			},
-			RecreateContainers: cmd.RecreateContainers,
-			RecreateVolumes:    cmd.RecreateVolumes,
-			RecreateNetworks:   cmd.RecreateNetworks,
-		})
+		runOpts := compose.RunOptions{
+			WorkDir:         workDir,
+			ComposeFile:     composeFile,
+			ForcePull:       cmd.ForcePull,
+			RemoveOrphans:   cmd.RemoveOrphans,
+			DockerConfigDir: dockerConfigDir,
+			OnLine:          wrappedOnLine,
+		}
+		up := func(upCtx context.Context, opts compose.RunOptions) (string, error) {
+			return compose.RunForceUp(upCtx, compose.ForceUpOptions{
+				RunOptions:         opts,
+				RecreateContainers: cmd.RecreateContainers,
+				RecreateVolumes:    cmd.RecreateVolumes,
+				RecreateNetworks:   cmd.RecreateNetworks,
+			})
+		}
+		out, ms, err := pullThenUp(ctx, cmd.PullTimeoutSeconds, cmd.UpTimeoutSeconds, runOpts, up)
+		upElapsedMs = ms
+		return out, err
 	})
 
 	elapsed := time.Since(start).Milliseconds()
-	result := protocol.CommandResult{CommandID: cmd.CommandID, Output: output, ComposeUpMs: elapsed}
+	result := protocol.CommandResult{CommandID: cmd.CommandID, Output: output, ComposeUpMs: upElapsedMs}
 	if runErr != nil {
 		result.Error = runErr.Error()
 		log.Printf("[executor] redeploy error stack=%s trigger=%s elapsed=%dms: %v", cmd.StackID, trigger, elapsed, runErr)

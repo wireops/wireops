@@ -114,15 +114,28 @@ func (r *Reconciler) resolveRegistryAuth(stack *core.Record) (authB64 string, in
 	return authB64, insecureHosts
 }
 
-// withDeployTimeout wraps ctx with a deadline: the stack's own
-// deploy_timeout_seconds when positive (sourced from wireops.yaml's timeout
-// field), otherwise the global default from config.GetDeployTimeout().
-func withDeployTimeout(ctx context.Context, stack *core.Record) (context.Context, context.CancelFunc) {
-	seconds := stack.GetInt("deploy_timeout_seconds")
-	if seconds > 0 {
-		return context.WithTimeout(ctx, time.Duration(seconds)*time.Second)
+// deployUpTimeoutSeconds returns the stack's own deploy_timeout_seconds
+// (sourced from wireops.yaml's timeout field) when positive, otherwise the
+// global default from config.GetDeployTimeout(). This bounds only the
+// worker's `docker compose up` step — see withDeployTimeout.
+func deployUpTimeoutSeconds(stack *core.Record) int {
+	if seconds := stack.GetInt("deploy_timeout_seconds"); seconds > 0 {
+		return seconds
 	}
-	return context.WithTimeout(ctx, config.GetDeployTimeout())
+	return int(config.GetDeployTimeout().Seconds())
+}
+
+// withDeployTimeout wraps ctx with a deadline covering both phases the
+// worker will run for this dispatch: config.GetPullTimeout() for `docker
+// compose pull` plus deployUpTimeoutSeconds for `docker compose up`. The two
+// budgets are also sent to the worker individually (see
+// protocol.DeployCommand.PullTimeoutSeconds/UpTimeoutSeconds) so it enforces
+// them as separate deadlines instead of racing a single one across both
+// commands — a slow registry on a large image shouldn't need a bigger
+// deploy_timeout_seconds just to survive the download.
+func withDeployTimeout(ctx context.Context, stack *core.Record) (context.Context, context.CancelFunc) {
+	total := config.GetPullTimeout() + time.Duration(deployUpTimeoutSeconds(stack))*time.Second
+	return context.WithTimeout(ctx, total)
 }
 
 // ReconcileStack fetches the repo, checks for changes, and deploys the compose stack.
@@ -460,6 +473,8 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 				RemoveOrphans:      removeOrphans,
 				RegistryAuthB64:    registryAuthB64,
 				InsecureRegistries: insecureRegistries,
+				PullTimeoutSeconds: int(config.GetPullTimeout().Seconds()),
+				UpTimeoutSeconds:   deployUpTimeoutSeconds(stack),
 			})
 			cancelDispatch()
 			composeUpMs = result.ComposeUpMs
@@ -743,6 +758,8 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 			RemoveOrphans:      removeOrphans,
 			RegistryAuthB64:    registryAuthB64,
 			InsecureRegistries: insecureRegistries,
+			PullTimeoutSeconds: int(config.GetPullTimeout().Seconds()),
+			UpTimeoutSeconds:   deployUpTimeoutSeconds(stack),
 		})
 		composeUpMs = result.ComposeUpMs
 		output, runErr = extractDispatchResult(result, dispatchErr)
@@ -1011,6 +1028,8 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 				RemoveOrphans:      removeOrphans,
 				RegistryAuthB64:    registryAuthB64,
 				InsecureRegistries: insecureRegistries,
+				PullTimeoutSeconds: int(config.GetPullTimeout().Seconds()),
+				UpTimeoutSeconds:   deployUpTimeoutSeconds(stack),
 			},
 			RecreateContainers: recreateContainers,
 			RecreateVolumes:    recreateVolumes,
@@ -1491,6 +1510,8 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 				RemoveOrphans:      removeOrphans,
 				RegistryAuthB64:    registryAuthB64,
 				InsecureRegistries: insecureRegistries,
+				PullTimeoutSeconds: int(config.GetPullTimeout().Seconds()),
+				UpTimeoutSeconds:   deployUpTimeoutSeconds(stack),
 			},
 			RecreateContainers: true,
 			RecreateVolumes:    recreateVolumes,
@@ -1513,6 +1534,8 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 			RemoveOrphans:      removeOrphans,
 			RegistryAuthB64:    registryAuthB64,
 			InsecureRegistries: insecureRegistries,
+			PullTimeoutSeconds: int(config.GetPullTimeout().Seconds()),
+			UpTimeoutSeconds:   deployUpTimeoutSeconds(stack),
 		})
 		composeUpMs = result.ComposeUpMs
 		output, runErr = extractDispatchResult(result, dispatchErr)
@@ -2509,6 +2532,8 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 		RemoveOrphans:      transferRemoveOrphans,
 		RegistryAuthB64:    transferRegistryAuthB64,
 		InsecureRegistries: transferInsecureRegistries,
+		PullTimeoutSeconds: int(config.GetPullTimeout().Seconds()),
+		UpTimeoutSeconds:   deployUpTimeoutSeconds(stack),
 	})
 	deployOutput = deployResult.Output
 	dispatchErr = dErr
