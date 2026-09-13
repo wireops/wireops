@@ -47,7 +47,17 @@ func (r *Reconciler) postDeployCheck(ctx context.Context, workerID, stackID, wor
 	// no service as an init container rather than failing the whole check.
 	initSet, _ := compose.InitServiceNames(composeContent)
 
-	projectName := compose.ProjectName(workDir)
+	// The rendered compose file's own top-level `name` is the actual project
+	// name `docker compose up` used on the worker (see
+	// sync.Renderer.GenerateRevision). Prefer it over recomputing from
+	// workDir's basename, which no longer matches now that the renderer
+	// forces `name` to the stack's own unique name. Fall back to the old
+	// basename-derived value only for a pre-fix revision that predates the
+	// `name` field being guaranteed present.
+	projectName, err := compose.ExtractProjectName(composeContent)
+	if err != nil {
+		projectName = compose.ProjectName(workDir)
+	}
 
 	var statuses []compose.ServiceStatus
 	var queryErr error

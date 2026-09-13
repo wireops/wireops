@@ -16,7 +16,9 @@ type RunOptions struct {
 	WorkDir     string
 	ComposeFile string
 
-	// ForcePull, when true, appends --pull always to `docker compose up`.
+	// ForcePull, when true, makes RunPull pass --policy always so an
+	// already-cached image is re-checked and replaced if the registry has a
+	// newer digest for the same tag.
 	ForcePull bool
 	// RemoveOrphans, when true, appends --remove-orphans to `docker compose up`.
 	// Callers must resolve the desired default (historically always true)
@@ -38,15 +40,71 @@ type RunOptions struct {
 }
 
 // buildUpArgs assembles the `docker compose ... up -d` argument list.
-func buildUpArgs(composeFile string, removeOrphans, forcePull bool) []string {
+// Pulling is handled separately by RunPull before this runs, so up never
+// needs its own --pull flag.
+func buildUpArgs(composeFile string, removeOrphans bool) []string {
 	args := []string{"compose", "-f", composeFile, "up", "-d"}
 	if removeOrphans {
 		args = append(args, "--remove-orphans")
 	}
+	return args
+}
+
+// buildPullArgs assembles the `docker compose ... pull` argument list.
+// forcePull passes --policy always so an already-cached image is re-checked
+// and replaced when the registry has a newer digest for the same tag;
+// otherwise compose applies each service's own pull_policy (default
+// "missing" — skip images already present locally), matching the previous
+// up-without---pull-always behavior.
+func buildPullArgs(composeFile string, forcePull bool) []string {
+	args := []string{"compose", "-f", composeFile, "pull"}
 	if forcePull {
-		args = append(args, "--pull", "always")
+		args = append(args, "--policy", "always")
 	}
 	return args
+}
+
+// RunPull runs `docker compose pull` as its own step, bounded by ctx
+// independent of the deadline given to the RunUp/RunForceUp call that
+// follows it — a slow registry or large image no longer eats into the
+// budget meant for actually starting containers.
+func RunPull(ctx context.Context, opts RunOptions) (string, error) {
+	composeFile := opts.ComposeFile
+	if composeFile == "" {
+		composeFile = "docker-compose.yml"
+	}
+	dockerBin, err := trustedDockerBinary()
+	if err != nil {
+		return "", err
+	}
+
+	fullPath := filepath.Join(opts.WorkDir, composeFile)
+	if _, err = os.Stat(fullPath); os.IsNotExist(err) {
+		altFile := "compose.yml"
+		altPath := filepath.Join(opts.WorkDir, altFile)
+		if _, err2 := os.Stat(altPath); os.IsNotExist(err2) {
+			return "", fmt.Errorf("compose file not found in %s", opts.WorkDir)
+		}
+		composeFile = altFile
+	}
+
+	args := buildPullArgs(composeFile, opts.ForcePull)
+	cmd := exec.CommandContext(ctx, dockerBin, args...)
+	cmd.Dir = opts.WorkDir
+	cmd.Env = safeEnv(opts.DockerConfigDir)
+
+	var buf bytes.Buffer
+	lw := &lineWriter{onLine: opts.OnLine}
+	cmd.Stdout = io.MultiWriter(&buf, lw)
+	cmd.Stderr = io.MultiWriter(&buf, lw)
+
+	err = cmd.Run()
+	lw.Flush()
+	if err != nil {
+		return buf.String(), fmt.Errorf("docker compose pull failed: %w", err)
+	}
+
+	return buf.String(), nil
 }
 
 func RunUp(ctx context.Context, opts RunOptions) (string, error) {
@@ -71,7 +129,7 @@ func RunUp(ctx context.Context, opts RunOptions) (string, error) {
 	}
 
 	// Use just the filename for -f since cmd.Dir is set to WorkDir
-	args := buildUpArgs(composeFile, opts.RemoveOrphans, opts.ForcePull)
+	args := buildUpArgs(composeFile, opts.RemoveOrphans)
 	cmd := exec.CommandContext(ctx, dockerBin, args...)
 	cmd.Dir = opts.WorkDir
 	cmd.Env = safeEnv(opts.DockerConfigDir)
@@ -146,7 +204,7 @@ func RunForceUp(ctx context.Context, opts ForceUpOptions) (string, error) {
 		allOutput.WriteString("\n--- recreating ---\n")
 	}
 
-	upArgs := buildUpArgs(composeFile, opts.RemoveOrphans, opts.ForcePull)
+	upArgs := buildUpArgs(composeFile, opts.RemoveOrphans)
 	if opts.RecreateContainers {
 		upArgs = append(upArgs, "--force-recreate")
 	}
@@ -239,6 +297,33 @@ func RunDownPurge(ctx context.Context, opts RunOptions) (string, error) {
 func ProjectName(workDir string) string {
 	base := filepath.Base(workDir)
 	return strings.ToLower(strings.ReplaceAll(base, " ", "_"))
+}
+
+// SanitizeProjectName normalizes an arbitrary string (typically a wireops
+// stack's own unique name) into a valid Docker Compose project name:
+// lowercase, first character alphanumeric, remaining characters limited to
+// [a-z0-9_-]. Used to force the rendered compose file's top-level `name`
+// field instead of letting `docker compose config` fall back to the compose
+// file's directory basename, which collides whenever two stacks share a
+// trailing path segment (e.g. stacks/pihole/red and stacks/jellyfin/red both
+// resolve to "red") and silently deletes one stack's containers as
+// "orphans" of the other when --remove-orphans runs.
+func SanitizeProjectName(name string) string {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	var b strings.Builder
+	for _, r := range lower {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '_', r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('-')
+		}
+	}
+	sanitized := strings.TrimLeft(b.String(), "-_")
+	if sanitized == "" {
+		return "stack"
+	}
+	return sanitized
 }
 
 // RunPs runs `docker compose ps --format json` and returns the names of services

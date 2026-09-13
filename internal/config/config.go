@@ -106,6 +106,21 @@ func GetDeployTimeout() time.Duration {
 	return defaultSeconds * time.Second
 }
 
+// GetPullTimeout returns the budget a worker gets to run `docker compose
+// pull` for a deploy, independent of GetDeployTimeout/deploy_timeout_seconds
+// (which only bounds the subsequent `up` step). Configured via PULL_TIMEOUT
+// (seconds), default 30m — large images on a slow connection shouldn't need
+// operators to inflate their deploy timeout just to survive the download.
+func GetPullTimeout() time.Duration {
+	const defaultSeconds = 30 * 60
+	if raw := strings.TrimSpace(os.Getenv("PULL_TIMEOUT")); raw != "" {
+		if val, err := strconv.Atoi(raw); err == nil && val > 0 {
+			return time.Duration(val) * time.Second
+		}
+	}
+	return defaultSeconds * time.Second
+}
+
 // GetComposeMaxBytes returns the maximum size of a resolved compose config the
 // server will buffer and parse from `docker compose config`. Configured via
 // COMPOSE_MAX_KB (kilobytes), default 512 KB.
