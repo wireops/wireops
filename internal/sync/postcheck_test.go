@@ -240,11 +240,20 @@ type fakeDispatcher struct {
 	results   []protocol.CommandResult
 	errs      []error
 	calls     int
+
+	// lastProjectName records the ProjectName field of the most recent
+	// protocol.GetStatusCommand dispatched, so tests can assert postDeployCheck
+	// queried the worker using the project name actually baked into the
+	// rendered compose file rather than one recomputed from a work dir path.
+	lastProjectName string
 }
 
 func (f *fakeDispatcher) Dispatch(ctx context.Context, workerID string, cmd interface{}) (protocol.CommandResult, error) {
 	idx := f.calls
 	f.calls++
+	if statusCmd, ok := cmd.(protocol.GetStatusCommand); ok {
+		f.lastProjectName = statusCmd.ProjectName
+	}
 	if idx >= len(f.results) {
 		idx = len(f.results) - 1
 	}
@@ -287,6 +296,69 @@ func TestPostDeployCheckReturnsActiveWhenAllHealthyOnFirstTry(t *testing.T) {
 	res := r.postDeployCheck(context.Background(), "worker-1", "stack-1", "/tmp/workdir", []byte(testCompose))
 	if res.Status != "active" {
 		t.Fatalf("status = %q, want active; detail=%s", res.Status, res.Detail)
+	}
+}
+
+// TestPostDeployCheckUsesProjectNameFromRenderedComposeName is a regression
+// test for the compose-project-collision incident: after the renderer fix,
+// the rendered compose file's top-level `name` is the authoritative project
+// name docker compose actually used on the worker, which can differ from
+// `compose.ProjectName(workDir)` (a basename-derived guess). The status
+// query dispatched here must use that authoritative name, or it would ask
+// the worker about the wrong project.
+func TestPostDeployCheckUsesProjectNameFromRenderedComposeName(t *testing.T) {
+	composeWithName := `
+name: pihole-red
+services:
+  pihole:
+    image: pihole/pihole
+`
+	dispatcher := &fakeDispatcher{
+		connected: true,
+		results: []protocol.CommandResult{
+			statusResult([]compose.ServiceStatus{
+				{ServiceName: "pihole", Status: "running", Health: "healthy"},
+			}),
+		},
+	}
+	r := &Reconciler{dispatcher: dispatcher}
+
+	// workDir's basename ("red") deliberately does NOT match the compose
+	// file's declared name ("pihole-red") -- mirroring stacks/pihole/red,
+	// whose workDir basename collided with stacks/jellyfin/red.
+	res := r.postDeployCheck(context.Background(), "worker-1", "stack-1", "/tmp/stacks/pihole/red", []byte(composeWithName))
+	if res.Status != "active" {
+		t.Fatalf("status = %q, want active; detail=%s", res.Status, res.Detail)
+	}
+	if dispatcher.lastProjectName != "pihole-red" {
+		t.Fatalf("dispatched ProjectName = %q, want %q (from the rendered compose's own name field, not workDir's basename %q)",
+			dispatcher.lastProjectName, "pihole-red", "red")
+	}
+}
+
+// TestPostDeployCheckFallsBackToWorkDirBasenameWhenComposeHasNoName covers
+// the defensive fallback for a pre-fix revision that predates the renderer
+// guaranteeing a `name` field: extraction fails, so postDeployCheck must
+// still function using the old basename-derived project name rather than
+// erroring out entirely.
+func TestPostDeployCheckFallsBackToWorkDirBasenameWhenComposeHasNoName(t *testing.T) {
+	dispatcher := &fakeDispatcher{
+		connected: true,
+		results: []protocol.CommandResult{
+			statusResult([]compose.ServiceStatus{
+				{ServiceName: "web", Status: "running", Health: "healthy"},
+				{ServiceName: "db", Status: "running", Health: "healthy"},
+			}),
+		},
+	}
+	r := &Reconciler{dispatcher: dispatcher}
+
+	res := r.postDeployCheck(context.Background(), "worker-1", "stack-1", "/tmp/workdir", []byte(testCompose))
+	if res.Status != "active" {
+		t.Fatalf("status = %q, want active; detail=%s", res.Status, res.Detail)
+	}
+	if dispatcher.lastProjectName != "workdir" {
+		t.Fatalf("dispatched ProjectName = %q, want %q (basename fallback of /tmp/workdir)", dispatcher.lastProjectName, "workdir")
 	}
 }
 

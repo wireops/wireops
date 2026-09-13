@@ -158,10 +158,34 @@ func (r *Renderer) GenerateRevision(
 	// the versioned revision file.
 	delete(configMap, manifest.ExtensionKey)
 
-	// Validation: ensure top-level name exists
-	if _, ok := configMap["name"]; !ok {
-		return nil, fmt.Errorf("rendered compose file missing top-level 'name' field")
+	// Force the compose project name to the stack's own unique name rather
+	// than trusting whatever `docker compose config` derived (by default,
+	// the compose file's directory basename). Two stacks whose compose_path
+	// share a trailing segment (e.g. stacks/pihole/red and
+	// stacks/jellyfin/red both resolve to "red") would otherwise render to
+	// the same project name and collide on the same worker: deploying one
+	// makes `docker compose up --remove-orphans` treat the other's
+	// containers as orphans of "its" project and delete them.
+	if stackName == "" {
+		return nil, fmt.Errorf("stack has no name to derive a compose project name from")
 	}
+	oldProjectName, _ := configMap["name"].(string)
+	newProjectName := compose.SanitizeProjectName(stackName)
+	// SanitizeProjectName can map two distinct stack names to the same
+	// project name (e.g. "prod/api" and "prod-api" both normalize to
+	// "prod-api"): reject that up front rather than silently reintroducing
+	// the same class of collision this whole override exists to prevent.
+	if err := r.ensureProjectNameUnique(stackID, newProjectName); err != nil {
+		return nil, err
+	}
+	configMap["name"] = newProjectName
+	// `docker compose config` already resolved the implicit default
+	// network's (and any named volume's) auto-generated "<name>_<resource>"
+	// name using the old project name above -- fix those up too, or two
+	// stacks that would have defaulted to the same project name still
+	// collide on those resource names even though their top-level `name`
+	// is now correct.
+	compose.RewriteAutoNamedResources(configMap, oldProjectName, newProjectName)
 
 	// Validate against worker policy
 	wp, err := policy.Load(r.app, workerID)
@@ -559,6 +583,32 @@ func injectVersionMetadata(services map[string]interface{}, commitSHA, checksum,
 		svc["annotations"] = annotations
 		services[serviceName] = svc
 	}
+}
+
+// ensureProjectNameUnique fails the render if another stack's name
+// sanitizes (via compose.SanitizeProjectName) to the same compose project
+// name as this one -- e.g. "prod/api" and "prod-api" both normalize to
+// "prod-api". Two such stacks would silently share a Docker Compose
+// project identity on the same worker, reintroducing the exact class of
+// bug (one stack's deploy deleting another's containers as "orphans")
+// that forcing an explicit project name is meant to prevent.
+func (r *Renderer) ensureProjectNameUnique(stackID, projectName string) error {
+	records, err := r.app.FindAllRecords("stacks")
+	if err != nil {
+		return fmt.Errorf("failed to check compose project name uniqueness: %w", err)
+	}
+	for _, rec := range records {
+		if rec.Id == stackID {
+			continue
+		}
+		if compose.SanitizeProjectName(rec.GetString("name")) == projectName {
+			return fmt.Errorf(
+				"compose project name %q would collide with existing stack %q (id %s) after normalization -- rename one of the two stacks so they don't share a Docker Compose project identity",
+				projectName, rec.GetString("name"), rec.Id,
+			)
+		}
+	}
+	return nil
 }
 
 func (r *Renderer) createRevisionRecord(stackID string, version int, commitSHA, checksum, composePath string) error {
