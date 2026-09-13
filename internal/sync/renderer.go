@@ -158,10 +158,27 @@ func (r *Renderer) GenerateRevision(
 	// the versioned revision file.
 	delete(configMap, manifest.ExtensionKey)
 
-	// Validation: ensure top-level name exists
-	if _, ok := configMap["name"]; !ok {
-		return nil, fmt.Errorf("rendered compose file missing top-level 'name' field")
+	// Force the compose project name to the stack's own unique name rather
+	// than trusting whatever `docker compose config` derived (by default,
+	// the compose file's directory basename). Two stacks whose compose_path
+	// share a trailing segment (e.g. stacks/pihole/red and
+	// stacks/jellyfin/red both resolve to "red") would otherwise render to
+	// the same project name and collide on the same worker: deploying one
+	// makes `docker compose up --remove-orphans` treat the other's
+	// containers as orphans of "its" project and delete them.
+	if stackName == "" {
+		return nil, fmt.Errorf("stack has no name to derive a compose project name from")
 	}
+	oldProjectName, _ := configMap["name"].(string)
+	newProjectName := compose.SanitizeProjectName(stackName)
+	configMap["name"] = newProjectName
+	// `docker compose config` already resolved the implicit default
+	// network's (and any named volume's) auto-generated "<name>_<resource>"
+	// name using the old project name above -- fix those up too, or two
+	// stacks that would have defaulted to the same project name still
+	// collide on those resource names even though their top-level `name`
+	// is now correct.
+	compose.RewriteAutoNamedResources(configMap, oldProjectName, newProjectName)
 
 	// Validate against worker policy
 	wp, err := policy.Load(r.app, workerID)

@@ -66,6 +66,58 @@ func TestBuildPullArgs(t *testing.T) {
 	}
 }
 
+func TestSanitizeProjectName(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "AlreadyValidKebabCase", input: "pihole-red", want: "pihole-red"},
+		{name: "UppercaseIsLowered", input: "Pihole-Red", want: "pihole-red"},
+		{name: "SpacesBecomeDashes", input: "my stack name", want: "my-stack-name"},
+		{name: "LeadingDigitIsFine", input: "1password", want: "1password"},
+		{name: "LeadingDashesAreStripped", input: "--pihole-red", want: "pihole-red"},
+		{name: "SymbolsBecomeDashes", input: "pihole@red!", want: "pihole-red-"},
+		{name: "EmptyStringFallsBackToStack", input: "", want: "stack"},
+		{name: "OnlyInvalidCharsFallsBackToStack", input: "@@@", want: "stack"},
+		{name: "UnderscoresArePreserved", input: "qbittorrent_green", want: "qbittorrent_green"},
+		// The actual incident this guards against: stacks whose compose_path
+		// happens to share a trailing directory segment (e.g.
+		// stacks/pihole/red and stacks/jellyfin/red) must sanitize to
+		// distinct project names since they're derived from the stack's own
+		// unique name, not from any shared path segment.
+		{name: "OurUseCasePiholeRed", input: "pihole-red", want: "pihole-red"},
+		{name: "OurUseCaseJellyfinRed", input: "jellyfin-red", want: "jellyfin-red"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := SanitizeProjectName(tc.input)
+			if got != tc.want {
+				t.Errorf("SanitizeProjectName(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSanitizeProjectNameNeverCollidesForOurRedNodeStacks(t *testing.T) {
+	// Regression test for the incident: stacks/pihole/red and
+	// stacks/jellyfin/red both resolved to compose project "red" (the
+	// shared trailing directory segment), so deploying one deleted the
+	// other's containers via --remove-orphans. The stack names themselves
+	// ("pihole-red", "jellyfin-red", "qbittorrent-red") are guaranteed
+	// unique in wireops, so sanitizing them must keep that uniqueness.
+	names := []string{"pihole-red", "jellyfin-red", "qbittorrent-red"}
+	seen := make(map[string]string, len(names))
+	for _, n := range names {
+		sanitized := SanitizeProjectName(n)
+		if prev, ok := seen[sanitized]; ok {
+			t.Fatalf("SanitizeProjectName collision: %q and %q both sanitize to %q", prev, n, sanitized)
+		}
+		seen[sanitized] = n
+	}
+}
+
 func TestSafeEnv(t *testing.T) {
 	t.Run("empty dockerConfigDir adds no DOCKER_CONFIG", func(t *testing.T) {
 		env := safeEnv("")

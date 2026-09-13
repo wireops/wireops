@@ -5,12 +5,15 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
+	"github.com/wireops/wireops/internal/compose"
 	"github.com/wireops/wireops/internal/sync"
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -546,6 +549,27 @@ services:
 	if res2.Checksum == res1.Checksum {
 		t.Errorf("expected checksum to change when config content changes")
 	}
+}
+
+// defaultNetworkName parses a rendered compose file's networks.default.name
+// field. Used instead of a substring check because two correctly-rendered
+// names in this test suite's fixtures (e.g. "pihole-red_default" and
+// "jellyfin-red_default") can both contain "red_default" as a trailing
+// substring, which would make a naive contains() check for the old,
+// colliding value pass regardless of whether the fix actually applied.
+func defaultNetworkName(t *testing.T, composeContent string) string {
+	t.Helper()
+	var doc struct {
+		Networks struct {
+			Default struct {
+				Name string `yaml:"name"`
+			} `yaml:"default"`
+		} `yaml:"networks"`
+	}
+	if err := yaml.Unmarshal([]byte(composeContent), &doc); err != nil {
+		t.Fatalf("failed to parse rendered compose networks: %v", err)
+	}
+	return doc.Networks.Default.Name
 }
 
 func contains(s, substr string) bool {
@@ -1258,5 +1282,143 @@ services:
 	}
 	if !contains(contentStr, `dev.wireops.managed: "true"`) {
 		t.Errorf("missing dev.wireops.managed label")
+	}
+}
+
+// TestRendererProjectNameDoesNotCollideOnSharedDirectoryBasename is a
+// regression test for a real production incident: stacks/pihole/red and
+// stacks/jellyfin/red were deployed to the same worker. Neither compose
+// file declared an explicit top-level `name`, so `docker compose config`
+// derived one from the compose file's directory basename -- "red" for
+// both. That made them the same Docker Compose project on the worker, and
+// deploying jellyfin (with --remove-orphans, the wireops default) deleted
+// pihole's already-running containers as "orphans" of the shared project.
+//
+// The fix forces the rendered `name` field to the stack's own unique
+// name instead of trusting the directory-basename default. This test
+// reproduces the exact directory layout (two workdirs whose last path
+// segment is both "red") and asserts the two stacks render to distinct
+// project names.
+func TestRendererProjectNameDoesNotCollideOnSharedDirectoryBasename(t *testing.T) {
+	app, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatalf(errCreateTestApp, err)
+	}
+	t.Cleanup(func() { app.Cleanup() })
+	createTestCollections(t, app)
+
+	root := t.TempDir()
+	piholeWorkDir := filepath.Join(root, "stacks", "pihole", "red")
+	jellyfinWorkDir := filepath.Join(root, "stacks", "jellyfin", "red")
+	if err := os.MkdirAll(piholeWorkDir, 0755); err != nil {
+		t.Fatalf("failed to create pihole workdir: %v", err)
+	}
+	if err := os.MkdirAll(jellyfinWorkDir, 0755); err != nil {
+		t.Fatalf("failed to create jellyfin workdir: %v", err)
+	}
+	if filepath.Base(piholeWorkDir) != filepath.Base(jellyfinWorkDir) {
+		t.Fatalf("test setup bug: workdirs must share a basename to reproduce the incident, got %q and %q",
+			piholeWorkDir, jellyfinWorkDir)
+	}
+
+	// Neither compose file declares an explicit `name:` -- exactly how the
+	// real stacks/pihole/red and stacks/jellyfin/red compose files were
+	// authored, since wireops's own x-wireops.name (a different, unrelated
+	// field) was assumed to be enough.
+	writeTestComposeFile(t, filepath.Join(piholeWorkDir, "docker-compose.yml"), `
+services:
+  pihole:
+    image: pihole/pihole:2026.07.2
+`)
+	writeTestComposeFile(t, filepath.Join(jellyfinWorkDir, "docker-compose.yml"), `
+services:
+  jellyfin:
+    image: lscr.io/linuxserver/jellyfin:10.11.11ubu2604-ls47
+`)
+
+	repo := createTestRepo(t, app, "cluster", "main")
+	piholeStack := createTestStack(t, app, repo.Id, "pihole-red")
+	jellyfinStack := createTestStack(t, app, repo.Id, "jellyfin-red")
+
+	renderer := sync.NewRenderer(app)
+	ctx := context.Background()
+
+	piholeRes, err := renderer.GenerateRevision(ctx, piholeStack, repo, piholeWorkDir, "docker-compose.yml", nil, "commitA", false, "", "embedded", nil)
+	if err != nil {
+		t.Fatalf("unexpected error rendering pihole-red: %v", err)
+	}
+	jellyfinRes, err := renderer.GenerateRevision(ctx, jellyfinStack, repo, jellyfinWorkDir, "docker-compose.yml", nil, "commitA", false, "", "embedded", nil)
+	if err != nil {
+		t.Fatalf("unexpected error rendering jellyfin-red: %v", err)
+	}
+
+	piholeContent := readRenderedFile(t, renderer, piholeStack.Id, piholeRes.Version)
+	jellyfinContent := readRenderedFile(t, renderer, jellyfinStack.Id, jellyfinRes.Version)
+
+	if !contains(piholeContent, "name: pihole-red") {
+		t.Errorf("expected pihole-red's rendered compose to declare name: pihole-red, got:\n%s", piholeContent)
+	}
+	if !contains(jellyfinContent, "name: jellyfin-red") {
+		t.Errorf("expected jellyfin-red's rendered compose to declare name: jellyfin-red, got:\n%s", jellyfinContent)
+	}
+	if contains(piholeContent, "name: red") || contains(jellyfinContent, "name: red") {
+		t.Fatalf("regression: a stack rendered with the old directory-basename project name \"red\" instead of its own unique name")
+	}
+
+	// The implicit default network's auto-generated name is resolved by
+	// `docker compose config` before the project name override runs, so it
+	// must be patched separately -- otherwise both stacks still end up with
+	// a network literally named "red_default", exact match (not substring:
+	// both correct names happen to end in "-red_default", which would make
+	// a naive substring check for "red_default" pass either way).
+	piholeDefaultNet := defaultNetworkName(t, piholeContent)
+	jellyfinDefaultNet := defaultNetworkName(t, jellyfinContent)
+	if piholeDefaultNet != "pihole-red_default" {
+		t.Errorf("pihole-red's default network name = %q, want %q", piholeDefaultNet, "pihole-red_default")
+	}
+	if jellyfinDefaultNet != "jellyfin-red_default" {
+		t.Errorf("jellyfin-red's default network name = %q, want %q", jellyfinDefaultNet, "jellyfin-red_default")
+	}
+	if piholeDefaultNet == jellyfinDefaultNet {
+		t.Fatalf("regression: pihole-red and jellyfin-red both rendered the same default network name %q", piholeDefaultNet)
+	}
+
+	piholeName, err := compose.ExtractProjectName([]byte(piholeContent))
+	if err != nil {
+		t.Fatalf("failed to extract pihole-red project name: %v", err)
+	}
+	jellyfinName, err := compose.ExtractProjectName([]byte(jellyfinContent))
+	if err != nil {
+		t.Fatalf("failed to extract jellyfin-red project name: %v", err)
+	}
+	if piholeName == jellyfinName {
+		t.Fatalf("regression: pihole-red and jellyfin-red rendered to the same compose project name %q -- deploying one would delete the other's containers as orphans", piholeName)
+	}
+}
+
+// TestRendererErrorsWhenStackHasNoName covers the guard added alongside the
+// project-name fix: a stack record with no name can't be sanitized into a
+// meaningful compose project name, so GenerateRevision must fail loudly
+// instead of silently deploying under some fallback name.
+func TestRendererErrorsWhenStackHasNoName(t *testing.T) {
+	app, workDir, composePath := setupRendererTest(t)
+	writeTestComposeFile(t, composePath, `
+services:
+  web:
+    image: nginx:latest
+`)
+
+	repo := createTestRepo(t, app, "Unnamed Repo", "main")
+	stack := createTestStack(t, app, repo.Id, "")
+
+	renderer := sync.NewRenderer(app)
+	ctx := context.Background()
+
+	_, err := renderer.GenerateRevision(ctx, stack, repo, workDir, "docker-compose.yml", nil, "commitA", false, "", "embedded", nil)
+	if err == nil {
+		t.Fatal("expected an error when the stack has no name, got nil")
+	}
+	if !strings.Contains(err.Error(), "name") {
+		t.Errorf("error = %v, want it to mention the missing name", err)
 	}
 }

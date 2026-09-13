@@ -299,6 +299,33 @@ func ProjectName(workDir string) string {
 	return strings.ToLower(strings.ReplaceAll(base, " ", "_"))
 }
 
+// SanitizeProjectName normalizes an arbitrary string (typically a wireops
+// stack's own unique name) into a valid Docker Compose project name:
+// lowercase, first character alphanumeric, remaining characters limited to
+// [a-z0-9_-]. Used to force the rendered compose file's top-level `name`
+// field instead of letting `docker compose config` fall back to the compose
+// file's directory basename, which collides whenever two stacks share a
+// trailing path segment (e.g. stacks/pihole/red and stacks/jellyfin/red both
+// resolve to "red") and silently deletes one stack's containers as
+// "orphans" of the other when --remove-orphans runs.
+func SanitizeProjectName(name string) string {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	var b strings.Builder
+	for _, r := range lower {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '_', r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('-')
+		}
+	}
+	sanitized := strings.TrimLeft(b.String(), "-")
+	if sanitized == "" {
+		return "stack"
+	}
+	return sanitized
+}
+
 // RunPs runs `docker compose ps --format json` and returns the names of services
 // (in any state) that have containers for the given compose project.
 // A nil/empty slice means no containers currently exist.
