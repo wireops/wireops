@@ -81,6 +81,8 @@ func TestSanitizeProjectName(t *testing.T) {
 		{name: "EmptyStringFallsBackToStack", input: "", want: "stack"},
 		{name: "OnlyInvalidCharsFallsBackToStack", input: "@@@", want: "stack"},
 		{name: "UnderscoresArePreserved", input: "qbittorrent_green", want: "qbittorrent_green"},
+		{name: "LeadingUnderscoreIsStripped", input: "_api", want: "api"},
+		{name: "LeadingUnderscoresAndDashesAreBothStripped", input: "_-_api", want: "api"},
 		// The actual incident this guards against: stacks whose compose_path
 		// happens to share a trailing directory segment (e.g.
 		// stacks/pihole/red and stacks/jellyfin/red) must sanitize to
@@ -115,6 +117,24 @@ func TestSanitizeProjectNameNeverCollidesForOurRedNodeStacks(t *testing.T) {
 			t.Fatalf("SanitizeProjectName collision: %q and %q both sanitize to %q", prev, n, sanitized)
 		}
 		seen[sanitized] = n
+	}
+}
+
+// TestSanitizeProjectNameCanCollideOnNormalization documents a known,
+// intentional limitation of SanitizeProjectName as a pure string
+// transform: two distinct stack names can normalize to the same project
+// name (e.g. "prod/api" and "prod-api" both become "prod-api", since '/'
+// and '-' both map to '-'). SanitizeProjectName has no visibility into
+// other stacks, so it cannot reject this itself -- that's what
+// sync.Renderer.ensureProjectNameUnique is for, checked against every
+// other stack's name at render time. This test exists so a future change
+// to the character-mapping rules doesn't accidentally "fix" this away
+// without updating ensureProjectNameUnique's test coverage to match.
+func TestSanitizeProjectNameCanCollideOnNormalization(t *testing.T) {
+	a := SanitizeProjectName("prod/api")
+	b := SanitizeProjectName("prod-api")
+	if a != b {
+		t.Fatalf(`expected "prod/api" and "prod-api" to normalize to the same value (documenting why a DB-level uniqueness check is required), got %q and %q`, a, b)
 	}
 }
 

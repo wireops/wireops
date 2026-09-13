@@ -851,7 +851,11 @@ services:
 			writeTestComposeFile(t, composePath, tc.compose)
 
 			repo := createTestRepo(t, app, tc.name, "main")
-			stack := createTestStack(t, app, repo.Id, "policy_stack")
+			// Each subtest gets its own stack name: the shared app/DB across
+			// subtests means a repeated "policy_stack" name would now trip
+			// ensureProjectNameUnique (a different, unrelated check) before
+			// the policy violation this test is actually exercising ever runs.
+			stack := createTestStack(t, app, repo.Id, "policy_stack_"+strings.ReplaceAll(tc.name, " ", "_"))
 
 			renderer := sync.NewRenderer(app)
 			ctx := context.Background()
@@ -888,7 +892,7 @@ services:
 		writeTestComposeFile(t, composePath, compose)
 
 		repo := createTestRepo(t, app, "worker-override-test", "main")
-		stack := createTestStack(t, app, repo.Id, "policy_stack")
+		stack := createTestStack(t, app, repo.Id, "policy_stack_worker_override")
 
 		renderer := sync.NewRenderer(app)
 		ctx := context.Background()
@@ -1420,5 +1424,64 @@ services:
 	}
 	if !strings.Contains(err.Error(), "name") {
 		t.Errorf("error = %v, want it to mention the missing name", err)
+	}
+}
+
+// TestRendererRejectsProjectNameCollisionFromNormalization covers the case
+// SanitizeProjectName itself can't catch: two different stack names that
+// normalize to the identical compose project name ("prod/api" and
+// "prod-api" both become "prod-api", since '/' and '-' both map to '-').
+// Without ensureProjectNameUnique, the second stack would silently render
+// under the same project as the first, reintroducing the exact
+// containers-deleted-as-orphans bug this whole fix exists to prevent.
+func TestRendererRejectsProjectNameCollisionFromNormalization(t *testing.T) {
+	app, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatalf(errCreateTestApp, err)
+	}
+	t.Cleanup(func() { app.Cleanup() })
+	createTestCollections(t, app)
+
+	root := t.TempDir()
+	firstWorkDir := filepath.Join(root, "first")
+	secondWorkDir := filepath.Join(root, "second")
+	if err := os.MkdirAll(firstWorkDir, 0755); err != nil {
+		t.Fatalf("failed to create first workdir: %v", err)
+	}
+	if err := os.MkdirAll(secondWorkDir, 0755); err != nil {
+		t.Fatalf("failed to create second workdir: %v", err)
+	}
+	writeTestComposeFile(t, filepath.Join(firstWorkDir, "docker-compose.yml"), `
+services:
+  api:
+    image: myapp:latest
+`)
+	writeTestComposeFile(t, filepath.Join(secondWorkDir, "docker-compose.yml"), `
+services:
+  api:
+    image: myapp:latest
+`)
+
+	repo := createTestRepo(t, app, "cluster", "main")
+	renderer := sync.NewRenderer(app)
+	ctx := context.Background()
+
+	// The first stack is created and rendered to completion before the
+	// second stack record even exists -- matching the real timeline (stacks
+	// are created and reconciled one at a time), and making sure the
+	// collision below is actually detected against a pre-existing stack
+	// rather than an artifact of creating both records up front.
+	firstStack := createTestStack(t, app, repo.Id, "prod/api")
+	if _, err := renderer.GenerateRevision(ctx, firstStack, repo, firstWorkDir, "docker-compose.yml", nil, "commitA", false, "", "embedded", nil); err != nil {
+		t.Fatalf("unexpected error rendering the first stack (prod/api): %v", err)
+	}
+
+	secondStack := createTestStack(t, app, repo.Id, "prod-api")
+	_, err = renderer.GenerateRevision(ctx, secondStack, repo, secondWorkDir, "docker-compose.yml", nil, "commitA", false, "", "embedded", nil)
+	if err == nil {
+		t.Fatal("expected an error when a second stack's name normalizes to the same project name as an existing stack, got nil")
+	}
+	if !strings.Contains(err.Error(), "prod-api") {
+		t.Errorf("error = %v, want it to mention the colliding project name %q", err, "prod-api")
 	}
 }

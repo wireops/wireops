@@ -171,6 +171,13 @@ func (r *Renderer) GenerateRevision(
 	}
 	oldProjectName, _ := configMap["name"].(string)
 	newProjectName := compose.SanitizeProjectName(stackName)
+	// SanitizeProjectName can map two distinct stack names to the same
+	// project name (e.g. "prod/api" and "prod-api" both normalize to
+	// "prod-api"): reject that up front rather than silently reintroducing
+	// the same class of collision this whole override exists to prevent.
+	if err := r.ensureProjectNameUnique(stackID, newProjectName); err != nil {
+		return nil, err
+	}
 	configMap["name"] = newProjectName
 	// `docker compose config` already resolved the implicit default
 	// network's (and any named volume's) auto-generated "<name>_<resource>"
@@ -576,6 +583,32 @@ func injectVersionMetadata(services map[string]interface{}, commitSHA, checksum,
 		svc["annotations"] = annotations
 		services[serviceName] = svc
 	}
+}
+
+// ensureProjectNameUnique fails the render if another stack's name
+// sanitizes (via compose.SanitizeProjectName) to the same compose project
+// name as this one -- e.g. "prod/api" and "prod-api" both normalize to
+// "prod-api". Two such stacks would silently share a Docker Compose
+// project identity on the same worker, reintroducing the exact class of
+// bug (one stack's deploy deleting another's containers as "orphans")
+// that forcing an explicit project name is meant to prevent.
+func (r *Renderer) ensureProjectNameUnique(stackID, projectName string) error {
+	records, err := r.app.FindAllRecords("stacks")
+	if err != nil {
+		return fmt.Errorf("failed to check compose project name uniqueness: %w", err)
+	}
+	for _, rec := range records {
+		if rec.Id == stackID {
+			continue
+		}
+		if compose.SanitizeProjectName(rec.GetString("name")) == projectName {
+			return fmt.Errorf(
+				"compose project name %q would collide with existing stack %q (id %s) after normalization -- rename one of the two stacks so they don't share a Docker Compose project identity",
+				projectName, rec.GetString("name"), rec.Id,
+			)
+		}
+	}
+	return nil
 }
 
 func (r *Renderer) createRevisionRecord(stackID string, version int, commitSHA, checksum, composePath string) error {

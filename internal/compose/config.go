@@ -326,16 +326,18 @@ func ExtractProjectName(data []byte) (string, error) {
 // top-level project name -- so two stacks that would have defaulted to the
 // same project name (e.g. stacks/pihole/red and stacks/jellyfin/red, both
 // "red") still collide on their default network/volume names even after
-// their top-level `name` fields are corrected. This rewrites any such
-// resource name's "<oldName>_" prefix to "<newName>_" so it tracks the
-// corrected project name too. No-op if oldName is empty or already matches
-// newName.
+// their top-level `name` fields are corrected.
+//
+// Only rewrites a resource whose "name" is exactly "<oldName>_<resourceKey>"
+// -- the precise pattern `docker compose config` uses for an implicit,
+// unnamed resource -- so a network or volume the user explicitly named
+// (which happens to share the old project's "<oldName>_" prefix by
+// coincidence, e.g. a volume literally named "red_backups") is left
+// untouched. No-op if oldName is empty or already matches newName.
 func RewriteAutoNamedResources(configMap map[string]interface{}, oldName, newName string) {
 	if oldName == "" || oldName == newName {
 		return
 	}
-	oldPrefix := oldName + "_"
-	newPrefix := newName + "_"
 	for _, section := range []string{"networks", "volumes"} {
 		raw, ok := configMap[section]
 		if !ok {
@@ -345,16 +347,16 @@ func RewriteAutoNamedResources(configMap map[string]interface{}, oldName, newNam
 		if !ok {
 			continue
 		}
-		for _, v := range resources {
+		for key, v := range resources {
 			def, ok := v.(map[string]interface{})
 			if !ok {
 				continue
 			}
 			name, ok := def["name"].(string)
-			if !ok || !strings.HasPrefix(name, oldPrefix) {
+			if !ok || name != oldName+"_"+key {
 				continue
 			}
-			def["name"] = newPrefix + strings.TrimPrefix(name, oldPrefix)
+			def["name"] = newName + "_" + key
 		}
 	}
 }

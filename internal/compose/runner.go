@@ -319,7 +319,7 @@ func SanitizeProjectName(name string) string {
 			b.WriteRune('-')
 		}
 	}
-	sanitized := strings.TrimLeft(b.String(), "-")
+	sanitized := strings.TrimLeft(b.String(), "-_")
 	if sanitized == "" {
 		return "stack"
 	}
