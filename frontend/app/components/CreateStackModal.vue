@@ -659,7 +659,7 @@ async function handleSubmit() {
             </div>
           </template>
 
-          <div class="space-y-4">
+          <div class="space-y-4 max-h-[55vh] overflow-y-auto pr-1">
             <div v-show="currentStep === 1" class="space-y-4">
               <div class="flex gap-2">
                 <UButton

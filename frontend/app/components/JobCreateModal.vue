@@ -229,15 +229,16 @@ async function submit() {
     @update:open="emit('update:open', $event)"
   >
     <template #content>
-      <AppPanelCard :ui="{ ring: '', divide: 'divide-y divide-gray-100 dark:divide-gray-800', base: 'h-full flex flex-col', body: { base: 'flex-1' } }">
-        <template #header>
-          <div class="flex items-center gap-2">
-            <UIcon name="i-lucide-calendar-clock" class="w-5 h-5 text-yellow-400" />
-            <h2 class="font-semibold text-lg">New Scheduled Job</h2>
-          </div>
-        </template>
+      <form class="w-full" @submit.prevent="submit">
+        <AppPanelCard :ui="{ ring: '', divide: 'divide-y divide-gray-100 dark:divide-gray-800' }">
+          <template #header>
+            <div class="flex items-center gap-2">
+              <UIcon name="i-lucide-calendar-clock" class="w-5 h-5 text-yellow-400" />
+              <h2 class="font-semibold text-lg">New Scheduled Job</h2>
+            </div>
+          </template>
 
-        <form class="space-y-4" @submit.prevent="submit">
+          <div class="space-y-4 max-h-[55vh] overflow-y-auto pr-1">
           <p class="text-sm text-gray-500 dark:text-wire-200/60 mb-2">
             {{ currentStep === 1 ? 'Step 1: Select a repository' : currentStep === 2 ? 'Step 2: Configuration' : 'Step 3: Environment Variables (optional)' }}
           </p>
@@ -301,34 +302,37 @@ async function submit() {
             <UIcon name="i-lucide-circle-x" class="w-5 h-5 text-red-500 mt-0.5 shrink-0" />
             <p class="text-sm text-red-500">{{ errorMsg }}</p>
           </div>
-
-          <div class="flex justify-between pt-4 mt-6">
-            <UButton v-if="currentStep > 1" label="Back" variant="outline" icon="i-lucide-arrow-left" @click="prevStep" />
-            <div v-else/>
-
-            <div class="flex gap-2">
-              <CancelButton @click="emit('update:open', false)" />
-              <UButton v-if="currentStep === 1" type="button" label="Next" icon="i-lucide-arrow-right" trailing :disabled="!form.repository" @click="nextStep" />
-              <UButton
-                v-else-if="currentStep === 2"
-                type="button"
-                label="Next"
-                icon="i-lucide-arrow-right"
-                trailing
-                :disabled="!form.repository || !form.job_file || !form.name || !!nameError"
-                @click="nextStep"
-              />
-              <UButton
-                v-else
-                type="submit"
-                label="Create Job"
-                icon="i-lucide-check"
-                :loading="submitting"
-              />
-            </div>
           </div>
-        </form>
-      </AppPanelCard>
+
+          <template #footer>
+            <div class="flex justify-between items-center w-full gap-2">
+              <UButton v-if="currentStep > 1" label="Back" variant="outline" icon="i-lucide-arrow-left" @click="prevStep" />
+              <div v-else/>
+
+              <div class="flex gap-2">
+                <CancelButton @click="emit('update:open', false)" />
+                <UButton v-if="currentStep === 1" type="button" label="Next" icon="i-lucide-arrow-right" trailing :disabled="!form.repository" @click="nextStep" />
+                <UButton
+                  v-else-if="currentStep === 2"
+                  type="button"
+                  label="Next"
+                  icon="i-lucide-arrow-right"
+                  trailing
+                  :disabled="!form.repository || !form.job_file || !form.name || !!nameError"
+                  @click="nextStep"
+                />
+                <UButton
+                  v-else
+                  type="submit"
+                  label="Create Job"
+                  icon="i-lucide-check"
+                  :loading="submitting"
+                />
+              </div>
+            </div>
+          </template>
+        </AppPanelCard>
+      </form>
     </template>
   </UModal>
 </template>
