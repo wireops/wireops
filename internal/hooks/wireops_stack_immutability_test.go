@@ -1,11 +1,15 @@
 package hooks
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
+	"github.com/pocketbase/pocketbase/tools/router"
 
 	"github.com/wireops/wireops/internal/logstream"
 	"github.com/wireops/wireops/internal/sync"
@@ -40,6 +44,7 @@ func newWireopsImmutabilityTestApp(t *testing.T) (*tests.TestApp, *core.Collecti
 	stacks.Fields.Add(&core.TextField{Name: "wireops_file_path"})
 	stacks.Fields.Add(&core.TextField{Name: "config_source"})
 	stacks.Fields.Add(&core.TextField{Name: "webhook_secret"})
+	stacks.Fields.Add(&core.TextField{Name: "compose_project_name"})
 	if err := app.Save(stacks); err != nil {
 		t.Fatalf("save stacks collection: %v", err)
 	}
@@ -150,5 +155,49 @@ func TestManualStackAllowsComposeFieldEdits(t *testing.T) {
 	reloaded.Set("compose_path", "apps/other")
 	if err := app.Save(reloaded); err != nil {
 		t.Fatalf("expected compose_path edit to succeed for manual stack, got: %v", err)
+	}
+}
+
+func TestComposeProjectNameIsServerManaged(t *testing.T) {
+	app, stacks := newWireopsImmutabilityTestApp(t)
+	workers, err := app.FindAllRecords("workers")
+	if err != nil || len(workers) == 0 {
+		t.Fatalf("expected a worker record: %v", err)
+	}
+
+	createdByServer := core.NewRecord(stacks)
+	createdByServer.Set("name", "server-owned")
+	createdByServer.Set("worker", workers[0].Id)
+	createdByServer.Set("compose_project_name", "stable-project")
+	if err := app.Save(createdByServer); err != nil {
+		t.Fatalf("trusted server save should be allowed: %v", err)
+	}
+
+	reloaded, err := app.FindRecordById("stacks", createdByServer.Id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloaded.Set("compose_project_name", "spoofed-project")
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPatch, "/api/collections/stacks/records/"+reloaded.Id, nil)
+	event := &core.RecordRequestEvent{
+		RequestEvent: &core.RequestEvent{App: app, Event: router.Event{Request: req}},
+		Record:       reloaded,
+	}
+	event.Collection = stacks
+	if err := app.OnRecordUpdateRequest("stacks").Trigger(event, func(*core.RecordRequestEvent) error { return nil }); err == nil || !strings.Contains(err.Error(), "managed by the server") {
+		t.Fatalf("API update error = %v, want server-managed rejection", err)
+	}
+
+	createdByAPI := core.NewRecord(stacks)
+	createdByAPI.Set("name", "api-stack")
+	createdByAPI.Set("worker", workers[0].Id)
+	createdByAPI.Set("compose_project_name", "spoofed-create")
+	createEvent := &core.RecordRequestEvent{
+		RequestEvent: &core.RequestEvent{App: app, Event: router.Event{Request: httptest.NewRequest(http.MethodPost, "/api/collections/stacks/records", nil)}},
+		Record:       createdByAPI,
+	}
+	createEvent.Collection = stacks
+	if err := app.OnRecordCreateRequest("stacks").Trigger(createEvent, func(*core.RecordRequestEvent) error { return nil }); err == nil || !strings.Contains(err.Error(), "managed by the server") {
+		t.Fatalf("API create error = %v, want server-managed rejection", err)
 	}
 }

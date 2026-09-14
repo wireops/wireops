@@ -339,6 +339,7 @@ func (s *Service) UpdateWorkerInfo(workerID string, info protocol.WorkerInfo) er
 	record.Set("compose_version", info.ComposeVersion)
 	record.Set("os", info.OS)
 	record.Set("arch", info.Arch)
+	record.Set("capabilities", info.Capabilities)
 	return s.app.Save(record)
 }
 

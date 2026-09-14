@@ -171,6 +171,8 @@ func newSopsTransferTestApp(t *testing.T) (*tests.TestApp, *Reconciler, *core.Re
 	stacks.Fields.Add(&core.RelationField{Name: "worker", CollectionId: workers.Id, MaxSelect: 1})
 	stacks.Fields.Add(&core.TextField{Name: "compose_path"})
 	stacks.Fields.Add(&core.NumberField{Name: "current_version"})
+	stacks.Fields.Add(&core.NumberField{Name: "deployed_version"})
+	stacks.Fields.Add(&core.TextField{Name: "compose_project_name"})
 	stacks.Fields.Add(&core.SelectField{Name: "status", Values: []string{"active", "syncing", "paused", "error", "pending"}})
 	if err := app.Save(stacks); err != nil {
 		t.Fatalf("failed to create stacks collection: %v", err)
@@ -212,6 +214,8 @@ func newSopsTransferTestApp(t *testing.T) (*tests.TestApp, *Reconciler, *core.Re
 	stack.Set("worker", sourceWorker.Id)
 	stack.Set("compose_path", ".")
 	stack.Set("current_version", 1)
+	stack.Set("deployed_version", 1)
+	stack.Set("compose_project_name", "stack")
 	stack.Set("status", "active")
 	if err := app.Save(stack); err != nil {
 		t.Fatalf("failed to create stack: %v", err)
@@ -224,7 +228,7 @@ func newSopsTransferTestApp(t *testing.T) (*tests.TestApp, *Reconciler, *core.Re
 	if err := os.MkdirAll(filepath.Dir(revisionPath), 0o755); err != nil {
 		t.Fatalf("failed to create revision dir: %v", err)
 	}
-	if err := os.WriteFile(revisionPath, []byte("services: {}\n"), 0o644); err != nil {
+	if err := os.WriteFile(revisionPath, []byte("name: stack\nservices: {}\n"), 0o644); err != nil {
 		t.Fatalf("failed to write rendered compose: %v", err)
 	}
 

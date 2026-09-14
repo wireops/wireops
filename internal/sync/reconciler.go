@@ -21,6 +21,7 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 
 	"github.com/wireops/wireops/internal/audit"
+	"github.com/wireops/wireops/internal/compose"
 	"github.com/wireops/wireops/internal/config"
 	"github.com/wireops/wireops/internal/configfiles"
 	"github.com/wireops/wireops/internal/constants"
@@ -461,7 +462,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 			forcePull, removeOrphans := resolveComposeRuntimeFlags(stack)
 			registryAuthB64, insecureRegistries := r.resolveRegistryAuth(stack)
 			dispatchCtx, cancelDispatch := withDeployTimeout(ctx, stack)
-			result, dispatchErr := r.dispatcher.Dispatch(dispatchCtx, workerID, protocol.DeployCommand{
+			baseCommand := protocol.DeployCommand{
 				CommandID:          syncLog.Id,
 				StackID:            stackID,
 				CommitSHA:          remoteSHA,
@@ -475,7 +476,15 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 				InsecureRegistries: insecureRegistries,
 				PullTimeoutSeconds: int(config.GetPullTimeout().Seconds()),
 				UpTimeoutSeconds:   deployUpTimeoutSeconds(stack),
-			})
+			}
+			command, commandErr := r.deployCommandForRender(workerID, baseCommand, renderRes, true, false, false, false)
+			var result protocol.CommandResult
+			var dispatchErr error
+			if commandErr != nil {
+				dispatchErr = commandErr
+			} else {
+				result, dispatchErr = r.dispatcher.Dispatch(dispatchCtx, workerID, command)
+			}
 			cancelDispatch()
 			composeUpMs = result.ComposeUpMs
 			output, runErr = extractDispatchResult(result, dispatchErr)
@@ -545,6 +554,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	stack.Set("deployed_commit", remoteSHA)
 	stack.Set("deployed_checksum", renderRes.Checksum)
 	stack.Set("deployed_at", time.Now().UTC().Format(time.RFC3339))
+	persistProjectIdentity(stack, renderRes)
 	r.clearLastError(stack)
 	if err := r.saveRecord(stack, "stacks", "complete reconcile"); err != nil {
 		_ = r.updateSyncLog(syncLog.Id, "error", "worker deploy succeeded but failed to persist stack success: "+err.Error(), duration)
@@ -747,7 +757,7 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 		registryAuthB64, insecureRegistries := r.resolveRegistryAuth(stack)
 		dispatchCtx, cancelDispatch := withDeployTimeout(ctx, stack)
 		defer cancelDispatch()
-		result, dispatchErr := r.dispatcher.Dispatch(dispatchCtx, workerID, protocol.DeployCommand{
+		baseCommand := protocol.DeployCommand{
 			CommandID:          cmdID,
 			StackID:            stackID,
 			CommitSHA:          commitSHA,
@@ -760,7 +770,17 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 			InsecureRegistries: insecureRegistries,
 			PullTimeoutSeconds: int(config.GetPullTimeout().Seconds()),
 			UpTimeoutSeconds:   deployUpTimeoutSeconds(stack),
-		})
+		}
+		// Rollback must never re-interpret an older revision as an identity
+		// migration; deploy it under the current project name only.
+		command, commandErr := r.deployCommandForRender(workerID, baseCommand, renderRes, false, false, false, false)
+		var result protocol.CommandResult
+		var dispatchErr error
+		if commandErr != nil {
+			dispatchErr = commandErr
+		} else {
+			result, dispatchErr = r.dispatcher.Dispatch(dispatchCtx, workerID, command)
+		}
 		composeUpMs = result.ComposeUpMs
 		output, runErr = extractDispatchResult(result, dispatchErr)
 	}
@@ -821,6 +841,7 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 	stack.Set("deployed_commit", commitSHA)
 	stack.Set("deployed_checksum", renderRes.Checksum)
 	stack.Set("deployed_at", time.Now().UTC().Format(time.RFC3339))
+	persistProjectIdentity(stack, renderRes)
 	r.clearLastError(stack)
 	if err := r.saveRecord(stack, "stacks", "complete rollback"); err != nil {
 		_ = r.updateSyncLog(syncLog.Id, "error", "rollback succeeded but failed to persist stack state: "+err.Error(), duration)
@@ -1016,25 +1037,28 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 		registryAuthB64, insecureRegistries := r.resolveRegistryAuth(stack)
 		dispatchCtx, cancelDispatch := withDeployTimeout(ctx, stack)
 		defer cancelDispatch()
-		result, dispatchErr := r.dispatcher.Dispatch(dispatchCtx, workerID, protocol.RedeployCommand{
-			DeployCommand: protocol.DeployCommand{
-				CommandID:          cmdID,
-				StackID:            stackID,
-				CommitSHA:          lastSHA,
-				Trigger:            "force-redeploy",
-				ComposeFileB64:     base64.StdEncoding.EncodeToString(composeContent),
-				EnvFileB64:         envFileB64,
-				ForcePull:          forcePull,
-				RemoveOrphans:      removeOrphans,
-				RegistryAuthB64:    registryAuthB64,
-				InsecureRegistries: insecureRegistries,
-				PullTimeoutSeconds: int(config.GetPullTimeout().Seconds()),
-				UpTimeoutSeconds:   deployUpTimeoutSeconds(stack),
-			},
-			RecreateContainers: recreateContainers,
-			RecreateVolumes:    recreateVolumes,
-			RecreateNetworks:   recreateNetworks,
-		})
+		baseCommand := protocol.DeployCommand{
+			CommandID:          cmdID,
+			StackID:            stackID,
+			CommitSHA:          lastSHA,
+			Trigger:            "force-redeploy",
+			ComposeFileB64:     base64.StdEncoding.EncodeToString(composeContent),
+			EnvFileB64:         envFileB64,
+			ForcePull:          forcePull,
+			RemoveOrphans:      removeOrphans,
+			RegistryAuthB64:    registryAuthB64,
+			InsecureRegistries: insecureRegistries,
+			PullTimeoutSeconds: int(config.GetPullTimeout().Seconds()),
+			UpTimeoutSeconds:   deployUpTimeoutSeconds(stack),
+		}
+		command, commandErr := r.deployCommandForRender(workerID, baseCommand, renderRes, true, recreateContainers, recreateVolumes, recreateNetworks)
+		var result protocol.CommandResult
+		var dispatchErr error
+		if commandErr != nil {
+			dispatchErr = commandErr
+		} else {
+			result, dispatchErr = r.dispatcher.Dispatch(dispatchCtx, workerID, command)
+		}
 		composeUpMs = result.ComposeUpMs
 		output, runErr = extractDispatchResult(result, dispatchErr)
 	}
@@ -1065,6 +1089,7 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 	stack.Set("deployed_commit", lastSHA)
 	stack.Set("deployed_checksum", renderRes.Checksum)
 	stack.Set("deployed_at", time.Now().UTC().Format(time.RFC3339))
+	persistProjectIdentity(stack, renderRes)
 	r.clearLastError(stack)
 	if err := r.saveRecord(stack, "stacks", "complete force redeploy"); err != nil {
 		_ = r.updateSyncLog(syncLog.Id, "error", "redeploy succeeded but failed to persist stack state: "+err.Error(), duration)
@@ -1498,32 +1523,7 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 		registryAuthB64, insecureRegistries := r.resolveRegistryAuth(stack)
 		dispatchCtx, cancelDispatch := withDeployTimeout(ctx, stack)
 		defer cancelDispatch()
-		result, dispatchErr := r.dispatcher.Dispatch(dispatchCtx, workerID, protocol.RedeployCommand{
-			DeployCommand: protocol.DeployCommand{
-				CommandID:          syncLog.Id,
-				StackID:            stackID,
-				CommitSHA:          "imported",
-				Trigger:            trigger,
-				ComposeFileB64:     b64,
-				EnvFileB64:         envFileB64,
-				ForcePull:          forcePull,
-				RemoveOrphans:      removeOrphans,
-				RegistryAuthB64:    registryAuthB64,
-				InsecureRegistries: insecureRegistries,
-				PullTimeoutSeconds: int(config.GetPullTimeout().Seconds()),
-				UpTimeoutSeconds:   deployUpTimeoutSeconds(stack),
-			},
-			RecreateContainers: true,
-			RecreateVolumes:    recreateVolumes,
-		})
-		composeUpMs = result.ComposeUpMs
-		output, runErr = extractDispatchResult(result, dispatchErr)
-	} else {
-		forcePull, removeOrphans := resolveComposeRuntimeFlags(stack)
-		registryAuthB64, insecureRegistries := r.resolveRegistryAuth(stack)
-		dispatchCtx, cancelDispatch := withDeployTimeout(ctx, stack)
-		defer cancelDispatch()
-		result, dispatchErr := r.dispatcher.Dispatch(dispatchCtx, workerID, protocol.DeployCommand{
+		baseCommand := protocol.DeployCommand{
 			CommandID:          syncLog.Id,
 			StackID:            stackID,
 			CommitSHA:          "imported",
@@ -1536,7 +1536,44 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 			InsecureRegistries: insecureRegistries,
 			PullTimeoutSeconds: int(config.GetPullTimeout().Seconds()),
 			UpTimeoutSeconds:   deployUpTimeoutSeconds(stack),
-		})
+		}
+		command, commandErr := r.deployCommandForRender(workerID, baseCommand, renderRes, true, true, recreateVolumes, false)
+		var result protocol.CommandResult
+		var dispatchErr error
+		if commandErr != nil {
+			dispatchErr = commandErr
+		} else {
+			result, dispatchErr = r.dispatcher.Dispatch(dispatchCtx, workerID, command)
+		}
+		composeUpMs = result.ComposeUpMs
+		output, runErr = extractDispatchResult(result, dispatchErr)
+	} else {
+		forcePull, removeOrphans := resolveComposeRuntimeFlags(stack)
+		registryAuthB64, insecureRegistries := r.resolveRegistryAuth(stack)
+		dispatchCtx, cancelDispatch := withDeployTimeout(ctx, stack)
+		defer cancelDispatch()
+		baseCommand := protocol.DeployCommand{
+			CommandID:          syncLog.Id,
+			StackID:            stackID,
+			CommitSHA:          "imported",
+			Trigger:            trigger,
+			ComposeFileB64:     b64,
+			EnvFileB64:         envFileB64,
+			ForcePull:          forcePull,
+			RemoveOrphans:      removeOrphans,
+			RegistryAuthB64:    registryAuthB64,
+			InsecureRegistries: insecureRegistries,
+			PullTimeoutSeconds: int(config.GetPullTimeout().Seconds()),
+			UpTimeoutSeconds:   deployUpTimeoutSeconds(stack),
+		}
+		command, commandErr := r.deployCommandForRender(workerID, baseCommand, renderRes, true, false, false, false)
+		var result protocol.CommandResult
+		var dispatchErr error
+		if commandErr != nil {
+			dispatchErr = commandErr
+		} else {
+			result, dispatchErr = r.dispatcher.Dispatch(dispatchCtx, workerID, command)
+		}
 		composeUpMs = result.ComposeUpMs
 		output, runErr = extractDispatchResult(result, dispatchErr)
 	}
@@ -1575,6 +1612,7 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 	stack.Set("deployed_commit", "imported")
 	stack.Set("deployed_checksum", newChecksum)
 	stack.Set("deployed_at", time.Now().UTC().Format(time.RFC3339))
+	persistProjectIdentity(stack, renderRes)
 	r.clearLastError(stack)
 	if err := r.saveRecord(stack, "stacks", "complete local reconcile"); err != nil {
 		_ = r.updateSyncLog(syncLog.Id, "error", "local deploy succeeded but failed to persist stack success: "+err.Error(), duration)
@@ -2330,22 +2368,40 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 	if sourceWorkerID == targetWorkerID {
 		return fmt.Errorf("target worker is the same as the current worker")
 	}
+	projectName, err := DeployedProjectName(stack)
+	if err != nil {
+		return err
+	}
+	if stack.GetString("compose_project_name") == "" {
+		desiredName := compose.SanitizeProjectName(stack.GetString("name"))
+		if projectName != desiredName {
+			return fmt.Errorf("stack Compose identity must migrate from %q to %q before transfer; redeploy the stack first", projectName, desiredName)
+		}
+		stack.Set("compose_project_name", projectName)
+		if err := r.saveRecord(stack, "stacks", "persist compose project identity before transfer"); err != nil {
+			return err
+		}
+	}
+	if err := r.renderer.ensureProjectNameUnique(stackID, targetWorkerID, projectName); err != nil {
+		return fmt.Errorf("target worker project identity conflict: %w", err)
+	}
 
 	log.Printf("[transfer] START stack=%s source_worker=%s target_worker=%s", stackID, sourceWorkerID, targetWorkerID)
 
 	// Read the current rendered compose file for both deploy and teardown.
 	var composeContent []byte
 	var composeFilePath string
-	currentVersion := stack.GetInt("current_version")
-	if currentVersion > 0 {
-		composeFilePath = r.renderer.GetRevisionFilePath(stackID, currentVersion)
-		composeContent, err = os.ReadFile(composeFilePath)
-		if err != nil {
-			return fmt.Errorf("failed to read rendered compose file: %w", err)
-		}
+	deployedVersion := stack.GetInt("deployed_version")
+	if deployedVersion == 0 {
+		return fmt.Errorf("stack has no deployed revision — sync the stack successfully before transferring")
+	}
+	composeFilePath = r.renderer.GetRevisionFilePath(stackID, deployedVersion)
+	composeContent, err = os.ReadFile(composeFilePath)
+	if err != nil {
+		return fmt.Errorf("failed to read deployed compose revision v%d: %w", deployedVersion, err)
 	}
 	if len(composeContent) == 0 || composeFilePath == "" {
-		return fmt.Errorf("stack has no rendered compose file — sync the stack at least once before transferring")
+		return fmt.Errorf("stack has no deployed compose file — sync the stack successfully before transferring")
 	}
 
 	envVars, envErr := r.loadEnvVars(ctx, stackID)

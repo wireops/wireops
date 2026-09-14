@@ -210,12 +210,16 @@ func Redeploy(ctx context.Context, cmd protocol.RedeployCommand, onLine func(str
 			OnLine:          wrappedOnLine,
 		}
 		up := func(upCtx context.Context, opts compose.RunOptions) (string, error) {
-			return compose.RunForceUp(upCtx, compose.ForceUpOptions{
+			forceOpts := compose.ForceUpOptions{
 				RunOptions:         opts,
 				RecreateContainers: cmd.RecreateContainers,
 				RecreateVolumes:    cmd.RecreateVolumes,
 				RecreateNetworks:   cmd.RecreateNetworks,
-			})
+			}
+			if cmd.ProjectMigration != nil {
+				return runProjectIdentityMigration(upCtx, forceOpts, cmd.ProjectMigration, cmd.StackID)
+			}
+			return compose.RunForceUp(upCtx, forceOpts)
 		}
 		out, ms, err := pullThenUp(ctx, cmd.PullTimeoutSeconds, cmd.UpTimeoutSeconds, runOpts, up)
 		upElapsedMs = ms
@@ -365,7 +369,7 @@ func GetStatus(ctx context.Context, cmd protocol.GetStatusCommand) protocol.Comm
 	}
 	defer cli.Close()
 
-	statuses, err := compose.GetStackStatus(ctx, cli.Raw(), cmd.ProjectName)
+	statuses, err := compose.GetStackStatusForStack(ctx, cli.Raw(), cmd.ProjectName, cmd.StackID)
 	if err != nil {
 		log.Printf("[executor] get_status error project=%s: %v", cmd.ProjectName, err)
 		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
@@ -382,26 +386,31 @@ func GetStatus(ctx context.Context, cmd protocol.GetStatusCommand) protocol.Comm
 }
 
 // StopContainer stops a container on the worker host after confirming it
-// belongs to the requested compose project.
+// belongs to the requested WireOps stack.
 func StopContainer(ctx context.Context, cmd protocol.ContainerActionCommand) protocol.CommandResult {
 	return executeContainerAction(ctx, cmd, "stop")
 }
 
 // RestartContainer restarts a container on the worker host after confirming it
-// belongs to the requested compose project.
+// belongs to the requested WireOps stack.
 func RestartContainer(ctx context.Context, cmd protocol.ContainerActionCommand) protocol.CommandResult {
 	return executeContainerAction(ctx, cmd, "restart")
 }
 
-// verifyContainerAndGetClient validates that the container belongs to the specified project and returns the docker client.
+// verifyContainerAndGetClient validates that the container belongs to the specified stack and returns the docker client.
 // The caller is responsible for calling defer cli.Close() if no error is returned.
-func verifyContainerAndGetClient(ctx context.Context, containerID, projectName string) (*docker.Client, error) {
+func verifyContainerAndGetClient(ctx context.Context, containerID, projectName, stackID string) (*docker.Client, error) {
 	cli, err := docker.NewClient()
 	if err != nil {
 		return nil, err
 	}
 
-	belongs, err := compose.ContainerBelongsToProject(ctx, cli.Raw(), containerID, projectName)
+	var belongs bool
+	if stackID != "" {
+		belongs, err = compose.ContainerBelongsToStack(ctx, cli.Raw(), containerID, stackID)
+	} else {
+		belongs, err = compose.ContainerBelongsToProject(ctx, cli.Raw(), containerID, projectName)
+	}
 	if err != nil {
 		cli.Close()
 		return nil, err
@@ -417,7 +426,7 @@ func verifyContainerAndGetClient(ctx context.Context, containerID, projectName s
 func executeContainerAction(ctx context.Context, cmd protocol.ContainerActionCommand, action string) protocol.CommandResult {
 	log.Printf("[executor] %s_container start stack=%s project=%s container=%s command=%s", action, cmd.StackID, cmd.ProjectName, cmd.ContainerID, cmd.CommandID)
 
-	cli, err := verifyContainerAndGetClient(ctx, cmd.ContainerID, cmd.ProjectName)
+	cli, err := verifyContainerAndGetClient(ctx, cmd.ContainerID, cmd.ProjectName, cmd.StackID)
 	if err != nil {
 		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
 	}
@@ -1053,7 +1062,7 @@ func safeEnv() []string {
 func GetContainerStats(ctx context.Context, cmd protocol.GetContainerStatsCommand) protocol.CommandResult {
 	log.Printf("[executor] get_container_stats start stack=%s project=%s container=%s command=%s", cmd.StackID, cmd.ProjectName, cmd.ContainerID, cmd.CommandID)
 
-	cli, err := verifyContainerAndGetClient(ctx, cmd.ContainerID, cmd.ProjectName)
+	cli, err := verifyContainerAndGetClient(ctx, cmd.ContainerID, cmd.ProjectName, cmd.StackID)
 	if err != nil {
 		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
 	}
@@ -1076,7 +1085,7 @@ func GetContainerStats(ctx context.Context, cmd protocol.GetContainerStatsComman
 func GetContainerLogs(ctx context.Context, cmd protocol.GetContainerLogsCommand) protocol.CommandResult {
 	log.Printf("[executor] get_container_logs start stack=%s project=%s container=%s command=%s tail=%s", cmd.StackID, cmd.ProjectName, cmd.ContainerID, cmd.CommandID, cmd.Tail)
 
-	cli, err := verifyContainerAndGetClient(ctx, cmd.ContainerID, cmd.ProjectName)
+	cli, err := verifyContainerAndGetClient(ctx, cmd.ContainerID, cmd.ProjectName, cmd.StackID)
 	if err != nil {
 		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
 	}

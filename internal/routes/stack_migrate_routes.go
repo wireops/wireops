@@ -345,14 +345,14 @@ func loadComposeConfigMap(ctx context.Context, workDir, composeFile string, envV
 }
 
 // resolveCurrentStackConfigMap resolves the source side of the diff: the
-// stack's last rendered revision on disk when one exists (already the
+// stack's last successfully deployed revision on disk when one exists (already the
 // compose config actually running in production, per §4.1 step 6), falling
 // back to a live `docker compose config` against the source repo checkout
 // for a stack that has never synced yet.
 func (rr routeRegistrar) resolveCurrentStackConfigMap(ctx context.Context, stack *core.Record, envVars []string) (map[string]interface{}, error) {
-	if currentVersion := stack.GetInt("current_version"); currentVersion > 0 {
+	if deployedVersion := stack.GetInt("deployed_version"); deployedVersion > 0 {
 		renderer := sync.NewRenderer(rr.app)
-		data, err := os.ReadFile(renderer.GetRevisionFilePath(stack.Id, currentVersion))
+		data, err := os.ReadFile(renderer.GetRevisionFilePath(stack.Id, deployedVersion))
 		if err == nil {
 			var configMap map[string]interface{}
 			if yerr := yaml.Unmarshal(data, &configMap); yerr == nil {
@@ -585,7 +585,7 @@ func recordMigrateAudit(app core.App, e *core.RequestEvent, stackID, oldRepoID, 
 }
 
 // dispatchTeardownForMigration tears down stack's currently-deployed compose
-// project — read from its last rendered revision, i.e. the OLD project,
+// project — read from its last successfully deployed revision, i.e. the OLD project,
 // before the caller re-points repository/compose_path — mirroring the
 // teardown block in registerStackDeleteRoute (stack_routes.go). Dispatched
 // directly here rather than through a Reconciler method: internal/hooks
@@ -595,15 +595,15 @@ func recordMigrateAudit(app core.App, e *core.RequestEvent, stackID, oldRepoID, 
 // is running yet, so there is nothing to tear down.
 func (rr routeRegistrar) dispatchTeardownForMigration(ctx context.Context, stack *core.Record) (string, error) {
 	stackID := stack.Id
-	currentVersion := stack.GetInt("current_version")
-	if currentVersion == 0 {
+	deployedVersion := stack.GetInt("deployed_version")
+	if deployedVersion == 0 {
 		return "", nil
 	}
 
 	renderer := sync.NewRenderer(rr.app)
-	composeContent, err := os.ReadFile(renderer.GetRevisionFilePath(stackID, currentVersion))
+	composeContent, err := os.ReadFile(renderer.GetRevisionFilePath(stackID, deployedVersion))
 	if err != nil {
-		return "", fmt.Errorf("failed to read rendered compose file for teardown: %w", err)
+		return "", fmt.Errorf("failed to read deployed compose revision v%d for teardown: %w", deployedVersion, err)
 	}
 
 	secretKey := crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))

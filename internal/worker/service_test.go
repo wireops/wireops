@@ -40,6 +40,7 @@ func ensureWorkerCollections(t *testing.T, app core.App) {
 		col.Fields.Add(&core.TextField{Name: "version"})
 		col.Fields.Add(&core.TextField{Name: "docker_version"})
 		col.Fields.Add(&core.TextField{Name: "compose_version"})
+		col.Fields.Add(&core.JSONField{Name: "capabilities"})
 		col.Fields.Add(&core.TextField{Name: "os"})
 		col.Fields.Add(&core.TextField{Name: "arch"})
 		if err := app.Save(col); err != nil {
@@ -201,6 +202,7 @@ func TestUpdateWorkerInfoPersistsVersion(t *testing.T) {
 		Version:        "1.2.3",
 		DockerVersion:  "27.0.0",
 		ComposeVersion: "2.27.0",
+		Capabilities:   []string{protocol.CapabilityProjectIdentityMigrationV1},
 		OS:             "linux",
 		Arch:           "amd64",
 	}); err != nil {
@@ -219,6 +221,13 @@ func TestUpdateWorkerInfoPersistsVersion(t *testing.T) {
 	}
 	if got := refreshed.GetString("compose_version"); got != "2.27.0" {
 		t.Fatalf("compose_version = %q, want %q", got, "2.27.0")
+	}
+	var capabilities []string
+	if err := refreshed.UnmarshalJSONField("capabilities", &capabilities); err != nil {
+		t.Fatalf("decode capabilities: %v", err)
+	}
+	if len(capabilities) != 1 || capabilities[0] != protocol.CapabilityProjectIdentityMigrationV1 {
+		t.Fatalf("capabilities = %v", capabilities)
 	}
 	if got := refreshed.GetString("os"); got != "linux" {
 		t.Fatalf("os = %q, want %q", got, "linux")

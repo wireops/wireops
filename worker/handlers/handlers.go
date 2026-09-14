@@ -646,7 +646,7 @@ func HandleTerminalOpen(sender Sender, payload interface{}) {
 		})
 	}
 
-	executor.OpenTerminal(cmd.SessionID, cmd.ContainerID, cmd.ProjectName, cmd.Shell, cmd.Rows, cmd.Cols, onOutput, onClosed)
+	executor.OpenTerminal(cmd.SessionID, cmd.ContainerID, cmd.ProjectName, cmd.StackID, cmd.Shell, cmd.Rows, cmd.Cols, onOutput, onClosed)
 }
 
 // HandleTerminalInput forwards keystroke bytes to an already-open session.
