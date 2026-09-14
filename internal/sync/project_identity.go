@@ -30,8 +30,8 @@ func workerHasCapability(worker *core.Record, capability string) bool {
 	return false
 }
 
-func (r *Reconciler) deployCommandForRender(workerID string, base protocol.DeployCommand, render *RenderResult, allowMigration, recreateContainers, recreateVolumes, recreateNetworks bool) (interface{}, error) {
-	needsMigration := allowMigration && render.PreviousProjectName != "" && render.PreviousProjectName != render.ProjectName
+func (r *Reconciler) deployCommandForRender(workerID string, base protocol.DeployCommand, render *RenderResult, recreateContainers, recreateVolumes, recreateNetworks bool) (interface{}, error) {
+	needsMigration := render.PreviousProjectName != "" && render.PreviousProjectName != render.ProjectName
 	if !needsMigration && !recreateContainers && !recreateVolumes && !recreateNetworks {
 		return base, nil
 	}

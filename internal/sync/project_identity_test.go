@@ -9,7 +9,7 @@ import (
 	"github.com/wireops/wireops/internal/protocol"
 )
 
-func TestDeployCommandForRenderRequiresMigrationCapability(t *testing.T) {
+func TestDeployCommandForRenderRequiresMigrationCapabilityIncludingRollback(t *testing.T) {
 	app, err := tests.NewTestApp()
 	if err != nil {
 		t.Fatal(err)
@@ -34,8 +34,8 @@ func TestDeployCommandForRenderRequiresMigrationCapability(t *testing.T) {
 		PreviousProjectName: "legacy-project",
 		PreviousCompose:     []byte("name: legacy-project\nservices: {}\n"),
 	}
-	base := protocol.DeployCommand{StackID: "stack-pihole"}
-	if _, err := r.deployCommandForRender(worker.Id, base, render, true, false, false, false); err == nil || !strings.Contains(err.Error(), "must be updated") {
+	base := protocol.DeployCommand{StackID: "stack-pihole", Trigger: "rollback"}
+	if _, err := r.deployCommandForRender(worker.Id, base, render, false, false, false); err == nil || !strings.Contains(err.Error(), "must be updated") {
 		t.Fatalf("error = %v, want worker update requirement", err)
 	}
 
@@ -43,7 +43,7 @@ func TestDeployCommandForRenderRequiresMigrationCapability(t *testing.T) {
 	if err := app.Save(worker); err != nil {
 		t.Fatal(err)
 	}
-	command, err := r.deployCommandForRender(worker.Id, base, render, true, false, false, false)
+	command, err := r.deployCommandForRender(worker.Id, base, render, false, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -477,7 +477,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 				PullTimeoutSeconds: int(config.GetPullTimeout().Seconds()),
 				UpTimeoutSeconds:   deployUpTimeoutSeconds(stack),
 			}
-			command, commandErr := r.deployCommandForRender(workerID, baseCommand, renderRes, true, false, false, false)
+			command, commandErr := r.deployCommandForRender(workerID, baseCommand, renderRes, false, false, false)
 			var result protocol.CommandResult
 			var dispatchErr error
 			if commandErr != nil {
@@ -771,9 +771,7 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 			PullTimeoutSeconds: int(config.GetPullTimeout().Seconds()),
 			UpTimeoutSeconds:   deployUpTimeoutSeconds(stack),
 		}
-		// Rollback must never re-interpret an older revision as an identity
-		// migration; deploy it under the current project name only.
-		command, commandErr := r.deployCommandForRender(workerID, baseCommand, renderRes, false, false, false, false)
+		command, commandErr := r.deployCommandForRender(workerID, baseCommand, renderRes, false, false, false)
 		var result protocol.CommandResult
 		var dispatchErr error
 		if commandErr != nil {
@@ -1051,7 +1049,7 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 			PullTimeoutSeconds: int(config.GetPullTimeout().Seconds()),
 			UpTimeoutSeconds:   deployUpTimeoutSeconds(stack),
 		}
-		command, commandErr := r.deployCommandForRender(workerID, baseCommand, renderRes, true, recreateContainers, recreateVolumes, recreateNetworks)
+		command, commandErr := r.deployCommandForRender(workerID, baseCommand, renderRes, recreateContainers, recreateVolumes, recreateNetworks)
 		var result protocol.CommandResult
 		var dispatchErr error
 		if commandErr != nil {
@@ -1537,7 +1535,7 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 			PullTimeoutSeconds: int(config.GetPullTimeout().Seconds()),
 			UpTimeoutSeconds:   deployUpTimeoutSeconds(stack),
 		}
-		command, commandErr := r.deployCommandForRender(workerID, baseCommand, renderRes, true, true, recreateVolumes, false)
+		command, commandErr := r.deployCommandForRender(workerID, baseCommand, renderRes, true, recreateVolumes, false)
 		var result protocol.CommandResult
 		var dispatchErr error
 		if commandErr != nil {
@@ -1566,7 +1564,7 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 			PullTimeoutSeconds: int(config.GetPullTimeout().Seconds()),
 			UpTimeoutSeconds:   deployUpTimeoutSeconds(stack),
 		}
-		command, commandErr := r.deployCommandForRender(workerID, baseCommand, renderRes, true, false, false, false)
+		command, commandErr := r.deployCommandForRender(workerID, baseCommand, renderRes, false, false, false)
 		var result protocol.CommandResult
 		var dispatchErr error
 		if commandErr != nil {
