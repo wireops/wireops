@@ -100,15 +100,15 @@ type terminalSession struct {
 var terminalSessions sync.Map // sessionID (string) -> *terminalSession
 
 // OpenTerminal starts an interactive docker-exec session (TTY attached)
-// inside a container already verified to belong to projectName, and streams
+// inside a container already verified to belong to stackID, and streams
 // its output to onOutput until the process exits or CloseTerminal is called.
 // onOutput and onClosed run on the goroutine this function spawns.
-func OpenTerminal(sessionID, containerID, projectName string, shell []string, rows, cols uint, onOutput func(data []byte), onClosed func(exitCode int, errMsg string)) {
+func OpenTerminal(sessionID, containerID, projectName, stackID string, shell []string, rows, cols uint, onOutput func(data []byte), onClosed func(exitCode int, errMsg string)) {
 	if len(shell) == 0 {
 		shell = []string{"/bin/sh"}
 	}
 
-	cli, err := verifyContainerAndGetClient(context.Background(), containerID, projectName)
+	cli, err := verifyContainerAndGetClient(context.Background(), containerID, projectName, stackID)
 	if err != nil {
 		onClosed(-1, err.Error())
 		return

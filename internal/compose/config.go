@@ -361,6 +361,36 @@ func RewriteAutoNamedResources(configMap map[string]interface{}, oldName, newNam
 	}
 }
 
+// PreserveAutoNamedVolumes keeps the physical names from a previously
+// deployed revision when the Compose project identity changes. Only volumes
+// whose current resolved name follows Compose's implicit
+// "<targetProject>_<key>" convention are rewritten; explicit user names and
+// newly introduced volumes remain untouched.
+func PreserveAutoNamedVolumes(configMap, previousConfig map[string]interface{}, targetProject string) {
+	current, ok := configMap["volumes"].(map[string]interface{})
+	if !ok || targetProject == "" {
+		return
+	}
+	previous, ok := previousConfig["volumes"].(map[string]interface{})
+	if !ok {
+		return
+	}
+	for key, raw := range current {
+		def, ok := raw.(map[string]interface{})
+		if !ok || def["name"] != targetProject+"_"+key {
+			continue
+		}
+		previousDef, ok := previous[key].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		previousName, _ := previousDef["name"].(string)
+		if previousName != "" {
+			def["name"] = previousName
+		}
+	}
+}
+
 // InitServiceNames extracts the names of services labeled with initLabel
 // (customization.init) from a rendered compose file, used by post-deploy
 // checks to exempt run-to-completion containers from the "must be running"

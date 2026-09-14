@@ -3,6 +3,7 @@ package sync_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -680,6 +681,7 @@ func createTestCollections(t *testing.T, app core.App) {
 	workers := core.NewBaseCollection("workers")
 	workers.Fields.Add(&core.TextField{Name: "hostname"})
 	workers.Fields.Add(&core.TextField{Name: "fingerprint"})
+	workers.Fields.Add(&core.JSONField{Name: "capabilities"})
 	workers.Fields.Add(&core.BoolField{Name: "policy_inherit"})
 	workers.Fields.Add(&core.JSONField{Name: "policy_flags"})
 	workers.Fields.Add(&core.JSONField{Name: "policy_volumes"})
@@ -697,6 +699,11 @@ func createTestCollections(t *testing.T, app core.App) {
 	stacks.Fields.Add(&core.TextField{Name: "name"})
 	stacks.Fields.Add(&core.RelationField{Name: "repository", CollectionId: repos.Id, MaxSelect: 1})
 	stacks.Fields.Add(&core.NumberField{Name: "current_version"})
+	stacks.Fields.Add(&core.NumberField{Name: "deployed_version"})
+	stacks.Fields.Add(&core.TextField{Name: "deployed_commit"})
+	stacks.Fields.Add(&core.TextField{Name: "last_synced_at"})
+	stacks.Fields.Add(&core.TextField{Name: "compose_project_name"})
+	stacks.Fields.Add(&core.RelationField{Name: "worker", CollectionId: workers.Id, MaxSelect: 1})
 	stacks.Fields.Add(&core.TextField{Name: "desired_commit"})
 	stacks.Fields.Add(&core.TextField{Name: "checksum"})
 	if err := app.Save(stacks); err != nil {
@@ -1483,5 +1490,95 @@ services:
 	}
 	if !strings.Contains(err.Error(), "prod-api") {
 		t.Errorf("error = %v, want it to mention the colliding project name %q", err, "prod-api")
+	}
+}
+
+func TestRendererMigratesFromDeployedIdentityAndPreservesNamedVolumes(t *testing.T) {
+	app, workDir, composePath := setupRendererTest(t)
+	legacyName := filepath.Base(workDir)
+	writeTestComposeFile(t, composePath, `
+services:
+  pihole:
+    image: pihole/pihole:latest
+    container_name: pihole
+    volumes:
+      - data:/etc/pihole
+volumes:
+  data:
+`)
+	repo := createTestRepo(t, app, "cluster", "main")
+	stack := createTestStack(t, app, repo.Id, "pihole-red")
+	renderer := sync.NewRenderer(app)
+	previousPath := renderer.GetRevisionFilePath(stack.Id, 1)
+	if err := os.MkdirAll(filepath.Dir(previousPath), 0700); err != nil {
+		t.Fatal(err)
+	}
+	previous := fmt.Sprintf("name: %s\nservices:\n  pihole:\n    image: pihole/pihole:latest\n    container_name: pihole\nvolumes:\n  data:\n    name: %s_data\n", legacyName, legacyName)
+	if err := os.WriteFile(previousPath, []byte(previous), 0600); err != nil {
+		t.Fatal(err)
+	}
+	stack.Set("current_version", 2) // v2 may be a failed v1.0.6 attempt.
+	stack.Set("deployed_version", 1)
+	stack.Set("deployed_commit", "legacy")
+	stack.Set("checksum", "failed-attempt")
+	if err := app.Save(stack); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := renderer.GenerateRevision(context.Background(), stack, repo, workDir, "docker-compose.yml", nil, "next", true, "", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.PreviousProjectName != legacyName || result.ProjectName != "pihole-red" {
+		t.Fatalf("migration identity = %q -> %q", result.PreviousProjectName, result.ProjectName)
+	}
+	if string(result.PreviousCompose) != previous {
+		t.Fatal("renderer did not use deployed_version as migration baseline")
+	}
+	rendered := readRenderedFile(t, renderer, stack.Id, result.Version)
+	if !strings.Contains(rendered, "name: pihole-red") || !strings.Contains(rendered, "name: "+legacyName+"_data") {
+		t.Fatalf("rendered migration did not preserve identity/volume:\n%s", rendered)
+	}
+	if stack.GetString("compose_project_name") != "" {
+		t.Fatal("renderer persisted project identity before deploy success")
+	}
+}
+
+func TestRendererNeverUsesFailedCurrentRevisionAsMigrationBaseline(t *testing.T) {
+	app, workDir, composePath := setupRendererTest(t)
+	writeTestComposeFile(t, composePath, `
+services:
+  app:
+    image: nginx:1.27
+`)
+	repo := createTestRepo(t, app, "cluster", "main")
+	stack := createTestStack(t, app, repo.Id, "production")
+	renderer := sync.NewRenderer(app)
+	failedPath := renderer.GetRevisionFilePath(stack.Id, 3)
+	if err := os.MkdirAll(filepath.Dir(failedPath), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(failedPath, []byte("name: production\nservices: {}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	stack.Set("current_version", 3)
+	stack.Set("last_synced_at", "2026-09-13 12:00:00.000Z")
+	if err := app.Save(stack); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := renderer.GenerateRevision(context.Background(), stack, repo, workDir, "docker-compose.yml", nil, "next", true, "", "", nil)
+	if err != nil {
+		t.Fatalf("render should not fail for a stack lacking a trustworthy baseline: %v", err)
+	}
+	// The failed current_version=3 revision must never be adopted as the
+	// migration baseline: with no deployed_version, the renderer resolves to
+	// the target identity with migration disabled (no PreviousProjectName),
+	// so nothing is ever torn down based on a guessed baseline.
+	if result.PreviousProjectName != "" {
+		t.Fatalf("PreviousProjectName = %q, want empty (no migration from failed revision)", result.PreviousProjectName)
+	}
+	if result.ProjectName != "production" {
+		t.Fatalf("ProjectName = %q, want production", result.ProjectName)
 	}
 }

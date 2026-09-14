@@ -363,9 +363,13 @@ func (rr routeRegistrar) registerStackInspectionRoutes() {
 			return e.JSON(http.StatusServiceUnavailable, map[string]string{"error": fmt.Sprintf(OfflineWorkerMsg, worker.GetString("hostname"))})
 		}
 
-		projectName := compose.ProjectName(stackWorkDir(rr.app, stack))
+		projectName, projectErr := sync.DeployedProjectName(stack)
+		if projectErr != nil {
+			return e.JSON(http.StatusConflict, map[string]string{"error": projectErr.Error()})
+		}
 		res, dispatchErr := rr.workerSvc.Dispatch(e.Request.Context(), workerID, protocol.GetStatusCommand{
 			CommandID:   fmt.Sprintf("status-%s", stackID),
+			StackID:     stackID,
 			ProjectName: projectName,
 		})
 		if dispatchErr == nil && res.Error == "" {
@@ -436,7 +440,10 @@ func (rr routeRegistrar) registerStackInspectionRoutes() {
 			return e.JSON(http.StatusServiceUnavailable, map[string]string{"error": fmt.Sprintf(OfflineWorkerMsg, worker.GetString("hostname"))})
 		}
 
-		projectName := compose.ProjectName(stackWorkDir(rr.app, stack))
+		projectName, projectErr := sync.DeployedProjectName(stack)
+		if projectErr != nil {
+			return e.JSON(http.StatusConflict, map[string]string{"error": projectErr.Error()})
+		}
 		result, dispatchErr := rr.workerSvc.Dispatch(e.Request.Context(), workerID, protocol.GetResourcesCommand{
 			CommandID:   fmt.Sprintf("resources-%s", stackID),
 			StackID:     stackID,
@@ -673,9 +680,13 @@ func (rr routeRegistrar) registerStackComposeRoute() {
 func (rr routeRegistrar) stackLiveServiceStatuses(ctx context.Context, stack *core.Record) []compose.ServiceStatus {
 	workerID := stack.GetString("worker")
 	if _, werr := rr.resolveWorker(workerID); werr == nil && rr.workerSvc != nil && rr.workerSvc.IsConnected(workerID) {
-		projectName := compose.ProjectName(stackWorkDir(rr.app, stack))
+		projectName, projectErr := sync.DeployedProjectName(stack)
+		if projectErr != nil {
+			return nil
+		}
 		res, dispatchErr := rr.workerSvc.Dispatch(ctx, workerID, protocol.GetStatusCommand{
 			CommandID:   fmt.Sprintf("status-%s", stack.Id),
+			StackID:     stack.Id,
 			ProjectName: projectName,
 		})
 		if dispatchErr == nil && res.Error == "" {
@@ -871,13 +882,13 @@ func (rr routeRegistrar) registerStackDeleteRoute() {
 
 		var composeContent []byte
 		renderer := sync.NewRenderer(rr.app)
-		currentVersion := stack.GetInt("current_version")
-		if currentVersion > 0 {
-			filePath := renderer.GetRevisionFilePath(stackID, currentVersion)
+		deployedVersion := stack.GetInt("deployed_version")
+		if deployedVersion > 0 {
+			filePath := renderer.GetRevisionFilePath(stackID, deployedVersion)
 			var readErr error
 			composeContent, readErr = os.ReadFile(filePath)
 			if readErr != nil && !force {
-				return e.JSON(http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("failed to read rendered compose file for teardown: %v", readErr)})
+				return e.JSON(http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("failed to read deployed compose revision v%d for teardown: %v", deployedVersion, readErr)})
 			}
 		}
 

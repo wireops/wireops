@@ -505,6 +505,34 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 		return e.Next()
 	})
 
+	// compose_project_name is assigned only after a successful deploy (or
+	// project-identity migration). Keep ordinary PocketBase API callers from
+	// spoofing or changing the runtime ownership boundary while allowing
+	// trusted server-side record saves to persist it.
+	app.OnRecordCreateRequest("stacks").BindFunc(func(e *core.RecordRequestEvent) error {
+		if e.Record.GetString("compose_project_name") != "" {
+			return validation.Errors{
+				"compose_project_name": validation.NewError("validation_server_managed", "Compose project identity is managed by the server."),
+			}
+		}
+		return e.Next()
+	})
+	app.OnRecordUpdateRequest("stacks").BindFunc(func(e *core.RecordRequestEvent) error {
+		// If Original() is unavailable we cannot prove the value is unchanged,
+		// so treat the previous value as empty: any non-empty compose_project_name
+		// coming through the API is then rejected rather than silently trusted.
+		previous := ""
+		if original := e.Record.Original(); original != nil {
+			previous = original.GetString("compose_project_name")
+		}
+		if e.Record.GetString("compose_project_name") != previous {
+			return validation.Errors{
+				"compose_project_name": validation.NewError("validation_server_managed", "Compose project identity is managed by the server."),
+			}
+		}
+		return e.Next()
+	})
+
 	// Repository hooks
 	app.OnRecordCreate("repositories").BindFunc(func(e *core.RecordEvent) error {
 		if err := validateRepositoryKeyAssignment(e.App, e.Record); err != nil {

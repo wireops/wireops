@@ -44,6 +44,10 @@ type RenderResult struct {
 	// block the deploy — the caller folds them into the render phase's
 	// sync_log_phases detail, purely advisory.
 	Warnings []string
+
+	ProjectName         string
+	PreviousProjectName string
+	PreviousCompose     []byte
 }
 
 // ServiceOverride holds render-time (not committed to git) overrides for a single
@@ -170,12 +174,16 @@ func (r *Renderer) GenerateRevision(
 		return nil, fmt.Errorf("stack has no name to derive a compose project name from")
 	}
 	oldProjectName, _ := configMap["name"].(string)
-	newProjectName := compose.SanitizeProjectName(stackName)
+	identity, err := r.resolveProjectIdentity(stack)
+	if err != nil {
+		return nil, err
+	}
+	newProjectName := identity.TargetName
 	// SanitizeProjectName can map two distinct stack names to the same
 	// project name (e.g. "prod/api" and "prod-api" both normalize to
 	// "prod-api"): reject that up front rather than silently reintroducing
 	// the same class of collision this whole override exists to prevent.
-	if err := r.ensureProjectNameUnique(stackID, newProjectName); err != nil {
+	if err := r.ensureProjectNameUnique(stackID, workerID, newProjectName); err != nil {
 		return nil, err
 	}
 	configMap["name"] = newProjectName
@@ -186,6 +194,13 @@ func (r *Renderer) GenerateRevision(
 	// collide on those resource names even though their top-level `name`
 	// is now correct.
 	compose.RewriteAutoNamedResources(configMap, oldProjectName, newProjectName)
+	if identity.NeedsMigration {
+		var previousConfig map[string]interface{}
+		if err := yaml.Unmarshal(identity.PreviousCompose, &previousConfig); err != nil {
+			return nil, fmt.Errorf("failed to parse deployed compose revision for project migration: %w", err)
+		}
+		compose.PreserveAutoNamedVolumes(configMap, previousConfig, newProjectName)
+	}
 
 	// Validate against worker policy
 	wp, err := policy.Load(r.app, workerID)
@@ -362,11 +377,14 @@ func (r *Renderer) GenerateRevision(
 
 		// For now, if the checksum matches, we can just return the existing version info.
 		return &RenderResult{
-			Version:      currentVersion,
-			Checksum:     checksum,
-			RenderedPath: fmt.Sprintf("v%d.yml", currentVersion),
-			ConfigFiles:  trackedConfigs,
-			Warnings:     renderWarnings,
+			Version:             currentVersion,
+			Checksum:            checksum,
+			RenderedPath:        fmt.Sprintf("v%d.yml", currentVersion),
+			ConfigFiles:         trackedConfigs,
+			Warnings:            renderWarnings,
+			ProjectName:         identity.TargetName,
+			PreviousProjectName: identity.PreviousName,
+			PreviousCompose:     identity.PreviousCompose,
 		}, nil
 	}
 
@@ -407,11 +425,14 @@ func (r *Renderer) GenerateRevision(
 	}
 
 	return &RenderResult{
-		Version:      nextVersion,
-		Checksum:     checksum,
-		RenderedPath: fileName,
-		ConfigFiles:  trackedConfigs,
-		Warnings:     renderWarnings,
+		Version:             nextVersion,
+		Checksum:            checksum,
+		RenderedPath:        fileName,
+		ConfigFiles:         trackedConfigs,
+		Warnings:            renderWarnings,
+		ProjectName:         identity.TargetName,
+		PreviousProjectName: identity.PreviousName,
+		PreviousCompose:     identity.PreviousCompose,
 	}, nil
 }
 
@@ -592,7 +613,7 @@ func injectVersionMetadata(services map[string]interface{}, commitSHA, checksum,
 // project identity on the same worker, reintroducing the exact class of
 // bug (one stack's deploy deleting another's containers as "orphans")
 // that forcing an explicit project name is meant to prevent.
-func (r *Renderer) ensureProjectNameUnique(stackID, projectName string) error {
+func (r *Renderer) ensureProjectNameUnique(stackID, workerID, projectName string) error {
 	records, err := r.app.FindAllRecords("stacks")
 	if err != nil {
 		return fmt.Errorf("failed to check compose project name uniqueness: %w", err)
@@ -601,7 +622,14 @@ func (r *Renderer) ensureProjectNameUnique(stackID, projectName string) error {
 		if rec.Id == stackID {
 			continue
 		}
-		if compose.SanitizeProjectName(rec.GetString("name")) == projectName {
+		if rec.GetString("worker") != workerID {
+			continue
+		}
+		otherName := rec.GetString("compose_project_name")
+		if otherName == "" {
+			otherName = compose.SanitizeProjectName(rec.GetString("name"))
+		}
+		if otherName == projectName {
 			return fmt.Errorf(
 				"compose project name %q would collide with existing stack %q (id %s) after normalization -- rename one of the two stacks so they don't share a Docker Compose project identity",
 				projectName, rec.GetString("name"), rec.Id,

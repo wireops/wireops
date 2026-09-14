@@ -2,6 +2,8 @@
 // communication between the wireops server (control plane) and remote workers.
 package protocol
 
+const CapabilityProjectIdentityMigrationV1 = "project_identity_migration_v1"
+
 // MessageType identifies the type of a WebSocket message.
 type MessageType string
 
@@ -130,9 +132,20 @@ type DeployCommand struct {
 // RedeployCommand extends DeployCommand with force-recreate options.
 type RedeployCommand struct {
 	DeployCommand
-	RecreateContainers bool `json:"recreate_containers"`
-	RecreateVolumes    bool `json:"recreate_volumes"`
-	RecreateNetworks   bool `json:"recreate_networks"`
+	RecreateContainers bool                  `json:"recreate_containers"`
+	RecreateVolumes    bool                  `json:"recreate_volumes"`
+	RecreateNetworks   bool                  `json:"recreate_networks"`
+	ProjectMigration   *ProjectMigrationSpec `json:"project_migration,omitempty"`
+}
+
+// ProjectMigrationSpec asks a capable worker to move only this stack's
+// labelled containers from a previously deployed Compose project identity to
+// the identity in DeployCommand.ComposeFileB64. The previous revision is kept
+// for a best-effort rollback if the new compose up fails.
+type ProjectMigrationSpec struct {
+	PreviousProjectName string `json:"previous_project_name"`
+	TargetProjectName   string `json:"target_project_name"`
+	PreviousComposeB64  string `json:"previous_compose_b64"`
 }
 
 // TeardownCommand is sent from the server to a worker to run `docker compose down`.
@@ -206,6 +219,7 @@ type ProbeResult struct {
 // GetStatusCommand asks the worker for live container statuses and labels for a project.
 type GetStatusCommand struct {
 	CommandID   string `json:"command_id"`
+	StackID     string `json:"stack_id,omitempty"`
 	ProjectName string `json:"project_name"`
 }
 
@@ -230,7 +244,7 @@ type GetResourcesCommand struct {
 	// StackID is informational (used for logging on the worker side).
 	StackID string `json:"stack_id"`
 
-	// ProjectName is the Docker Compose project name, derived from the workdir basename.
+	// ProjectName is the persisted Docker Compose project identity.
 	ProjectName string `json:"project_name"`
 }
 
@@ -291,7 +305,7 @@ type GetResourcesResult struct {
 }
 
 // ContainerActionCommand asks the worker to stop or restart a specific
-// container after verifying it belongs to the compose project.
+// container after verifying it belongs to the WireOps stack.
 type ContainerActionCommand struct {
 	CommandID   string `json:"command_id"`
 	StackID     string `json:"stack_id"`
@@ -300,7 +314,7 @@ type ContainerActionCommand struct {
 }
 
 // GetContainerStatsCommand queries the worker for CPU, memory, and network stats
-// of a container after verifying it belongs to the compose project.
+// of a container after verifying it belongs to the WireOps stack.
 type GetContainerStatsCommand struct {
 	CommandID   string `json:"command_id"`
 	StackID     string `json:"stack_id"`
@@ -309,7 +323,7 @@ type GetContainerStatsCommand struct {
 }
 
 // GetContainerLogsCommand queries the worker for the logs of a container
-// after verifying it belongs to the compose project.
+// after verifying it belongs to the WireOps stack.
 type GetContainerLogsCommand struct {
 	CommandID   string `json:"command_id"`
 	StackID     string `json:"stack_id"`
@@ -345,7 +359,7 @@ func TerminalOpenSessionIDFromCommandID(commandID string) (string, bool) {
 
 // TerminalOpenCommand asks the worker to open an interactive exec session
 // (docker exec, TTY attached) inside a container already verified to belong
-// to the requesting stack's compose project.
+// to the requesting WireOps stack.
 type TerminalOpenCommand struct {
 	CommandID   string `json:"command_id"`
 	SessionID   string `json:"session_id"`
@@ -620,11 +634,12 @@ type HeartbeatPayload struct {
 }
 
 type WorkerInfo struct {
-	Version        string `json:"version,omitempty"`
-	DockerVersion  string `json:"docker_version"`
-	ComposeVersion string `json:"compose_version"`
-	OS             string `json:"os"`
-	Arch           string `json:"arch"`
+	Version        string   `json:"version,omitempty"`
+	DockerVersion  string   `json:"docker_version"`
+	ComposeVersion string   `json:"compose_version"`
+	OS             string   `json:"os"`
+	Arch           string   `json:"arch"`
+	Capabilities   []string `json:"capabilities,omitempty"`
 }
 
 type TelemetryInfo struct {

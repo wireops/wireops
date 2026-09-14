@@ -66,6 +66,7 @@ func (r *Reconciler) postDeployCheck(ctx context.Context, workerID, stackID, wor
 	for attempt := 1; attempt <= postCheckAttempts; attempt++ {
 		result, dispatchErr := r.dispatcher.Dispatch(ctx, workerID, protocol.GetStatusCommand{
 			CommandID:   fmt.Sprintf("post-check-%s-%d", stackID, attempt),
+			StackID:     stackID,
 			ProjectName: projectName,
 		})
 		switch {

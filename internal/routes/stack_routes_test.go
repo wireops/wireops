@@ -295,7 +295,8 @@ func createTeardownTestStack(t *testing.T, app core.App, repoID, workerID string
 	stack.Set("name", "teardown-stack")
 	stack.Set("repository", repoID)
 	stack.Set("worker", workerID)
-	stack.Set("current_version", 1)
+	stack.Set("current_version", 2) // v2 may be a failed deploy; teardown must use v1.
+	stack.Set("deployed_version", 1)
 	if err := app.Save(stack); err != nil {
 		t.Fatalf("create test stack: %v", err)
 	}

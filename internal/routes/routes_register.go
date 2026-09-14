@@ -168,7 +168,11 @@ func (rr routeRegistrar) resolveStackAndWorker(e *core.RequestEvent, stackID str
 		_ = e.JSON(http.StatusNotFound, map[string]string{"error": "stack not found"})
 		return nil, "", "", false
 	}
-	projectName := compose.ProjectName(stackWorkDir(rr.app, stack))
+	projectName, err := sync.DeployedProjectName(stack)
+	if err != nil {
+		_ = e.JSON(http.StatusConflict, map[string]string{"error": err.Error()})
+		return nil, "", "", false
+	}
 	workerID := stack.GetString("worker")
 	return stack, projectName, workerID, true
 }
@@ -981,7 +985,10 @@ func (rr routeRegistrar) registerIntegrationRoutes(secretKey []byte) {
 			return e.JSON(http.StatusNotFound, map[string]string{"error": "stack not found"})
 		}
 
-		projectName := compose.ProjectName(stackWorkDir(rr.app, stack))
+		projectName, err := sync.DeployedProjectName(stack)
+		if err != nil {
+			return e.JSON(http.StatusConflict, map[string]string{"error": err.Error()})
+		}
 		assignedWorkerID := stack.GetString("worker")
 		worker, err := rr.resolveWorker(assignedWorkerID)
 		if err != nil {
@@ -993,6 +1000,7 @@ func (rr routeRegistrar) registerIntegrationRoutes(secretKey []byte) {
 
 		res, err := rr.workerSvc.Dispatch(e.Request.Context(), assignedWorkerID, protocol.GetStatusCommand{
 			CommandID:   fmt.Sprintf("status-actions-%s", stackID),
+			StackID:     stackID,
 			ProjectName: projectName,
 		})
 		if err != nil || res.Error != "" {

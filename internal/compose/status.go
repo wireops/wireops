@@ -61,8 +61,18 @@ type ContainerStats struct {
 }
 
 func GetStackStatus(ctx context.Context, cli *dockerclient.Client, projectName string) ([]ServiceStatus, error) {
+	return GetStackStatusForStack(ctx, cli, projectName, "")
+}
+
+// GetStackStatusForStack narrows a project query to WireOps' immutable stack
+// label when available. This prevents legacy stacks that once shared a
+// Compose project name from seeing each other's containers.
+func GetStackStatusForStack(ctx context.Context, cli *dockerclient.Client, projectName, stackID string) ([]ServiceStatus, error) {
 	f := filters.NewArgs()
 	f.Add("label", "com.docker.compose.project="+projectName)
+	if stackID != "" {
+		f.Add("label", "dev.wireops.stack_id="+stackID)
+	}
 
 	containers, err := cli.ContainerList(ctx, container.ListOptions{
 		All:     true,
@@ -351,6 +361,20 @@ func ContainerBelongsToProject(ctx context.Context, cli *dockerclient.Client, co
 		return false, nil
 	}
 	return inspect.Config.Labels["com.docker.compose.project"] == projectName, nil
+}
+
+// ContainerBelongsToStack checks the immutable WireOps ownership label. It is
+// stronger than Compose project membership because old releases could assign
+// the same project name to multiple stacks.
+func ContainerBelongsToStack(ctx context.Context, cli *dockerclient.Client, containerID, stackID string) (bool, error) {
+	inspect, err := cli.ContainerInspect(ctx, containerID)
+	if err != nil {
+		return false, err
+	}
+	if inspect.Config == nil {
+		return false, nil
+	}
+	return inspect.Config.Labels["dev.wireops.stack_id"] == stackID, nil
 }
 
 // filterIntegrationLabels restricts labels to only those relevant for integrations (e.g. traefik., dozzle.)

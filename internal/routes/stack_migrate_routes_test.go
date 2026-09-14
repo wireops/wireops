@@ -1473,7 +1473,7 @@ func TestDispatchTeardownForMigrationSkipsWhenNeverSynced(t *testing.T) {
 }
 
 // TestDispatchTeardownForMigrationMissingRevisionFileErrors covers a stack
-// whose current_version is set but whose rendered revision file is gone
+// whose deployed_version is set but whose rendered revision file is gone
 // from disk (e.g. STACKS_STORAGE_PATH wiped/misconfigured) — must error out
 // rather than silently skip, since skipping there would proceed straight to
 // mutating the record without ever tearing the old project down.
@@ -1484,7 +1484,7 @@ func TestDispatchTeardownForMigrationMissingRevisionFileErrors(t *testing.T) {
 
 	repo := createMigrateTestRepo(t, app, "repo-a", "https://example.com/a.git")
 	worker := createMigrateTestWorker(t, app)
-	stack := createMigrateTestStack(t, app, repo.Id, map[string]any{"worker": worker.Id, "current_version": 1})
+	stack := createMigrateTestStack(t, app, repo.Id, map[string]any{"worker": worker.Id, "current_version": 2, "deployed_version": 1})
 
 	rr := routeRegistrar{app: app, workerSvc: dispatcher}
 	_, err := rr.dispatchTeardownForMigration(context.Background(), stack)
@@ -1506,7 +1506,7 @@ func TestDispatchTeardownForMigrationDispatchTransportError(t *testing.T) {
 
 	repo := createMigrateTestRepo(t, app, "repo-a", "https://example.com/a.git")
 	worker := createMigrateTestWorker(t, app)
-	stack := createMigrateTestStack(t, app, repo.Id, map[string]any{"worker": worker.Id, "current_version": 1})
+	stack := createMigrateTestStack(t, app, repo.Id, map[string]any{"worker": worker.Id, "current_version": 2, "deployed_version": 1})
 	seedRenderedRevision(t, stack.Id, "name: myapp\nservices:\n  web:\n    image: nginx\n")
 
 	rr := routeRegistrar{app: app, workerSvc: dispatcher}
@@ -1520,13 +1520,13 @@ func TestDispatchTeardownForMigrationDispatchTransportError(t *testing.T) {
 }
 
 // TestResolveCurrentStackConfigMapReadsRenderedRevision covers the
-// current_version>0 branch reading straight off disk (no docker) — the
-// other route tests only exercise the current_version==0 fallback that
+// deployed_version>0 branch reading straight off disk (no docker) — the
+// other route tests only exercise the deployed_version==0 fallback that
 // shells out to `docker compose config`.
 func TestResolveCurrentStackConfigMapReadsRenderedRevision(t *testing.T) {
 	app, _, _ := setupMigrateTestApp(t, false)
 	repo := createMigrateTestRepo(t, app, "repo-a", "https://example.com/a.git")
-	stack := createMigrateTestStack(t, app, repo.Id, map[string]any{"current_version": 1})
+	stack := createMigrateTestStack(t, app, repo.Id, map[string]any{"current_version": 2, "deployed_version": 1})
 	seedRenderedRevision(t, stack.Id, "name: myapp\nservices:\n  web:\n    image: nginx\n")
 
 	rr := routeRegistrar{app: app}
@@ -1553,8 +1553,9 @@ func TestMigrateTeardownDispatchesBeforeMutationAndRecordsAudit(t *testing.T) {
 
 	worker := createMigrateTestWorker(t, app)
 	stack := createMigrateTestStack(t, app, sourceRepo.Id, map[string]any{
-		"worker":          worker.Id,
-		"current_version": 1,
+		"worker":           worker.Id,
+		"current_version":  2,
+		"deployed_version": 1,
 	})
 	seedRenderedRevision(t, stack.Id, "name: myapp\nservices:\n  web:\n    image: nginx\n")
 
@@ -1607,8 +1608,9 @@ func TestMigrateTeardownFailureAbortsMutation(t *testing.T) {
 
 	worker := createMigrateTestWorker(t, app)
 	stack := createMigrateTestStack(t, app, sourceRepo.Id, map[string]any{
-		"worker":          worker.Id,
-		"current_version": 1,
+		"worker":           worker.Id,
+		"current_version":  2,
+		"deployed_version": 1,
 	})
 	seedRenderedRevision(t, stack.Id, "name: myapp\nservices:\n  web:\n    image: nginx\n")
 
@@ -1657,8 +1659,9 @@ func TestMigrateTeardownRequiresWorkerOnline(t *testing.T) {
 
 	worker := createMigrateTestWorker(t, app)
 	stack := createMigrateTestStack(t, app, sourceRepo.Id, map[string]any{
-		"worker":          worker.Id,
-		"current_version": 1,
+		"worker":           worker.Id,
+		"current_version":  2,
+		"deployed_version": 1,
 	})
 	seedRenderedRevision(t, stack.Id, "name: myapp\nservices:\n  web:\n    image: nginx\n")
 
@@ -1710,7 +1713,7 @@ func TestMigrateConcurrentRequestsAreSerialized(t *testing.T) {
 	targetRepo := createMigrateTestRepo(t, app, "target-repo", targetDir)
 
 	worker := createMigrateTestWorker(t, app)
-	stack := createMigrateTestStack(t, app, sourceRepo.Id, map[string]any{"worker": worker.Id, "current_version": 1})
+	stack := createMigrateTestStack(t, app, sourceRepo.Id, map[string]any{"worker": worker.Id, "current_version": 2, "deployed_version": 1})
 	seedRenderedRevision(t, stack.Id, "name: myapp\nservices:\n  web:\n    image: nginx\n")
 
 	body, _ := json.Marshal(migrateReq(targetRepo.Id, map[string]any{

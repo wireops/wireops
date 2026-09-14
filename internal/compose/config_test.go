@@ -337,6 +337,34 @@ func TestRewriteAutoNamedResources(t *testing.T) {
 	})
 }
 
+func TestPreserveAutoNamedVolumes(t *testing.T) {
+	current := map[string]interface{}{
+		"volumes": map[string]interface{}{
+			"data":    map[string]interface{}{"name": "pihole-red_data"},
+			"cache":   map[string]interface{}{"name": "custom-cache"},
+			"newdata": map[string]interface{}{"name": "pihole-red_newdata"},
+		},
+	}
+	previous := map[string]interface{}{
+		"volumes": map[string]interface{}{
+			"data":  map[string]interface{}{"name": "red_data"},
+			"cache": map[string]interface{}{"name": "old-custom-cache"},
+		},
+	}
+
+	PreserveAutoNamedVolumes(current, previous, "pihole-red")
+	volumes := current["volumes"].(map[string]interface{})
+	if got := volumes["data"].(map[string]interface{})["name"]; got != "red_data" {
+		t.Fatalf("data volume = %v, want red_data", got)
+	}
+	if got := volumes["cache"].(map[string]interface{})["name"]; got != "custom-cache" {
+		t.Fatalf("explicit cache volume changed to %v", got)
+	}
+	if got := volumes["newdata"].(map[string]interface{})["name"]; got != "pihole-red_newdata" {
+		t.Fatalf("new volume changed to %v", got)
+	}
+}
+
 func TestInitServiceNames(t *testing.T) {
 	cases := []struct {
 		name  string
