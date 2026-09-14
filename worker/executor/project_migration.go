@@ -225,7 +225,7 @@ func runProjectIdentityMigration(ctx context.Context, opts compose.ForceUpOption
 	if err != nil {
 		return "", err
 	}
-	targetCompose, err := os.ReadFile(filepath.Join(opts.WorkDir, opts.ComposeFile))
+	targetCompose, _, err := compose.ReadFile(opts.WorkDir, opts.WorkDir, opts.ComposeFile, 0)
 	if err != nil {
 		return "", fmt.Errorf("read target compose revision: %w", err)
 	}
