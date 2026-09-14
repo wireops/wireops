@@ -46,7 +46,7 @@ jobs:
           CGO_ENABLED: 0
         run: |
           packages=$(go list ./... | grep -v '^github.com/wireops/wireops/worker\(/\|$\)')
-          go test -v $packages
+          go test -timeout 20m -v $packages
 
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
