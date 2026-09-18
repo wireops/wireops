@@ -34,6 +34,7 @@ interface ContainerStats {
 type VolumeInfo = {
   name: string; docker_name: string; driver: string; mountpoint: string; scope: string
   created_at?: string; size_bytes?: number; options?: Record<string, string>
+  type?: 'volume' | 'bind'; destination?: string
 }
 type NetworkIPAMConfig = {
   subnet?: string; gateway?: string; ip_range?: string; aux_addresses?: Record<string, string>
@@ -43,6 +44,7 @@ type NetworkInfo = {
   subnet?: string; gateway?: string; ipam_configs?: NetworkIPAMConfig[]
   enable_ipv4: boolean; enable_ipv6: boolean; internal: boolean; attachable: boolean; ingress: boolean; config_only: boolean
   options?: Record<string, string>
+  external?: boolean
 }
 
 interface ContainerInfo {
@@ -680,6 +682,7 @@ watch(() => props.services, (services) => {
                 <UIcon name="i-lucide-database" class="w-4 h-4 text-gray-500 dark:text-gray-400" />
               </div>
               <span class="min-w-0 flex-1 truncate font-semibold text-sm">{{ vol.name }}</span>
+              <UBadge v-if="vol.type === 'bind'" label="Host" variant="subtle" size="xs" color="info" />
               <UBadge :label="vol.driver" variant="subtle" size="xs" />
               <UBadge :label="vol.scope" variant="outline" size="xs" color="neutral" />
               <UIcon
@@ -689,9 +692,13 @@ watch(() => props.services, (services) => {
                 :class="openVolumeDetails[vol.name] ? 'rotate-180' : ''"
               />
             </div>
-            <div v-if="vol.mountpoint || vol.size_bytes != null" class="mt-2 border-t border-gray-100 pt-2 dark:border-gray-800">
+            <div v-if="(vol.type === 'bind' ? vol.destination : vol.mountpoint) || vol.size_bytes != null" class="mt-2 border-t border-gray-100 pt-2 dark:border-gray-800">
               <div class="flex flex-wrap items-start justify-between gap-2">
-                <div v-if="vol.mountpoint" class="min-w-0 flex-1">
+                <div v-if="vol.type === 'bind' && vol.destination" class="min-w-0 flex-1">
+                  <p class="text-xs text-gray-500 dark:text-gray-400">Container path</p>
+                  <code class="block truncate text-xs text-gray-500 dark:text-gray-400" :title="vol.destination">{{ vol.destination }}</code>
+                </div>
+                <div v-else-if="vol.mountpoint" class="min-w-0 flex-1">
                   <p class="text-xs text-gray-500 dark:text-gray-400">Mount point</p>
                   <code class="block truncate text-xs text-gray-500 dark:text-gray-400" :title="vol.mountpoint">{{ vol.mountpoint }}</code>
                 </div>
@@ -760,6 +767,7 @@ watch(() => props.services, (services) => {
                 <UIcon name="i-lucide-waypoints" class="w-4 h-4 text-gray-500 dark:text-gray-400" />
               </div>
               <span class="min-w-0 flex-1 truncate font-semibold text-sm">{{ net.name }}</span>
+              <UBadge v-if="net.external" label="External" variant="subtle" size="xs" color="warning" />
               <UBadge :label="net.driver" variant="subtle" size="xs" />
               <UBadge :label="net.scope" variant="outline" size="xs" color="neutral" />
               <UIcon
