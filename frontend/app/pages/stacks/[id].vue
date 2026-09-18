@@ -289,7 +289,6 @@ const activeTab = ref('overview')
 const tabs = [
   { label: 'Overview', value: 'overview', icon: 'i-lucide-info' },
   { label: 'Variables', value: 'env', icon: 'i-lucide-variable' },
-  { label: 'Dependencies', value: 'dependencies', icon: 'i-lucide-git-fork' },
   { label: 'Sync Logs', value: 'logs', icon: 'i-lucide-scroll-text' },
 ]
 
@@ -1061,6 +1060,13 @@ onMounted(() => {
         @open-terminal="openTerminalModal($event.containerId, $event.containerName)"
       />
 
+      <AppPanelCard>
+        <template #header>
+          <h3 class="font-semibold">Dependencies</h3>
+        </template>
+        <StackDependencyGraph :stack-id="stackId" />
+      </AppPanelCard>
+
       <!-- Webhook Integration -->
       <AccordionCard v-model:open="showWebhookIntegration" title="Webhook Integration" icon="i-lucide-webhook">
         <div class="space-y-3">
@@ -1162,10 +1168,6 @@ onMounted(() => {
       <GlobalVariablesExporter target-type="stack" :target-id="stackId" :local-keys="localEnvKeys" />
     </div>
 
-    <!-- Dependencies -->
-    <div v-if="activeTab === 'dependencies'">
-      <StackDependencyGraph :stack-id="stackId" />
-    </div>
 
     <!-- Sync Logs -->
     <div v-if="activeTab === 'logs'">
