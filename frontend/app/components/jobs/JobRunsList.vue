@@ -212,7 +212,7 @@ defineExpose({
       
       <div v-if="totalItems > perPage" class="flex justify-between items-center mt-4">
         <UPagination
-          v-model="page"
+          v-model:page="page"
           :total="totalItems"
           :items-per-page="perPage"
         />
