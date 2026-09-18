@@ -12,7 +12,7 @@ const emit = defineEmits<{
 }>()
 
 const { $pb } = useNuxtApp()
-const { getStackFiles, getWireopsFiles, getWireopsDefinitionFromFile, getComposeWireopsFiles, getComposeDefinitionFromFile, getWorkers, createStackFromWireops, createStackFromCompose, lintCompose, customPost } = useApi()
+const { getStackFiles, getComposeWireopsFiles, getComposeDefinitionFromFile, getWorkers, createStackFromCompose, lintCompose, customPost } = useApi()
 const { validateComposePath, validateComposeFile } = useValidation()
 const toast = useToast()
 
@@ -39,9 +39,9 @@ const defaultForm = () => ({
   selected_file: '',
 })
 
-type WireopsDefinition = Awaited<ReturnType<typeof getWireopsDefinitionFromFile>>
+type WireopsDefinition = Awaited<ReturnType<typeof getComposeDefinitionFromFile>>
 
-const creationMode = ref<'manual' | 'wireops_file' | 'compose_embedded'>('wireops_file')
+const creationMode = ref<'manual' | 'compose_embedded'>('compose_embedded')
 const form = ref(defaultForm())
 const repoFiles = ref<string[]>([])
 const loadingFiles = ref(false)
@@ -72,10 +72,19 @@ const composePreview = ref<{ focusOn: (line: number) => void } | null>(null)
 // newer one when the user changes the file or worker mid-flight.
 let lintRequestId = 0
 
-const modeOptions: { label: string; value: 'manual' | 'wireops_file' | 'compose_embedded' }[] = [
-  { label: 'Manual', value: 'manual' },
-  { label: 'From wireops.yaml (deprecated)', value: 'wireops_file' },
-  { label: 'Single file (x-wireops)', value: 'compose_embedded' },
+const modeOptions: { label: string; value: 'manual' | 'compose_embedded'; icon: string; description: string }[] = [
+  {
+    label: 'Single file (x-wireops)',
+    value: 'compose_embedded',
+    icon: 'i-lucide-file-code',
+    description: 'Compose file with an embedded x-wireops block (recommended)',
+  },
+  {
+    label: 'Manual',
+    value: 'manual',
+    icon: 'i-lucide-sliders-horizontal',
+    description: 'Pick a compose file directly, with no wireops config',
+  },
 ]
 
 const repoOptions = computed(() =>
@@ -121,6 +130,11 @@ const wireopsFileOptions = computed(() =>
 watch(() => props.open, async (val) => {
   if (val) {
     await Promise.all([refreshRepos(), refreshWorkers()])
+    // Skip the picker entirely when there's only one repository to choose
+    // from — nothing to disambiguate.
+    if (!form.value.repository && repos.value?.length === 1) {
+      form.value.repository = repos.value[0].id
+    }
     // Always land on step 1 on a fresh open, even if the URL still carries a
     // stack_step from a previous session that never made it through close()
     // (e.g. a hard navigation away mid-wizard) — a stale step would otherwise
@@ -131,7 +145,7 @@ watch(() => props.open, async (val) => {
     }
   } else {
     form.value = defaultForm()
-    creationMode.value = 'wireops_file'
+    creationMode.value = 'compose_embedded'
     repoFiles.value = []
     wireopsFiles.value = []
     selectedWireopsFile.value = ''
@@ -173,25 +187,19 @@ async function loadStackFiles(repoId: string) {
 
 async function loadWireopsFiles(repoId: string) {
   const requestedRepo = repoId
-  const requestedMode = creationMode.value
   loadingWireopsFiles.value = true
   try {
-    const files = requestedMode === 'compose_embedded'
-      ? await getComposeWireopsFiles(repoId)
-      : await getWireopsFiles(repoId)
-    if (form.value.repository !== requestedRepo || creationMode.value !== requestedMode) return
+    const files = await getComposeWireopsFiles(repoId)
+    if (form.value.repository !== requestedRepo) return
     wireopsFiles.value = files || []
     selectedWireopsFile.value = wireopsFiles.value.length === 1 ? wireopsFiles.value[0]! : ''
   } catch {
-    if (form.value.repository !== requestedRepo || creationMode.value !== requestedMode) return
-    toast.add({
-      title: requestedMode === 'compose_embedded' ? 'Failed to fetch compose files with x-wireops' : 'Failed to fetch wireops.yaml files',
-      color: 'error',
-    })
+    if (form.value.repository !== requestedRepo) return
+    toast.add({ title: 'Failed to fetch compose files with x-wireops', color: 'error' })
     wireopsFiles.value = []
     selectedWireopsFile.value = ''
   } finally {
-    if (form.value.repository === requestedRepo && creationMode.value === requestedMode) {
+    if (form.value.repository === requestedRepo) {
       loadingWireopsFiles.value = false
     }
   }
@@ -232,19 +240,16 @@ watch(selectedWireopsFile, async (file) => {
   if (!file || !form.value.repository) return
   const requestedFile = file
   const requestedRepo = form.value.repository
-  const requestedMode = creationMode.value
   loadingDefinition.value = true
   try {
-    const def = requestedMode === 'compose_embedded'
-      ? await getComposeDefinitionFromFile(requestedRepo, file)
-      : await getWireopsDefinitionFromFile(requestedRepo, file)
-    if (selectedWireopsFile.value !== requestedFile || form.value.repository !== requestedRepo || creationMode.value !== requestedMode) return
+    const def = await getComposeDefinitionFromFile(requestedRepo, file)
+    if (selectedWireopsFile.value !== requestedFile || form.value.repository !== requestedRepo) return
     wireopsDefinition.value = def
   } catch (e: any) {
-    if (selectedWireopsFile.value !== requestedFile || form.value.repository !== requestedRepo || creationMode.value !== requestedMode) return
-    definitionErrors.value = e?.data?.errors || [e?.message || (requestedMode === 'compose_embedded' ? 'Invalid x-wireops block' : 'Invalid wireops.yaml')]
+    if (selectedWireopsFile.value !== requestedFile || form.value.repository !== requestedRepo) return
+    definitionErrors.value = e?.data?.errors || [e?.message || 'Invalid x-wireops block']
   } finally {
-    if (selectedWireopsFile.value === requestedFile && form.value.repository === requestedRepo && creationMode.value === requestedMode) {
+    if (selectedWireopsFile.value === requestedFile && form.value.repository === requestedRepo) {
       loadingDefinition.value = false
     }
   }
@@ -278,14 +283,14 @@ const composeTarget = computed<{ compose_path: string; compose_file: string } | 
 // of letting the user hit an opaque save failure.
 const lintHasErrors = computed(() => (lintReport.value?.errors ?? 0) > 0)
 
-const canProceedToStep2 = computed(() => {
+const canProceedPastBasicInfo = computed(() => {
   if (!form.value.repository) return false
   if (creationMode.value === 'manual') return !!form.value.name
   return !!wireopsDefinition.value && !wireopsDefinition.value.resolution_error && definitionErrors.value.length === 0
 })
 
-const canProceedToStep3 = computed(() =>
-  canProceedToStep2.value && !!form.value.worker && !!composeTarget.value
+const canProceedPastConfiguration = computed(() =>
+  canProceedPastBasicInfo.value && !!form.value.worker && !!composeTarget.value
 )
 
 // Steps before the current one get a green check instead of their own icon —
@@ -311,40 +316,42 @@ function stepUi(stepNumber: number) {
 
 const stepperItems = computed(() => [
   {
-    title: 'Basic Info',
-    description: creationMode.value === 'manual'
-      ? 'Name & Repository'
-      : creationMode.value === 'compose_embedded'
-        ? 'Repository & compose file'
-        : 'Repository & wireops.yaml',
-    icon: currentStep.value > 1 ? 'i-lucide-check' : 'i-lucide-info',
+    title: 'Type',
+    description: 'How the stack is defined',
+    icon: currentStep.value > 1 ? 'i-lucide-check' : 'i-lucide-layout-grid',
     ui: stepUi(1),
+  },
+  {
+    title: 'Basic Info',
+    description: creationMode.value === 'manual' ? 'Name & Repository' : 'Repository & compose file',
+    icon: currentStep.value > 2 ? 'i-lucide-check' : 'i-lucide-info',
+    ui: stepUi(2),
   },
   {
     title: 'Configuration',
     description: 'Worker & Compose File',
-    icon: currentStep.value > 2 ? 'i-lucide-check' : 'i-lucide-settings',
-    ui: stepUi(2),
-    disabled: !canProceedToStep2.value,
+    icon: currentStep.value > 3 ? 'i-lucide-check' : 'i-lucide-settings',
+    ui: stepUi(3),
+    disabled: !canProceedPastBasicInfo.value,
   },
   {
     title: 'Environment Variables',
     description: 'Optional',
-    icon: currentStep.value > 3 ? 'i-lucide-check' : 'i-lucide-variable',
-    ui: stepUi(3),
-    disabled: !canProceedToStep3.value,
+    icon: currentStep.value > 4 ? 'i-lucide-check' : 'i-lucide-variable',
+    ui: stepUi(4),
+    disabled: !canProceedPastConfiguration.value,
   },
   {
     title: 'Review',
     description: 'Compose checks',
     icon: 'i-lucide-shield-check',
-    disabled: !canProceedToStep3.value,
+    disabled: !canProceedPastConfiguration.value,
   },
 ])
 
 function canReachStep(step: number) {
-  if (step >= 3) return canProceedToStep3.value
-  if (step === 2) return canProceedToStep2.value
+  if (step >= 4) return canProceedPastConfiguration.value
+  if (step === 3) return canProceedPastBasicInfo.value
   return true
 }
 
@@ -367,12 +374,12 @@ function nextStep() {
   if (target > stepperItems.value.length) return
   // Surface the reason the step after Configuration is out of reach instead
   // of having the button silently do nothing.
-  if (target === 3 && !form.value.worker) {
+  if (target === 4 && !form.value.worker) {
     createErrors.value.worker = 'Please select a worker'
     return
   }
   // Commit any typed-but-not-added env var row before leaving that step.
-  if (currentStep.value === 3) {
+  if (currentStep.value === 4) {
     envVarsEditor.value?.commitDraft()
     if (envVarsEditor.value?.hasInvalidDraft) {
       createErrors.value.env_vars = 'Fix or clear the invalid environment variable before continuing.'
@@ -381,6 +388,14 @@ function nextStep() {
     createErrors.value.env_vars = undefined
   }
   goToStep(target)
+}
+
+// Picking a card advances the wizard immediately, same as the provider cards
+// in RepositoryCreateModal's Source step — there's nothing else to fill in
+// on this step, so a separate Next click would just be friction.
+function selectMode(mode: 'manual' | 'compose_embedded') {
+  creationMode.value = mode
+  nextStep()
 }
 
 function prevStep() {
@@ -442,7 +457,7 @@ watch(
     () => composeTarget.value && `${composeTarget.value.compose_path}/${composeTarget.value.compose_file}`,
   ],
   ([step]) => {
-    if (step === 4) runLint()
+    if (step === 5) runLint()
   },
 )
 
@@ -486,15 +501,16 @@ async function handleSubmit() {
   }
 
   // Commit any typed-but-not-added env var row: nextStep() does this when
-  // leaving step 3 via Next, but the stepper also allows jumping straight
-  // from Environment Variables to Review, bypassing that call entirely.
+  // leaving the Environment Variables step via Next, but the stepper also
+  // allows jumping straight from there to Review, bypassing that call
+  // entirely.
   envVarsEditor.value?.commitDraft()
   if (envVarsEditor.value?.hasInvalidDraft) {
     createErrors.value.env_vars = 'Fix or clear the invalid environment variable before continuing.'
     // Jumping straight from Environment Variables to Review (via the
     // stepper) bypasses nextStep(), so the error message above only lives
-    // on step 3's template — send the user back there to see it.
-    goToStep(3)
+    // on that step's template — send the user back there to see it.
+    goToStep(4)
     return
   }
   createErrors.value.env_vars = undefined
@@ -519,30 +535,21 @@ async function handleSubmit() {
     if (creationMode.value !== 'manual') {
       const def = wireopsDefinition.value
       if (!def || def.resolution_error) {
-        createErrors.value.wireops_file = def?.resolution_error
-          || (creationMode.value === 'compose_embedded' ? 'Select a valid compose file with an x-wireops block' : 'Select a valid wireops.yaml file')
+        createErrors.value.wireops_file = def?.resolution_error || 'Select a valid compose file with an x-wireops block'
         return
       }
 
-      // Every wireops.yaml/x-wireops-derived field (name, compose path/file,
-      // flags) is computed server-side by re-parsing the file — the client
-      // only picks repository/worker and points at the file path. This
-      // preview (`def`) is display-only and never sent as the source of
-      // truth.
-      const created = creationMode.value === 'compose_embedded'
-        ? await createStackFromCompose({
-            repository: form.value.repository,
-            worker: form.value.worker,
-            compose_path: def.resolved_compose_path || '.',
-            compose_file: def.resolved_compose_file!,
-            paused: hasPendingEnvVars,
-          })
-        : await createStackFromWireops({
-            repository: form.value.repository,
-            worker: form.value.worker,
-            wireops_file: selectedWireopsFile.value,
-            paused: hasPendingEnvVars,
-          })
+      // Every x-wireops-derived field (name, compose path/file, flags) is
+      // computed server-side by re-parsing the file — the client only picks
+      // repository/worker and points at the file path. This preview (`def`)
+      // is display-only and never sent as the source of truth.
+      const created = await createStackFromCompose({
+        repository: form.value.repository,
+        worker: form.value.worker,
+        compose_path: def.resolved_compose_path || '.',
+        compose_file: def.resolved_compose_file!,
+        paused: hasPendingEnvVars,
+      })
       stackId = created.id
     } else {
       const target = composeTarget.value
@@ -631,7 +638,7 @@ async function handleSubmit() {
 <template>
   <UModal
     :open="open"
-    :ui="{ content: currentStep === 4 ? 'sm:max-w-5xl w-full' : 'sm:max-w-2xl w-full' }"
+    :ui="{ content: currentStep === 5 ? 'sm:max-w-5xl w-full' : 'sm:max-w-2xl w-full' }"
     @update:open="(val: boolean) => { if (val === false && saving) return; emit('update:open', val) }"
   >
     <template #content>
@@ -661,19 +668,27 @@ async function handleSubmit() {
 
           <div class="space-y-4 max-h-[55vh] overflow-y-auto pr-1">
             <div v-show="currentStep === 1" class="space-y-4">
-              <div class="flex gap-2">
-                <UButton
+              <p class="text-sm text-gray-500">How is this stack defined?</p>
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <button
                   v-for="opt in modeOptions"
                   :key="opt.value"
-                  :label="opt.label"
-                  size="sm"
-                  :variant="creationMode === opt.value ? 'solid' : 'outline'"
-                  :color="creationMode === opt.value ? 'primary' : 'neutral'"
                   type="button"
-                  @click="() => { creationMode = opt.value }"
-                />
+                  :data-testid="`mode-card-${opt.value}`"
+                  class="flex flex-col items-center justify-center gap-3 rounded-lg border p-6 text-center cursor-pointer transition-colors"
+                  :class="creationMode === opt.value
+                    ? 'border-primary-500 bg-primary-50 dark:bg-primary-950/20'
+                    : 'border-gray-300 dark:border-gray-800 hover:border-primary-500 hover:bg-gray-50 dark:hover:bg-gray-900'"
+                  @click="selectMode(opt.value)"
+                >
+                  <UIcon :name="opt.icon" class="w-10 h-10" :class="creationMode === opt.value ? 'text-primary-500' : 'text-gray-400'" />
+                  <span class="font-medium">{{ opt.label }}</span>
+                  <span class="text-xs text-gray-500">{{ opt.description }}</span>
+                </button>
               </div>
+            </div>
 
+            <div v-show="currentStep === 2" class="space-y-4">
               <UFormField label="Repository" required>
                 <AppSelectInput v-model="form.repository" :items="repoOptions" placeholder="Select a repository" class="w-full" />
               </UFormField>
@@ -688,20 +703,12 @@ async function handleSubmit() {
               </template>
 
               <template v-else>
-                <UAlert
-                  v-if="creationMode === 'wireops_file'"
-                  color="warning"
-                  icon="i-lucide-triangle-alert"
-                  title="Deprecated layout"
-                  description="The standalone wireops.yaml layout is deprecated. Prefer the single-file mode, which embeds an x-wireops block in the compose file. This mode still works and existing stacks keep syncing."
-                />
-
-                <UFormField :label="creationMode === 'compose_embedded' ? 'Compose file (with x-wireops)' : 'wireops.yaml file'" required>
+                <UFormField label="Compose file (with x-wireops)" required>
                   <div class="flex items-center gap-2">
                     <AppSelectInput
                       v-model="selectedWireopsFile"
                       :items="wireopsFileOptions"
-                      :placeholder="creationMode === 'compose_embedded' ? 'Select a compose file' : 'Select a wireops.yaml file'"
+                      placeholder="Select a compose file"
                       :disabled="!form.repository || loadingWireopsFiles"
                       class="flex-1"
                     />
@@ -712,20 +719,20 @@ async function handleSubmit() {
                   v-if="!loadingWireopsFiles && form.repository && wireopsFiles.length === 0"
                   color="warning"
                   icon="i-lucide-triangle-alert"
-                  :title="creationMode === 'compose_embedded' ? 'No compose file with x-wireops found' : 'No wireops.yaml found'"
-                  :description="creationMode === 'compose_embedded' ? 'No compose file with a top-level x-wireops block was found in this repository.' : 'No wireops.yaml or wireops.yml file was found in this repository.'"
+                  title="No compose file with x-wireops found"
+                  description="No compose file with a top-level x-wireops block was found in this repository."
                 />
 
                 <div v-if="loadingDefinition" class="flex items-center gap-2 text-sm text-gray-500">
                   <UIcon name="i-lucide-loader-2" class="w-4 h-4 animate-spin" />
-                  {{ creationMode === 'compose_embedded' ? 'Parsing x-wireops block...' : 'Parsing wireops.yaml...' }}
+                  Parsing x-wireops block...
                 </div>
 
                 <UAlert
                   v-else-if="definitionErrors.length"
                   color="error"
                   icon="i-lucide-triangle-alert"
-                  :title="creationMode === 'compose_embedded' ? 'Invalid x-wireops block' : 'Invalid wireops.yaml'"
+                  title="Invalid x-wireops block"
                 >
                   <template #description>
                     <ul class="list-disc list-inside">
@@ -746,7 +753,7 @@ async function handleSubmit() {
                     <div class="flex items-center gap-2 text-gray-900 dark:text-wire-200 font-medium">
                       <UIcon name="i-lucide-tag" class="w-4 h-4" />
                       <span>{{ wireopsDefinition.name }}</span>
-                      <span class="text-xs font-normal text-gray-500">(name is set by {{ creationMode === 'compose_embedded' ? 'the x-wireops block' : 'wireops.yaml' }}, not editable here)</span>
+                      <span class="text-xs font-normal text-gray-500">(name is set by the x-wireops block, not editable here)</span>
                     </div>
                     <div class="flex items-center gap-2 text-gray-700 dark:text-wire-200">
                       <UIcon name="i-lucide-file-code" class="w-4 h-4" />
@@ -768,7 +775,7 @@ async function handleSubmit() {
               </template>
             </div>
 
-            <div v-show="currentStep === 2" class="space-y-4">
+            <div v-show="currentStep === 3" class="space-y-4">
               <UFormField label="Worker" :error="createErrors.worker" required>
                 <AppSelectInput v-model="form.worker" :items="workerOptions" placeholder="Select a worker" class="w-full" />
               </UFormField>
@@ -808,12 +815,12 @@ async function handleSubmit() {
               />
             </div>
 
-            <div v-show="currentStep === 3" class="space-y-4">
+            <div v-show="currentStep === 4" class="space-y-4">
               <EnvironmentVariablesPendingEditor ref="envVarsEditor" v-model="pendingEnvVars" />
               <p v-if="createErrors.env_vars" class="text-xs text-red-500">{{ createErrors.env_vars }}</p>
             </div>
 
-            <div v-show="currentStep === 4" class="space-y-4 md:space-y-0 md:grid md:grid-cols-2 md:gap-4 md:items-start">
+            <div v-show="currentStep === 5" class="space-y-4 md:space-y-0 md:grid md:grid-cols-2 md:gap-4 md:items-start">
               <div class="space-y-2">
                 <p class="text-sm text-gray-700 dark:text-wire-200">
                   Compose file
@@ -868,26 +875,28 @@ async function handleSubmit() {
 
           <template #footer>
             <div class="flex justify-between items-center w-full gap-2">
-              <UButton v-if="currentStep > 1" label="Back" variant="outline" icon="i-lucide-arrow-left" @click="prevStep" />
-              <UButton
-                v-else-if="creationMode !== 'manual' && form.repository"
-                label="Sync Repository"
-                variant="outline"
-                icon="i-lucide-refresh-cw"
-                :loading="loadingWireopsFiles"
-                @click="loadWireopsFiles(form.repository)"
-              />
-              <div v-else/>
+              <div class="flex gap-2">
+                <UButton v-if="currentStep > 1" label="Back" variant="outline" icon="i-lucide-arrow-left" @click="prevStep" />
+                <UButton
+                  v-if="currentStep === 2 && creationMode !== 'manual' && form.repository"
+                  label="Sync Repository"
+                  variant="outline"
+                  icon="i-lucide-refresh-cw"
+                  :loading="loadingWireopsFiles"
+                  @click="loadWireopsFiles(form.repository)"
+                />
+              </div>
 
-              <p v-if="currentStep === 4 && createErrors.lint" class="text-xs text-red-500 text-right">
+              <p v-if="currentStep === 5 && createErrors.lint" class="text-xs text-red-500 text-right">
                 {{ createErrors.lint }}
               </p>
 
               <div class="flex gap-2">
                 <CancelButton @click="close" />
-                <UButton v-if="currentStep === 1" type="button" label="Next" icon="i-lucide-arrow-right" trailing :disabled="!canProceedToStep2" @click="nextStep" />
-                <UButton v-else-if="currentStep === 2" type="button" label="Next" icon="i-lucide-arrow-right" trailing :disabled="!canProceedToStep3" @click="nextStep" />
-                <UButton v-else-if="currentStep === 3" type="button" label="Next" icon="i-lucide-arrow-right" trailing @click="nextStep" />
+                <UButton v-if="currentStep === 1" type="button" label="Next" icon="i-lucide-arrow-right" trailing @click="nextStep" />
+                <UButton v-else-if="currentStep === 2" type="button" label="Next" icon="i-lucide-arrow-right" trailing :disabled="!canProceedPastBasicInfo" @click="nextStep" />
+                <UButton v-else-if="currentStep === 3" type="button" label="Next" icon="i-lucide-arrow-right" trailing :disabled="!canProceedPastConfiguration" @click="nextStep" />
+                <UButton v-else-if="currentStep === 4" type="button" label="Next" icon="i-lucide-arrow-right" trailing @click="nextStep" />
                 <UButton v-else type="submit" label="Create" icon="i-lucide-check" :loading="saving" :disabled="lintLoading || lintHasErrors" />
               </div>
             </div>

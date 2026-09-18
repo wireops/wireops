@@ -182,6 +182,14 @@ async function goToNextStep(wrapper: any) {
   await flushPromises()
 }
 
+// Picks a mode card on the wizard's first (Type) step — this both sets
+// creationMode and advances straight to the Basic Info step, same as
+// clicking a provider card in RepositoryCreateModal's Source step.
+async function selectMode(wrapper: any, mode: 'manual' | 'compose_embedded') {
+  await wrapper.find(`[data-testid="mode-card-${mode}"]`).trigger('click')
+  await flushPromises()
+}
+
 // From the Configuration step, skips the (empty, optional) Environment
 // Variables step and lands on the Review step, where the lint runs.
 async function skipEnvVarsIntoReviewStep(wrapper: any) {
@@ -189,7 +197,9 @@ async function skipEnvVarsIntoReviewStep(wrapper: any) {
   await goToNextStep(wrapper)
 }
 
-async function openInWireopsMode() {
+// Opens the modal in its default mode (manual mode requires clicking the
+// "Manual" button first — see fillManualStackThroughConfiguration below).
+async function openCreateModal() {
   const wrapper = mount(CreateStackModal, {
     props: { open: false },
     global: { stubs },
@@ -204,22 +214,22 @@ describe('CreateStackModal', () => {
     vi.restoreAllMocks()
   })
 
-  it('defaults to wireops_file mode and shows the file picker without a Name field', async () => {
+  it('defaults to single-file (x-wireops) mode and shows the file picker without a Name field', async () => {
     setupGlobals()
-    const wrapper = await openInWireopsMode()
+    const wrapper = await openCreateModal()
 
     expect(wrapper.text()).toContain('Manual')
-    expect(wrapper.text()).toContain('From wireops.yaml (deprecated)')
-    expect(wrapper.text()).toContain('wireops.yaml file')
-    // standalone wireops.yaml mode surfaces the deprecation warning
-    expect(wrapper.text()).toContain('Deprecated layout')
-    // no Name input in wireops_file mode — name comes from the file
+    expect(wrapper.text()).toContain('Single file (x-wireops)')
+    expect(wrapper.text()).not.toContain('From wireops.yaml')
+    expect(wrapper.text()).not.toContain('Deprecated layout')
+    expect(wrapper.text()).toContain('Compose file (with x-wireops)')
+    // no Name input in this mode — name comes from the x-wireops block
     expect(wrapper.findAll('label').some(l => l.text() === 'Name')).toBe(false)
   })
 
-  it('previews a valid wireops.yaml definition without letting the name be edited', async () => {
-    const { getWireopsDefinitionFromFile } = setupGlobals()
-    getWireopsDefinitionFromFile.mockResolvedValue({
+  it('previews a valid x-wireops definition without letting the name be edited', async () => {
+    const { getComposeDefinitionFromFile } = setupGlobals()
+    getComposeDefinitionFromFile.mockResolvedValue({
       version: 'wireops.v1',
       name: 'api',
       deploy_timeout_seconds: 300,
@@ -230,18 +240,19 @@ describe('CreateStackModal', () => {
       resolved_compose_file: 'docker-compose.yml',
     })
 
-    const wrapper = await openInWireopsMode()
+    const wrapper = await openCreateModal()
+    await selectMode(wrapper, 'compose_embedded')
 
     const repoSelect = wrapper.findAll('select')[0]!
     await repoSelect.setValue('repo-1')
     await flushPromises()
 
-    const fileSelect = wrapper.findAll('select').find(s => s.findAll('option').some(o => o.text() === 'wireops.yaml'))
+    const fileSelect = wrapper.findAll('select').find(s => s.findAll('option').some(o => o.text() === 'docker-compose.yml'))
     expect(fileSelect).toBeTruthy()
-    await fileSelect!.setValue('wireops.yaml')
+    await fileSelect!.setValue('docker-compose.yml')
     await flushPromises()
 
-    expect(getWireopsDefinitionFromFile).toHaveBeenCalledWith('repo-1', 'wireops.yaml')
+    expect(getComposeDefinitionFromFile).toHaveBeenCalledWith('repo-1', 'docker-compose.yml')
     expect(wrapper.findAll('label').some(l => l.text() === 'Name')).toBe(false)
     expect(wrapper.text()).toContain('api')
     expect(wrapper.text()).toContain('not editable here')
@@ -249,20 +260,21 @@ describe('CreateStackModal', () => {
     expect(wrapper.text()).toContain('force_pull: false')
   })
 
-  it('blocks Next when the wireops.yaml file is invalid', async () => {
-    const { getWireopsDefinitionFromFile } = setupGlobals()
-    const err: any = new Error('invalid wireops.yaml')
+  it('blocks Next when the x-wireops block is invalid', async () => {
+    const { getComposeDefinitionFromFile } = setupGlobals()
+    const err: any = new Error('invalid x-wireops block')
     err.data = { errors: ['name is required'] }
-    getWireopsDefinitionFromFile.mockRejectedValue(err)
+    getComposeDefinitionFromFile.mockRejectedValue(err)
 
-    const wrapper = await openInWireopsMode()
+    const wrapper = await openCreateModal()
+    await selectMode(wrapper, 'compose_embedded')
 
     const repoSelect = wrapper.findAll('select')[0]!
     await repoSelect.setValue('repo-1')
     await flushPromises()
 
-    const fileSelect = wrapper.findAll('select').find(s => s.findAll('option').some(o => o.text() === 'wireops.yaml'))
-    await fileSelect!.setValue('wireops.yaml')
+    const fileSelect = wrapper.findAll('select').find(s => s.findAll('option').some(o => o.text() === 'docker-compose.yml'))
+    await fileSelect!.setValue('docker-compose.yml')
     await flushPromises()
 
     expect(wrapper.text()).toContain('name is required')
@@ -271,9 +283,9 @@ describe('CreateStackModal', () => {
     expect(nextButton?.attributes('disabled')).toBeDefined()
   })
 
-  it('submits only repository/worker/wireops_file — never client-computed config', async () => {
-    const { getWireopsDefinitionFromFile, createStackFromWireops } = setupGlobals()
-    getWireopsDefinitionFromFile.mockResolvedValue({
+  it('submits only repository/worker/compose file — never client-computed config', async () => {
+    const { getComposeDefinitionFromFile, createStackFromCompose } = setupGlobals()
+    getComposeDefinitionFromFile.mockResolvedValue({
       version: 'wireops.v1',
       name: 'api',
       deploy_timeout_seconds: 300,
@@ -284,14 +296,15 @@ describe('CreateStackModal', () => {
       resolved_compose_file: 'docker-compose.yml',
     })
 
-    const wrapper = await openInWireopsMode()
+    const wrapper = await openCreateModal()
+    await selectMode(wrapper, 'compose_embedded')
 
     const repoSelect = wrapper.findAll('select')[0]!
     await repoSelect.setValue('repo-1')
     await flushPromises()
 
-    const fileSelect = wrapper.findAll('select').find(s => s.findAll('option').some(o => o.text() === 'wireops.yaml'))
-    await fileSelect!.setValue('wireops.yaml')
+    const fileSelect = wrapper.findAll('select').find(s => s.findAll('option').some(o => o.text() === 'docker-compose.yml'))
+    await fileSelect!.setValue('docker-compose.yml')
     await flushPromises()
 
     const nextButton = wrapper.findAll('button').find(b => b.text() === 'Next')
@@ -308,21 +321,22 @@ describe('CreateStackModal', () => {
     await wrapper.find('form').trigger('submit.prevent')
     await flushPromises()
 
-    expect(createStackFromWireops).toHaveBeenCalledWith({
+    expect(createStackFromCompose).toHaveBeenCalledWith({
       repository: 'repo-1',
       worker: 'worker-1',
-      wireops_file: 'wireops.yaml',
+      compose_path: '.',
+      compose_file: 'docker-compose.yml',
       paused: false,
     })
   })
 
   it('falls back to every active worker and warns when worker.tags matches none', async () => {
-    const { getWireopsDefinitionFromFile, createStackFromWireops, getWorkers } = setupGlobals()
+    const { getComposeDefinitionFromFile, createStackFromCompose, getWorkers } = setupGlobals()
     getWorkers.mockResolvedValue([
       { id: 'worker-1', hostname: 'worker-a', status: 'ACTIVE', tags: ['staging'] },
       { id: 'worker-2', hostname: 'worker-b', status: 'ACTIVE', tags: [] },
     ])
-    getWireopsDefinitionFromFile.mockResolvedValue({
+    getComposeDefinitionFromFile.mockResolvedValue({
       version: 'wireops.v1',
       name: 'api',
       deploy_timeout_seconds: 300,
@@ -333,14 +347,15 @@ describe('CreateStackModal', () => {
       resolved_compose_file: 'docker-compose.yml',
     })
 
-    const wrapper = await openInWireopsMode()
+    const wrapper = await openCreateModal()
+    await selectMode(wrapper, 'compose_embedded')
 
     const repoSelect = wrapper.findAll('select')[0]!
     await repoSelect.setValue('repo-1')
     await flushPromises()
 
-    const fileSelect = wrapper.findAll('select').find(s => s.findAll('option').some(o => o.text() === 'wireops.yaml'))
-    await fileSelect!.setValue('wireops.yaml')
+    const fileSelect = wrapper.findAll('select').find(s => s.findAll('option').some(o => o.text() === 'docker-compose.yml'))
+    await fileSelect!.setValue('docker-compose.yml')
     await flushPromises()
 
     const nextButton = wrapper.findAll('button').find(b => b.text() === 'Next')
@@ -359,16 +374,17 @@ describe('CreateStackModal', () => {
     await wrapper.find('form').trigger('submit.prevent')
     await flushPromises()
 
-    expect(createStackFromWireops).toHaveBeenCalledWith({
+    expect(createStackFromCompose).toHaveBeenCalledWith({
       repository: 'repo-1',
       worker: 'worker-1',
-      wireops_file: 'wireops.yaml',
+      compose_path: '.',
+      compose_file: 'docker-compose.yml',
       paused: false,
     })
   })
 
-  it('compose_embedded mode previews the x-wireops block and submits compose_path/compose_file, never wireops_file', async () => {
-    const { getComposeWireopsFiles, getComposeDefinitionFromFile, createStackFromCompose, createStackFromWireops } = setupGlobals()
+  it('compose_embedded mode (the default) previews the x-wireops block and submits compose_path/compose_file', async () => {
+    const { getComposeWireopsFiles, getComposeDefinitionFromFile, createStackFromCompose } = setupGlobals()
     getComposeDefinitionFromFile.mockResolvedValue({
       version: 'wireops.v1',
       name: 'api',
@@ -380,11 +396,10 @@ describe('CreateStackModal', () => {
       resolved_compose_file: 'docker-compose.yml',
     })
 
-    const wrapper = await openInWireopsMode()
-
-    const singleFileButton = wrapper.findAll('button').find(b => b.text() === 'Single file (x-wireops)')
-    await singleFileButton!.trigger('click')
-    await flushPromises()
+    const wrapper = await openCreateModal()
+    // Single file (x-wireops) is already the default mode, but it's still
+    // picked explicitly on the Type step to advance the wizard.
+    await selectMode(wrapper, 'compose_embedded')
 
     expect(wrapper.text()).toContain('Compose file (with x-wireops)')
     expect(wrapper.findAll('label').some(l => l.text() === 'Name')).toBe(false)
@@ -421,16 +436,13 @@ describe('CreateStackModal', () => {
       compose_file: 'docker-compose.yml',
       paused: false,
     })
-    expect(createStackFromWireops).not.toHaveBeenCalled()
   })
 
   it('manual mode still shows an editable Name and creates via the raw stacks collection', async () => {
     const { createStack } = setupGlobals()
-    const wrapper = await openInWireopsMode()
+    const wrapper = await openCreateModal()
 
-    const manualButton = wrapper.findAll('button').find(b => b.text() === 'Manual')
-    await manualButton!.trigger('click')
-    await flushPromises()
+    await selectMode(wrapper, 'manual')
 
     expect(wrapper.findAll('label').some(l => l.text() === 'Name')).toBe(true)
 
@@ -476,11 +488,9 @@ describe('CreateStackModal', () => {
       },
     })
 
-    const wrapper = await openInWireopsMode()
+    const wrapper = await openCreateModal()
 
-    const manualButton = wrapper.findAll('button').find(b => b.text() === 'Manual')
-    await manualButton!.trigger('click')
-    await flushPromises()
+    await selectMode(wrapper, 'manual')
 
     await wrapper.find('input').setValue('my-stack')
     await wrapper.findAll('select')[0]!.setValue('repo-1')
@@ -517,11 +527,9 @@ describe('CreateStackModal', () => {
       },
     })
 
-    const wrapper = await openInWireopsMode()
+    const wrapper = await openCreateModal()
 
-    const manualButton = wrapper.findAll('button').find(b => b.text() === 'Manual')
-    await manualButton!.trigger('click')
-    await flushPromises()
+    await selectMode(wrapper, 'manual')
 
     await wrapper.find('input').setValue('my-stack')
     await wrapper.findAll('select')[0]!.setValue('repo-1')
@@ -552,11 +560,9 @@ describe('CreateStackModal', () => {
       config_error: 'failed to resolve compose config: yaml: line 3: mapping values are not allowed',
     })
 
-    const wrapper = await openInWireopsMode()
+    const wrapper = await openCreateModal()
 
-    const manualButton = wrapper.findAll('button').find(b => b.text() === 'Manual')
-    await manualButton!.trigger('click')
-    await flushPromises()
+    await selectMode(wrapper, 'manual')
 
     await wrapper.find('input').setValue('my-stack')
     await wrapper.findAll('select')[0]!.setValue('repo-1')
@@ -590,11 +596,9 @@ describe('CreateStackModal', () => {
       filename: 'docker-compose.yml',
     })
 
-    const wrapper = await openInWireopsMode()
+    const wrapper = await openCreateModal()
 
-    const manualButton = wrapper.findAll('button').find(b => b.text() === 'Manual')
-    await manualButton!.trigger('click')
-    await flushPromises()
+    await selectMode(wrapper, 'manual')
 
     await wrapper.find('input').setValue('my-stack')
     await wrapper.findAll('select')[0]!.setValue('repo-1')
@@ -623,11 +627,9 @@ describe('CreateStackModal', () => {
       report: { findings: [], errors: 0, warnings: 0, infos: 0 },
     })
 
-    const wrapper = await openInWireopsMode()
+    const wrapper = await openCreateModal()
 
-    const manualButton = wrapper.findAll('button').find(b => b.text() === 'Manual')
-    await manualButton!.trigger('click')
-    await flushPromises()
+    await selectMode(wrapper, 'manual')
 
     await wrapper.find('input').setValue('my-stack')
     await wrapper.findAll('select')[0]!.setValue('repo-1')
@@ -658,11 +660,9 @@ describe('CreateStackModal', () => {
       .mockImplementationOnce(() => new Promise((r) => { resolveFirst = r }))
       .mockImplementationOnce(() => new Promise((r) => { resolveSecond = r }))
 
-    const wrapper = await openInWireopsMode()
+    const wrapper = await openCreateModal()
 
-    const manualButton = wrapper.findAll('button').find(b => b.text() === 'Manual')
-    await manualButton!.trigger('click')
-    await flushPromises()
+    await selectMode(wrapper, 'manual')
 
     await wrapper.find('input').setValue('my-stack')
     await wrapper.findAll('select')[0]!.setValue('repo-1')
@@ -707,11 +707,9 @@ describe('CreateStackModal', () => {
 
   it('blocks Next into Review until a worker is picked', async () => {
     setupGlobals()
-    const wrapper = await openInWireopsMode()
+    const wrapper = await openCreateModal()
 
-    const manualButton = wrapper.findAll('button').find(b => b.text() === 'Manual')
-    await manualButton!.trigger('click')
-    await flushPromises()
+    await selectMode(wrapper, 'manual')
 
     await wrapper.find('input').setValue('my-stack')
     await wrapper.findAll('select')[0]!.setValue('repo-1')
@@ -728,9 +726,7 @@ describe('CreateStackModal', () => {
   })
 
   async function fillManualStackThroughConfiguration(wrapper: any) {
-    const manualButton = wrapper.findAll('button').find((b: any) => b.text() === 'Manual')
-    await manualButton!.trigger('click')
-    await flushPromises()
+    await selectMode(wrapper, 'manual')
 
     await wrapper.find('input').setValue('my-stack')
     await wrapper.findAll('select')[0]!.setValue('repo-1')
@@ -746,7 +742,7 @@ describe('CreateStackModal', () => {
 
   it('creates the stack paused, then saves env vars and resumes it automatically', async () => {
     const { createStack, updateStack, customPost } = setupGlobals()
-    const wrapper = await openInWireopsMode()
+    const wrapper = await openCreateModal()
 
     await fillManualStackThroughConfiguration(wrapper)
     await goToNextStep(wrapper) // Configuration -> Environment Variables
@@ -773,7 +769,7 @@ describe('CreateStackModal', () => {
 
   it('persists a typed-but-not-added env var row when Next is clicked without pressing the row add button', async () => {
     const { createStack, updateStack, customPost } = setupGlobals()
-    const wrapper = await openInWireopsMode()
+    const wrapper = await openCreateModal()
 
     await fillManualStackThroughConfiguration(wrapper)
     await goToNextStep(wrapper) // Configuration -> Environment Variables
@@ -794,7 +790,7 @@ describe('CreateStackModal', () => {
 
   it('commits an uncommitted env var draft when jumping directly from Environment Variables to Review', async () => {
     const { createStack, updateStack, customPost, push, queryState } = setupGlobals()
-    const wrapper = await openInWireopsMode()
+    const wrapper = await openCreateModal()
 
     await fillManualStackThroughConfiguration(wrapper)
     await goToNextStep(wrapper) // Configuration -> Environment Variables
@@ -804,7 +800,7 @@ describe('CreateStackModal', () => {
     // Simulate clicking the "Review" step directly on the stepper instead of
     // Next — that path (UStepper's v-model) never runs nextStep()'s
     // commitDraft() call.
-    push({ query: { ...queryState.query, stack_step: '4' } })
+    push({ query: { ...queryState.query, stack_step: '5' } })
     await flushPromises()
 
     await wrapper.find('form').trigger('submit.prevent')
@@ -820,7 +816,7 @@ describe('CreateStackModal', () => {
 
   it('blocks leaving Environment Variables while the draft is invalid, and unblocks once cleared', async () => {
     setupGlobals()
-    const wrapper = await openInWireopsMode()
+    const wrapper = await openCreateModal()
 
     await fillManualStackThroughConfiguration(wrapper)
     await goToNextStep(wrapper) // Configuration -> Environment Variables
@@ -828,8 +824,8 @@ describe('CreateStackModal', () => {
     await wrapper.find('.type-invalid-draft').trigger('click')
     await goToNextStep(wrapper) // attempted Environment Variables -> Review
 
-    // Still on Environment Variables: the "Next" button (step 3's) is still
-    // there, "Create" (step 4's submit) isn't reachable yet.
+    // Still on Environment Variables: the "Next" button (step 4's) is still
+    // there, "Create" (step 5's submit) isn't reachable yet.
     expect(wrapper.findAll('button').some(b => b.text() === 'Next')).toBe(true)
     expect(wrapper.findAll('button').some(b => b.text() === 'Create')).toBe(false)
     expect(wrapper.text()).toContain('Fix or clear the invalid environment variable before continuing.')
@@ -843,7 +839,7 @@ describe('CreateStackModal', () => {
 
   it('blocks final submission from Review when the draft is invalid via direct stepper navigation', async () => {
     const { createStack, push, queryState } = setupGlobals()
-    const wrapper = await openInWireopsMode()
+    const wrapper = await openCreateModal()
 
     await fillManualStackThroughConfiguration(wrapper)
     await goToNextStep(wrapper) // Configuration -> Environment Variables
@@ -851,7 +847,7 @@ describe('CreateStackModal', () => {
     await wrapper.find('.type-invalid-draft').trigger('click')
 
     // Jump straight to Review, bypassing the Next-button block above.
-    push({ query: { ...queryState.query, stack_step: '4' } })
+    push({ query: { ...queryState.query, stack_step: '5' } })
     await flushPromises()
 
     await wrapper.find('form').trigger('submit.prevent')
@@ -859,12 +855,12 @@ describe('CreateStackModal', () => {
 
     expect(createStack).not.toHaveBeenCalled()
 
-    // The error text lives only inside the step-3 (Environment Variables)
+    // The error text lives only inside the step-4 (Environment Variables)
     // v-show block. Asserting via wrapper.text() would pass even if that
     // block stayed hidden, since v-show leaves the element in the DOM —
     // check the actual visible state (and that submit routed the user back
-    // to step 3, where the message actually renders) instead.
-    expect(queryState.query.stack_step).toBe('3')
+    // to step 4, where the message actually renders) instead.
+    expect(queryState.query.stack_step).toBe('4')
     const draftError = wrapper.findAll('p').find(p => p.text() === 'Fix or clear the invalid environment variable before continuing.')
     expect(draftError).toBeTruthy()
     expect((draftError!.element.parentElement as HTMLElement).style.display).not.toBe('none')
@@ -872,7 +868,7 @@ describe('CreateStackModal', () => {
 
   it('creates the stack pending and never touches the env-vars endpoint when none were added', async () => {
     const { createStack, updateStack, customPost } = setupGlobals()
-    const wrapper = await openInWireopsMode()
+    const wrapper = await openCreateModal()
 
     await fillManualStackThroughConfiguration(wrapper)
     await skipEnvVarsIntoReviewStep(wrapper)
@@ -887,7 +883,7 @@ describe('CreateStackModal', () => {
   it('leaves the stack paused and warns instead of resuming when the env-vars save fails', async () => {
     const { createStack, updateStack, customPost, toastAdd } = setupGlobals()
     customPost.mockRejectedValueOnce(new Error('boom'))
-    const wrapper = await openInWireopsMode()
+    const wrapper = await openCreateModal()
 
     await fillManualStackThroughConfiguration(wrapper)
     await goToNextStep(wrapper) // Configuration -> Environment Variables
