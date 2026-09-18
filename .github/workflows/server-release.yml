@@ -64,3 +64,5 @@ jobs:
             COMMIT=${{ github.sha }}
             BUILD_DATE=${{ steps.build-meta.outputs.build_date }}
           provenance: true
+          cache-from: type=gha,scope=server
+          cache-to: type=gha,mode=max,scope=server
