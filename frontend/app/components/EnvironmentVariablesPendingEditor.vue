@@ -104,7 +104,7 @@ function saveEditRow() {
 // untouched in `rows` until saveEditRow() runs, so reverting loses nothing.
 function commitDraft() {
   if (editingIndex.value !== null && !editKeyError.value) {
-    if (editValue.value.trim()) saveEditRow()
+    if (editKey.value.trim() && editValue.value.trim()) saveEditRow()
     else cancelEditRow()
   }
   if (newKey.value.trim() && newValue.value.trim() && !newKeyError.value) {
