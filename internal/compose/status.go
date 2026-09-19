@@ -12,6 +12,7 @@ import (
 	dockertypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/mount"
 	dockernetwork "github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
 	dockerclient "github.com/docker/docker/client"
@@ -271,6 +272,58 @@ func GetStackVolumes(ctx context.Context, cli *dockerclient.Client, projectName 
 		}
 		infos = append(infos, info)
 	}
+
+	bindMounts, err := getStackBindMounts(ctx, cli, projectName)
+	if err != nil {
+		log.Printf("failed to list bind mounts for project %s: %v", projectName, err)
+	} else {
+		infos = append(infos, bindMounts...)
+	}
+
+	return infos, nil
+}
+
+// getStackBindMounts discovers host bind mounts used by the project's
+// containers. Bind mounts are never Docker-managed volumes - they don't
+// appear in `docker volume ls` - so the only way to find them is inspecting
+// each container's actual Mounts.
+func getStackBindMounts(ctx context.Context, cli *dockerclient.Client, projectName string) ([]protocol.VolumeInfo, error) {
+	f := filters.NewArgs()
+	f.Add("label", "com.docker.compose.project="+projectName)
+
+	containers, err := cli.ContainerList(ctx, container.ListOptions{All: true, Filters: f})
+	if err != nil {
+		return nil, err
+	}
+
+	seen := make(map[string]bool)
+	var infos []protocol.VolumeInfo
+	for _, c := range containers {
+		inspect, ierr := cli.ContainerInspect(ctx, c.ID)
+		if ierr != nil {
+			log.Printf("failed to inspect container %s: %v", c.ID, ierr)
+			continue
+		}
+		for _, m := range inspect.Mounts {
+			if m.Type != mount.TypeBind {
+				continue
+			}
+			key := m.Source + "|" + m.Destination
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			infos = append(infos, protocol.VolumeInfo{
+				Name:        m.Source,
+				DockerName:  m.Source,
+				Driver:      "bind",
+				Mountpoint:  m.Source,
+				Scope:       "local",
+				Type:        "bind",
+				Destination: m.Destination,
+			})
+		}
+	}
 	return infos, nil
 }
 
@@ -295,40 +348,105 @@ func GetStackNetworks(ctx context.Context, cli *dockerclient.Client, projectName
 	}
 
 	infos := make([]protocol.NetworkInfo, 0, len(networks))
+	seenIDs := make(map[string]bool, len(networks))
 	for _, n := range networks {
-		info := protocol.NetworkInfo{
-			Name:       n.Labels["com.docker.compose.network"],
-			DockerName: n.Name,
-			ID:         n.ID,
-			Driver:     n.Driver,
-			Scope:      n.Scope,
-			EnableIPv4: n.EnableIPv4,
-			EnableIPv6: n.EnableIPv6,
-			Internal:   n.Internal,
-			Attachable: n.Attachable,
-			Ingress:    n.Ingress,
-			ConfigOnly: n.ConfigOnly,
-			Options:    n.Options,
+		infos = append(infos, buildNetworkInfo(n, false))
+		seenIDs[n.ID] = true
+	}
+
+	externalInfos, err := getExternalStackNetworks(ctx, cli, projectName, seenIDs)
+	if err != nil {
+		log.Printf("failed to list external networks for project %s: %v", projectName, err)
+	} else {
+		infos = append(infos, externalInfos...)
+	}
+
+	return infos, nil
+}
+
+func buildNetworkInfo(n dockernetwork.Inspect, external bool) protocol.NetworkInfo {
+	info := protocol.NetworkInfo{
+		Name:       n.Labels["com.docker.compose.network"],
+		DockerName: n.Name,
+		ID:         n.ID,
+		Driver:     n.Driver,
+		Scope:      n.Scope,
+		EnableIPv4: n.EnableIPv4,
+		EnableIPv6: n.EnableIPv6,
+		Internal:   n.Internal,
+		Attachable: n.Attachable,
+		Ingress:    n.Ingress,
+		ConfigOnly: n.ConfigOnly,
+		Options:    n.Options,
+		External:   external,
+	}
+	if !n.Created.IsZero() {
+		info.CreatedAt = n.Created.Format(time.RFC3339)
+	}
+	if info.Name == "" {
+		info.Name = n.Name
+	}
+	for _, config := range n.IPAM.Config {
+		info.IPAMConfigs = append(info.IPAMConfigs, protocol.NetworkIPAMConfig{
+			Subnet:       config.Subnet,
+			Gateway:      config.Gateway,
+			IPRange:      config.IPRange,
+			AuxAddresses: config.AuxAddress,
+		})
+	}
+	if len(info.IPAMConfigs) > 0 {
+		info.Subnet = info.IPAMConfigs[0].Subnet
+		info.Gateway = info.IPAMConfigs[0].Gateway
+	}
+	return info
+}
+
+// getExternalStackNetworks finds networks the project's containers are
+// actually attached to but that aren't owned by this compose project (i.e.
+// declared `external: true` in compose). Those networks pre-exist outside
+// the project and never receive the com.docker.compose.project label, so
+// they can only be found by walking the containers' real network
+// attachments rather than filtering NetworkList by label.
+func getExternalStackNetworks(ctx context.Context, cli *dockerclient.Client, projectName string, seenNetworkIDs map[string]bool) ([]protocol.NetworkInfo, error) {
+	f := filters.NewArgs()
+	f.Add("label", "com.docker.compose.project="+projectName)
+
+	containers, err := cli.ContainerList(ctx, container.ListOptions{All: true, Filters: f})
+	if err != nil {
+		return nil, err
+	}
+
+	seenNames := make(map[string]bool)
+	var infos []protocol.NetworkInfo
+	for _, c := range containers {
+		inspect, ierr := cli.ContainerInspect(ctx, c.ID)
+		if ierr != nil || inspect.NetworkSettings == nil {
+			continue
 		}
-		if !n.Created.IsZero() {
-			info.CreatedAt = n.Created.Format(time.RFC3339)
+		for netName, endpoint := range inspect.NetworkSettings.Networks {
+			networkID := netName
+			if endpoint != nil && endpoint.NetworkID != "" {
+				networkID = endpoint.NetworkID
+			}
+			if networkID == "" || seenNames[networkID] {
+				continue
+			}
+			seenNames[networkID] = true
+			if endpoint != nil && seenNetworkIDs[endpoint.NetworkID] {
+				continue
+			}
+
+			netInspect, nerr := cli.NetworkInspect(ctx, networkID, dockernetwork.InspectOptions{})
+			if nerr != nil {
+				log.Printf("failed to inspect network %s: %v", netName, nerr)
+				continue
+			}
+			if seenNetworkIDs[netInspect.ID] {
+				continue
+			}
+			seenNetworkIDs[netInspect.ID] = true
+			infos = append(infos, buildNetworkInfo(netInspect, true))
 		}
-		if info.Name == "" {
-			info.Name = n.Name
-		}
-		for _, config := range n.IPAM.Config {
-			info.IPAMConfigs = append(info.IPAMConfigs, protocol.NetworkIPAMConfig{
-				Subnet:       config.Subnet,
-				Gateway:      config.Gateway,
-				IPRange:      config.IPRange,
-				AuxAddresses: config.AuxAddress,
-			})
-		}
-		if len(info.IPAMConfigs) > 0 {
-			info.Subnet = info.IPAMConfigs[0].Subnet
-			info.Gateway = info.IPAMConfigs[0].Gateway
-		}
-		infos = append(infos, info)
 	}
 	return infos, nil
 }

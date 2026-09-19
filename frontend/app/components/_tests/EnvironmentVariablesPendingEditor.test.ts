@@ -64,6 +64,13 @@ const stubs = {
       return () => h('button', { type: 'button', onClick: () => emit('click') }, 'Cancel')
     },
   },
+  CloseButton: {
+    props: ['ariaLabel'],
+    emits: ['click'],
+    setup(props: { ariaLabel?: string }, { emit }: { emit: (e: string) => void }) {
+      return () => h('button', { type: 'button', 'aria-label': props.ariaLabel ?? 'Close', onClick: () => emit('click') })
+    },
+  },
   IntegrationsVaultReferencePicker: {
     props: ['modelValue'],
     setup(_props: unknown, { slots }: { slots: Slots }) {
@@ -224,6 +231,61 @@ describe('EnvironmentVariablesPendingEditor', () => {
 
     await wrapper.find('input[placeholder="KEY"]').setValue('')
     expect(vm.hasInvalidDraft).toBe(false)
+  })
+
+  it('edits an existing row\'s value', async () => {
+    const wrapper = mountEditor([{ key: 'FOO', value: 'old', secret: false, secret_provider: '' }])
+
+    const editButton = wrapper.findAll('button').find(b => b.attributes('aria-label') === 'Edit environment variable')
+    await editButton!.trigger('click')
+
+    await wrapper.find('input[placeholder="value"]').setValue('new')
+    const saveButton = wrapper.findAll('button').find(b => b.attributes('aria-label') === 'Save environment variable')
+    await saveButton!.trigger('click')
+
+    expect(wrapper.emitted('update:modelValue')![0]![0]).toEqual([
+      { key: 'FOO', value: 'new', secret: false, secret_provider: '' },
+    ])
+  })
+
+  it('converts an existing row to secret when the lock toggle is used while editing', async () => {
+    const wrapper = mountEditor([{ key: 'FOO', value: 'plain', secret: false, secret_provider: '' }])
+
+    await wrapper.findAll('button').find(b => b.attributes('aria-label') === 'Edit environment variable')!.trigger('click')
+    await wrapper.findAll('button').find(b => b.attributes('aria-label') === 'Set as secret')!.trigger('click')
+    await wrapper.findAll('button').find(b => b.attributes('aria-label') === 'Save environment variable')!.trigger('click')
+
+    expect(wrapper.emitted('update:modelValue')![0]![0]).toEqual([
+      { key: 'FOO', value: 'plain', secret: true, secret_provider: 'internal' },
+    ])
+  })
+
+  it('cancelling a row edit leaves the original row untouched', async () => {
+    const wrapper = mountEditor([{ key: 'FOO', value: 'old', secret: false, secret_provider: '' }])
+
+    await wrapper.findAll('button').find(b => b.attributes('aria-label') === 'Edit environment variable')!.trigger('click')
+    await wrapper.find('input[placeholder="value"]').setValue('changed')
+    await wrapper.findAll('button').find(b => b.attributes('aria-label') === 'Cancel edit')!.trigger('click')
+
+    expect(wrapper.emitted('update:modelValue')).toBeFalsy()
+    const valueInputs = wrapper.findAll('input').filter(i => i.attributes('placeholder') === 'value')
+    expect(valueInputs.some(i => i.element.value === 'old')).toBe(true)
+  })
+
+  it('rejects renaming a row to a key that already exists', async () => {
+    const wrapper = mountEditor([
+      { key: 'FOO', value: 'a', secret: false, secret_provider: '' },
+      { key: 'BAR', value: 'b', secret: false, secret_provider: '' },
+    ])
+
+    const editButtons = wrapper.findAll('button').filter(b => b.attributes('aria-label') === 'Edit environment variable')
+    await editButtons[1]!.trigger('click') // editing BAR
+
+    await wrapper.find('input[placeholder="KEY"]').setValue('FOO')
+
+    expect(wrapper.text()).toContain('Key already added')
+    const saveButton = wrapper.findAll('button').find(b => b.attributes('aria-label') === 'Save environment variable')
+    expect(saveButton?.attributes('disabled')).toBeDefined()
   })
 
   it('reports parse errors for malformed pasted lines without emitting', async () => {

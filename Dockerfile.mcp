@@ -1,7 +1,11 @@
-FROM golang:1.26.6-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26.6-alpine AS builder
 
-ARG TARGETOS=linux
-ARG TARGETARCH=amd64
+# No default here on purpose — buildx auto-populates these from the
+# requested --platform, but only if the Dockerfile doesn't shadow them with
+# its own default value (a bare `ARG TARGETARCH=amd64` silently breaks that
+# injection and every arch ends up building amd64 binaries).
+ARG TARGETOS
+ARG TARGETARCH
 ARG VERSION=dev
 ARG COMMIT=none
 ARG BUILD_DATE=unknown

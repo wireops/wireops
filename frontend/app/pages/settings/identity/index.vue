@@ -417,7 +417,7 @@ onMounted(() => {
           </ul>
           <div v-if="usersTotalPages > 1" class="flex justify-between items-center pt-2">
             <UPagination
-              v-model="usersPage"
+              v-model:page="usersPage"
               :total="totalUsers"
               :items-per-page="usersPerPage"
             />

@@ -248,7 +248,8 @@ type GetResourcesCommand struct {
 	ProjectName string `json:"project_name"`
 }
 
-// VolumeInfo describes a Docker volume associated with a compose project.
+// VolumeInfo describes a Docker volume associated with a compose project, or
+// a host bind mount used by one of its containers.
 type VolumeInfo struct {
 	Name       string            `json:"name"`
 	DockerName string            `json:"docker_name"`
@@ -258,6 +259,15 @@ type VolumeInfo struct {
 	CreatedAt  string            `json:"created_at,omitempty"`
 	SizeBytes  *int64            `json:"size_bytes,omitempty"`
 	Options    map[string]string `json:"options,omitempty"`
+
+	// Type is "volume" (a Docker-managed named volume, the default/zero
+	// value for backward compatibility) or "bind" (a host path mounted
+	// straight into a container - never appears in `docker volume ls`, so
+	// it's discovered from container Mounts instead).
+	Type string `json:"type,omitempty"`
+	// Destination is the path inside the container where a bind mount is
+	// mounted. Only populated when Type == "bind".
+	Destination string `json:"destination,omitempty"`
 }
 
 // NetworkInfo describes a Docker network associated with a compose project.
@@ -278,6 +288,11 @@ type NetworkInfo struct {
 	Ingress     bool                `json:"ingress"`
 	ConfigOnly  bool                `json:"config_only"`
 	Options     map[string]string   `json:"options,omitempty"`
+
+	// External marks a network the project's containers are attached to but
+	// don't own - i.e. a pre-existing network declared `external: true` in
+	// compose, which never receives the com.docker.compose.project label.
+	External bool `json:"external,omitempty"`
 }
 
 // NetworkIPAMConfig describes one address pool configured for a Docker network.

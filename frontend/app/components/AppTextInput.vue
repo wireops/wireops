@@ -7,6 +7,8 @@ const props = withDefaults(
     placeholder?: string
     id?: string
     ariaLabel?: string
+    ariaInvalid?: boolean
+    ariaDescribedby?: string
     type?: string
     disabled?: boolean
     readonly?: boolean
@@ -19,6 +21,8 @@ const props = withDefaults(
     placeholder: '',
     id: undefined,
     ariaLabel: undefined,
+    ariaInvalid: undefined,
+    ariaDescribedby: undefined,
     type: 'text',
     disabled: false,
     readonly: false,
@@ -66,8 +70,10 @@ function onBlur(event: FocusEvent) {
       :type="type"
       class="flex-1 min-w-0 bg-transparent border-0 p-0 focus:ring-0 focus:outline-hidden text-base sm:text-sm h-6 text-gray-900/90 dark:text-white/90 placeholder-gray-400 dark:placeholder-wire-200/30 disabled:cursor-not-allowed"
       :placeholder="placeholder"
-      :aria-label="ariaLabel"
       v-bind="ariaAttrs"
+      :aria-label="ariaLabel"
+      :aria-invalid="ariaInvalid ?? ariaAttrs?.['aria-invalid']"
+      :aria-describedby="ariaDescribedby ?? ariaAttrs?.['aria-describedby']"
       :value="modelValue"
       :disabled="fieldDisabled ?? disabled"
       :readonly="readonly"

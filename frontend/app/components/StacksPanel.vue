@@ -86,8 +86,15 @@ const {
     })
     return { items: result.items, totalItems: result.totalItems }
   },
-  { perPage: 24, sort: sortParam, watchDebounced: [searchQuery, statusFilter, workerFilter, groupFilter] }
+  { perPage: isCompact.value ? 20 : 21, sort: sortParam, watchDebounced: [searchQuery, statusFilter, workerFilter, groupFilter] }
 )
+
+// Card mode fits 21 per page (3-col grid), list mode fits 20 - resync
+// perPage (and reset to page 1) whenever the density toggle flips.
+watch(isCompact, (compact) => {
+  perPage.value = compact ? 20 : 21
+  page.value = 1
+})
 
 // Fleet-wide aggregate used only for the group dropdown and the status
 // availability bar - both need counts across every stack, not just the
@@ -494,7 +501,7 @@ async function handlePurge(dirName: string) {
 
           <div v-if="totalPages > 1" class="flex justify-between items-center pt-2">
             <UPagination
-              v-model="page"
+              v-model:page="page"
               :total="totalStacks"
               :items-per-page="perPage"
             />

@@ -85,6 +85,7 @@ export function useApi() {
   type VolumeInfo = {
     name: string; docker_name: string; driver: string; mountpoint: string; scope: string
     created_at?: string; size_bytes?: number; options?: Record<string, string>
+    type?: 'volume' | 'bind'; destination?: string
   }
   type NetworkIPAMConfig = {
     subnet?: string; gateway?: string; ip_range?: string; aux_addresses?: Record<string, string>
@@ -94,6 +95,7 @@ export function useApi() {
     subnet?: string; gateway?: string; ipam_configs?: NetworkIPAMConfig[]
     enable_ipv4: boolean; enable_ipv6: boolean; internal: boolean; attachable: boolean; ingress: boolean; config_only: boolean
     options?: Record<string, string>
+    external?: boolean
   }
   const getStackResources = (stackId: string) =>
     customGet<{ volumes: VolumeInfo[]; networks: NetworkInfo[] }>(`/api/custom/stacks/${stackId}/resources`)

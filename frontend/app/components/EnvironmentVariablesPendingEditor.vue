@@ -52,19 +52,72 @@ function removeRow(index: number) {
   rows.value = rows.value.filter((_, i) => i !== index)
 }
 
+// Editing a row in place, mirroring EnvironmentVariablesCard's inline editor
+// — but purely local since nothing is persisted yet at this wizard step.
+const editingIndex = ref<number | null>(null)
+const editKey = ref('')
+const editValue = ref('')
+const editSecret = ref(false)
+const editProvider = ref('internal')
+
+const editKeyError = computed(() => {
+  const key = editKey.value.trim()
+  if (!key) return ''
+  if (!isValidEnvKey(key)) return 'Invalid key format'
+  if (rows.value.some((r, i) => r.key === key && i !== editingIndex.value)) return 'Key already added'
+  return ''
+})
+
+function startEditRow(index: number) {
+  const row = rows.value[index]
+  if (!row) return
+  editingIndex.value = index
+  editKey.value = row.key
+  editValue.value = row.value
+  editSecret.value = row.secret
+  editProvider.value = row.secret_provider || 'internal'
+}
+
+function cancelEditRow() {
+  editingIndex.value = null
+}
+
+function saveEditRow() {
+  if (editingIndex.value === null) return
+  const key = editKey.value.trim()
+  if (!key || editKeyError.value || !editValue.value.trim()) return
+  const next = rows.value.slice()
+  next[editingIndex.value] = {
+    key,
+    value: editValue.value,
+    secret: editSecret.value,
+    secret_provider: editSecret.value ? editProvider.value : '',
+  }
+  rows.value = next
+  editingIndex.value = null
+}
+
 // Commits the in-progress key/value draft row (if any) so it isn't
 // silently lost when the wizard advances without clicking the row's
-// own add button.
+// own add button. Also resolves an in-progress row edit: saves it if
+// complete, or reverts it if left half-filled — the original row is
+// untouched in `rows` until saveEditRow() runs, so reverting loses nothing.
 function commitDraft() {
+  if (editingIndex.value !== null && !editKeyError.value) {
+    if (editKey.value.trim() && editValue.value.trim()) saveEditRow()
+    else cancelEditRow()
+  }
   if (newKey.value.trim() && newValue.value.trim() && !newKeyError.value) {
     addRow()
   }
 }
 
-// True when the draft key can't be committed because it's invalid or a
+// True when a draft can't be committed because it's invalid or a
 // duplicate — callers use this to block navigation instead of silently
 // dropping it via commitDraft() above.
-const hasInvalidDraft = computed(() => !!newKey.value.trim() && !!newKeyError.value)
+const hasInvalidDraft = computed(() =>
+  (!!newKey.value.trim() && !!newKeyError.value) || (editingIndex.value !== null && !!editKeyError.value)
+)
 
 defineExpose({ commitDraft, hasInvalidDraft })
 
@@ -164,30 +217,108 @@ function onImportFileSelected(e: Event) {
         No environment variables added — this step is optional, click Next to skip.
       </div>
 
-      <div v-for="(row, index) in rows" :key="`${row.key}-${index}`" class="grid grid-cols-1 gap-2 py-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2rem] sm:items-center">
-        <AppTextInput :model-value="row.key" disabled class="font-mono" />
-        <AppTextInput
-          v-if="row.secret"
-          model-value="••••••••"
-          disabled
-          type="password"
-          :icon="iconFor(row.secret_provider || 'internal')"
-          class="font-mono"
-        />
-        <EnvValueInput v-else :model-value="row.value" disabled class="font-mono" />
-        <UButton
-          icon="i-lucide-trash-2"
-          variant="ghost"
-          color="error"
-          size="xs"
-          class="h-8 w-full justify-center !bg-red-500/10 p-0 !text-red-600 hover:!bg-red-500/15 sm:w-8 sm:!bg-transparent sm:!text-inherit sm:hover:!bg-transparent dark:!text-red-400"
-          aria-label="Remove environment variable"
-          @click="removeRow(index)"
-        />
+      <div v-for="(row, index) in rows" :key="`${row.key}-${index}`">
+        <div v-if="editingIndex === index" class="grid grid-cols-1 gap-2 py-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2rem_2rem_2rem] sm:items-center">
+          <AppTextInput
+            v-model="editKey"
+            placeholder="KEY"
+            class="font-mono"
+            aria-label="Environment variable key"
+            :aria-invalid="!!editKeyError"
+            :aria-describedby="editKeyError ? 'edit-key-error' : undefined"
+          />
+          <div class="flex items-center gap-1">
+            <AppSelectInput
+              v-if="editSecret && hasActiveBackends"
+              v-model="editProvider"
+              :items="providerOptions"
+              :searchable="false"
+              content-width
+              class="font-mono shrink-0"
+            />
+            <IntegrationsVaultReferencePicker v-if="editSecret && editProvider === 'vault'" v-model="editValue" />
+            <IntegrationsInfisicalReferencePicker v-else-if="editSecret && editProvider === 'infisical'" v-model="editValue" />
+            <EnvValueInput
+              v-else
+              v-model="editValue"
+              placeholder="value"
+              :type="editSecret ? 'password' : 'text'"
+              :icon="editSecret ? iconFor(editProvider) : undefined"
+              :avatar="editSecret ? avatarFor(editProvider) : undefined"
+              class="font-mono w-full"
+            />
+          </div>
+          <UButton
+            type="button"
+            :icon="editSecret ? 'i-lucide-lock' : 'i-lucide-variable'"
+            :color="editSecret ? 'warning' : 'neutral'"
+            variant="soft"
+            size="xs"
+            class="h-8 w-8 justify-center p-0"
+            :aria-pressed="editSecret"
+            :aria-label="editSecret ? 'Set as plain text' : 'Set as secret'"
+            :title="editSecret ? 'Secret' : 'Plain text'"
+            @click="editSecret = !editSecret"
+          />
+          <UButton
+            icon="i-lucide-check"
+            variant="ghost"
+            color="success"
+            size="xs"
+            class="h-8 w-8 justify-center p-0"
+            :disabled="!editKey.trim() || !!editKeyError || !editValue.trim()"
+            aria-label="Save environment variable"
+            @click="saveEditRow"
+          />
+          <CloseButton size="xs" class="h-8 w-8 justify-center p-0" aria-label="Cancel edit" @click="cancelEditRow" />
+        </div>
+        <p
+          v-if="editingIndex === index && editKeyError"
+          id="edit-key-error"
+          class="text-xs text-red-500"
+        >
+          {{ editKeyError }}
+        </p>
+
+        <div v-else class="grid grid-cols-1 gap-2 py-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2rem_2rem] sm:items-center">
+          <AppTextInput :model-value="row.key" disabled class="font-mono" />
+          <AppTextInput
+            v-if="row.secret"
+            model-value="••••••••"
+            disabled
+            type="password"
+            :icon="iconFor(row.secret_provider || 'internal')"
+            class="font-mono"
+          />
+          <EnvValueInput v-else :model-value="row.value" disabled class="font-mono" />
+          <UButton
+            icon="i-lucide-pencil"
+            variant="ghost"
+            size="xs"
+            class="h-8 w-full justify-center bg-sky-500/10 p-0 text-sky-600 hover:bg-sky-500/15 sm:w-8 sm:bg-transparent sm:text-inherit sm:hover:bg-transparent dark:text-sky-400"
+            :disabled="editingIndex !== null"
+            aria-label="Edit environment variable"
+            @click="startEditRow(index)"
+          />
+          <UButton
+            icon="i-lucide-trash-2"
+            variant="ghost"
+            color="error"
+            size="xs"
+            class="h-8 w-full justify-center !bg-red-500/10 p-0 !text-red-600 hover:!bg-red-500/15 sm:w-8 sm:!bg-transparent sm:!text-inherit sm:hover:!bg-transparent dark:!text-red-400"
+            :disabled="editingIndex !== null"
+            aria-label="Remove environment variable"
+            @click="removeRow(index)"
+          />
+        </div>
       </div>
 
-      <p v-if="newKeyError" class="text-xs text-red-500">{{ newKeyError }}</p>
-      <form class="grid grid-cols-1 gap-2 pt-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2rem_2rem] sm:items-center" @submit.prevent="addRow">
+      <p v-if="editingIndex === null && newKeyError" class="text-xs text-red-500">{{ newKeyError }}</p>
+      <form
+        v-if="editingIndex === null"
+        class="grid grid-cols-1 gap-2 pt-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2rem_2rem] sm:items-center"
+        @submit.prevent="addRow"
+      >
         <AppTextInput v-model="newKey" placeholder="KEY" class="font-mono" />
         <div class="flex items-center gap-1">
           <AppSelectInput

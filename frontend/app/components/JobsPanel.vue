@@ -75,8 +75,15 @@ const {
     })
     return { items: result.items, totalItems: result.total_items }
   },
-  { perPage: 20, watchDebounced: [searchQuery, statusFilter, repositoryFilter] }
+  { perPage: isCompact.value ? 20 : 21, watchDebounced: [searchQuery, statusFilter, repositoryFilter] }
 )
+
+// Comfortable (card-like) rows cap at 21 per page, compact list rows at 20 -
+// resync perPage (and reset to page 1) whenever the density toggle flips.
+watch(isCompact, (compact) => {
+  perPage.value = compact ? 20 : 21
+  page.value = 1
+})
 
 // group lives only inside each job's parsed job.yaml (see jobs.go's
 // buildJobsFilter comment), not a stored column, so it can't be pushed into
@@ -455,7 +462,7 @@ function formatRelative(dateStr: string) {
 
         <div v-if="totalPages > 1" class="flex justify-between items-center pt-2">
           <UPagination
-            v-model="page"
+            v-model:page="page"
             :total="totalJobs"
             :items-per-page="perPage"
           />

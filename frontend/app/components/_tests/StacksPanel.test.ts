@@ -575,6 +575,30 @@ describe('StacksPanel', () => {
     return { wrapper, getList, getFullList, subscribeHandlers, toastAdd, announce, navigateTo, asyncDataRefs }
   }
 
+  it('resets to page 1 and resizes perPage when density toggles', async () => {
+    const { wrapper, getList } = mountStacksPanel()
+    await flushPromises()
+
+    expect((wrapper.vm as any).perPage).toBe(21)
+
+    // A later page only sticks once the fetcher reports enough total items -
+    // simulate that before moving off page 1.
+    getList.mockResolvedValue({ items: [stackFixture], totalItems: 50 })
+    ;(wrapper.vm as any).page = 2
+    await flushPromises()
+    expect((wrapper.vm as any).page).toBe(2)
+
+    const callsBeforeToggle = getList.mock.calls.length
+    useListDensity().setDensity('compact')
+    await flushPromises()
+
+    expect((wrapper.vm as any).perPage).toBe(20)
+    expect((wrapper.vm as any).page).toBe(1)
+    expect(getList.mock.calls.length).toBeGreaterThan(callsBeforeToggle)
+    expect(getList.mock.calls.at(-1)![0]).toBe(1)
+    expect(getList.mock.calls.at(-1)![1]).toBe(20)
+  })
+
   it('reports empty-state steps from the underlying repos/workers data', async () => {
     const noRepos = mountStacksPanel({
       asyncData: { stacks_aggregate: [], stack_card_workers: [], repos_for_stacks_empty: [] },
