@@ -219,7 +219,14 @@ function onImportFileSelected(e: Event) {
 
       <div v-for="(row, index) in rows" :key="`${row.key}-${index}`">
         <div v-if="editingIndex === index" class="grid grid-cols-1 gap-2 py-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2rem_2rem_2rem] sm:items-center">
-          <AppTextInput v-model="editKey" placeholder="KEY" class="font-mono" />
+          <AppTextInput
+            v-model="editKey"
+            placeholder="KEY"
+            class="font-mono"
+            aria-label="Environment variable key"
+            :aria-invalid="!!editKeyError"
+            :aria-describedby="editKeyError ? 'edit-key-error' : undefined"
+          />
           <div class="flex items-center gap-1">
             <AppSelectInput
               v-if="editSecret && hasActiveBackends"
@@ -265,7 +272,13 @@ function onImportFileSelected(e: Event) {
           />
           <CloseButton size="xs" class="h-8 w-8 justify-center p-0" aria-label="Cancel edit" @click="cancelEditRow" />
         </div>
-        <p v-if="editingIndex === index && editKeyError" class="text-xs text-red-500">{{ editKeyError }}</p>
+        <p
+          v-if="editingIndex === index && editKeyError"
+          id="edit-key-error"
+          class="text-xs text-red-500"
+        >
+          {{ editKeyError }}
+        </p>
 
         <div v-else class="grid grid-cols-1 gap-2 py-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2rem_2rem] sm:items-center">
           <AppTextInput :model-value="row.key" disabled class="font-mono" />

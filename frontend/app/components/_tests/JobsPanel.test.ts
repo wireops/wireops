@@ -146,6 +146,30 @@ describe('JobsPanel', () => {
     expect(wrapper.text()).not.toContain('net: wireops')
   })
 
+  it('resets to page 1 and resizes perPage when density toggles', async () => {
+    const { listJobs } = stubGlobals()
+    const wrapper = mount(JobsPanel, { global: { stubs } })
+    await flushPromises()
+
+    expect((wrapper.vm as any).perPage).toBe(21)
+
+    // A later page only sticks once the fetcher reports enough total items -
+    // simulate that before moving off page 1.
+    listJobs.mockResolvedValue({ items: [jobFixture], total_items: 50 })
+    ;(wrapper.vm as any).page = 2
+    await flushPromises()
+    expect((wrapper.vm as any).page).toBe(2)
+
+    const callsBeforeToggle = listJobs.mock.calls.length
+    useListDensity().setDensity('compact')
+    await flushPromises()
+
+    expect((wrapper.vm as any).perPage).toBe(20)
+    expect((wrapper.vm as any).page).toBe(1)
+    expect(listJobs.mock.calls.length).toBeGreaterThan(callsBeforeToggle)
+    expect(listJobs).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, perPage: 20 }))
+  })
+
   it('walks the empty-state step through repo, worker, then job creation', async () => {
     const { asyncDataStore, navigateTo } = stubGlobals()
     const wrapper = mount(JobsPanel, { global: { stubs } })

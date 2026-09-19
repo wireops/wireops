@@ -784,7 +784,7 @@ async function handleSubmit() {
                 color="warning"
                 icon="i-lucide-triangle-alert"
                 title="No worker matches the required tags"
-                description="Showing every active worker instead — the wireops.yaml worker.tags filter didn't match any of them."
+                description="Showing every active worker instead — the x-wireops worker.tags filter didn't match any of them."
               />
 
               <template v-if="creationMode === 'manual'">

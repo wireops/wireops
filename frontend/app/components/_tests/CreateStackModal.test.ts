@@ -3,6 +3,18 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { h, reactive, ref } from 'vue'
 import CreateStackModal from '../CreateStackModal.vue'
 
+// happy-dom's getComputedStyle doesn't reflect inline styles reliably, so
+// Vue Test Utils' isVisible() can't be trusted for v-show'd elements here -
+// walk the ancestor chain and check the inline style Vue actually sets.
+function isShown(el: Element | null | undefined): boolean {
+  let node = el as HTMLElement | null
+  while (node) {
+    if (node.style?.display === 'none') return false
+    node = node.parentElement
+  }
+  return !!el
+}
+
 function setupGlobals() {
   const queryState = reactive<{ query: Record<string, any> }>({ query: {} })
   const push = vi.fn(({ query }: any) => { queryState.query = { ...query } })
@@ -217,13 +229,26 @@ describe('CreateStackModal', () => {
   it('defaults to single-file (x-wireops) mode and shows the file picker without a Name field', async () => {
     setupGlobals()
     const wrapper = await openCreateModal()
+    const composeFileLabel = () => wrapper.findAll('label').find(l => l.text() === 'Compose file (with x-wireops)')
 
+    // Type step: mode cards are visible, later-step content (the compose
+    // picker) exists in the DOM via v-show but is not yet on screen.
+    expect(isShown(wrapper.find('[data-testid="mode-card-manual"]').element)).toBe(true)
+    expect(isShown(wrapper.find('[data-testid="mode-card-compose_embedded"]').element)).toBe(true)
     expect(wrapper.text()).toContain('Manual')
     expect(wrapper.text()).toContain('Single file (x-wireops)')
     expect(wrapper.text()).not.toContain('From wireops.yaml')
     expect(wrapper.text()).not.toContain('Deprecated layout')
-    expect(wrapper.text()).toContain('Compose file (with x-wireops)')
+    expect(isShown(composeFileLabel()?.element)).toBe(false)
     // no Name input in this mode — name comes from the x-wireops block
+    expect(wrapper.findAll('label').some(l => l.text() === 'Name')).toBe(false)
+
+    await selectMode(wrapper, 'compose_embedded')
+
+    // Selecting the default mode advances to Basic Info, where the compose
+    // file picker actually becomes visible.
+    expect(isShown(wrapper.find('[data-testid="mode-card-manual"]').element)).toBe(false)
+    expect(isShown(composeFileLabel()?.element)).toBe(true)
     expect(wrapper.findAll('label').some(l => l.text() === 'Name')).toBe(false)
   })
 

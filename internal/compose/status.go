@@ -424,15 +424,19 @@ func getExternalStackNetworks(ctx context.Context, cli *dockerclient.Client, pro
 			continue
 		}
 		for netName, endpoint := range inspect.NetworkSettings.Networks {
-			if netName == "" || seenNames[netName] {
+			networkID := netName
+			if endpoint != nil && endpoint.NetworkID != "" {
+				networkID = endpoint.NetworkID
+			}
+			if networkID == "" || seenNames[networkID] {
 				continue
 			}
-			seenNames[netName] = true
+			seenNames[networkID] = true
 			if endpoint != nil && seenNetworkIDs[endpoint.NetworkID] {
 				continue
 			}
 
-			netInspect, nerr := cli.NetworkInspect(ctx, netName, dockernetwork.InspectOptions{})
+			netInspect, nerr := cli.NetworkInspect(ctx, networkID, dockernetwork.InspectOptions{})
 			if nerr != nil {
 				log.Printf("failed to inspect network %s: %v", netName, nerr)
 				continue

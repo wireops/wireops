@@ -666,7 +666,7 @@ watch(() => props.services, (services) => {
         <div v-if="volumes.length" class="space-y-3">
           <div
             v-for="vol in volumes"
-            :key="vol.name"
+            :key="`${vol.type ?? 'volume'}:${vol.name}:${vol.destination ?? ''}`"
             class="rounded-lg border border-gray-200 p-3 transition-colors dark:border-gray-700/60"
             :class="hasVolumeDetails(vol) ? 'cursor-pointer hover:border-gray-300 hover:bg-gray-50/50 dark:hover:border-gray-600 dark:hover:bg-gray-800/20' : ''"
             :role="hasVolumeDetails(vol) ? 'button' : undefined"
@@ -767,7 +767,7 @@ watch(() => props.services, (services) => {
                 <UIcon name="i-lucide-waypoints" class="w-4 h-4 text-gray-500 dark:text-gray-400" />
               </div>
               <span class="min-w-0 flex-1 truncate font-semibold text-sm">{{ net.name }}</span>
-              <UBadge v-if="net.external" label="External" variant="subtle" size="xs" color="warning" />
+              <UBadge v-if="net.external" label="Externally managed" variant="subtle" size="xs" color="warning" />
               <UBadge :label="net.driver" variant="subtle" size="xs" />
               <UBadge :label="net.scope" variant="outline" size="xs" color="neutral" />
               <UIcon
@@ -804,7 +804,7 @@ watch(() => props.services, (services) => {
                 </div>
                 <div>
                   <dt class="text-gray-500 dark:text-gray-400">Network flags</dt>
-                  <dd class="text-gray-800 dark:text-wire-200">{{ net.internal ? 'Internal' : 'External' }} · {{ net.attachable ? 'Attachable' : 'Not attachable' }}</dd>
+                  <dd class="text-gray-800 dark:text-wire-200">{{ net.internal ? 'Internal' : 'Not internal' }} · {{ net.attachable ? 'Attachable' : 'Not attachable' }}</dd>
                 </div>
                 <div v-if="net.ingress || net.config_only">
                   <dt class="text-gray-500 dark:text-gray-400">Special role</dt>
