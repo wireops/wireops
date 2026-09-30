@@ -189,21 +189,28 @@ func TestRefreshTokenProviderError(t *testing.T) {
 	}
 }
 
-func TestRefreshTokenFetchUserFails(t *testing.T) {
+// TestRefreshTokenDoesNotCallUserEndpoint guards against a refresh that
+// redeems the (rotating) refresh token and then fails on a follow-up /user
+// call, discarding the only live token pair.
+func TestRefreshTokenDoesNotCallUserEndpoint(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/oauth/token", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "new-access"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "new-access", "refresh_token": "new-refresh"})
 	})
 	mux.HandleFunc("/api/v4/user", func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("RefreshToken must not call /api/v4/user")
 		w.WriteHeader(http.StatusInternalServerError)
 	})
 	server := gitlabTestServer(t, mux)
 	setEnv(t, server.URL)
 
 	p := &Provider{}
-	_, err := p.RefreshToken(context.Background(), "old-refresh")
-	if err == nil || !strings.Contains(err.Error(), "fetch authenticated user") {
-		t.Fatalf("expected fetch authenticated user error, got %v", err)
+	token, err := p.RefreshToken(context.Background(), "old-refresh")
+	if err != nil {
+		t.Fatalf("RefreshToken: %v", err)
+	}
+	if token.AccessToken != "new-access" || token.RefreshToken != "new-refresh" || token.AccountLogin != "" {
+		t.Fatalf("unexpected refreshed token: %+v", token)
 	}
 }
 
@@ -224,9 +231,6 @@ func TestRefreshTokenSuccess(t *testing.T) {
 			"refresh_token": "new-refresh",
 			"expires_in":    7200,
 		})
-	})
-	mux.HandleFunc("/api/v4/user", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"username": "octocat-gl"})
 	})
 	server := gitlabTestServer(t, mux)
 	setEnv(t, server.URL)

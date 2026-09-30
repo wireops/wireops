@@ -150,15 +150,15 @@ func (p *Provider) RefreshToken(ctx context.Context, refreshToken string) (*gitp
 		return nil, err
 	}
 
-	user, err := p.fetchAuthenticatedUser(ctx, tokenResp.AccessToken)
-	if err != nil {
-		return nil, err
-	}
-
+	// Deliberately no /user lookup here (AccountLogin stays empty; callers
+	// keep the login stored at connect time). GitLab rotates the refresh
+	// token on use, so once /oauth/token answers, the pair in tokenResp is
+	// the only live credential: any follow-up call that could fail (and
+	// would also consume the new access token, revoking the old refresh
+	// token) risks discarding it and permanently breaking the connection.
 	token := &gitprovider.Token{
 		AccessToken:  tokenResp.AccessToken,
 		RefreshToken: tokenResp.RefreshToken,
-		AccountLogin: user.Username,
 	}
 	if tokenResp.ExpiresIn > 0 {
 		token.ExpiresAt = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)

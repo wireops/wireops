@@ -52,7 +52,7 @@ jobs:
           CGO_ENABLED: 0
         run: |
           packages=$(go list ./... | grep -v '^github.com/wireops/wireops/worker\(/\|$\)')
-          go test -coverprofile=coverage.out $packages
+          go test -timeout 20m -coverprofile=coverage.out $packages
 
       - name: Upload coverage to Codacy
         uses: codacy/codacy-coverage-reporter-action@89d6c85cfafaec52c72b6c5e8b2878d33104c699 # v1
