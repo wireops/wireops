@@ -785,3 +785,91 @@ func TestDoRefreshOAuthTokenRecoversPendingTokenAfterSaveFailure(t *testing.T) {
 		t.Fatal("expected pending refresh to be cleared after persisting")
 	}
 }
+
+type recordingRefreshProvider struct {
+	countingRefreshProvider
+	lastRefreshToken string
+}
+
+func (p *recordingRefreshProvider) Slug() string { return "recording-refresh-provider" }
+func (p *recordingRefreshProvider) RefreshToken(ctx context.Context, refreshToken string) (*gitprovider.Token, error) {
+	p.mu.Lock()
+	p.lastRefreshToken = refreshToken
+	p.mu.Unlock()
+	return p.countingRefreshProvider.RefreshToken(ctx, refreshToken)
+}
+
+// TestDoRefreshOAuthTokenDropsPendingAfterReconnectWithSameExpiry guards
+// against a stale pending pair overwriting a manual reconnect that left
+// oauth_token_expires_at unchanged (a token response without expires_in).
+func TestDoRefreshOAuthTokenDropsPendingAfterReconnectWithSameExpiry(t *testing.T) {
+	secret := "0123456789abcdef0123456789abcdef"
+	app, _, keys := newCredentialStoreTestApp(t)
+	t.Setenv("SECRET_KEY", secret)
+
+	origDelays := persistRetryDelays
+	persistRetryDelays = []time.Duration{0, 0}
+	t.Cleanup(func() { persistRetryDelays = origDelays })
+
+	provider := &recordingRefreshProvider{}
+	gitprovider.Register(provider)
+	key := saveOAuthKeyDueForRefresh(t, app, keys, secret, provider.Slug(), "octocat")
+	t.Cleanup(func() { pendingRefreshes.Delete(key.Id) })
+
+	var failSaves sync.Mutex
+	failing := true
+	app.OnRecordUpdate("repository_keys").BindFunc(func(e *core.RecordEvent) error {
+		failSaves.Lock()
+		defer failSaves.Unlock()
+		if failing {
+			return errors.New("database is locked")
+		}
+		return e.Next()
+	})
+
+	if _, _, err := LoadOAuthToken(context.Background(), app, key.Id); err != nil {
+		t.Fatalf("first load: %v", err)
+	}
+	if _, ok := pendingRefreshes.Load(key.Id); !ok {
+		t.Fatal("expected a pending refresh after the failed save")
+	}
+
+	failSaves.Lock()
+	failing = false
+	failSaves.Unlock()
+
+	// Simulate a manual reconnect that keeps the same expiry.
+	reconnected, err := app.FindRecordById("repository_keys", key.Id)
+	if err != nil {
+		t.Fatalf("find key: %v", err)
+	}
+	encryptedAccess, err := crypto.Encrypt([]byte("reconnected-token"), []byte(secret))
+	if err != nil {
+		t.Fatalf("encrypt access token: %v", err)
+	}
+	encryptedRefresh, err := crypto.Encrypt([]byte("reconnected-refresh"), []byte(secret))
+	if err != nil {
+		t.Fatalf("encrypt refresh token: %v", err)
+	}
+	reconnected.Set("oauth_token", encryptedAccess)
+	reconnected.Set("oauth_refresh_token", encryptedRefresh)
+	if err := app.Save(reconnected); err != nil {
+		t.Fatalf("save reconnect: %v", err)
+	}
+
+	if _, _, err := LoadOAuthToken(context.Background(), app, key.Id); err != nil {
+		t.Fatalf("second load: %v", err)
+	}
+	if provider.callCount() != 2 {
+		t.Fatalf("expected the reconnected credential to be refreshed, got %d refresh calls", provider.callCount())
+	}
+	provider.mu.Lock()
+	last := provider.lastRefreshToken
+	provider.mu.Unlock()
+	if last != "reconnected-refresh" {
+		t.Fatalf("expected refresh with the reconnected refresh token, got %q", last)
+	}
+	if _, ok := pendingRefreshes.Load(key.Id); ok {
+		t.Fatal("expected the stale pending refresh to be dropped")
+	}
+}

@@ -229,10 +229,11 @@ func doRefreshOAuthToken(ctx context.Context, app core.App, keyID string, provid
 	// rotated the refresh token on use), so it takes precedence over what's
 	// stored — redeeming the stored, already-consumed refresh token again
 	// would fail with invalid_grant and brick the credential.
+	base := identityOf(record)
 	var pending *pendingRefresh
 	if v, ok := pendingRefreshes.Load(keyID); ok {
 		p := v.(*pendingRefresh)
-		if p.baseExpiresAt.Equal(expiresAt) {
+		if p.base.matches(record) {
 			pending = p
 		} else {
 			// The row moved on (manual reconnect or a later successful
@@ -241,7 +242,7 @@ func doRefreshOAuthToken(ctx context.Context, app core.App, keyID string, provid
 		}
 	}
 	if pending != nil && (pending.token.ExpiresAt.IsZero() || time.Now().Add(refreshGraceWindow).Before(pending.token.ExpiresAt)) {
-		if err := persistRefreshedToken(app, keyID, expiresAt, pending.token, secretKey); err != nil {
+		if err := persistRefreshedToken(app, keyID, base, pending.token, secretKey); err != nil {
 			log.Printf("[git] oauth token refresh: key %s: retry persisting refreshed token: %v", keyID, err)
 		} else {
 			pendingRefreshes.Delete(keyID)
@@ -279,12 +280,12 @@ func doRefreshOAuthToken(ctx context.Context, app core.App, keyID string, provid
 		newToken.RefreshToken = pending.token.RefreshToken
 	}
 
-	if err := persistRefreshedToken(app, keyID, expiresAt, newToken, secretKey); err != nil {
+	if err := persistRefreshedToken(app, keyID, base, newToken, secretKey); err != nil {
 		// The refresh token was already redeemed: keep the new pair in
 		// memory so the next attempt persists it instead of redeeming the
 		// consumed one, and still hand the fresh access token to callers.
 		log.Printf("[git] oauth token refresh: key %s: persist refreshed token failed, will retry: %v", keyID, err)
-		pendingRefreshes.Store(keyID, &pendingRefresh{token: newToken, baseExpiresAt: expiresAt})
+		pendingRefreshes.Store(keyID, &pendingRefresh{token: newToken, base: base})
 		return newToken.AccessToken, nil
 	}
 	pendingRefreshes.Delete(keyID)
@@ -292,12 +293,34 @@ func doRefreshOAuthToken(ctx context.Context, app core.App, keyID string, provid
 	return newToken.AccessToken, nil
 }
 
+// credentialIdentity identifies the stored credential a refresh started
+// from, so a result can be discarded if the row was replaced meanwhile (a
+// manual reconnect). The expiry alone isn't enough: a reconnect whose
+// response carries no expires_in leaves oauth_token_expires_at untouched.
+// The oauth_token ciphertext always changes on reconnect (AES-GCM uses a
+// random nonce) and never changes on a failed save.
+type credentialIdentity struct {
+	expiresAt   time.Time
+	tokenCipher string
+}
+
+func identityOf(record *core.Record) credentialIdentity {
+	return credentialIdentity{
+		expiresAt:   record.GetDateTime("oauth_token_expires_at").Time(),
+		tokenCipher: record.GetString("oauth_token"),
+	}
+}
+
+func (c credentialIdentity) matches(record *core.Record) bool {
+	current := identityOf(record)
+	return c.expiresAt.Equal(current.expiresAt) && c.tokenCipher == current.tokenCipher
+}
+
 // pendingRefresh is a redeemed-but-not-yet-persisted token pair, together
-// with the oauth_token_expires_at of the stored row it replaces (used to
-// detect that the row was since changed by a reconnect).
+// with the identity of the stored credential it replaces.
 type pendingRefresh struct {
-	token         *gitprovider.Token
-	baseExpiresAt time.Time
+	token *gitprovider.Token
+	base  credentialIdentity
 }
 
 // pendingRefreshes holds, per repository_keys ID, a token pair whose save
@@ -311,10 +334,10 @@ var persistRetryDelays = []time.Duration{100 * time.Millisecond, 500 * time.Mill
 
 // persistRefreshedToken writes newToken onto keyID's row, re-reading the
 // record on each attempt and retrying a failed save. It gives up without
-// writing if the row's oauth_token_expires_at no longer matches
-// baseExpiresAt: someone else (a manual reconnect) replaced the credential
-// meanwhile, and overwriting it would be wrong.
-func persistRefreshedToken(app core.App, keyID string, baseExpiresAt time.Time, newToken *gitprovider.Token, secretKey []byte) error {
+// writing if the row no longer matches base: someone else (a manual
+// reconnect) replaced the credential meanwhile, and overwriting it would be
+// wrong.
+func persistRefreshedToken(app core.App, keyID string, base credentialIdentity, newToken *gitprovider.Token, secretKey []byte) error {
 	var lastErr error
 	for attempt := 0; attempt <= len(persistRetryDelays); attempt++ {
 		if attempt > 0 {
@@ -325,7 +348,7 @@ func persistRefreshedToken(app core.App, keyID string, baseExpiresAt time.Time, 
 			lastErr = fmt.Errorf("find repository key: %w", err)
 			continue
 		}
-		if !record.GetDateTime("oauth_token_expires_at").Time().Equal(baseExpiresAt) {
+		if !base.matches(record) {
 			return nil
 		}
 		if err := applyRefreshedToken(record, newToken, secretKey); err != nil {
