@@ -653,3 +653,135 @@ func TestDoRefreshOAuthTokenPersistsSuccessStatus(t *testing.T) {
 		t.Fatal("expected oauth_last_refresh_at to be set after a successful refresh")
 	}
 }
+
+// saveOAuthKeyDueForRefresh stores an oauth_token key whose access token is
+// already past expiry, so the next load refreshes it.
+func saveOAuthKeyDueForRefresh(t *testing.T, app core.App, keys *core.Collection, secret, providerSlug, login string) *core.Record {
+	t.Helper()
+	encryptedAccess, err := crypto.Encrypt([]byte("stale-token"), []byte(secret))
+	if err != nil {
+		t.Fatalf("encrypt access token: %v", err)
+	}
+	encryptedRefresh, err := crypto.Encrypt([]byte("stale-refresh"), []byte(secret))
+	if err != nil {
+		t.Fatalf("encrypt refresh token: %v", err)
+	}
+	key := core.NewRecord(keys)
+	key.Set("name", "OAuth key")
+	key.Set("auth_type", string(AuthTypeOAuthToken))
+	key.Set("oauth_provider", providerSlug)
+	key.Set("oauth_token", encryptedAccess)
+	key.Set("oauth_refresh_token", encryptedRefresh)
+	key.Set("oauth_account_login", login)
+	key.Set("oauth_token_expires_at", time.Now().Add(-time.Minute))
+	if err := app.Save(key); err != nil {
+		t.Fatalf("save key: %v", err)
+	}
+	return key
+}
+
+type loginlessRefreshProvider struct{ alwaysSucceedRefreshProvider }
+
+func (loginlessRefreshProvider) Slug() string { return "loginless-refresh-provider" }
+func (loginlessRefreshProvider) RefreshToken(_ context.Context, _ string) (*gitprovider.Token, error) {
+	return &gitprovider.Token{
+		AccessToken:  "refreshed-token",
+		RefreshToken: "refreshed-refresh-token",
+		ExpiresAt:    time.Now().Add(time.Hour),
+	}, nil
+}
+
+// TestDoRefreshOAuthTokenKeepsLoginWhenProviderOmitsIt covers GitLab's
+// refresh, which no longer looks up /user: the stored login must survive.
+func TestDoRefreshOAuthTokenKeepsLoginWhenProviderOmitsIt(t *testing.T) {
+	secret := "0123456789abcdef0123456789abcdef"
+	app, _, keys := newCredentialStoreTestApp(t)
+	t.Setenv("SECRET_KEY", secret)
+
+	provider := loginlessRefreshProvider{}
+	gitprovider.Register(provider)
+	key := saveOAuthKeyDueForRefresh(t, app, keys, secret, provider.Slug(), "jfxdev")
+
+	if _, token, err := LoadOAuthToken(context.Background(), app, key.Id); err != nil || token != "refreshed-token" {
+		t.Fatalf("load oauth token: token=%q err=%v", token, err)
+	}
+
+	reloaded, err := app.FindRecordById("repository_keys", key.Id)
+	if err != nil {
+		t.Fatalf("reload key: %v", err)
+	}
+	if got := reloaded.GetString("oauth_account_login"); got != "jfxdev" {
+		t.Fatalf("expected login to be kept, got %q", got)
+	}
+	refresh, err := decryptRecordField(reloaded, "oauth_refresh_token", []byte(secret))
+	if err != nil || string(refresh) != "refreshed-refresh-token" {
+		t.Fatalf("expected rotated refresh token persisted, got %q (err %v)", refresh, err)
+	}
+}
+
+type pendingCountingRefreshProvider struct{ countingRefreshProvider }
+
+func (p *pendingCountingRefreshProvider) Slug() string { return "pending-counting-provider" }
+
+// TestDoRefreshOAuthTokenRecoversPendingTokenAfterSaveFailure guards against
+// losing a rotated refresh token when saving it fails: the next attempt must
+// persist the pending pair instead of redeeming the consumed refresh token.
+func TestDoRefreshOAuthTokenRecoversPendingTokenAfterSaveFailure(t *testing.T) {
+	secret := "0123456789abcdef0123456789abcdef"
+	app, _, keys := newCredentialStoreTestApp(t)
+	t.Setenv("SECRET_KEY", secret)
+
+	origDelays := persistRetryDelays
+	persistRetryDelays = []time.Duration{0, 0}
+	t.Cleanup(func() { persistRetryDelays = origDelays })
+
+	provider := &pendingCountingRefreshProvider{}
+	gitprovider.Register(provider)
+	key := saveOAuthKeyDueForRefresh(t, app, keys, secret, provider.Slug(), "octocat")
+	t.Cleanup(func() { pendingRefreshes.Delete(key.Id) })
+
+	var failSaves sync.Mutex
+	failing := true
+	app.OnRecordUpdate("repository_keys").BindFunc(func(e *core.RecordEvent) error {
+		failSaves.Lock()
+		defer failSaves.Unlock()
+		if failing {
+			return errors.New("database is locked")
+		}
+		return e.Next()
+	})
+
+	if _, token, err := LoadOAuthToken(context.Background(), app, key.Id); err != nil || token != "refreshed-token" {
+		t.Fatalf("first load: token=%q err=%v", token, err)
+	}
+	if provider.callCount() != 1 {
+		t.Fatalf("expected 1 refresh call, got %d", provider.callCount())
+	}
+
+	failSaves.Lock()
+	failing = false
+	failSaves.Unlock()
+
+	if _, token, err := LoadOAuthToken(context.Background(), app, key.Id); err != nil || token != "refreshed-token" {
+		t.Fatalf("second load: token=%q err=%v", token, err)
+	}
+	if provider.callCount() != 1 {
+		t.Fatalf("expected pending token to be persisted without redeeming again, got %d refresh calls", provider.callCount())
+	}
+
+	reloaded, err := app.FindRecordById("repository_keys", key.Id)
+	if err != nil {
+		t.Fatalf("reload key: %v", err)
+	}
+	access, err := decryptRecordField(reloaded, "oauth_token", []byte(secret))
+	if err != nil || string(access) != "refreshed-token" {
+		t.Fatalf("expected refreshed access token persisted, got %q (err %v)", access, err)
+	}
+	refresh, err := decryptRecordField(reloaded, "oauth_refresh_token", []byte(secret))
+	if err != nil || string(refresh) != "refreshed-refresh-token" {
+		t.Fatalf("expected rotated refresh token persisted, got %q (err %v)", refresh, err)
+	}
+	if _, ok := pendingRefreshes.Load(key.Id); ok {
+		t.Fatal("expected pending refresh to be cleared after persisting")
+	}
+}
