@@ -285,7 +285,7 @@ function downloadComposeFile() {
   toast.add({ title: 'Compose file downloaded', color: 'success' })
 }
 
-const activeTab = ref('overview')
+const activeTab = ref((route.query.tab as string) || 'overview')
 const tabs = [
   { label: 'Overview', value: 'overview', icon: 'i-lucide-info' },
   { label: 'Variables', value: 'env', icon: 'i-lucide-variable' },

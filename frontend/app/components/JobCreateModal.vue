@@ -208,6 +208,7 @@ async function submit() {
     toast.add({ title: 'Job created', color: 'success' })
     emit('created')
     emit('update:open', false)
+    await navigateTo(`/jobs/${job.id}?tab=runs`)
   } catch (e: any) {
     const serverMsg = e?.response?.data?.name?.message || e?.data?.data?.name?.message || e?.data?.data?.name
     if (serverMsg) {

@@ -627,6 +627,7 @@ async function handleSubmit() {
 
     emit('update:open', false)
     emit('created')
+    await navigateTo(`/stacks/${stackId}?tab=logs`)
   } catch (e: any) {
     toast.add({ title: 'Failed to create stack', description: e?.message, color: 'error' })
   } finally {

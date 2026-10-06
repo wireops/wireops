@@ -303,6 +303,19 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	}
 
 	// --- compose deploy ---
+	// This phase (env/secrets load, lint, docker compose config via
+	// GenerateRevision) is local and normally sub-second. Give it its own
+	// fresh timeout budget instead of inheriting whatever remains of ctx's
+	// shared reconcile deadline: the git fetch above can retry for several
+	// minutes against a flaky remote (cloneOrFetchWithRetry), and if that
+	// exhausts most of the parent deadline, compose config would otherwise
+	// fail instantly with a misleading "context deadline exceeded" even
+	// though the render itself never ran long. context.WithoutCancel drops
+	// ctx's already-ticking deadline while this still respects explicit
+	// cancellation up to renderPhaseTimeout.
+	renderCtx, renderCancel := context.WithTimeout(context.WithoutCancel(ctx), renderPhaseTimeout)
+	defer renderCancel()
+
 	renderStart := time.Now()
 	workDir, err := r.stackWorkDir(stack, repoID)
 	if err != nil {
@@ -323,7 +336,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		return err
 	}
 
-	envVars, envErr := r.loadEnvVars(ctx, stackID)
+	envVars, envErr := r.loadEnvVars(renderCtx, stackID)
 	if envErr != nil {
 		errMsg := fmt.Sprintf("failed to load env vars: %v", envErr)
 		r.logFailureWithPhase(stackID, trigger, remoteSHA, errMsg, constants.PhaseRender, renderStart,
@@ -333,7 +346,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	}
 
 	sopsStart := time.Now()
-	sopsValues, sopsErr := r.loadSopsEnv(ctx, repo, workDir)
+	sopsValues, sopsErr := r.loadSopsEnv(renderCtx, repo, workDir)
 	if sopsErr != nil {
 		errMsg := fmt.Sprintf("failed to decrypt SOPS secrets file: %v", sopsErr)
 		r.logFailureWithPhase(stackID, trigger, remoteSHA, errMsg, constants.PhaseSecretsFetch, sopsStart,
@@ -351,7 +364,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	// the fully-resolved config and does abort on error-severity findings; this
 	// earlier one exists so the timeline shows *why* before the render phase
 	// fails, and so a render success still has a lint summary attached.
-	lintRes := r.lintCompose(ctx, containmentRootFor(repo, workDir), workDir, composeFile, workerID, envVars)
+	lintRes := r.lintCompose(renderCtx, containmentRootFor(repo, workDir), workDir, composeFile, workerID, envVars)
 	if lintRes.err != nil {
 		log.Printf("[reconciler] lint skipped for stack %s: %v", stackID, lintRes.err)
 	} else if len(lintRes.report.Findings) > 0 {
@@ -367,10 +380,10 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	prevChecksum := stack.GetString("checksum")
 	prevVersion := stack.GetInt("current_version")
 
-	renderRes, err := r.renderer.GenerateRevision(ctx, stack, repo, workDir, composeFile, envVars, remoteSHA, false, workerID, workerFingerprint, LoadRenderOverrides(stack))
+	renderRes, err := r.renderer.GenerateRevision(renderCtx, stack, repo, workDir, composeFile, envVars, remoteSHA, false, workerID, workerFingerprint, LoadRenderOverrides(stack))
 	if err != nil && errors.Is(err, ErrUnknownOverrideService) {
 		r.clearStaleRenderOverrides(stack, stackID, err.Error())
-		renderRes, err = r.renderer.GenerateRevision(ctx, stack, repo, workDir, composeFile, envVars, remoteSHA, false, workerID, workerFingerprint, nil)
+		renderRes, err = r.renderer.GenerateRevision(renderCtx, stack, repo, workDir, composeFile, envVars, remoteSHA, false, workerID, workerFingerprint, nil)
 	}
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to generate label revision: %v", err)
@@ -1721,6 +1734,12 @@ func (r *Reconciler) loadCredential(ctx context.Context, repoID string) (*gitpkg
 // the remaining "retries" die instantly on ctx.Done() without ever touching
 // the network again.
 const gitFetchAttemptTimeout = 90 * time.Second
+
+// renderPhaseTimeout bounds the compose-deploy phase (env/secrets load,
+// lint, docker compose config) with its own clock, independent of the
+// shared reconcile deadline — see the "--- compose deploy ---" comment in
+// ReconcileStack for why.
+const renderPhaseTimeout = 3 * time.Minute
 
 func (r *Reconciler) cloneOrFetchWithRetry(ctx context.Context, repoID, gitURL, branch string, auth transport.AuthMethod, workspace string) (*gogit.Repository, error) {
 	const maxAttempts = 3

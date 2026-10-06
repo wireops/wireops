@@ -8,7 +8,7 @@ const { subscribe } = useRealtime()
 const toast = useToast()
 
 const jobId = computed(() => route.params.id as string)
-const activeTab = ref('definition')
+const activeTab = ref((route.query.tab as string) || 'definition')
 const tabs = [
   { label: 'Definition', value: 'definition', icon: 'i-lucide-file-code' },
   { label: 'Env Vars', value: 'env', icon: 'i-lucide-key' },
