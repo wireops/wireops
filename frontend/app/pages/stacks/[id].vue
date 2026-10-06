@@ -285,12 +285,13 @@ function downloadComposeFile() {
   toast.add({ title: 'Compose file downloaded', color: 'success' })
 }
 
-const activeTab = ref('overview')
 const tabs = [
   { label: 'Overview', value: 'overview', icon: 'i-lucide-info' },
   { label: 'Variables', value: 'env', icon: 'i-lucide-variable' },
   { label: 'Sync Logs', value: 'logs', icon: 'i-lucide-scroll-text' },
 ]
+const requestedTab = route.query.tab as string
+const activeTab = ref(tabs.some(t => t.value === requestedTab) ? requestedTab : 'overview')
 
 // Edit stack
 const editing = ref(false)

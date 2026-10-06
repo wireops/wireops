@@ -13,7 +13,7 @@ function setupGlobals() {
 
   ;(globalThis as any).WORKER_STATUS = { ACTIVE: 'ACTIVE', OFFLINE: 'OFFLINE', REVOKED: 'REVOKED', PENDING: 'PENDING' }
 
-  ;(globalThis as any).useRoute = () => ({ params: { id: 'stack-1' } })
+  ;(globalThis as any).useRoute = () => ({ params: { id: 'stack-1' }, query: {} })
   const navigateTo = vi.fn()
   ;(globalThis as any).navigateTo = navigateTo
 

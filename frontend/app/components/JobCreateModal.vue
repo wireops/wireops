@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import type { PendingEnvVar } from '../utils/envFileParser'
 
 const route = useRoute()
@@ -208,6 +208,10 @@ async function submit() {
     toast.add({ title: 'Job created', color: 'success' })
     emit('created')
     emit('update:open', false)
+    // Let the close watcher's own router.replace (clearing job_step from
+    // this page's query) run first, so it isn't racing the navigation below.
+    await nextTick()
+    await navigateTo(`/jobs/${job.id}?tab=runs`)
   } catch (e: any) {
     const serverMsg = e?.response?.data?.name?.message || e?.data?.data?.name?.message || e?.data?.data?.name
     if (serverMsg) {

@@ -11,7 +11,7 @@ function setupGlobals(job: Record<string, any>) {
     (globalThis as any)[key] = (vue as any)[key]
   }
 
-  ;(globalThis as any).useRoute = () => ({ params: { id: job.id } })
+  ;(globalThis as any).useRoute = () => ({ params: { id: job.id }, query: {} })
   ;(globalThis as any).useRouter = () => ({ push: vi.fn(), replace: vi.fn() })
   const navigateTo = vi.fn().mockResolvedValue(undefined)
   ;(globalThis as any).navigateTo = navigateTo
