@@ -8,12 +8,13 @@ const { subscribe } = useRealtime()
 const toast = useToast()
 
 const jobId = computed(() => route.params.id as string)
-const activeTab = ref((route.query.tab as string) || 'definition')
 const tabs = [
   { label: 'Definition', value: 'definition', icon: 'i-lucide-file-code' },
   { label: 'Env Vars', value: 'env', icon: 'i-lucide-key' },
   { label: 'Runs', value: 'runs', icon: 'i-lucide-history' },
 ]
+const requestedTab = route.query.tab as string
+const activeTab = ref(tabs.some(t => t.value === requestedTab) ? requestedTab : 'definition')
 
 // --- Delete job
 const showDangerZone = ref(false)

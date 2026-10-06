@@ -310,10 +310,10 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	// minutes against a flaky remote (cloneOrFetchWithRetry), and if that
 	// exhausts most of the parent deadline, compose config would otherwise
 	// fail instantly with a misleading "context deadline exceeded" even
-	// though the render itself never ran long. context.WithoutCancel drops
-	// ctx's already-ticking deadline while this still respects explicit
-	// cancellation up to renderPhaseTimeout.
-	renderCtx, renderCancel := context.WithTimeout(context.WithoutCancel(ctx), renderPhaseTimeout)
+	// though the render itself never ran long. freshTimeout drops ctx's
+	// already-ticking deadline but still cancels renderCtx on a real parent
+	// cancellation (e.g. app shutdown), not merely on ctx's own timeout.
+	renderCtx, renderCancel := freshTimeout(ctx, renderPhaseTimeout)
 	defer renderCancel()
 
 	renderStart := time.Now()
@@ -1740,6 +1740,24 @@ const gitFetchAttemptTimeout = 90 * time.Second
 // shared reconcile deadline — see the "--- compose deploy ---" comment in
 // ReconcileStack for why.
 const renderPhaseTimeout = 3 * time.Minute
+
+// freshTimeout returns a context with its own deadline d from now, detached
+// from parent's already-ticking deadline (so a parent that's starved its
+// budget on an earlier phase doesn't hand this phase an instantly-expired
+// context) — but it still stops immediately if parent is cancelled for a
+// real reason rather than merely timing out, e.g. app shutdown cancelling
+// the scheduler's rootCtx (see OnTerminate in cmd/serve.go, which cancels
+// in-flight reconciles before the DB connection is torn down). Only
+// context.Canceled propagates; context.DeadlineExceeded on parent does not.
+func freshTimeout(parent context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), d)
+	stop := context.AfterFunc(parent, func() {
+		if parent.Err() == context.Canceled {
+			cancel()
+		}
+	})
+	return ctx, func() { stop(); cancel() }
+}
 
 func (r *Reconciler) cloneOrFetchWithRetry(ctx context.Context, repoID, gitURL, branch string, auth transport.AuthMethod, workspace string) (*gogit.Repository, error) {
 	const maxAttempts = 3

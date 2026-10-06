@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import type { PendingEnvVar } from '../utils/envFileParser'
 const route = useRoute()
 const router = useRouter()
@@ -627,6 +627,9 @@ async function handleSubmit() {
 
     emit('update:open', false)
     emit('created')
+    // Let the close watcher's own router.replace (clearing stack_step from
+    // this page's query) run first, so it isn't racing the navigation below.
+    await nextTick()
     await navigateTo(`/stacks/${stackId}?tab=logs`)
   } catch (e: any) {
     toast.add({ title: 'Failed to create stack', description: e?.message, color: 'error' })
