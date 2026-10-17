@@ -1,0 +1,29 @@
+# npm audit allowlist
+#
+# One advisory ID (GHSA-...) per line (blank lines and lines starting with #
+# ignored). Only high/critical advisories are gated; see scripts/npm-audit.sh.
+# Each entry MUST include a reason comment above it -- never allowlist blind.
+#
+# The frontend is a client-side-only SPA: nuxt.config.ts sets `ssr: false` with
+# `nitro: { preset: 'static' }`, and `make build-frontend` ships nothing but the
+# `nuxt generate` output into pb_public/. Build-time and dev-server-only
+# packages therefore never reach a running wireops instance. Verified by
+# grepping .output/public after `npm run generate` -- zero matches for any of
+# the packages below.
+#
+# GHSA-86w9-cpqp-85rv:
+# node-forge RSA PKCS#1 v1.5 signature verification accepts extra nested
+# DigestAlgorithm elements. Reached only via listhen -> nitropack/@nuxt/cli,
+# where node-forge generates the Nitro dev server's self-signed HTTPS cert.
+# No fixed release exists upstream: 1.4.0 is the latest published version and
+# the advisory covers <=1.4.0, and listhen 1.10.1 (latest) still requires
+# ^1.4.0. Revisit when node-forge ships a patched release.
+GHSA-86w9-cpqp-85rv
+
+# GHSA-vfj7-8cjw-p6xm:
+# braces stack-exhaustion DoS through deeply nested patterns. Reached only via
+# micromatch -> fast-glob -> globby -> nitropack, i.e. build-time file globbing
+# over paths from our own repo, never attacker-controlled input. No fixed
+# release exists upstream: 3.0.3 is the latest published version and the
+# advisory covers <=3.0.3. Revisit when braces ships a patched release.
+GHSA-vfj7-8cjw-p6xm

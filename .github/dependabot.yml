@@ -1,0 +1,63 @@
+# Dependabot configuration.
+#
+# Security updates need no config and fire on their own; what this file adds is
+# scheduled *version* updates, plus coverage for the github-actions and docker
+# ecosystems that were previously unmanaged. Each ecosystem groups its updates
+# into a single PR so a week's worth of bumps arrives as one reviewable change
+# instead of one PR per package.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "build(deps)"
+    groups:
+      go-modules:
+        patterns:
+          - "*"
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "build(deps)"
+      prefix-development: "build(deps-dev)"
+    groups:
+      npm-dependencies:
+        patterns:
+          - "*"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "build(deps)"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  # Covers every Dockerfile.* in the repository root (server, worker, mcp and
+  # their .local variants).
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "build(deps)"
+    groups:
+      docker-images:
+        patterns:
+          - "*"
