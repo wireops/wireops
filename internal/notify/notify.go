@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -61,8 +62,31 @@ func New(app core.App) *Notifier {
 
 // Dispatch sends a notification for the given event to all enabled notification integrations.
 // It is fire-and-forget: failures are only logged, never returned.
+//
+// That guarantee has to cover panics, not just errors. The goroutine below is
+// detached from whoever called Dispatch, so an unrecovered panic here is not
+// contained by the caller's own recover (sync.Scheduler.safeRun, say) -- it
+// propagates out of sync.WaitGroup.Go and takes the whole process down. A
+// notification is the least important thing wireops does; it must never be
+// able to kill the server that was mid-reconcile.
+//
+// The panic that prompted this came from dispatching against an app whose DB
+// had already been torn down, which is also why a cancelled context downgrades
+// the log line: during shutdown an in-flight dispatch racing teardown is
+// expected, not a defect. Mirrors sync.Scheduler.safeRun.
 func (n *Notifier) Dispatch(ctx context.Context, p Payload) {
 	n.wg.Go(func() {
+		defer func() {
+			rec := recover()
+			if rec == nil {
+				return
+			}
+			if ctx.Err() != nil {
+				log.Printf("[notify] dispatch %s for stack %s interrupted by shutdown", p.Event, p.StackID)
+				return
+			}
+			log.Printf("[notify] panic in dispatch %s for stack %s: %v\n%s", p.Event, p.StackID, rec, debug.Stack())
+		}()
 		if err := n.dispatch(ctx, p); err != nil {
 			log.Printf("[notify] dispatch %s for stack %s failed: %v", p.Event, p.StackID, err)
 		}
