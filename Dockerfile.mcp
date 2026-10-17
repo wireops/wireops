@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM golang:1.26.6-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26.9-alpine AS builder
 
 # No default here on purpose — buildx auto-populates these from the
 # requested --platform, but only if the Dockerfile doesn't shadow them with
