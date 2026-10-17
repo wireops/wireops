@@ -101,3 +101,28 @@ func TestDispatchSourcesConfigFromStore(t *testing.T) {
 		t.Fatal("expected dispatch() to POST to the webhook URL loaded via Store")
 	}
 }
+
+// A dispatch goroutine is detached from its caller, so a panic inside it is
+// not contained by the caller's recover — before Dispatch recovered on its
+// own, sync.WaitGroup.Go repanicked and killed the whole test binary (and, in
+// production, the server). The nil app here stands in for the real trigger: an
+// app whose DB was already torn down while a reconcile's notification was
+// still in flight.
+func TestDispatchRecoversPanicInsteadOfCrashing(t *testing.T) {
+	n := &Notifier{client: &http.Client{}}
+
+	n.Dispatch(context.Background(), Payload{Event: SyncDone, StackID: "stack-1"})
+	n.Wait()
+}
+
+// A panic racing shutdown is expected rather than a defect, so it must still
+// be contained — the cancelled context only changes which line gets logged.
+func TestDispatchRecoversPanicAfterContextCancelled(t *testing.T) {
+	n := &Notifier{client: &http.Client{}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	n.Dispatch(ctx, Payload{Event: SyncDone, StackID: "stack-1"})
+	n.Wait()
+}
