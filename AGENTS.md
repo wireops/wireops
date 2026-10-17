@@ -419,6 +419,7 @@ Recurring review findings distilled into rules — check new components/pages ag
 - **DON'T** ship `target="_blank"` links with no indication they leave the page. **DO** add an `aria-label` (or visually-hidden text) noting it opens in a new tab.
 - **DON'T** make explanatory text reachable only via hover (`UPopover mode="hover"`, tooltip-only content). **DO** also set a `title` attribute on the trigger, or use a keyboard-focusable element, so keyboard/AT users get the same info.
 - **DON'T** render a static separator/prefix (e.g. `/`) unconditionally next to optional data. **DO** guard the separator with the same `v-if` as the data it separates.
+- **DON'T** build an icon name dynamically (`` `i-lucide-${status}` ``, string concatenation, a name coming from the API). **DO** write the full literal (`'i-lucide-check'`) in a `.vue`/`.ts` file under `frontend/app/`. Icons are inlined at build time by `@nuxt/icon`'s source scanner (`icon.clientBundle.scan` in `nuxt.config.ts`) and the Iconify API fallback is off (`provider: 'none'`), because wireops runs self-hosted on hosts with no outbound internet — a name the scanner can't see statically renders as a blank box in production even though it works in `nuxt dev`.
 
 **State & concurrency:**
 - **DON'T** disable only the specific button/card a user clicked when guarding against a concurrent async action (OAuth popups, in-flight requests). **DO** disable every sibling trigger off the shared in-flight flag (e.g. `connectingSlug`) so two flows can't run at once and corrupt shared form state.
