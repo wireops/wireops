@@ -90,6 +90,9 @@ jobs:
         working-directory: ./frontend
         run: npm run postinstall
 
+      - name: Run npm audit
+        run: ./scripts/npm-audit.sh
+
       - name: Run frontend tests
         working-directory: ./frontend
         run: npm run test
