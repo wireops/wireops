@@ -1,5 +1,5 @@
 # Stage 1: Docker CLI (embed docker + compose plugin)
-FROM docker:27-cli AS docker-cli
+FROM docker:29-cli AS docker-cli
 
 # Stage 2: Frontend build
 FROM node:26-alpine AS frontend-builder
@@ -10,7 +10,7 @@ COPY frontend/ ./
 RUN npm run postinstall && npm run generate
 
 # Stage 3: Go build
-FROM golang:1.26.9-alpine AS go-builder
+FROM golang:1.27.2-alpine AS go-builder
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
@@ -23,7 +23,7 @@ COPY --from=frontend-builder /app/frontend/.output/public ./pb_public
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o wireops .
 
 # Stage 4: Runtime
-FROM alpine:3.20
+FROM alpine:3.24
 RUN apk add --no-cache ca-certificates tzdata \
     && addgroup -g 1000 appgroup \
     && adduser -u 1000 -G appgroup -s /bin/sh -D appuser
