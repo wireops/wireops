@@ -94,8 +94,8 @@ Self-hosted GitOps platform for managing Docker Compose stacks and scheduled Doc
 
 | Layer | Technology |
 |---|---|
-| Backend language | Go 1.25 |
-| Backend framework | PocketBase v0.36 (embedded SQLite, REST, realtime SSE) |
+| Backend language | Go 1.27 |
+| Backend framework | PocketBase v0.40 (embedded SQLite, REST, realtime SSE) |
 | HTTP routing | PocketBase router + Gin (worker server only) |
 | Database | SQLite via PocketBase |
 | Git operations | `go-git/go-git/v5` |

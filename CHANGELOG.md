@@ -11,6 +11,20 @@ changes in a minor release.
 - Per-service **Restart All** and **Stop All** controls, plus multi-select
   restart/stop operations for arbitrary containers in a stack.
 
+### Security
+
+- Rebuild the server, worker, and MCP images on Alpine 3.24; the previous
+  Alpine 3.20 base reached end of support in April 2026 and no longer received
+  security updates.
+- Update the Docker CLI embedded in the server and worker images to 29.x.
+- Fail the `govulncheck` CI gate when the scanner itself cannot run (crash or
+  unreachable vulnerability database) instead of reporting a clean result.
+
+### Changed
+
+- Build with Go 1.27 and update Go and frontend dependencies, including
+  PocketBase v0.40.
+
 ### Documentation
 
 - Define the pre-1.0 server-worker compatibility policy.

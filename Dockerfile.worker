@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM golang:1.26.9-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27.2-alpine AS builder
 
 # No default here on purpose — buildx auto-populates these from the
 # requested --platform, but only if the Dockerfile doesn't shadow them with
@@ -26,9 +26,9 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     -ldflags="-s -w -X github.com/wireops/wireops/internal/buildinfo.Version=${VERSION} -X github.com/wireops/wireops/internal/buildinfo.Commit=${COMMIT} -X github.com/wireops/wireops/internal/buildinfo.BuildDate=${BUILD_DATE}" \
     -o /out/wireops-worker ./worker/main.go
 
-FROM docker:27-cli AS docker-cli
+FROM docker:29-cli AS docker-cli
 
-FROM alpine:3.20
+FROM alpine:3.24
 RUN apk add --no-cache ca-certificates tzdata \
     && addgroup -g 1000 appgroup \
     && adduser -u 1000 -G appgroup -s /bin/sh -D appuser
