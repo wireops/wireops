@@ -142,7 +142,7 @@ Environment variables live in wireops — per stack, per job, or shared globally
 A `job.yaml` in a repo defines a one-shot container on a cron schedule. The file is the single source of truth, and the `resources` block is mandatory:
 
 ```yaml
-title: "Database Backup"
+name: "Database Backup"
 description: "Nightly backup of the postgres database"
 cron: "0 2 * * *"
 image: "postgres:15-alpine"
