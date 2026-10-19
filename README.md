@@ -5,10 +5,15 @@
 [![Latest Release](https://img.shields.io/github/v/release/wireops/wireops?sort=semver)](https://github.com/wireops/wireops/releases/latest)
 [![Server CI](https://github.com/wireops/wireops/actions/workflows/server-ci.yml/badge.svg)](https://github.com/wireops/wireops/actions/workflows/server-ci.yml)
 [![Worker CI](https://github.com/wireops/wireops/actions/workflows/worker-ci.yml/badge.svg)](https://github.com/wireops/wireops/actions/workflows/worker-ci.yml)
+[![MCP CI](https://github.com/wireops/wireops/actions/workflows/mcp-ci.yml/badge.svg)](https://github.com/wireops/wireops/actions/workflows/mcp-ci.yml)
+[![Known Vulnerabilities](https://snyk.io/test/github/wireops/wireops/badge.svg)](https://snyk.io/test/github/wireops/wireops)
 [![govulncheck](https://img.shields.io/badge/govulncheck-passing-brightgreen.svg)](.govulncheck-allowlist.txt)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/wireops/wireops)](go.mod)
+[![Node Version](https://img.shields.io/badge/node-26-brightgreen.svg)](.github/workflows/server-ci.yml)
+[![Nuxt](https://img.shields.io/badge/Nuxt-4.6-00DC82.svg?logo=nuxtdotjs&logoColor=white)](frontend/package.json)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPLv3-blue.svg)](LICENSE)
 [![Codacy Grade](https://app.codacy.com/project/badge/Grade/cdc7bea4ca1e44f780110e784d34938a)](https://app.codacy.com/gh/wireops/wireops/dashboard)
 [![Codacy Coverage](https://app.codacy.com/project/badge/Coverage/cdc7bea4ca1e44f780110e784d34938a)](https://app.codacy.com/gh/wireops/wireops/dashboard)
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPLv3-blue.svg)](LICENSE)
 
 **Push to Git. wireops ships it.** A self-hosted GitOps controller that watches your repos and rolls out `docker compose` changes across every host you own — no Kubernetes, no manifest sprawl, no SSH-and-pray deploys. Think Flux/ArgoCD, but for plain Compose stacks.
 
