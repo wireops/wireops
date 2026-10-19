@@ -19,10 +19,14 @@ changes in a minor release.
 - Update the Docker CLI embedded in the server and worker images to 29.x.
 - Fail the `govulncheck` CI gate when the scanner itself cannot run (crash or
   unreachable vulnerability database) instead of reporting a clean result.
+- Require Go 1.27.2 as the minimum toolchain in `go.mod`. CI and the release
+  images already built on 1.27.2, but the module only asked for 1.27, so a
+  local build could silently link the 1.27.0 standard library and its
+  `crypto/tls`, `net/http` and `os` advisories.
 
 ### Changed
 
-- Build with Go 1.27 and update Go and frontend dependencies, including
+- Build with Go 1.27.2 and update Go and frontend dependencies, including
   PocketBase v0.40.
 
 ### Documentation
