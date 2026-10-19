@@ -5,59 +5,56 @@
 [![Latest Release](https://img.shields.io/github/v/release/wireops/wireops?sort=semver)](https://github.com/wireops/wireops/releases/latest)
 [![Server CI](https://github.com/wireops/wireops/actions/workflows/server-ci.yml/badge.svg)](https://github.com/wireops/wireops/actions/workflows/server-ci.yml)
 [![Worker CI](https://github.com/wireops/wireops/actions/workflows/worker-ci.yml/badge.svg)](https://github.com/wireops/wireops/actions/workflows/worker-ci.yml)
-[![MCP CI](https://github.com/wireops/wireops/actions/workflows/mcp-ci.yml/badge.svg)](https://github.com/wireops/wireops/actions/workflows/mcp-ci.yml)
-[![Known Vulnerabilities](https://snyk.io/test/github/wireops/wireops/badge.svg)](https://snyk.io/test/github/wireops/wireops)
 [![govulncheck](https://img.shields.io/badge/govulncheck-passing-brightgreen.svg)](.govulncheck-allowlist.txt)
-[![Go Version](https://img.shields.io/github/go-mod/go-version/wireops/wireops)](go.mod)
-[![Node Version](https://img.shields.io/badge/node-26-brightgreen.svg)](.github/workflows/server-ci.yml)
-[![Nuxt](https://img.shields.io/badge/Nuxt-4.5-00DC82.svg?logo=nuxtdotjs&logoColor=white)](frontend/package.json)
+[![Codacy Grade](https://app.codacy.com/project/badge/Grade/cdc7bea4ca1e44f780110e784d34938a)](https://app.codacy.com/gh/wireops/wireops/dashboard)
+[![Codacy Coverage](https://app.codacy.com/project/badge/Coverage/cdc7bea4ca1e44f780110e784d34938a)](https://app.codacy.com/gh/wireops/wireops/dashboard)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPLv3-blue.svg)](LICENSE)
-[![Codacy Badge](https://app.codacy.com/project/badge/Grade/cdc7bea4ca1e44f780110e784d34938a)](https://app.codacy.com/gh/wireops/wireops/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
-[![Codacy Badge](https://app.codacy.com/project/badge/Coverage/cdc7bea4ca1e44f780110e784d34938a)](https://app.codacy.com/gh/wireops/wireops/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_coverage)
 
-**Push to Git. wireops ships it.** A self-hosted GitOps controller that watches your repos and rolls out `docker compose` changes across every host you own — no Kubernetes, no extra control-plane manifests, no manual SSH-and-pray deploys. Think Flux/ArgoCD, but for plain Compose stacks.
+**Push to Git. wireops ships it.** A self-hosted GitOps controller that watches your repos and rolls out `docker compose` changes across every host you own — no Kubernetes, no manifest sprawl, no SSH-and-pray deploys. Think Flux/ArgoCD, but for plain Compose stacks.
 
-📚 **Documentation**: [wireops.dev](https://wireops.dev/docs/) · [Português (Brasil)](https://wireops.dev/pt-BR/docs/). It includes installation, architecture, API reference, operations, security, integrations, and troubleshooting. Security reporting remains in [SECURITY.md](SECURITY.md).
+📚 **Docs**: [wireops.dev](https://wireops.dev/docs/) · [Português (Brasil)](https://wireops.dev/pt-BR/docs/) — install, architecture, API reference, operations, security, integrations, troubleshooting. Vulnerabilities go to [SECURITY.md](SECURITY.md), not a public issue.
 
-## Table of Contents
+## What it does
 
-- [Features](#features)
-- [Screenshots](#screenshots)
-- [Project Scope](#project-scope)
-- [Tech Stack](#tech-stack)
-- [Requirements](#requirements)
-- [Quick Start](#quick-start)
-- [Usage](#usage)
-- [Customization](#customization)
-- [Environment Variables](#environment-variables)
-- [Production](#production)
-- [Integrations](#integrations)
-- [Development](#development)
-- [Known Limitations](#known-limitations)
-- [License](#license)
-- [Contributing](#contributing)
+**GitOps**
 
-## Features
+- Polls each repo (interval per stack, or a push webhook) and deploys on every new commit
+- One compose file *is* the stack: an `x-wireops` block carries name, worker tags, timeouts and sync interval, and `docker compose` still runs the file as-is
+- Rollback to any previous commit; every deploy is kept as a numbered revision you can read and diff
+- Per-phase deploy timeline (fetch → lint → render → secrets → policy → dispatch → compose up → post-check → notify) instead of one opaque log blob
+- Adopt what's already running: discover unmanaged Compose projects on a worker and import them; migrate a stack to another repository with a preview of what changes first
+- Cron-scheduled one-shot Docker jobs (`job.yaml`), with run history, manual runs and cancellation
 
-- 🐳 Docker Compose stack management
-- 🔄 Automatic synchronization from Git repositories
-- 📊 Real-time container monitoring
-- 🔐 Share secrets to your Stack/Job with SOPS+age, HashiCorp Vault, Infisical integrations
-- 🛡️ Strong Policy and RBAC system, with audit logging
-- 🔑 SSO login via any OIDC provider
-- 🌐 Webhook, Discord, Slack, and ntfy notifications
-- 🚀 Force redeploy with recreate options
-- 🗓️ Cron-scheduled one-shot Docker jobs
-- 🔄 Rollback to previous commits
-- 🐙 Native GitHub OAuth connect
-- 💻 Audited web terminal, RBAC-gated
-- 🎛️ Optional render-time stack overrides (image/ports/networks/scale) for one-off validation testing, without a git commit
+**Guardrails**
+
+- Compose lint before anything ships — unpinned tags, missing restart policy or healthcheck, plaintext secrets, ports on `0.0.0.0`, and worker-policy breaches, each mapped back to the line in your file
+- Per-worker deploy policy: allowlists for images/volumes/networks/capabilities, plus blocks for privileged, host network/PID/IPC, docker socket, `:latest`
+- Four roles (`monitoring` · `viewer` · `operator` · `admin`) over capability-checked routes, SSO group → role mapping, and an audit log of every change
+- Secrets encrypted at rest (AES-GCM), or kept in HashiCorp Vault, Infisical, or SOPS+age files committed next to your compose file
+
+**Day-2**
+
+- Live container state, logs, stats, and a per-stack dependency graph of services, networks and volumes
+- Audited web terminal into a container, RBAC-gated, with asciicast transcripts and idle timeouts
+- Backups from the UI — scheduled, retained, optionally mirrored to S3-compatible storage with client-side encryption — plus restore and upload
+- Render-time overrides (image/ports/networks/scale) for one-off validation, without a git commit
+- Private registry credentials scoped per stack, never written to the worker's `~/.docker/config.json`
+- Prometheus `/metrics`, webhook/Discord/Slack/ntfy notifications, and a read-only [MCP server](https://wireops.dev/docs/reference/mcp-server/) so an AI agent can inspect stacks and scaffold new ones
+
+**Identity**
+
+- SSO login via any OIDC provider; native OAuth connect for GitHub and GitLab (including self-hosted)
+- Service accounts with scoped API keys for metrics scraping and automation
+
+## How it works
+
+Two binaries from one Go module. The **server** (PocketBase + an embedded Nuxt SPA) does reconciliation, scheduling and state — it never touches Docker. The **workers** connect *out* to the server over a token-authenticated WebSocket and are the only thing that runs `docker compose` on a host. Add a host by starting a worker with a token; nothing needs to reach into it.
+
+See the [architecture guide](https://wireops.dev/docs/reference/architecture/) for the full picture.
 
 ## Screenshots
 
 *Click any screenshot to zoom.*
-
-### Desktop
 
 <p align="center">
   <a href=".github/assets/screenshots/stacks-overview.png"><img src=".github/assets/screenshots/stacks-overview.png" alt="Stacks overview" width="800"></a><br>
@@ -65,124 +62,93 @@
 </p>
 
 <p align="center">
-  <a href=".github/assets/screenshots/dependency-graph.png"><img src=".github/assets/screenshots/dependency-graph.png" alt="Stack dependency graph" width="500"></a><br>
-  <sub><b>Dependency graph</b> — visualize service, network, and volume dependencies per stack</sub>
+  <a href=".github/assets/screenshots/dependency-graph.png"><img src=".github/assets/screenshots/dependency-graph.png" alt="Stack dependency graph" width="420"></a>
+  &nbsp;
+  <a href=".github/assets/screenshots/jobs.png"><img src=".github/assets/screenshots/jobs.png" alt="Cron jobs" width="420"></a><br>
+  <sub><b>Dependency graph</b> — services, networks and volumes per stack · <b>Jobs</b> — cron-scheduled one-shot containers with run history</sub>
 </p>
 
 <p align="center">
-  <a href=".github/assets/screenshots/jobs.png"><img src=".github/assets/screenshots/jobs.png" alt="Cron jobs" width="500"></a><br>
-  <sub><b>Jobs</b> — cron-scheduled one-shot Docker jobs with run history</sub>
+  <a href=".github/assets/screenshots/integrations.png"><img src=".github/assets/screenshots/integrations.png" alt="Integrations" width="420"></a>
+  &nbsp;
+  <a href=".github/assets/screenshots/mobile-stack-detail.png"><img src=".github/assets/screenshots/mobile-stack-detail.png" alt="Mobile stack detail" width="180"></a><br>
+  <sub><b>Integrations</b> — Traefik, Caddy, Dozzle, Vault, Infisical, SOPS, S3, and more · <b>Mobile</b> — manage stacks and secrets from your phone</sub>
 </p>
-
-<p align="center">
-  <a href=".github/assets/screenshots/integrations.png"><img src=".github/assets/screenshots/integrations.png" alt="Integrations" width="500"></a><br>
-  <sub><b>Integrations</b> — Traefik, Caddy, Dozzle, Vault, Infisical, SOPS, and more</sub>
-</p>
-
-### Mobile
-
-<p align="center">
-  <a href=".github/assets/screenshots/mobile-dashboard.png"><img src=".github/assets/screenshots/mobile-dashboard.png" alt="Mobile dashboard" width="220"></a>
-  &nbsp;&nbsp;
-  <a href=".github/assets/screenshots/mobile-stack-detail.png"><img src=".github/assets/screenshots/mobile-stack-detail.png" alt="Mobile stack detail" width="220"></a>
-  &nbsp;&nbsp;
-  <a href=".github/assets/screenshots/mobile-secrets.png"><img src=".github/assets/screenshots/mobile-secrets.png" alt="Mobile secrets management" width="220"></a><br>
-  <sub><b>Mobile-friendly UI</b> — manage stacks and secrets from your phone</sub>
-</p>
-
-## Project Scope
-
-Targets developers, homelabs, and self-hosters running plain `docker compose` stacks across one or many hosts and repos — GitOps sync/deploy, without manifest sprawl or enterprise-grade autoscaling/control-plane complexity.
-
-**Not** a Kubernetes/Swarm alternative, not a competitor to Flux/ArgoCD or enterprise app-management platforms. For production workloads exposed to the internet at enterprise scale (multi-node autoscaling, high availability, compliance-grade orchestration), prefer Kubernetes (with Flux/ArgoCD) instead.
-
-## Tech Stack
-
-- **Backend**: Go + PocketBase
-- **Frontend**: Nuxt 4 + Vue 3 + Nuxt UI
-- **Container Runtime**: Docker + Docker Compose
-- **Database**: SQLite (via PocketBase)
 
 ## Requirements
 
-- A Linux host on `amd64` or `arm64`.
-- Docker Engine `25.0+` and Docker Compose `v2.24.1+` (`docker compose`).
-- Worker access to the Docker socket or configured Docker endpoint.
-- Network access from every worker to the server; use TLS or a private network for remote workers.
+- A Linux host on `amd64` or `arm64`
+- Docker Engine `25.0+` and Docker Compose `v2.24.1+` (`docker compose`)
+- Worker access to the Docker socket or a configured Docker endpoint
+- Network access from every worker to the server — TLS or a private network for remote workers
 
-Keep the server and every worker on the exact same release. See the
-[compatibility policy](https://wireops.dev/docs/operations/compatibility/) before upgrading either component.
+Keep the server and every worker on the exact same release; read the [compatibility policy](https://wireops.dev/docs/operations/compatibility/) before upgrading either.
 
-## Quick Start
+## Quick start
 
-wireops has two pieces you bring up separately: the **server** first, then one or more **workers** that register against it (see the [architecture guide](https://wireops.dev/docs/reference/architecture/) for why). The `example/docker-compose.yml` file has both services predefined.
+The server comes up first, then one or more workers register against it. `example/docker-compose.yml` has both.
 
-**1. Start the server**
-
-Generate a 32-byte key for `SECRET_KEY` (this encrypts every secret wireops stores — git passwords, SSH keys, integration tokens — so treat it like any other production credential):
-
-```bash
-openssl rand -hex 32
-```
+**1. Start the server.** `SECRET_KEY` encrypts every secret wireops stores — git passwords, SSH keys, integration tokens — so treat it like a production credential:
 
 ```bash
 cp example/.env.example example/.env
-# Edit example/.env: set SECRET_KEY, BOOTSTRAP_TOKEN, WORKER_TAGS, and the
-# Linux DOCKER_GID when applicable
-# Optionally set APP_URL for production deployments
+# Set SECRET_KEY (openssl rand -hex 32), BOOTSTRAP_TOKEN, WORKER_TAGS,
+# and DOCKER_GID on Linux. Set APP_URL if this isn't localhost.
 
 cd example
 docker compose up -d wireops
 ```
 
-Minimum `example/.env` values for the server's first start:
+**2. Create the first admin.** There are no default credentials. Open `http://localhost:8090/setup`, enter your `BOOTSTRAP_TOKEN`, create the account. The route closes itself once an admin exists — keeping or dropping the token afterwards changes nothing, but dropping it is tidier.
+
+**3. Issue a worker token.** **Workers → Add Worker** in the UI, copy the token.
+
+**4. Start a worker.**
 
 ```bash
-SECRET_KEY=<paste the openssl output here>
-BOOTSTRAP_TOKEN=replace-with-a-strong-one-time-token
-```
-
-**2. Create the first administrator account**
-
-There are no default credentials — wireops requires a bootstrap token for the first web-based setup. Open `http://localhost:8090/setup` (or `http://<server-ip>:8090/setup`), enter the `BOOTSTRAP_TOKEN` you set, and create the admin account. The setup route closes itself automatically once that first admin exists.
-
-Notes:
-- `BOOTSTRAP_TOKEN` is only used while no administrator exists yet — if it's missing on a fresh instance, the setup page stays blocked until it's configured.
-- After setup is complete, keeping or removing `BOOTSTRAP_TOKEN` doesn't reopen setup, but removing it is recommended.
-
-**3. Issue a worker token**
-
-Once logged in, go to **Workers → Add Worker** in the UI and copy the token it gives you.
-
-**4. Start a worker**
-
-```bash
-# in the same example/ directory
+# still in example/
 WORKER_TOKEN=paste-the-token-here WORKER_TAGS=prod,eu-west-1 docker compose up -d wireops-worker
 ```
 
-The worker connects out to the server, registers with that token, and starts polling for stacks/jobs to run. Check **Workers** in the UI — it should flip to `ACTIVE` within a few seconds.
+It connects out, registers, and flips to `ACTIVE` in **Workers** within a few seconds. `WORKER_TAGS` is what a worker is *for* (`prod`, `eu-west-1`) — required, comma-separated, set on the worker itself. Stacks and jobs can require tags, so only matching workers show up as targets.
 
-`WORKER_TAGS` labels what a worker is for (e.g. `prod`, `eu-west-1`) — required, comma-separated, set on the worker itself, not in the UI. Stacks and jobs can require specific tags in their `x-wireops` block (or the deprecated standalone `wireops.yaml`)/`job.yaml`, so only matching workers show up as valid targets.
+> **Linux permissions:** the containers run as UID/GID `1000`. Create `example/data` and make it writable by that identity before the first start, and set `DOCKER_GID` to the Docker socket's numeric group (`stat -c '%g' /var/run/docker.sock`). `example/.env.example` has the commands. Linux is the supported production environment.
 
-> **Linux permissions:** the containers run as UID/GID `1000`. Before the first start, create `example/data` and make it writable by that identity. A Linux worker also needs the Docker socket's numeric group in `DOCKER_GID`; `example/.env.example` contains the commands. On Docker Desktop, the data directory must still be writable by the container user and socket permissions depend on the local setup; Linux is the supported production environment.
+The example pins `WIREOPS_VERSION` rather than tracking `latest`. Port `8443` is plain HTTP/WebSocket while `TLS_ENABLED=false` — remote workers should use native TLS or a private network. Read the [production guidance](https://wireops.dev/docs/operations/production/) before exposing an instance.
 
-The example pins `WIREOPS_VERSION` instead of using `latest`. Port `8443` is plain HTTP/WebSocket while `TLS_ENABLED=false`; remote workers should use native TLS or a private network. See [production guidance](https://wireops.dev/docs/operations/production/) before exposing an instance.
+## Defining a stack
 
-## Usage
+A stack is a compose file in a Git repository, plus a top-level `x-wireops` block telling wireops how to deploy it. `x-*` is a [compose extension field](https://docs.docker.com/reference/compose-file/extension/), so `docker compose up` still runs the file unchanged:
 
-1. **Add a Repository**: Configure your Git repository with credentials if needed
-2. **Create a Stack**: Link a stack to a repository, specify compose file location
-3. **Configure**: Set environment variables, poll interval, and sync options
-4. **Deploy**: Stacks auto-sync on interval or trigger manually/via webhook
+```yaml
+x-wireops:
+  version: wireops.v1
+  name: api
+  group: platform           # optional, for grouping in the UI
+  timeout: 5m               # deploy timeout
+  sync:
+    interval: 2m            # how often this repo is polled for this stack
+  worker:
+    tags: [prod, amd64]     # which workers may run it
+  compose:
+    remove_orphans: true
+    force_pull: false
+  jobs:
+    wait_running: true      # wait for related jobs before deploying
 
-### Scheduled Jobs
+services:
+  api:
+    image: ghcr.io/acme/api:1.4.2
+    restart: unless-stopped
+```
 
-wireops supports cron-based execution of one-shot Docker containers. A job is configured via a `job.yaml` file committed to a Git repository.
+Point a stack at the file in the UI (**Stacks → New**) and wireops re-reads the block from git on every sync — those fields aren't editable through the API, so git stays the source of truth. The older two-file layout (a separate `wireops.yaml`) still works, but `x-wireops` is the path for anything new.
 
-The `job.yaml` configuration is the single source of truth for the job and requires a `resources` block with `cpu`, `memory`, and `timeout` settings.
+Environment variables live in wireops — per stack, per job, or shared globally — can be marked secret, and support bulk edit and copy-from-another-stack. Config files committed to the repo mount into services via a `dev.wireops.config.<name>` annotation, checksum-tracked so drift shows up.
 
-**Example `job.yaml`:**
+### Scheduled jobs
+
+A `job.yaml` in a repo defines a one-shot container on a cron schedule. The file is the single source of truth and the `resources` block is mandatory:
 
 ```yaml
 title: "Database Backup"
@@ -191,105 +157,90 @@ cron: "0 2 * * *"
 image: "postgres:15-alpine"
 command: ["pg_dump", "-h", "db", "-U", "postgres", "mydb"]
 tags: ["backup", "prod"]
-mode: "once" # once or once_all
+mode: "once"          # once | once_all
 volumes:
   - "/opt/backups:/backups"
 network: "prod_network"
 resources:
-  cpu: "0.5"        # Mandatory: CPU limit (e.g., "0.5" or "2")
-  memory: "512m"    # Mandatory: Memory limit (e.g., "256m" or "1g")
-  timeout: "15m"    # Mandatory: Job timeout duration (e.g., "10m", "1h")
+  cpu: "0.5"          # required
+  memory: "512m"      # required
+  timeout: "15m"      # required
 ```
 
-### Private Registry Credentials
+## Secrets
 
-To deploy a stack that pulls images from a private registry (Docker Hub, GHCR, a self-hosted Harbor/Nexus/`registry:2`, or GCP Artifact Registry), add a **Registry Credential** and assign it to the stack — the worker authenticates the pull with it, scoped to that one deploy only, without touching the worker host's global `~/.docker/config.json`.
+Four ways to get a value into a container, pick per variable:
 
-1. **Settings → Secrets → Registry Credentials** tab, **Add Credential**.
-2. Fill in:
-   - **Registry URL** — a host, with or without scheme (`ghcr.io`, `https://registry.example.com:5000`).
-   - **Type** — `Username / Password`, `Token`, or `GCP Service Account` (paste the service-account JSON key; the username is fixed to `_json_key`, the convention Google's registries expect).
-   - **Insecure registry** — only for a registry served over plain HTTP or a self-signed TLS certificate. This toggle does **not** configure the worker's Docker daemon for you — the worker host still needs the registry listed under `insecure-registries` in its own `/etc/docker/daemon.json` (with Docker restarted), or the deploy will fail with a clear preflight error rather than a silent pull failure.
-3. **Test Connection** before saving to confirm the credential authenticates against the registry.
-4. Open the target **Stack**'s settings and assign the credential under **Registry Credential** — it now applies to every deploy, redeploy, and rollback of that stack.
+| Backend | Where the value lives |
+|---|---|
+| `internal` | wireops' own DB, AES-GCM encrypted with `SECRET_KEY` |
+| `vault` | HashiCorp Vault KV v2, referenced as `<mount>/data/<path>#<field>`, fetched at deploy time |
+| `infisical` | Infisical, referenced as `<project>/<env>/<path>#<NAME>`, fetched at deploy time |
+| SOPS + age | A `secrets.yaml` committed next to your compose file, decrypted during sync with the repo's auto-generated age key |
 
-Testing the connection to a registry on your own private network (not reachable from the public internet) requires opting it into `ALLOWED_PRIVATE_IP_RANGES` (comma-separated CIDRs/IPs) — by default the server blocks that request as a potential SSRF vector, the same protection already applied to git host key scanning. This only gates the server-side "Test Connection" handshake; the worker's actual pull is unaffected.
+Nothing plaintext is ever persisted, a deploy is blocked up front if a referenced backend is disabled, and reveal actions are audited. Details: [Secrets](https://wireops.dev/docs/reference/environment-variables/).
 
-## Customization
+## Day-2 operations
 
-### Custom Container Thumbnails
+Short version of what's in the UI — the [docs](https://wireops.dev/docs/) have the full story on each.
 
-You can customize the image slug (icon/identifier) displayed in the UI for your containers by adding the `customization.image.slug` label to your Docker Compose services.
-
-These images are fetched from the [selfh.st/icons](https://selfh.st/icons/) catalog and served globally via its CDN. The slug you provide must match the identifier used in their catalog.
-
-The application automatically extracts this value from the service's `labels`, `annotations`, `deploy.labels`, or `deploy.annotations`.
-
-**Example `docker-compose.yml`:**
-
-```yaml
-services:
-  app:
-    image: nginx:1.31.4-alpine
-    labels:
-      - "customization.image.slug=nginx"
-```
-
-### Override Deployment
-
-Stacks support render-time overrides — swapping a service's `image`, `ports`, `networks`, or `scale` without committing anything to git. Overrides are stored on the stack (not the repo), applied only when the compose file is rendered for deploy, and only take effect the next time the stack is rendered/redeployed. A scale of `0` stops every container for that service; scale-only overrides adjust replica counts without recreating unchanged containers.
-
-- Gated by the **"Allow render overrides"** worker policy flag (`allow_render_overrides`), off by default — set it globally or per-worker in worker policy settings.
-- View, set, and clear overrides from the stack detail page, or via `GET`/`PUT`/`DELETE /api/custom/stacks/{id}/render-overrides`.
-- Overridden values still pass through the worker's other deploy policy checks (image/network allowlists, etc.) — an override can't be used to bypass policy.
-- Applying or clearing overrides force-recreates the stack's containers, except when the change is scale-only — those adjust replica counts without recreating unchanged containers.
-
-## Environment Variables
-
-`SECRET_KEY` is required. `BOOTSTRAP_TOKEN` is required only until the first
-administrator is created — see [Quick Start](#quick-start) above.
-
-For the full server/worker env var reference, SMTP, OIDC/SSO, secret providers (Vault/Infisical), and SOPS+age, see [Environment Variables](https://wireops.dev/docs/reference/environment-variables/).
-
-Metrics, Prometheus/Grafana scrape config, the MCP server, and the disaster-recovery runbook are documented at [Observability](https://wireops.dev/docs/reference/observability/) · [MCP Server](https://wireops.dev/docs/reference/mcp-server/) · [Disaster Recovery](https://wireops.dev/docs/operations/disaster-recovery/).
-
-## Production
-
-The quick start is intended to prove the installation. Before using wireops for workloads you care about, pin the image version, enable TLS for remote workers, configure off-host backups, protect `SECRET_KEY` separately, and test one restore. Follow the [production checklist](https://wireops.dev/docs/operations/production/), [compatibility policy](https://wireops.dev/docs/operations/compatibility/), and [upgrade guide](https://wireops.dev/docs/operations/upgrading/).
+- **Rollback & revisions** — redeploy any earlier commit; read or diff the exact rendered compose file of any past deploy.
+- **Render overrides** — swap a service's `image`, `ports`, `networks` or `scale` without a commit, for one-off validation. Stored on the stack, applied at render time, still subject to every policy check. Gated by the `allow_render_overrides` worker-policy flag (off by default). `scale: 0` stops a service; scale-only changes adjust replicas without recreating containers.
+- **Registry credentials** — Docker Hub, GHCR, Harbor/Nexus/`registry:2`, or a GCP service-account key. Assign one to a stack and the worker authenticates that deploy's pulls only. Reaching a registry on a private network means opting its range into `ALLOWED_PRIVATE_IP_RANGES` — the same SSRF guard that covers git host-key scanning.
+- **Backups** — create, schedule, retain, download and restore from the UI, no PocketBase superuser needed. Enable the S3 integration and every new backup is also mirrored off-host, encrypted client-side (`SECRET_KEY`-derived, or an AWS KMS-wrapped data key). Mirroring replicates, never moves. The archive covers the database — not the git checkouts and rendered revisions under `DATA_DIR`. See [Disaster Recovery](https://wireops.dev/docs/operations/disaster-recovery/).
+- **Web terminal** — a shell in a running container, behind the `use_terminal` capability, with per-worker session limits, a 15-minute idle timeout, and an asciicast transcript kept 30 days. Transcripts capture everything typed and shown, secrets included.
+- **Custom thumbnails** — add `customization.image.slug=nginx` to a service's labels (or `annotations`/`deploy.labels`) and the UI shows that icon from the [selfh.st/icons](https://selfh.st/icons/) catalog.
 
 ## Integrations
 
-Wireops ships two kinds of integration plugin, registered the same way (`internal/integrations/`) and enabled/configured from the same Settings screen: **container-action** integrations (Traefik, Caddy, Nginx Proxy Manager, Dozzle) add clickable "Open"/"Logs" shortcuts to the container list; **notification** integrations (Webhook, Discord, Slack, Ntfy) send a message when a sync event fires and don't touch the container list.
+Plugins register themselves in `internal/integrations/` and are all configured from the same Settings screen:
 
-Full plugin interface, config fields, and label/compose examples: [Integrations](https://wireops.dev/docs/integrations/).
+| Kind | Plugins |
+|---|---|
+| Container actions | Traefik, Caddy, Nginx Proxy Manager, Dozzle — add "Open"/"Logs" shortcuts to the container list |
+| Notifications | Webhook, Discord, Slack, ntfy — fire on sync events |
+| Secret backends | Vault, Infisical, SOPS |
+| Storage | S3-compatible, for off-host backup mirroring |
+| Source control | GitHub, GitLab — OAuth connect, enabled by setting the provider's client ID/secret |
+
+Plugin interface, config fields and label examples: [Integrations](https://wireops.dev/docs/integrations/).
+
+## Configuration
+
+`SECRET_KEY` is required. `BOOTSTRAP_TOKEN` is required only until the first admin exists. Everything else has a default.
+
+Full reference — server and worker variables, SMTP, OIDC/SSO, Vault/Infisical, SOPS+age, TLS: [Environment Variables](https://wireops.dev/docs/reference/environment-variables/). Also: [Observability](https://wireops.dev/docs/reference/observability/) (metrics, Prometheus/Grafana scrape config) · [MCP Server](https://wireops.dev/docs/reference/mcp-server/) · [Disaster Recovery](https://wireops.dev/docs/operations/disaster-recovery/).
+
+## Production
+
+The quick start is there to prove the install. Before you run anything you care about: pin the image version, enable TLS for remote workers, configure off-host backups, keep `SECRET_KEY` somewhere separate, and test one restore. Then follow the [production checklist](https://wireops.dev/docs/operations/production/), [compatibility policy](https://wireops.dev/docs/operations/compatibility/) and [upgrade guide](https://wireops.dev/docs/operations/upgrading/).
 
 ## Development
 
-```bash
-# Backend
-go run main.go serve
+Go + PocketBase on the backend, Nuxt 4 + Vue 3 + Nuxt UI on the frontend, SQLite for storage.
 
-# Frontend
-cd frontend
-npm install
-npm run dev
+```bash
+make dev                  # backend :8090 (admin at /_/) + frontend :3000
+START_WORKER=true WORKER_TOKEN=... make dev    # ...and a local worker
+
+go test ./...             # backend
+cd frontend && npm run test && npm run lint
+
+make all                  # production build: SPA into pb_public/, then the binary
 ```
 
----
+`AGENTS.md` is the deep reference — data model, every custom endpoint, business flows, conventions.
 
-## Known Limitations
+## Scope
 
-- No OCI-artifact source, Docker Swarm/multi-node, or canary/preview deploys yet (tracked as strategic backlog with no ETA).
+Built for developers, homelabs and self-hosters running plain `docker compose` across one or many hosts and repos: GitOps sync and deploy, without manifest sprawl or control-plane complexity.
+
+It is **not** a Kubernetes or Swarm alternative, and not a competitor to Flux/ArgoCD. If you need multi-node autoscaling, HA or compliance-grade orchestration, use Kubernetes. No OCI-artifact source, Swarm/multi-node support, or canary/preview deploys — those are strategic backlog with no ETA.
 
 ## License
 
-AGPLv3 — see [LICENSE](LICENSE)
-
-wireops is free/open-source software. Forks and derivative works must also
-be released under AGPLv3 (or a compatible license) and must credit
-**wireops** ([github.com/wireops/wireops](https://github.com/wireops/wireops))
-as the original project — see [NOTICE](NOTICE).
+AGPLv3 — see [LICENSE](LICENSE). wireops is free/open-source software. Forks and derivative works must also be AGPLv3 (or compatible) and must credit **wireops** ([github.com/wireops/wireops](https://github.com/wireops/wireops)) as the original project — see [NOTICE](NOTICE).
 
 ## Contributing
 
-Contributions are welcome! Please open an issue or PR. Security reports must follow [SECURITY.md](SECURITY.md) instead of a public issue. User-visible changes should be added to the `Unreleased` section of [CHANGELOG.md](CHANGELOG.md).
+Issues and PRs welcome. Security reports follow [SECURITY.md](SECURITY.md) instead of a public issue. User-visible changes go in the `Unreleased` section of [CHANGELOG.md](CHANGELOG.md).
