@@ -2,10 +2,12 @@
 // API. It never holds a credential itself — every call takes the caller's
 // API key explicitly and forwards it as-is (pass-through auth).
 // Authorization is enforced entirely server-side by
-// internal/auth.APIKeyMiddleware and internal/rbac.
+// internal/auth.APIKeyMiddleware and internal/rbac, so a viewer-scoped key
+// simply gets a 403 back from the server for the write verbs below.
 package client
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -71,20 +73,36 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("wireops API error: status=%d body=%s", e.StatusCode, e.Body)
 }
 
-// Get issues an authenticated GET against path (e.g. "/api/collections/stacks/records")
-// with the given query params, and decodes the JSON response into out.
-func (c *Client) Get(ctx context.Context, apiKey, path string, query url.Values, out any) error {
+// do issues an authenticated request against path with the given query params
+// and optional JSON body, decoding the JSON response into out (out may be nil
+// to discard it). It is the single place where the API key header, the non-2xx
+// handling and the JSON codec live; every verb below is a thin wrapper.
+func (c *Client) do(ctx context.Context, apiKey, method, path string, query url.Values, body, out any) error {
 	reqURL := c.baseURL + path
 	if len(query) > 0 {
 		reqURL += "?" + query.Encode()
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	var payload io.Reader
+	if body != nil {
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			return fmt.Errorf("encoding request body: %w", err)
+		}
+		// bytes.Reader (not bytes.Buffer) so net/http can replay the body on
+		// a same-origin redirect instead of resending an empty one.
+		payload = bytes.NewReader(encoded)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, reqURL, payload)
 	if err != nil {
 		return fmt.Errorf("building request: %w", err)
 	}
 	req.Header.Set(auth.APIKeyHeader, apiKey)
 	req.Header.Set("Accept", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -92,20 +110,76 @@ func (c *Client) Get(ctx context.Context, apiKey, path string, query url.Values,
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("reading response: %w", err)
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return &APIError{StatusCode: resp.StatusCode, Body: string(body)}
+		return &APIError{StatusCode: resp.StatusCode, Body: string(respBody)}
 	}
 
 	if out == nil {
 		return nil
 	}
-	if err := json.Unmarshal(body, out); err != nil {
+	if err := json.Unmarshal(respBody, out); err != nil {
 		return fmt.Errorf("decoding response: %w", err)
 	}
 	return nil
+}
+
+// Get issues an authenticated GET against path (e.g. "/api/collections/stacks/records")
+// with the given query params, and decodes the JSON response into out.
+func (c *Client) Get(ctx context.Context, apiKey, path string, query url.Values, out any) error {
+	return c.do(ctx, apiKey, http.MethodGet, path, query, nil, out)
+}
+
+// GetRaw issues an authenticated GET and returns the response body verbatim,
+// for endpoints that don't answer with JSON (e.g. the NDJSON terminal
+// transcript).
+func (c *Client) GetRaw(ctx context.Context, apiKey, path string, query url.Values) ([]byte, error) {
+	reqURL := c.baseURL + path
+	if len(query) > 0 {
+		reqURL += "?" + query.Encode()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("building request: %w", err)
+	}
+	req.Header.Set(auth.APIKeyHeader, apiKey)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("calling wireops API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading response: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, &APIError{StatusCode: resp.StatusCode, Body: string(respBody)}
+	}
+	return respBody, nil
+}
+
+// Post issues an authenticated POST with a JSON body.
+func (c *Client) Post(ctx context.Context, apiKey, path string, query url.Values, body, out any) error {
+	return c.do(ctx, apiKey, http.MethodPost, path, query, body, out)
+}
+
+// Put issues an authenticated PUT with a JSON body.
+func (c *Client) Put(ctx context.Context, apiKey, path string, query url.Values, body, out any) error {
+	return c.do(ctx, apiKey, http.MethodPut, path, query, body, out)
+}
+
+// Patch issues an authenticated PATCH with a JSON body.
+func (c *Client) Patch(ctx context.Context, apiKey, path string, query url.Values, body, out any) error {
+	return c.do(ctx, apiKey, http.MethodPatch, path, query, body, out)
+}
+
+// Delete issues an authenticated DELETE.
+func (c *Client) Delete(ctx context.Context, apiKey, path string, query url.Values, out any) error {
+	return c.do(ctx, apiKey, http.MethodDelete, path, query, nil, out)
 }

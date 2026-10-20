@@ -19,6 +19,7 @@ Self-hosted GitOps platform for managing Docker Compose stacks and scheduled Doc
 - [Environment Variables](#environment-variables)
 - [Integration Plugin System](#integration-plugin-system)
 - [Notifications](#notifications)
+- [MCP Server](#mcp-server)
 - [Access Control, Policy & Audit](#access-control-policy--audit)
 - [Coding Conventions](#coding-conventions)
 - [Testing & Coverage](#testing--coverage)
@@ -78,7 +79,7 @@ Self-hosted GitOps platform for managing Docker Compose stacks and scheduled Doc
 │       └── watcher.go            # File-based change detection
 ├── pb_migrations/                # PocketBase SQLite schema migrations
 ├── pb_public/                    # Compiled frontend static assets (served by PocketBase)
-├── mcp/                          # Standalone MCP server binary (wireops-mcp) — read-only tools + generate/scaffold tools, pass-through auth
+├── mcp/                          # Standalone MCP server binary (wireops-mcp) — read + operator-scoped write tools, generate/scaffold tools, pass-through auth
 └── frontend/                     # Nuxt 4 SPA (Vue 3, @nuxt/ui v4, Tailwind)
     └── app/
         ├── pages/                # File-based routing
@@ -378,6 +379,22 @@ Registered via `init()` and `integrations.Register()`. Current plugins:
 Historically configured via the `stack_sync_events` singleton collection with two built-in providers (Webhook, Ntfy). Discord and Slack were added as `internal/integrations/` notification plugins rather than extending `stack_sync_events` directly — treat `integrations/` as the current extension point for new notification channels; `internal/notify/` remains for the original webhook/ntfy wiring.
 
 Events: `sync.started`, `sync.done`, `sync.error`, `sync.test`.
+
+---
+
+## MCP Server
+
+A third deployable (`mcp/`, image from `Dockerfile.mcp`, binary `wireops-mcp`) that translates the existing REST API into MCP. It is **not** mounted into the server — it is its own process, listening on `MCP_LISTEN_ADDR` (default `:8091`) and talking to `SERVER_URL`. Transport is streamable HTTP at `POST/GET /mcp` (`mcp/app/app.go`), via `github.com/modelcontextprotocol/go-sdk`. 67 tools, 3 resource templates (`wireops://stacks/{id}/compose`, `wireops://jobs/{id}/raw`, `wireops://stacks/{id}/logs/live`, the last subscribable through the SSE bridge in `mcp/resources/livelogs.go`) and 2 prompts.
+
+- **Pass-through auth, no credential of its own.** Each client supplies its own `service_accounts` API key per connection (`X-Wireops-Api-Key`, or `Authorization: Bearer`), stashed in the request context by `withAPIKeyMiddleware` and forwarded verbatim by `mcp/client`. Nothing is persisted, so the audit log keeps per-agent granularity and a key can be revoked individually. `mcp/client`'s `CheckRedirect` refuses any redirect off `SERVER_URL`'s origin, since Go would otherwise carry the key header to it.
+- **Authorization is the server's, never the MCP process's.** There is no per-tool capability check and no allowlist: all 67 tools are registered for every session, and a key that is not `operator` gets a 403 from `rbac.Require(...)` at call time. Deliberate — a gate here would be a second, weaker copy of the RBAC. Since `internal/routes/service_accounts.go` caps a service account at `viewer`/`operator`, the MCP ceiling is exactly the `operator` capability set (`operate_stacks`, `manage_repositories`, `manage_jobs`, `manage_workers`, `use_terminal`).
+  - Consequence worth knowing: the tools that call `manage_settings`/`view_audit_logs` routes (`list_audit_logs`, `get_worker_policy`, `get_global_worker_policy`, `list_integrations`, `list_orphans`, `get_system_info`) are **admin-only and therefore unreachable with any API key** — they always 403. `scaffold_stack`'s optional `worker_id` policy check inherits that. Not fixed here: resolving it means either allowing `admin` service accounts, lowering those routes' capability, or dropping the tools.
+- **Tool annotations** (`mcp/tools/annotations.go`): every tool carries `ToolAnnotations` via one of `readOnly()` / `additive(idempotent)` / `destructive(idempotent)`, because the MCP default for an unannotated tool is `destructiveHint=true`. This is what lets a client decide unattended-vs-confirm. Keep new tools annotated; `lint_compose` and `preview_stack_migration` are `readOnly()` despite being POSTs, since they only parse.
+- **Confirm gate** (`mcp/tools/confirm.go`): the tools whose effect cannot be undone take a `confirm` field and run `requireConfirm`, which resolves the record's own name server-side and demands an exact match — `stacks`→`name`, `workers`→`hostname`, `repositories`→`name`, `scheduled_jobs`→`name`; `stop_container` matches the resolved compose service name and `delete_job_run` the literal `"delete"`. The error quotes the expected value on purpose, so the agent relays it and asks rather than retrying. `force_redeploy_stack` and `set_stack_env_vars`/`set_job_env_vars` require it only on their destructive branch (`recreate_volumes`, `mode: "replace"`). A mismatch must fail **before** any write request leaves the process — the tests assert exactly that.
+- **Write tools map 1:1 onto routes the UI already calls**, so RBAC, worker-policy validation and audit entries all come for free. Pause/resume is a `PATCH` on the `stacks` record (`set_stack_paused`), the same mechanism `frontend/app/pages/stacks/[id].vue` uses; collection CRUD (`repositories`, `scheduled_jobs`) is audited by the global `OnRecord{Create,Update,Delete}Request` hooks in `internal/hooks/pb_hooks.go`.
+- **`exec_in_container`** (`mcp/tools/tools_exec.go`) is the only tool that composes several routes: it opens a real pty session, sends the command plus a newline, polls the asciicast-v2 transcript until the output stops growing for a quiet period (a pty gives no completion signal), then closes the session in a `defer` so an abandoned shell never waits for the 15-minute idle sweeper. Transcript events are base64-encoded (see `internal/termsession.AppendTranscript`), and a torn final line is skipped rather than failing the read. Transcript ownership works because `actorID` is the service-account id, so the same key that opened the session can read it back.
+- **Deliberately not exposed**, though an operator could call them: credential/registry `test` and `keyscan`, the git-provider OAuth routes, `sops-rotate-key`, the Vault/Infisical browse routes, and repository credential writes (`repository_keys`). Setup/secret-material flows that belong in the UI.
+- **Tests**: `go test ./mcp/...` (own CI workflow, `.github/workflows/mcp-ci.yml`, plus `govulncheck`). Pattern is stdlib-only — `httptest.NewServer` plus the handler called as a plain function with `ctxWithKey()`; `mcp/tools/tools_write_test.go`'s `recorder` records every request so a test can assert the method, path, query, body *and* that nothing was written at all.
 
 ---
 

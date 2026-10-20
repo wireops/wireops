@@ -8,6 +8,20 @@ changes in a minor release.
 
 ### Added
 
+- The MCP server now exposes the `operator` actions, not only reads: deploy,
+  force redeploy, rollback, pause/resume, render-time overrides, container
+  restart/stop, transfer, delete, env var writes, stack import, stack creation
+  from a repository compose file, repository and scheduled-job management, job
+  runs, worker revocation, and one-shot `exec_in_container`. Authorization is
+  unchanged and still the server's: an API key belongs to a service account,
+  which can only be `viewer` or `operator`, so a viewer-scoped key keeps
+  getting `403` for every one of them and an instance that does not run the MCP
+  container is unaffected.
+- Every MCP tool now carries the protocol's read-only/destructive/idempotent
+  hints, so a client can tell which calls are safe unattended, and the
+  irreversible ones require a `confirm` field repeating the resource's exact
+  name (stack name, worker hostname, repository name, job name) before any
+  write leaves the process.
 - Per-service **Restart All** and **Stop All** controls, plus multi-select
   restart/stop operations for arbitrary containers in a stack.
 

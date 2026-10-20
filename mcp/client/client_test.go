@@ -2,6 +2,8 @@ package client
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -127,5 +129,170 @@ func TestGetWithNilOutSkipsDecode(t *testing.T) {
 	err := c.Get(context.Background(), "wireops_sk_test", "/api/custom/stacks/x/services", nil, nil)
 	if err != nil {
 		t.Fatalf("expected no error when out is nil, got %v", err)
+	}
+}
+
+// writeRecorder captures what a write verb actually put on the wire.
+type writeRecorder struct {
+	method      string
+	path        string
+	query       string
+	contentType string
+	apiKey      string
+	body        string
+}
+
+func newWriteServer(t *testing.T, response string) (*httptest.Server, *writeRecorder) {
+	t.Helper()
+	rec := &writeRecorder{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		rec.method = r.Method
+		rec.path = r.URL.Path
+		rec.query = r.URL.RawQuery
+		rec.contentType = r.Header.Get("Content-Type")
+		rec.apiKey = r.Header.Get(auth.APIKeyHeader)
+		rec.body = string(raw)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(response))
+	}))
+	t.Cleanup(srv.Close)
+	return srv, rec
+}
+
+func TestWriteVerbsSendMethodBodyAndHeaders(t *testing.T) {
+	cases := []struct {
+		name   string
+		call   func(c *Client, ctx context.Context) error
+		method string
+		body   string
+	}{
+		{
+			name: "post",
+			call: func(c *Client, ctx context.Context) error {
+				return c.Post(ctx, "wireops_sk_test", "/api/custom/stacks/s1/sync", nil, map[string]any{"a": 1}, nil)
+			},
+			method: http.MethodPost,
+			body:   `{"a":1}`,
+		},
+		{
+			name: "put",
+			call: func(c *Client, ctx context.Context) error {
+				return c.Put(ctx, "wireops_sk_test", "/api/custom/stacks/s1/render-overrides", nil, map[string]any{"a": 1}, nil)
+			},
+			method: http.MethodPut,
+			body:   `{"a":1}`,
+		},
+		{
+			name: "patch",
+			call: func(c *Client, ctx context.Context) error {
+				return c.Patch(ctx, "wireops_sk_test", "/api/collections/stacks/records/s1", nil, map[string]any{"a": 1}, nil)
+			},
+			method: http.MethodPatch,
+			body:   `{"a":1}`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, rec := newWriteServer(t, `{}`)
+			if err := tc.call(New(srv.URL), context.Background()); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if rec.method != tc.method {
+				t.Fatalf("expected %s, got %s", tc.method, rec.method)
+			}
+			if rec.body != tc.body {
+				t.Fatalf("expected body %s, got %s", tc.body, rec.body)
+			}
+			if rec.contentType != "application/json" {
+				t.Fatalf("expected a JSON content type, got %q", rec.contentType)
+			}
+			if rec.apiKey != "wireops_sk_test" {
+				t.Fatalf("expected the API key forwarded, got %q", rec.apiKey)
+			}
+		})
+	}
+}
+
+func TestDeleteSendsNoBodyAndForwardsQuery(t *testing.T) {
+	srv, rec := newWriteServer(t, `{}`)
+
+	if err := New(srv.URL).Delete(context.Background(), "wireops_sk_test", "/api/custom/stacks/s1", url.Values{"force": {"true"}}, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rec.method != http.MethodDelete {
+		t.Fatalf("expected DELETE, got %s", rec.method)
+	}
+	if rec.body != "" {
+		t.Fatalf("expected no body, got %q", rec.body)
+	}
+	// Without a body there is nothing to describe, so the header must stay off.
+	if rec.contentType != "" {
+		t.Fatalf("expected no content type on a bodyless request, got %q", rec.contentType)
+	}
+	if rec.query != "force=true" {
+		t.Fatalf("expected the query forwarded, got %q", rec.query)
+	}
+}
+
+func TestPostDecodesResponseInto(t *testing.T) {
+	srv, _ := newWriteServer(t, `{"session_id":"sess-1"}`)
+
+	var out struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := New(srv.URL).Post(context.Background(), "wireops_sk_test", "/x", nil, struct{}{}, &out); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.SessionID != "sess-1" {
+		t.Fatalf("expected the response decoded, got %+v", out)
+	}
+}
+
+func TestWriteVerbsSurfaceAPIError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error":"permission denied"}`))
+	}))
+	defer srv.Close()
+
+	err := New(srv.URL).Post(context.Background(), "wireops_sk_viewer", "/api/custom/stacks/s1/sync", nil, struct{}{}, nil)
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected an APIError, got %v", err)
+	}
+	if apiErr.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", apiErr.StatusCode)
+	}
+}
+
+func TestGetRawReturnsBodyVerbatim(t *testing.T) {
+	ndjson := "{\"version\":2}\n[0,\"o\",\"aGk=\"]\n"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_, _ = w.Write([]byte(ndjson))
+	}))
+	defer srv.Close()
+
+	got, err := New(srv.URL).GetRaw(context.Background(), "wireops_sk_test", "/transcript", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(got) != ndjson {
+		t.Fatalf("expected the body verbatim, got %q", got)
+	}
+}
+
+func TestGetRawSurfacesAPIError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	_, err := New(srv.URL).GetRaw(context.Background(), "wireops_sk_test", "/transcript", nil)
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected a 404 APIError, got %v", err)
 	}
 }
