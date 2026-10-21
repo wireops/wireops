@@ -12,7 +12,8 @@ changes in a minor release.
   force redeploy, rollback, pause/resume, render-time overrides, container
   restart/stop, transfer, delete, env var writes, stack import, stack creation
   from a repository compose file, repository and scheduled-job management, job
-  runs, worker revocation, and one-shot `exec_in_container`. Authorization is
+  runs, worker revocation, and one-shot `exec_in_container`, which reports the
+  command's output and its exit code. Authorization is
   unchanged and still the server's: an API key belongs to a service account,
   which can only be `viewer` or `operator`, so a viewer-scoped key keeps
   getting `403` for every one of them and an instance that does not run the MCP

@@ -179,7 +179,7 @@ type RollbackStackInput struct {
 // SetStackPausedInput is the input for the set_stack_paused tool.
 type SetStackPausedInput struct {
 	StackID string `json:"stack_id" jsonschema:"The wireops stack record id."`
-	Paused  bool   `json:"paused" jsonschema:"true pauses git sync/reconcile for this stack, false resumes it. Does not start or stop any container."`
+	Paused  bool   `json:"paused" jsonschema:"true pauses git sync/reconcile for this stack, false resumes it (only allowed when the stack is currently paused). Does not start or stop any container."`
 }
 
 // ServiceOverrideInput is one service's render-time override, mirroring
@@ -423,7 +423,7 @@ type ExecInContainerInput struct {
 	StackID        string   `json:"stack_id" jsonschema:"The wireops stack record id."`
 	ContainerID    string   `json:"container_id,omitempty" jsonschema:"The Docker container id, as returned by get_stack_services. Required unless service_name is given."`
 	ServiceName    string   `json:"service_name,omitempty" jsonschema:"The compose service name, resolved to a container id via get_stack_services. Alternative to container_id."`
-	Command        string   `json:"command" jsonschema:"The shell command line to run inside the container. Executed by the shell below; a trailing newline is added automatically."`
-	Shell          []string `json:"shell,omitempty" jsonschema:"Shell to spawn, as an argv array. Optional — defaults to ['/bin/sh']."`
-	TimeoutSeconds int      `json:"timeout_seconds,omitempty" jsonschema:"How long to wait for output before giving up and closing the session. Optional — defaults to 30, capped at 120."`
+	Command        string   `json:"command" jsonschema:"The shell command line to run inside the container. Executed by the shell below, followed by a marker command that reports the exit status, so the command must leave the shell able to read another line."`
+	Shell          []string `json:"shell,omitempty" jsonschema:"Shell to spawn, as an argv array. Must be a POSIX shell. Optional — defaults to ['/bin/sh']."`
+	TimeoutSeconds int      `json:"timeout_seconds,omitempty" jsonschema:"How long to wait for the command to finish before giving up and closing the session. Optional — defaults to 30, capped at 120."`
 }

@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,19 +24,21 @@ const (
 	// call can never outlive the MCP client's own patience by much.
 	execDefaultTimeout = 30 * time.Second
 	execMaxTimeout     = 120 * time.Second
-	// execPollInterval is how often the transcript is re-read, and
-	// execQuietPeriod how long the output has to stop growing before the
-	// command is considered finished. A pty gives no completion signal, so
-	// "nothing new for a while" is the only end-of-output we get.
+	// execPollInterval is how often the transcript is re-read while waiting
+	// for the end-of-command marker.
 	execPollInterval = 300 * time.Millisecond
-	execQuietPeriod  = time.Second
+	// execMarkerPrefix starts the unique end-of-command marker. A pty gives
+	// no completion signal, so the command is followed by a printf that emits
+	// this marker plus the exit status, and that line — not a lull in the
+	// output — is what ends the wait.
+	execMarkerPrefix = "WIREOPS_EOC_"
 )
 
 // registerExecTools adds the use_terminal-scoped tool.
 func registerExecTools(server *mcp.Server, c *client.Client) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "exec_in_container",
-		Description: "Run a one-shot shell command inside a container of a wireops stack and return its output — the MCP equivalent of the panel's terminal, for inspection a log line can't answer (checking a config file inside the image, a DNS lookup from the container's network, disk usage). It opens a real pty session, sends the command, waits for the output to settle, then closes the session; everything typed and printed is recorded in that session's auditable transcript under the calling API key. This runs ARBITRARY commands as the container's user, so it can change or break the container's state — prefer get_container_logs, get_stack_services and get_container_stats when they can answer the question. Identify the container with container_id or service_name. Output detection is quiet-period based, so a command that prints nothing returns empty and a long-running or interactive command (top, tail -f, a shell waiting for input) will simply hit the timeout — pass a command that terminates.",
+		Description: "Run a one-shot shell command inside a container of a wireops stack and return its output and exit code — the MCP equivalent of the panel's terminal, for inspection a log line can't answer (checking a config file inside the image, a DNS lookup from the container's network, disk usage). It opens a real pty session, sends the command, waits for it to finish, then closes the session; everything typed and printed is recorded in that session's auditable transcript under the calling API key. This runs ARBITRARY commands as the container's user, so it can change or break the container's state — prefer get_container_logs, get_stack_services and get_container_stats when they can answer the question. Identify the container with container_id or service_name. Completion is detected by appending a POSIX-shell marker command, so: the shell must be POSIX (the default /bin/sh is), and a long-running or interactive command (top, tail -f, a shell waiting for input) never reaches the marker and hits the timeout instead — pass a command that terminates. On timeout, timed_out is true, exit_code is null and output holds whatever had been printed by then.",
 		Annotations: destructive(false),
 	}, execInContainer(c))
 }
@@ -90,17 +94,25 @@ func execInContainer(c *client.Client) mcp.ToolHandlerFor[models.ExecInContainer
 			return nil, nil, err
 		}
 
+		// The marker is passed to printf as an argument, so the line the pty
+		// echoes back carries it next to a quote while the real end of output
+		// carries it next to ":<exit status>" — which is how
+		// awaitTranscriptOutput tells the two apart. On its own line (leading
+		// \n) so a command whose output has no trailing newline can't run into
+		// it.
+		marker := execMarkerPrefix + opened.SessionID
 		inputPath := "/api/custom/terminal/sessions/" + url.PathEscape(opened.SessionID) + "/input"
-		if err := c.Post(ctx, apiKey, inputPath, nil, map[string]any{"data": in.Command + "\n"}, nil); err != nil {
+		data := in.Command + "\nprintf '\\n%s:%d\\n' '" + marker + "' $?\n"
+		if err := c.Post(ctx, apiKey, inputPath, nil, map[string]any{"data": data}, nil); err != nil {
 			return nil, nil, fmt.Errorf("sending command: %w", err)
 		}
 
-		output, timedOut, err := awaitTranscriptOutput(ctx, c, apiKey, opened.SessionID, len(baseline), timeout)
+		output, exitCode, timedOut, err := awaitTranscriptOutput(ctx, c, apiKey, opened.SessionID, len(baseline), marker, timeout)
 		if err != nil {
 			return nil, nil, err
 		}
 
-		return nil, map[string]any{
+		result := map[string]any{
 			"stack_id":     in.StackID,
 			"container_id": containerID,
 			"service_name": serviceName,
@@ -108,7 +120,14 @@ func execInContainer(c *client.Client) mcp.ToolHandlerFor[models.ExecInContainer
 			"command":      in.Command,
 			"output":       output,
 			"timed_out":    timedOut,
-		}, nil
+			// Null rather than 0 when the marker never arrived: a timed-out
+			// command has no exit status, and reporting 0 would read as success.
+			"exit_code": nil,
+		}
+		if exitCode != nil {
+			result["exit_code"] = *exitCode
+		}
+		return nil, result, nil
 	}
 }
 
@@ -121,45 +140,69 @@ func closeTerminalSession(c *client.Client, apiKey, sessionID string) {
 	_ = c.Post(ctx, apiKey, path, nil, struct{}{}, nil)
 }
 
-// awaitTranscriptOutput polls the session transcript until it stops growing
-// for execQuietPeriod, or the deadline passes, and returns everything written
-// after baseLen. A pty has no end-of-command marker, so settling is the only
-// available signal; timedOut tells the caller the output may be truncated.
-func awaitTranscriptOutput(ctx context.Context, c *client.Client, apiKey, sessionID string, baseLen int, timeout time.Duration) (string, bool, error) {
+// awaitTranscriptOutput polls the session transcript until the end-of-command
+// marker appears, or the deadline passes, and returns everything written
+// after baseLen and before the marker, plus the command's exit status.
+//
+// Waiting for a lull in the output instead would be wrong: the pty echoes the
+// command back as soon as it is sent, so the transcript grows before the
+// command has printed anything, and a command that is quiet for a moment
+// before its first byte (du -sh /, a slow DNS lookup) would be reported as
+// finished with no output. exitCode is nil and timedOut true when the marker
+// never arrived, in which case the output may be truncated.
+func awaitTranscriptOutput(ctx context.Context, c *client.Client, apiKey, sessionID string, baseLen int, marker string, timeout time.Duration) (string, *int, bool, error) {
 	deadline := time.Now().Add(timeout)
-	lastLen := baseLen
-	lastGrowth := time.Now()
+	markerRe := regexp.MustCompile(regexp.QuoteMeta(marker) + `:(\d+)`)
 	var decoded string
 
 	for {
 		select {
 		case <-ctx.Done():
-			return decoded, false, ctx.Err()
+			return decoded, nil, false, ctx.Err()
 		case <-time.After(execPollInterval):
 		}
 
 		full, err := readTranscript(ctx, c, apiKey, sessionID)
 		if err != nil {
-			return "", false, err
-		}
-		if len(full) > lastLen {
-			lastLen = len(full)
-			lastGrowth = time.Now()
+			return "", nil, false, err
 		}
 		if len(full) > baseLen {
 			decoded = full[baseLen:]
 		}
 
-		// Only settle once something actually arrived; otherwise a command
-		// whose first byte is slow would return empty after one quiet
-		// period.
-		if len(full) > baseLen && time.Since(lastGrowth) >= execQuietPeriod {
-			return decoded, false, nil
+		if loc := markerRe.FindStringSubmatchIndex(decoded); loc != nil {
+			output := stripEchoedInput(decoded[:loc[0]], marker)
+			// The newline the marker command prints ahead of the marker is
+			// ours, not something the command itself printed.
+			output = strings.TrimSuffix(output, "\n")
+			output = strings.TrimSuffix(output, "\r")
+			if code, convErr := strconv.Atoi(decoded[loc[2]:loc[3]]); convErr == nil {
+				return output, &code, false, nil
+			}
+			return output, nil, false, nil
 		}
 		if time.Now().After(deadline) {
-			return decoded, true, nil
+			return stripEchoedInput(decoded, marker), nil, true, nil
 		}
 	}
+}
+
+// stripEchoedInput drops the input line the pty echoed back. The session is a
+// real pty with ECHO on, so everything sent to it reappears in the transcript
+// ahead of any output; the echo of the trailing marker command is the last
+// thing echoed, so cutting past the newline that ends it leaves exactly what
+// the command itself printed. A session that does not echo has nothing to cut
+// and is returned unchanged.
+func stripEchoedInput(output, marker string) string {
+	i := strings.Index(output, marker)
+	if i < 0 {
+		return output
+	}
+	nl := strings.IndexByte(output[i:], '\n')
+	if nl < 0 {
+		return output
+	}
+	return output[i+nl+1:]
 }
 
 // readTranscript fetches a session's asciicast-v2 transcript and returns the

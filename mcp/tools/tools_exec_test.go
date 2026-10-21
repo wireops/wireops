@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/wireops/wireops/mcp/client"
 	"github.com/wireops/wireops/mcp/models"
@@ -29,9 +30,11 @@ func asciicast(chunks ...string) string {
 	return sb.String()
 }
 
-// execServer fakes the four terminal routes exec_in_container drives. The
-// transcript starts as the shell banner and gains the command's output once
-// input has been sent, which is what the quiet-period loop polls for.
+// execServer fakes the four terminal routes exec_in_container drives. It
+// behaves like the real pty: the input it is sent is echoed straight back into
+// the transcript, and the command's output (plus the end-of-command marker the
+// tool appends, resolved with exitCode) only follows after echoDelay. That gap
+// is what a quiet-period-based wait would mistake for the end of the command.
 type execServer struct {
 	mu         sync.Mutex
 	calls      []string
@@ -39,7 +42,13 @@ type execServer struct {
 	transcript string
 	// transcriptStatus, when non-zero, is returned instead of the body.
 	transcriptStatus int
-	srv              *httptest.Server
+	// echoDelay is how long after the input the command's output appears; the
+	// echo itself is immediate.
+	echoDelay time.Duration
+	// exitCode is reported by the marker line. A negative value suppresses the
+	// marker entirely, standing in for a command that never finishes.
+	exitCode int
+	srv      *httptest.Server
 }
 
 func newExecServer(banner, output string) *execServer {
@@ -61,7 +70,26 @@ func newExecServer(banner, output string) *execServer {
 			}
 			_ = json.Unmarshal(raw, &body)
 			es.inputs = append(es.inputs, body.Data)
-			es.transcript = asciicast(banner, output)
+
+			// The pty echoes every line it is given, right away.
+			echo := strings.ReplaceAll(body.Data, "\n", "\r\n")
+			es.transcript = asciicast(banner, echo)
+
+			marker := execMarkerPrefix + "sess-1"
+			tail := output
+			if es.exitCode >= 0 {
+				tail += fmt.Sprintf("\n%s:%d\n", marker, es.exitCode)
+			}
+			if es.echoDelay > 0 {
+				go func(delay time.Duration) {
+					time.Sleep(delay)
+					es.mu.Lock()
+					defer es.mu.Unlock()
+					es.transcript = asciicast(banner, echo, tail)
+				}(es.echoDelay)
+			} else {
+				es.transcript = asciicast(banner, echo, tail)
+			}
 			_, _ = w.Write([]byte(`{"status":"ok"}`))
 		case strings.HasSuffix(r.URL.Path, "/transcript"):
 			if es.transcriptStatus != 0 {
@@ -78,6 +106,23 @@ func newExecServer(banner, output string) *execServer {
 }
 
 func (e *execServer) close()                 { e.srv.Close() }
+
+// slowOutput makes the command's output appear only after d; the echo of the
+// input stays immediate, which is the gap that matters.
+func (e *execServer) slowOutput(d time.Duration) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.echoDelay = d
+}
+
+// exits sets the status the end-of-command marker reports. A negative code
+// suppresses the marker entirely, standing in for a command that never
+// finishes.
+func (e *execServer) exits(code int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.exitCode = code
+}
 func (e *execServer) client() *client.Client { return client.New(e.srv.URL) }
 
 func (e *execServer) seen() []string {
@@ -126,12 +171,75 @@ func TestExecInContainerReturnsCommandOutput(t *testing.T) {
 	if result["timed_out"] != false {
 		t.Fatalf("expected timed_out false, got %v", result["timed_out"])
 	}
+	if result["exit_code"] != 0 {
+		t.Fatalf("expected exit_code 0, got %v", result["exit_code"])
+	}
 	if result["container_id"] != "c-web" || result["service_name"] != "web" {
 		t.Fatalf("expected the resolved container reported back, got %v", result)
 	}
 
-	if inputs := es.sentInputs(); len(inputs) != 1 || inputs[0] != "ls /\n" {
-		t.Fatalf("expected the command sent with a trailing newline, got %v", inputs)
+	inputs := es.sentInputs()
+	if len(inputs) != 1 {
+		t.Fatalf("expected exactly one input, got %v", inputs)
+	}
+	if !strings.HasPrefix(inputs[0], "ls /\n") {
+		t.Fatalf("expected the command sent first, with a trailing newline, got %q", inputs[0])
+	}
+	// The marker has to be a printf *argument*: inline in the format string,
+	// the echoed input line would carry "<marker>:" too and be mistaken for
+	// the end of the output.
+	if !strings.Contains(inputs[0], "'"+execMarkerPrefix+"sess-1'") {
+		t.Fatalf("expected the marker passed as a quoted argument, got %q", inputs[0])
+	}
+}
+
+func TestExecInContainerWaitsThroughASilentStart(t *testing.T) {
+	// A command that prints nothing for a while before its first byte: the
+	// echo of the input has already grown the transcript, so a wait that
+	// settled on "nothing new for a moment" would return the echo alone and
+	// report the command as finished.
+	es := newExecServer("/ # ", "42G\t/\n")
+	defer es.close()
+	es.slowOutput(1500 * time.Millisecond)
+
+	_, out, err := execInContainer(es.client())(ctxWithKey(), nil, models.ExecInContainerInput{
+		StackID:        "stack1",
+		ServiceName:    "web",
+		Command:        "du -sh /",
+		TimeoutSeconds: 10,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	result := out.(map[string]any)
+	if got := result["output"]; got != "42G\t/\n" {
+		t.Fatalf("expected the slow output to be waited for, got %q", got)
+	}
+	if result["timed_out"] != false {
+		t.Fatalf("expected timed_out false, got %v", result)
+	}
+}
+
+func TestExecInContainerReportsExitCode(t *testing.T) {
+	es := newExecServer("/ # ", "cat: /nope: No such file or directory\n")
+	defer es.close()
+	es.exits(1)
+
+	_, out, err := execInContainer(es.client())(ctxWithKey(), nil, models.ExecInContainerInput{
+		StackID:     "stack1",
+		ServiceName: "web",
+		Command:     "cat /nope",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	result := out.(map[string]any)
+	if result["exit_code"] != 1 {
+		t.Fatalf("expected exit_code 1, got %v", result["exit_code"])
+	}
+	// The marker line itself is not part of the command's output.
+	if got, _ := result["output"].(string); strings.Contains(got, execMarkerPrefix) {
+		t.Fatalf("expected the marker stripped from the output, got %q", got)
 	}
 }
 
@@ -161,6 +269,9 @@ func TestExecInContainerAlwaysClosesTheSession(t *testing.T) {
 func TestExecInContainerTimesOutWithoutOutput(t *testing.T) {
 	es := newExecServer("/ # ", "")
 	defer es.close()
+	// A command that never finishes: the marker never arrives, so only the
+	// deadline ends the wait.
+	es.exits(-1)
 
 	_, out, err := execInContainer(es.client())(ctxWithKey(), nil, models.ExecInContainerInput{
 		StackID:        "stack1",
@@ -174,6 +285,10 @@ func TestExecInContainerTimesOutWithoutOutput(t *testing.T) {
 	result := out.(map[string]any)
 	if result["timed_out"] != true {
 		t.Fatalf("expected timed_out true, got %v", result)
+	}
+	// No marker means no exit status — 0 would read as "succeeded".
+	if result["exit_code"] != nil {
+		t.Fatalf("expected exit_code nil on timeout, got %v", result["exit_code"])
 	}
 	if !containsCall(es.seen(), "POST /api/custom/terminal/sessions/sess-1/close") {
 		t.Fatalf("expected the session closed after the timeout, calls: %v", es.seen())

@@ -36,7 +36,7 @@ func registerStackWriteTools(server *mcp.Server, c *client.Client) {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "set_stack_paused",
-		Description: "Pause or resume git sync/reconcile for a wireops stack. Pausing does NOT stop the running containers — it only stops wireops from acting on new commits; use stop_container for the containers themselves. Resuming makes the stack eligible for the next poll, so a stack that drifted from git will be reconciled shortly after.",
+		Description: "Pause or resume git sync/reconcile for a wireops stack. Pausing does NOT stop the running containers — it only stops wireops from acting on new commits; use stop_container for the containers themselves. Resuming makes the stack eligible for the next poll, so a stack that drifted from git will be reconciled shortly after. Resuming only works on a stack that is actually paused: a stack sitting in 'error' or 'degraded' is not paused, and the call is refused rather than overwriting that status with 'active'.",
 		Annotations: additive(true),
 	}, setStackPaused(c))
 
@@ -177,12 +177,26 @@ func setStackPaused(c *client.Client) mcp.ToolHandlerFor[models.SetStackPausedIn
 		}
 		// Same mechanism the UI uses: pause/resume is a status write on the
 		// stacks record, not a custom route.
-		status := "active"
-		if in.Paused {
-			status = "paused"
+		path := "/api/collections/stacks/records/" + url.PathEscape(in.StackID)
+		status := "paused"
+		if !in.Paused {
+			// "active" is only the right value to resume *into* when the stack
+			// is actually paused — the UI only offers resume there. Writing it
+			// over "error", "degraded" or "syncing" would replace a real status
+			// with a healthy-looking one that nothing recomputes until the next
+			// reconcile, and get_stack_status would report the stack as fine.
+			var current struct {
+				Status string `json:"status"`
+			}
+			if err := c.Get(ctx, apiKey, path, url.Values{"fields": {"status"}}, &current); err != nil {
+				return nil, nil, fmt.Errorf("reading the stack's current status: %w", err)
+			}
+			if current.Status != "paused" {
+				return nil, nil, fmt.Errorf("stack %q is not paused (status %q) — nothing to resume, and overwriting that status would hide it", in.StackID, current.Status)
+			}
+			status = "active"
 		}
 		var out any
-		path := "/api/collections/stacks/records/" + url.PathEscape(in.StackID)
 		if err := c.Patch(ctx, apiKey, path, nil, map[string]any{"status": status}, &out); err != nil {
 			return nil, nil, err
 		}

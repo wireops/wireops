@@ -109,6 +109,12 @@ func stackNamed(name string) map[string]string {
 	return map[string]string{"GET /api/collections/stacks/records/stack1": `{"name":"` + name + `"}`}
 }
 
+// stackStatus serves the fields=status lookup set_stack_paused does before
+// resuming a stack.
+func stackStatus(status string) map[string]string {
+	return map[string]string{"GET /api/collections/stacks/records/stack1": `{"status":"` + status + `"}`}
+}
+
 func mergeRoutes(sets ...map[string]string) map[string]string {
 	out := map[string]string{}
 	for _, set := range sets {
@@ -247,19 +253,48 @@ func TestRollbackStackPostsCommitSHA(t *testing.T) {
 
 func TestSetStackPausedPatchesStatus(t *testing.T) {
 	for _, tc := range []struct {
-		paused bool
-		want   string
-	}{{true, "paused"}, {false, "active"}} {
-		rec := newRecorder(nil)
-		_, _, err := setStackPaused(rec.client())(ctxWithKey(), nil, models.SetStackPausedInput{StackID: "stack1", Paused: tc.paused})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		got := rec.expectLast(t, http.MethodPatch, "/api/collections/stacks/records/stack1")
-		if got.Body["status"] != tc.want {
-			t.Fatalf("paused=%v: expected status %q, got %v", tc.paused, tc.want, got.Body["status"])
-		}
-		rec.close()
+		name    string
+		paused  bool
+		current string
+		want    string
+	}{
+		{"pausing an active stack", true, "active", "paused"},
+		{"pausing a failing stack", true, "error", "paused"},
+		{"resuming a paused stack", false, "paused", "active"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := newRecorder(stackStatus(tc.current))
+			defer rec.close()
+
+			_, _, err := setStackPaused(rec.client())(ctxWithKey(), nil, models.SetStackPausedInput{StackID: "stack1", Paused: tc.paused})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			got := rec.expectLast(t, http.MethodPatch, "/api/collections/stacks/records/stack1")
+			if got.Body["status"] != tc.want {
+				t.Fatalf("expected status %q, got %v", tc.want, got.Body["status"])
+			}
+		})
+	}
+}
+
+func TestSetStackPausedRefusesToResumeAStackThatIsNotPaused(t *testing.T) {
+	// Writing "active" here would replace a real status with a healthy-looking
+	// one that nothing recomputes until the next reconcile.
+	for _, current := range []string{"error", "degraded", "syncing", "active"} {
+		t.Run(current, func(t *testing.T) {
+			rec := newRecorder(stackStatus(current))
+			defer rec.close()
+
+			_, _, err := setStackPaused(rec.client())(ctxWithKey(), nil, models.SetStackPausedInput{StackID: "stack1"})
+			if err == nil {
+				t.Fatalf("expected resuming a %q stack to be refused", current)
+			}
+			if !strings.Contains(err.Error(), current) {
+				t.Fatalf("expected the error to name the current status, got %v", err)
+			}
+			rec.expectNoWrites(t)
+		})
 	}
 }
 
@@ -359,6 +394,25 @@ func TestStopContainerConfirmsWithServiceName(t *testing.T) {
 	if got.Body["container_id"] != "c-web" {
 		t.Fatalf("expected container id forwarded, got %v", got.Body["container_id"])
 	}
+}
+
+func TestStopContainerRefusesAnUnnamedService(t *testing.T) {
+	rec := newRecorder(map[string]string{
+		"GET /api/custom/stacks/stack1/services": `[{"service_name":"","container_id":"c-orphan"}]`,
+	})
+	defer rec.close()
+
+	// Resolved by container id, this service has no compose name to confirm
+	// against. An omitted confirm must not match that empty string and turn
+	// the guard off.
+	_, _, err := stopContainer(rec.client())(ctxWithKey(), nil, models.StopContainerInput{
+		StackID:     "stack1",
+		ContainerID: "c-orphan",
+	})
+	if err == nil {
+		t.Fatal("expected the stop to be refused with no name to confirm against")
+	}
+	rec.expectNoWrites(t)
 }
 
 func TestTransferStackRequiresConfirm(t *testing.T) {
@@ -857,6 +911,17 @@ func TestRequireConfirmSurfacesLookupFailure(t *testing.T) {
 	err := requireConfirm(ctxWithKey(), client.New(srv.URL), "wireops_sk_test", confirmStacks, "ghost", "whatever")
 	if err == nil || !strings.Contains(err.Error(), "ghost") {
 		t.Fatalf("expected a lookup error naming the record, got %v", err)
+	}
+}
+
+func TestMatchConfirmRejectsAnEmptyExpectedValue(t *testing.T) {
+	// Without this, an omitted confirm ("") would equal the expected value and
+	// every caller that resolves its target by something other than a name
+	// would silently lose the guard.
+	for _, got := range []string{"", "anything"} {
+		if err := matchConfirm("", got); err == nil {
+			t.Fatalf("expected confirm %q against an empty expected value to fail", got)
+		}
 	}
 }
 

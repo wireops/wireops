@@ -52,6 +52,13 @@ func requireConfirm(ctx context.Context, c *client.Client, apiKey, collection, i
 // matchConfirm compares a caller-supplied confirm value against the expected
 // one, for callers that already know the expected string.
 func matchConfirm(expected, got string) error {
+	// An empty expected value would make an omitted confirm match it, turning
+	// the guard off exactly when the caller resolved the target by something
+	// other than its name (see resolveContainerTarget, which returns an empty
+	// service name for a container with no compose service label).
+	if expected == "" {
+		return fmt.Errorf("no name to confirm against — refusing an irreversible action on a target that cannot be named")
+	}
 	if got == expected {
 		return nil
 	}
