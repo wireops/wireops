@@ -41,7 +41,7 @@
 - 📦 Private registry credentials, scoped to a stack's deploy
 - 💾 Backups with schedule, retention and restore — optionally mirrored to S3, encrypted client-side
 - 📥 Import Compose projects already running on a host, or migrate a stack to another repository
-- 🤖 Read-only MCP server, so an AI agent can inspect stacks and scaffold new ones
+- 🤖 MCP server, so an AI agent can inspect stacks, scaffold new ones and — with an operator-scoped API key — deploy, roll back, run jobs and exec into containers, under the same RBAC and audit log as a human
 - 💻 Audited web terminal, RBAC-gated
 - 🎛️ Optional render-time stack overrides (image/ports/networks/scale) for one-off validation testing, without a git commit
 

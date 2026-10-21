@@ -1,8 +1,11 @@
 // Package app wires up the wireops MCP server: a standalone deployable,
-// analogous to worker/app, that exposes read-only wireops data as MCP
+// analogous to worker/app, that exposes wireops data and operations as MCP
 // tools over streamable HTTP. It never authenticates to the wireops
 // server with a credential of its own — every caller supplies their own
-// viewer-scoped API key on each connection (pass-through auth).
+// API key on each connection (pass-through auth), and that key's role is
+// what decides how much it can do: a viewer-scoped key can only read, an
+// operator-scoped one can also deploy, roll back, run jobs and exec into
+// containers. The decision is the server's (internal/rbac), never ours.
 package app
 
 import (

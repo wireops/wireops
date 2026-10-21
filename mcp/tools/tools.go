@@ -1,7 +1,12 @@
-// Package tools registers the wireops MCP tool set. All tools are
-// read-only proxies over the existing REST API — the MCP process has no
-// write capability by construction, and the actual permission check is
-// left entirely to the wireops server's RBAC on the caller's API key.
+// Package tools registers the wireops MCP tool set: read tools plus the
+// write tools an operator-scoped API key can use, all of them thin proxies
+// over the existing REST API. The MCP process makes no authorization
+// decision of its own — every call carries the caller's own API key and the
+// wireops server's RBAC decides, so a viewer-scoped key gets a 403 back for
+// everything in the write half. On top of that, the tools whose effect
+// cannot be undone require the caller to echo the resource's name back in a
+// confirm field (see confirm.go), and every tool is annotated with its
+// read-only/destructive hints so clients know what to prompt a human about.
 package tools
 
 import (
@@ -24,157 +29,200 @@ import (
 	"github.com/wireops/wireops/mcp/utils"
 )
 
-// Register adds every wireops read-only tool to server, calling the
-// wireops REST API at c on each invocation.
+// Register adds every wireops tool to server, calling the wireops REST API
+// at c on each invocation. The write tools are registered unconditionally:
+// gating them here would be a second, weaker copy of the server's RBAC, and
+// a viewer-scoped key already cannot use them.
 func Register(server *mcp.Server, c *client.Client) {
+	registerReadTools(server, c)
+	registerStackWriteTools(server, c)
+	registerRepoWriteTools(server, c)
+	registerJobWriteTools(server, c)
+	registerWorkerWriteTools(server, c)
+	registerExecTools(server, c)
+}
+
+// registerReadTools adds the tools that never change wireops state, plus the
+// pure local generators (generate_*/scaffold_stack).
+func registerReadTools(server *mcp.Server, c *client.Client) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "list_stacks",
 		Description: "List all wireops stacks visible to the caller's API key, with their sync status. Records with active render-time overrides carry a _notice field pointing at get_stack_render_overrides. A status of \"paused\" means git sync/reconcile is disabled for that stack — it says nothing about whether the compose containers are running; check get_stack_services for that.",
+		Annotations: readOnly(),
 	}, listStacks(c))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_stack_status",
 		Description: "Get a single wireops stack record by id, including its current sync/deploy status. If the stack has active render-time overrides, the response carries a _notice field pointing at get_stack_render_overrides. A status of \"paused\" means git sync/reconcile is disabled for that stack — it says nothing about whether the compose containers are running; check get_stack_services for that. A status of \"degraded\" means at least one non-init service isn't healthy, OR an initialization service (customization.init, see get_stack_services) exited non-zero or is stuck in a restart loop. A healthy or cleanly-exiting (code 0) init service is exempt and does not by itself degrade the stack.",
+		Annotations: readOnly(),
 	}, getStackStatus(c))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_sync_logs",
 		Description: "List recent sync log entries for a wireops stack (most recent first).",
+		Annotations: readOnly(),
 	}, getSyncLogs(c))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_stack_services",
 		Description: "List the running containers/services for a wireops stack. This reflects actual container/compose state, independent of the stack's sync status — a \"paused\" stack (git sync disabled) can still have running containers, and a stack that is actively syncing can have stopped containers. Each entry carries is_init and exit_code: is_init is true when the service is labeled customization.init (a run-to-completion container such as a migration or seed job). For those, status \"exited\" with exit_code 0 is the expected, healthy end state, not a failure — only a non-zero exit_code or repeated restarts indicate a problem. Both fields can come back null instead of 0/false, meaning unknown (not a known-good value) — this happens when the assigned worker is offline and the response falls back to last-known DB state, which doesn't track exit_code/is_init.",
+		Annotations: readOnly(),
 	}, getStackServices(c))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_stack_resources",
 		Description: "List the Docker volumes and networks associated with a wireops stack.",
+		Annotations: readOnly(),
 	}, getStackResources(c))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_stack_compose",
 		Description: "Get the raw compose file content wireops currently considers 'current' for a stack — the rendered content of current_version if the stack has synced at least once, else the compose file read straight from the repo (or from the host for a locally-imported stack). For comparing two past revisions instead, use diff_stack_version.",
+		Annotations: readOnly(),
 	}, getStackCompose(c))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_stack_revision",
 		Description: "Get the raw rendered docker-compose content of a single past revision of a wireops stack by version number. For comparing two revisions side by side, use diff_stack_version instead.",
+		Annotations: readOnly(),
 	}, getStackRevision(c))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_container_stats",
 		Description: "Get live CPU/memory/network/block-IO usage for a single container in a wireops stack. Requires the stack's worker to be online. Pairs with get_container_logs and get_stack_services (which lists the container ids to pass here).",
+		Annotations: readOnly(),
 	}, getContainerStats(c))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "list_audit_logs",
 		Description: "List wireops audit log entries (who did what, when, and the outcome) — covers actions like stack pause/resume/deploy, worker token issuance, settings changes, etc. Supports filtering by actor, action, resource, origin, status, and time range. Most recent first.",
+		Annotations: readOnly(),
 	}, listAuditLogs(c))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_stack_render_overrides",
 		Description: "Get the render-time overrides (image/ports/networks/scale) currently active on a wireops stack, plus what those same services resolve to from Git alone, for comparison. Render overrides are ephemeral (not committed to git) and are reapplied automatically on every reconcile until cleared. Empty if the stack has no active overrides.",
+		Annotations: readOnly(),
 	}, getStackRenderOverrides(c))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "diff_stack_version",
 		Description: "Get the raw rendered docker-compose content of two past revisions of a wireops stack (e.g. version 33 vs 34), for comparison before deciding on a rollback. Returns both revisions' content as-is — does not compute a diff itself, the caller compares them. Revision numbers can be found via the stack's stack_revisions collection records (sorted by version).",
+		Annotations: readOnly(),
 	}, diffStackVersion(c))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "list_secrets",
 		Description: "List which secret env vars are configured for a wireops stack — key names and provider only, never values, regardless of whether the secret is stored internally or via an external provider (Vault/Infisical/SOPS). Covers stack-level env vars marked secret, secret global env vars bound to the stack, and SOPS-managed keys from the repo's secrets file. Use this to check whether a secret exists/is configured, not to read it.",
+		Annotations: readOnly(),
 	}, listSecrets(c))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_container_logs",
 		Description: "Fetch recent log lines from a specific container within a wireops stack. Identify the container with container_id or service_name (either works — service_name is resolved internally, saving a round trip through get_stack_services). Use pattern to filter to lines matching a regex, which cuts noise in crash-loop logs.",
+		Annotations: readOnly(),
 	}, getContainerLogs(c))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "list_jobs",
 		Description: "List wireops scheduled (cron) jobs, with their status and recent runs.",
+		Annotations: readOnly(),
 	}, listJobs(c))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_job_definition",
 		Description: "Get the parsed job.yaml definition for a wireops scheduled job.",
+		Annotations: readOnly(),
 	}, getJobDefinition(c))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "list_repos",
 		Description: "List wireops repositories (name, git_url, branch, status, last_commit_sha) visible to the caller's API key. Never includes credentials — SSH keys and git passwords live in a separate collection this tool does not touch.",
+		Annotations: readOnly(),
 	}, listRepos(c))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_repo_commits",
 		Description: "List the most recent commits on a wireops repository's tracked branch.",
+		Annotations: readOnly(),
 	}, getRepoCommits(c))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "list_repo_stack_files",
 		Description: "List compose file paths (docker-compose.yml/yaml, compose.yml/yaml) found in a wireops repository — useful for finding candidate compose files before scaffolding or importing a stack. Triggers a git fetch of the repository first, so it reflects the latest commit on the tracked branch.",
+		Annotations: readOnly(),
 	}, listRepoStackFiles(c))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "list_repo_job_files",
 		Description: "List job.yaml file paths found in a wireops repository — useful for finding candidate job definitions before scheduling a job. Triggers a git fetch of the repository first, so it reflects the latest commit on the tracked branch.",
+		Annotations: readOnly(),
 	}, listRepoJobFiles(c))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_stack_integration_actions",
 		Description: "List available integration actions (e.g. Traefik/Dozzle links) for a wireops stack.",
+		Annotations: readOnly(),
 	}, getStackIntegrationActions(c))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "list_workers",
 		Description: "List wireops workers, including their live status (ACTIVE/OFFLINE, computed against the current connection — not just the stored DB flag), last_seen heartbeat timestamp, and docker_online, plus token and host info. This already covers worker online/offline diagnosis — there is no separate worker-status tool.",
+		Annotations: readOnly(),
 	}, listWorkers(c))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_worker_metrics",
 		Description: "Get current resource metrics (CPU/memory/disk) for a wireops worker.",
+		Annotations: readOnly(),
 	}, getWorkerMetrics(c))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_worker_policy",
 		Description: "Get a wireops worker's deploy security policy: its local override fields, whether it inherits the global policy (inherit=true), and the fully resolved 'effective' policy actually enforced on deploy (allowed images/volumes/networks/capabilities/devices, and the block_* flags for privileged/host-network/host-PID/host-IPC/docker-socket). Use this to explain why a compose file would be accepted or rejected by this worker, or before calling scaffold_stack with worker_id. Requires manage-settings capability on the caller's API key.",
+		Annotations: readOnly(),
 	}, getWorkerPolicy(c))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_global_worker_policy",
 		Description: "Get the instance-wide default deploy security policy — the same shape as get_worker_policy's 'effective' field, but the fallback every worker inherits from unless it sets its own local override (inherit=false in get_worker_policy). Requires manage-settings capability on the caller's API key.",
+		Annotations: readOnly(),
 	}, getGlobalWorkerPolicy(c))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "list_integrations",
 		Description: "List all wireops integration plugins (Traefik, Dozzle, notification providers, etc.), whether each is enabled, and its (secret-masked) config. Requires manage-settings capability on the caller's API key. For per-stack resolved container actions instead, use get_stack_integration_actions.",
+		Annotations: readOnly(),
 	}, listIntegrations(c))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "list_orphans",
 		Description: "List directories in the repo workspace that aren't tracked by any wireops repository record — leftovers from deleted repos, failed imports, etc. Requires manage-settings capability on the caller's API key.",
+		Annotations: readOnly(),
 	}, listOrphans(c))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_system_info",
 		Description: "Get wireops server build/version info and repo workspace disk usage. Requires manage-settings capability on the caller's API key.",
+		Annotations: readOnly(),
 	}, getSystemInfo(c))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "generate_wireops_yaml",
 		Description: "DEPRECATED: Generate a valid standalone wireops.yaml file from structured fields, ready to commit to a repository. The standalone two-file layout is deprecated — for a new stack, use scaffold_stack instead, which by default embeds an equivalent 'x-wireops' block directly in the compose file (no separate wireops.yaml needed). Use this tool directly only to add/edit a standalone wireops.yaml for a repository that already uses the deprecated two-file layout. Does not create or modify any stack — the caller commits the returned content itself.",
+		Annotations: readOnly(),
 	}, generateWireopsYAML())
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "generate_job_yaml",
 		Description: "Generate a valid job.yaml file from structured fields, ready to commit to a repository. Does not create or schedule any job — the caller commits the returned content itself.",
+		Annotations: readOnly(),
 	}, generateJobYAML())
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "scaffold_stack",
 		Description: "Generate a single docker-compose.yml for a new stack from structured service definitions, ready to commit to a repository — this is the primary, recommended way to define a wireops stack. By default (two_file left false) the wireops fields are embedded as a top-level 'x-wireops' block directly in that one compose file, so only one file needs to be committed; create the stack via POST /api/custom/stacks/from-compose (compose_path/compose_file). Set two_file: true only to instead generate the deprecated two-file layout (separate wireops.yaml + docker-compose.yml, for POST /api/custom/stacks/from-wireops) — e.g. to match an existing repository already using that layout, or on an explicit user request; the two-file layout still works but is deprecated in favor of the embedded x-wireops block. If worker_id is given, validates the compose file against that worker's effective deploy security policy and reports violations instead of silently returning a file that would be rejected at deploy time. Does not create or import any stack. Before calling this tool, look up the current image tag, ports, volumes, and required environment variables for each service using a web search against the application's official site, official image registry page, or official GitHub repository — do not rely on memorized/training-data knowledge, which may be outdated. ComposeServiceInput has no labels/annotations field, so the wireops compose conventions — the `customization.image.slug` label (custom UI icon), the `dev.wireops.config.<name>` annotation (mounts a git-tracked file/directory into the container, source:target), and `customization.init` (a manually added label, not generated by this tool, marking a run-to-completion container such as a migration or seed job so wireops treats a clean exit as healthy instead of a failure) — must be hand-added to the returned YAML before committing, if wanted. These are unrelated to x-wireops (a stack-level, top-level key) and never overlap with it.",
+		Annotations: readOnly(),
 	}, scaffoldStack(c))
 }
 
@@ -299,6 +347,51 @@ func resolveContainerIDByServiceName(ctx context.Context, c *client.Client, apiK
 		}
 	}
 	return "", fmt.Errorf("no service named %q found for stack %q", serviceName, stackID)
+}
+
+// resolveContainerTarget turns the (container_id | service_name) pair the
+// container-action tools accept into both halves: the id the API needs, and
+// the service name the confirmation prompts quote back. Either input is
+// enough — whichever is missing is looked up from the stack's service list.
+func resolveContainerTarget(ctx context.Context, c *client.Client, apiKey, stackID, containerID, serviceName string) (string, string, error) {
+	if containerID == "" && serviceName == "" {
+		return "", "", fmt.Errorf("either container_id or service_name is required")
+	}
+	services, err := fetchStackServices(ctx, c, apiKey, stackID)
+	if err != nil {
+		return "", "", err
+	}
+	for _, svc := range services {
+		m, ok := svc.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		name, _ := m["service_name"].(string)
+		id, _ := m["container_id"].(string)
+		if (serviceName != "" && name == serviceName) || (serviceName == "" && id == containerID) {
+			if id == "" {
+				return "", "", fmt.Errorf("service %q has no container_id yet (not running?)", name)
+			}
+			return id, name, nil
+		}
+	}
+	if serviceName != "" {
+		return "", "", fmt.Errorf("no service named %q found for stack %q", serviceName, stackID)
+	}
+	return "", "", fmt.Errorf("no container %q found for stack %q — call get_stack_services for the current ids", containerID, stackID)
+}
+
+// Modes accepted by the env-var bulk routes.
+const (
+	envVarModeAppend  = "append"
+	envVarModeReplace = "replace"
+)
+
+func validateEnvVarMode(mode string) error {
+	if mode == envVarModeAppend || mode == envVarModeReplace {
+		return nil
+	}
+	return fmt.Errorf("mode must be %q or %q, got %q", envVarModeAppend, envVarModeReplace, mode)
 }
 
 func getStackServices(c *client.Client) mcp.ToolHandlerFor[models.StackIDInput, any] {
