@@ -7,7 +7,7 @@ on:
     branches: [ main, develop ]
 
 env:
-  GO_VERSION: "1.27.2"
+  GO_VERSION: "1.27.3"
 
 jobs:
   mcp:
@@ -50,7 +50,7 @@ jobs:
         run: go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
 
       - name: Run govulncheck
-        run: govulncheck ./mcp/...
+        run: ./scripts/govulncheck.sh ./mcp/...
 
       - name: Build mcp binary
         env:
