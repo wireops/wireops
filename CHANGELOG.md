@@ -38,6 +38,14 @@ changes in a minor release.
   images already built on 1.27.2, but the module only asked for 1.27, so a
   local build could silently link the 1.27.0 standard library and its
   `crypto/tls`, `net/http` and `os` advisories.
+- Build the server, worker, and MCP binaries with Go 1.27.3, which clears
+  GO-2026-6809: the `crypto/x509` verifier in 1.27.2 kept trusting
+  intermediate certificates that have since been distrusted, and every TLS
+  client in wireops (git over HTTPS, registry auth, webhook and ntfy
+  delivery, the MCP process calling the server) reached it. Also run the
+  `mcp` CI job's `govulncheck` through `scripts/govulncheck.sh`, like the
+  server and worker jobs, so it honours `.govulncheck-allowlist.txt` instead
+  of failing on an advisory the other two jobs accept.
 
 ### Changed
 
