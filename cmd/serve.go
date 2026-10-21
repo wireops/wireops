@@ -399,6 +399,7 @@ func Execute() error {
 		routes.RegisterAuthRoutes(se.Router, app)
 		routes.RegisterServiceAccountRoutes(se.Router, app)
 		routes.RegisterSSOGroupRoleRoutes(se.Router, app)
+		routes.RegisterMeRoutes(se.Router, app)
 
 		se.Router.GET("/{path...}", apis.Static(os.DirFS("./pb_public"), true))
 

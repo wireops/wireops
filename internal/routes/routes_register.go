@@ -342,6 +342,13 @@ func (rr routeRegistrar) registerStreamRoutes() {
 			flusher.Flush()
 		}
 
+		// history=false skips replaying the stack's stored sync output and
+		// streams only what happens from now on. The snapshot is still read
+		// and observed below, so the handoff bookkeeping is unchanged — a
+		// caller that only wants to watch one reconcile (the MCP server's
+		// deploy wait) does not have to receive every past deploy's log first.
+		history := e.Request.URL.Query().Get("history") != "false"
+
 		// Subscribe before loading the historical snapshot so writes that land
 		// in the gap between the two are queued on the channel rather than
 		// lost; the handoff state below reconciles them against the snapshot
@@ -363,10 +370,22 @@ func (rr routeRegistrar) registerStreamRoutes() {
 				flusher.Flush()
 			}
 		}
+		// Status transitions go out as a *named* SSE event, so a log tail that
+		// only reads unnamed "data:" frames (the UI's useDeployStream) never
+		// sees them, while a caller waiting for a reconcile to finish does not
+		// have to infer completion from the output text.
+		writeStatus := func(recordID, status string) {
+			fmt.Fprintf(e.Response, "event: status\ndata: {\"record_id\":%q,\"status\":%q}\n\n", recordID, status)
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
 
 		state := newStreamHandoffState()
 		for _, logRecord := range logs {
-			writeLines(logRecord.GetString("output"))
+			if history {
+				writeLines(logRecord.GetString("output"))
+			}
 			state.observeSnapshot(logRecord.Id, logRecord.GetString("output"))
 		}
 
@@ -382,6 +401,9 @@ func (rr routeRegistrar) registerStreamRoutes() {
 				}
 				if delta := state.apply(ev); delta != "" {
 					writeLines(delta)
+				}
+				if status, changed := state.applyStatus(ev); changed {
+					writeStatus(ev.RecordID, status)
 				}
 			default:
 				break drain
@@ -400,28 +422,51 @@ func (rr routeRegistrar) registerStreamRoutes() {
 				if delta := state.apply(ev); delta != "" {
 					writeLines(delta)
 				}
+				if status, changed := state.applyStatus(ev); changed {
+					writeStatus(ev.RecordID, status)
+				}
 			}
 		}
 	}).BindFunc(rbac.Require(rbac.CapViewLogs))
 }
 
 // streamHandoffState tracks, per sync_logs RecordID, how many bytes of
-// cumulative output have already been written to an SSE stream. It lets the
-// /stream handler reconcile broker events against the historical snapshot
-// (and against each other) so the same bytes are never replayed and no
-// bytes published during the subscribe/snapshot handoff are dropped.
+// cumulative output have already been written to an SSE stream, and the last
+// status emitted for it. It lets the /stream handler reconcile broker events
+// against the historical snapshot (and against each other) so the same bytes
+// are never replayed and no bytes published during the subscribe/snapshot
+// handoff are dropped.
 type streamHandoffState struct {
-	lastLen map[string]int
+	lastLen    map[string]int
+	lastStatus map[string]string
 }
 
 func newStreamHandoffState() *streamHandoffState {
-	return &streamHandoffState{lastLen: make(map[string]int)}
+	return &streamHandoffState{
+		lastLen:    make(map[string]int),
+		lastStatus: make(map[string]string),
+	}
 }
 
 // observeSnapshot records that recordID's output, as loaded from the
 // historical snapshot, has already been written in full.
 func (s *streamHandoffState) observeSnapshot(recordID, output string) {
 	s.lastLen[recordID] = len(output)
+}
+
+// applyStatus reports ev's status when it differs from the last one emitted
+// for that record, so a consumer waiting on a reconcile sees each transition
+// once. A record first seen through the broker (the usual case for a reconcile
+// that starts after the stream is open) reports its status immediately;
+// records only seen in the historical snapshot are deliberately not seeded
+// here, since replaying a finished deploy's "success" to a client that just
+// connected would read as the outcome of whatever it is waiting for.
+func (s *streamHandoffState) applyStatus(ev logstream.Event) (string, bool) {
+	if ev.Status == "" || s.lastStatus[ev.RecordID] == ev.Status {
+		return "", false
+	}
+	s.lastStatus[ev.RecordID] = ev.Status
+	return ev.Status, true
 }
 
 // apply returns the slice of ev.Output not yet written for its record ("" if

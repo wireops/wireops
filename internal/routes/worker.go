@@ -243,7 +243,7 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 			"allow_render_overrides": flagsOut.AllowRenderOverrides,
 			"effective":              effective.ToJSON(),
 		})
-	}).BindFunc(rbac.Require(rbac.CapManageSettings))
+	}).BindFunc(rbac.Require(rbac.CapViewWorkerPolicy))
 
 	// PUT /api/custom/workers/{id}/policy
 	// Saves or updates the per-worker policy override.
@@ -331,7 +331,7 @@ func RegisterWorkerRoutes(r *router.Router[*core.RequestEvent], app core.App, wo
 			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
 		return e.JSON(http.StatusOK, p.ToJSON())
-	}).BindFunc(rbac.Require(rbac.CapManageSettings))
+	}).BindFunc(rbac.Require(rbac.CapViewWorkerPolicy))
 
 	// PUT /api/custom/settings/worker-policy
 	r.PUT("/api/custom/settings/worker-policy", func(e *core.RequestEvent) error {

@@ -1,6 +1,7 @@
 package rbac
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -257,4 +258,121 @@ func TestRequireMiddleware(t *testing.T) {
 			t.Fatalf("expected 403, got %d", got)
 		}
 	})
+}
+
+func TestCapViewWorkerPolicyIsOperatorLevel(t *testing.T) {
+	// A service account caps at operator (internal/routes/service_accounts.go),
+	// so this minimum is what makes the deploy policy readable by an API key
+	// at all — a regression to admin silently breaks the MCP policy tools.
+	if got := MinimumRole(CapViewWorkerPolicy); got != RoleOperator {
+		t.Fatalf("expected operator, got %q", got)
+	}
+	if AtLeast(RoleViewer, MinimumRole(CapViewWorkerPolicy)) {
+		t.Fatal("expected viewer role to NOT satisfy CapViewWorkerPolicy")
+	}
+	if !AtLeast(RoleOperator, MinimumRole(CapViewWorkerPolicy)) {
+		t.Fatal("expected operator role to satisfy CapViewWorkerPolicy")
+	}
+}
+
+func TestAllCapabilitiesIsSortedAndComplete(t *testing.T) {
+	caps := AllCapabilities()
+	if len(caps) != len(minimumRoleByCapability) {
+		t.Fatalf("expected %d capabilities, got %d", len(minimumRoleByCapability), len(caps))
+	}
+	for i := 1; i < len(caps); i++ {
+		if caps[i-1] >= caps[i] {
+			t.Fatalf("capabilities are not sorted: %q before %q", caps[i-1], caps[i])
+		}
+	}
+	// Every entry must be a known capability, so the enumeration can never
+	// report something Require would not recognize.
+	for _, capability := range caps {
+		if _, ok := minimumRoleByCapability[capability]; !ok {
+			t.Fatalf("AllCapabilities returned unknown capability %q", capability)
+		}
+	}
+}
+
+func TestCapabilitiesForMatchesCan(t *testing.T) {
+	for _, role := range []string{RoleMonitoring, RoleViewer, RoleOperator, RoleAdmin} {
+		t.Run(role, func(t *testing.T) {
+			granted := map[Capability]bool{}
+			for _, capability := range CapabilitiesFor(role) {
+				granted[capability] = true
+			}
+			// The enumeration is only useful if it agrees with the guard, so
+			// assert it against AtLeast for every known capability.
+			for _, capability := range AllCapabilities() {
+				want := AtLeast(role, MinimumRole(capability))
+				if granted[capability] != want {
+					t.Errorf("role %q: capability %q granted=%v, want %v", role, capability, granted[capability], want)
+				}
+			}
+		})
+	}
+}
+
+func TestCapabilitiesForUnknownRoleGrantsNothing(t *testing.T) {
+	for _, role := range []string{"", "owner"} {
+		if got := CapabilitiesFor(role); len(got) != 0 {
+			t.Fatalf("role %q should grant nothing, got %v", role, got)
+		}
+	}
+}
+
+func TestCapabilitiesForOperatorExcludesAdminOnly(t *testing.T) {
+	granted := map[Capability]bool{}
+	for _, capability := range CapabilitiesFor(RoleOperator) {
+		granted[capability] = true
+	}
+	for _, capability := range []Capability{CapOperateStacks, CapUseTerminal, CapViewWorkerPolicy} {
+		if !granted[capability] {
+			t.Errorf("expected operator to hold %q", capability)
+		}
+	}
+	for _, capability := range []Capability{CapManageSettings, CapManageUsers, CapManageSecurity, CapViewAuditLogs} {
+		if granted[capability] {
+			t.Errorf("expected operator NOT to hold %q", capability)
+		}
+	}
+}
+
+func TestRequireForbiddenBodyNamesTheCapability(t *testing.T) {
+	user := core.NewRecord(core.NewAuthCollection("users"))
+	user.Set("role", RoleOperator)
+	event := &core.RequestEvent{
+		Event: pbrouter.Event{
+			Response: httptest.NewRecorder(),
+			Request:  httptest.NewRequest(http.MethodGet, "/", nil),
+		},
+		Auth: user,
+	}
+
+	if err := Require(CapManageSettings)(event); err != nil {
+		t.Fatalf("middleware returned error: %v", err)
+	}
+	res := event.Response.(*httptest.ResponseRecorder)
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", res.Code)
+	}
+
+	var body map[string]string
+	if err := json.Unmarshal(res.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decoding body %q: %v", res.Body.String(), err)
+	}
+	// "permission denied" is matched by frontend/app/utils/error-parser.ts, so
+	// it has to survive the enrichment verbatim.
+	if body["error"] != "permission denied" {
+		t.Errorf("error = %q, want %q", body["error"], "permission denied")
+	}
+	if body["required_capability"] != string(CapManageSettings) {
+		t.Errorf("required_capability = %q, want %q", body["required_capability"], CapManageSettings)
+	}
+	if body["minimum_role"] != RoleAdmin {
+		t.Errorf("minimum_role = %q, want %q", body["minimum_role"], RoleAdmin)
+	}
+	if body["actor_role"] != RoleOperator {
+		t.Errorf("actor_role = %q, want %q", body["actor_role"], RoleOperator)
+	}
 }

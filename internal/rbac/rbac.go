@@ -2,6 +2,7 @@ package rbac
 
 import (
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -36,23 +37,29 @@ const (
 	CapManageSecurity Capability = "manage_security"
 	CapViewAuditLogs  Capability = "view_audit_logs"
 	CapUseTerminal    Capability = "use_terminal"
+	// CapViewWorkerPolicy gates reading a worker's (or the global) deploy
+	// security policy. Writing one still needs CapManageSettings: an operator
+	// has to know which rule would reject a compose file it is about to
+	// deploy, which is a read, not a settings change.
+	CapViewWorkerPolicy Capability = "view_worker_policy"
 )
 
 var minimumRoleByCapability = map[Capability]string{
-	CapViewMetrics:    RoleMonitoring,
-	CapViewStacks:     RoleViewer,
-	CapViewJobs:       RoleViewer,
-	CapViewLogs:       RoleViewer,
-	CapOperateStacks:  RoleOperator,
-	CapManageRepos:    RoleOperator,
-	CapViewWorkers:    RoleViewer,
-	CapManageWorkers:  RoleOperator,
-	CapManageJobs:     RoleOperator,
-	CapManageSettings: RoleAdmin,
-	CapManageUsers:    RoleAdmin,
-	CapManageSecurity: RoleAdmin,
-	CapViewAuditLogs:  RoleAdmin,
-	CapUseTerminal:    RoleOperator,
+	CapViewMetrics:      RoleMonitoring,
+	CapViewStacks:       RoleViewer,
+	CapViewJobs:         RoleViewer,
+	CapViewLogs:         RoleViewer,
+	CapOperateStacks:    RoleOperator,
+	CapManageRepos:      RoleOperator,
+	CapViewWorkers:      RoleViewer,
+	CapManageWorkers:    RoleOperator,
+	CapManageJobs:       RoleOperator,
+	CapManageSettings:   RoleAdmin,
+	CapManageUsers:      RoleAdmin,
+	CapManageSecurity:   RoleAdmin,
+	CapViewAuditLogs:    RoleAdmin,
+	CapUseTerminal:      RoleOperator,
+	CapViewWorkerPolicy: RoleOperator,
 }
 
 func NormalizeRole(role string) string {
@@ -114,6 +121,31 @@ func MinimumRole(capability Capability) string {
 	return RoleAdmin
 }
 
+// AllCapabilities returns every known capability, sorted, so a caller can
+// enumerate them without reaching into minimumRoleByCapability.
+func AllCapabilities() []Capability {
+	caps := make([]Capability, 0, len(minimumRoleByCapability))
+	for capability := range minimumRoleByCapability {
+		caps = append(caps, capability)
+	}
+	sort.Slice(caps, func(i, j int) bool { return caps[i] < caps[j] })
+	return caps
+}
+
+// CapabilitiesFor returns the capabilities role actually satisfies, sorted.
+// It is derived from the same minimumRoleByCapability table Can consults, so
+// an introspection endpoint can never drift from what Require enforces. An
+// unknown or empty role satisfies nothing.
+func CapabilitiesFor(role string) []Capability {
+	granted := make([]Capability, 0, len(minimumRoleByCapability))
+	for _, capability := range AllCapabilities() {
+		if AtLeast(role, MinimumRole(capability)) {
+			granted = append(granted, capability)
+		}
+	}
+	return granted
+}
+
 func ResolveActor(e *core.RequestEvent) (string, string, string) {
 	if e == nil || e.Auth == nil {
 		return "", "", ""
@@ -151,7 +183,18 @@ func Require(capability Capability) func(*core.RequestEvent) error {
 		if e.Auth == nil {
 			return e.JSON(http.StatusUnauthorized, map[string]string{"error": "authentication required"})
 		}
-		return e.JSON(http.StatusForbidden, map[string]string{"error": "permission denied"})
+		// The "permission denied" text is load-bearing — the frontend's
+		// error parser matches on it — so the detail is added alongside it
+		// rather than replacing it. Naming the capability is what lets an
+		// API client (notably the MCP server) report *what* is missing
+		// instead of just that something was.
+		role, _, _ := ResolveActor(e)
+		return e.JSON(http.StatusForbidden, map[string]string{
+			"error":               "permission denied",
+			"required_capability": string(capability),
+			"minimum_role":        MinimumRole(capability),
+			"actor_role":          role,
+		})
 	}
 }
 
