@@ -48,12 +48,12 @@ func TestReadStackComposeReturnsContent(t *testing.T) {
 
 	handler := readStackCompose(client.New(srv.URL))
 	result, err := handler(ctxWithKey(), &mcp.ReadResourceRequest{
-		Params: &mcp.ReadResourceParams{URI: "wireops://stacks/stack1/compose"},
+		Params: &mcp.ReadResourceParams{URI: "wireops://stacks/stack0000000001/compose"},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if gotPath != "/api/custom/stacks/stack1/compose" {
+	if gotPath != "/api/custom/stacks/stack0000000001/compose" {
 		t.Fatalf("unexpected path: %s", gotPath)
 	}
 	if gotHeader != "wireops_sk_test" {
@@ -70,7 +70,7 @@ func TestReadStackComposeReturnsContent(t *testing.T) {
 func TestReadStackComposeMissingAPIKey(t *testing.T) {
 	handler := readStackCompose(client.New("http://unused"))
 	_, err := handler(context.Background(), &mcp.ReadResourceRequest{
-		Params: &mcp.ReadResourceParams{URI: "wireops://stacks/stack1/compose"},
+		Params: &mcp.ReadResourceParams{URI: "wireops://stacks/stack0000000001/compose"},
 	})
 	if err == nil {
 		t.Fatal("expected error when API key missing from context")
@@ -80,7 +80,7 @@ func TestReadStackComposeMissingAPIKey(t *testing.T) {
 func TestReadStackComposeMalformedURI(t *testing.T) {
 	handler := readStackCompose(client.New("http://unused"))
 	_, err := handler(ctxWithKey(), &mcp.ReadResourceRequest{
-		Params: &mcp.ReadResourceParams{URI: "wireops://jobs/stack1/raw"},
+		Params: &mcp.ReadResourceParams{URI: "wireops://jobs/stack0000000001/raw"},
 	})
 	if err == nil {
 		t.Fatal("expected resource-not-found error for mismatched URI")
@@ -97,12 +97,12 @@ func TestReadJobRawReturnsContent(t *testing.T) {
 
 	handler := readJobRaw(client.New(srv.URL))
 	result, err := handler(ctxWithKey(), &mcp.ReadResourceRequest{
-		Params: &mcp.ReadResourceParams{URI: "wireops://jobs/job1/raw"},
+		Params: &mcp.ReadResourceParams{URI: "wireops://jobs/job000000000001/raw"},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if gotPath != "/api/custom/jobs/job1/raw" {
+	if gotPath != "/api/custom/jobs/job000000000001/raw" {
 		t.Fatalf("unexpected path: %s", gotPath)
 	}
 	if len(result.Contents) != 1 || result.Contents[0].Text != "name: nightly-backup" {
@@ -121,7 +121,7 @@ func TestReadStackLiveLogsReturnsLatestOutput(t *testing.T) {
 
 	handler := readStackLiveLogs(client.New(srv.URL))
 	result, err := handler(ctxWithKey(), &mcp.ReadResourceRequest{
-		Params: &mcp.ReadResourceParams{URI: "wireops://stacks/stack1/logs/live"},
+		Params: &mcp.ReadResourceParams{URI: "wireops://stacks/stack0000000001/logs/live"},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -129,7 +129,7 @@ func TestReadStackLiveLogsReturnsLatestOutput(t *testing.T) {
 	if gotPath != "/api/collections/sync_logs/records" {
 		t.Fatalf("unexpected path: %s", gotPath)
 	}
-	if !strings.Contains(gotQuery, "stack1") || !strings.Contains(gotQuery, "perPage=1") {
+	if !strings.Contains(gotQuery, "stack0000000001") || !strings.Contains(gotQuery, "perPage=1") {
 		t.Fatalf("unexpected query: %s", gotQuery)
 	}
 	if len(result.Contents) != 1 || result.Contents[0].Text != "deploy ok" {
@@ -149,7 +149,7 @@ func TestReadStackLiveLogsEscapesStackIDInFilter(t *testing.T) {
 	// A stack id containing a bare quote must not be able to close the
 	// filter's string literal early and splice in extra clauses.
 	_, err := handler(ctxWithKey(), &mcp.ReadResourceRequest{
-		Params: &mcp.ReadResourceParams{URI: "wireops://stacks/stack1' || status='success/logs/live"},
+		Params: &mcp.ReadResourceParams{URI: "wireops://stacks/stack0000000001' || status='success/logs/live"},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -158,10 +158,10 @@ func TestReadStackLiveLogsEscapesStackIDInFilter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unescape query: %v", err)
 	}
-	if strings.Contains(unescaped, "filter=stack='stack1' ||") {
+	if strings.Contains(unescaped, "filter=stack='stack0000000001' ||") {
 		t.Fatalf("stack id was not escaped, filter injection possible: %s", unescaped)
 	}
-	if !strings.Contains(unescaped, `stack1\' || status=\'success`) {
+	if !strings.Contains(unescaped, `stack0000000001\' || status=\'success`) {
 		t.Fatalf("expected escaped quotes in filter, got: %s", unescaped)
 	}
 }
@@ -174,12 +174,48 @@ func TestReadStackLiveLogsNoRecordsYieldsEmptyText(t *testing.T) {
 
 	handler := readStackLiveLogs(client.New(srv.URL))
 	result, err := handler(ctxWithKey(), &mcp.ReadResourceRequest{
-		Params: &mcp.ReadResourceParams{URI: "wireops://stacks/stack1/logs/live"},
+		Params: &mcp.ReadResourceParams{URI: "wireops://stacks/stack0000000001/logs/live"},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if result.Contents[0].Text != "" {
 		t.Fatalf("expected empty text when no sync_logs exist, got %q", result.Contents[0].Text)
+	}
+}
+
+func TestComposeConventionsResourceCoversTheRenderRules(t *testing.T) {
+	handler := readComposeConventions()
+	result, err := handler(context.Background(), &mcp.ReadResourceRequest{
+		Params: &mcp.ReadResourceParams{URI: composeConventionsURI},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Contents) != 1 {
+		t.Fatalf("expected one content part, got %d", len(result.Contents))
+	}
+	text := result.Contents[0].Text
+
+	// These rules are enforced at render time, so a stack that violates one
+	// fails to sync — the document is only useful if it states all of them.
+	for _, want := range []string{
+		"customization.image.slug", "selfh.st/icons",
+		"dev.wireops.config.<name>", "annotations:", "recursively", "symlink",
+		"1MB", "5MB", `"../"`,
+		"customization.init", "exits non-zero",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("conventions resource should explain %q", want)
+		}
+	}
+}
+
+func TestComposeConventionsResourceRejectsAnotherURI(t *testing.T) {
+	handler := readComposeConventions()
+	if _, err := handler(context.Background(), &mcp.ReadResourceRequest{
+		Params: &mcp.ReadResourceParams{URI: "wireops://conventions/other"},
+	}); err == nil {
+		t.Fatal("expected an error for an unknown URI")
 	}
 }

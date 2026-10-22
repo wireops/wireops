@@ -59,7 +59,7 @@ func newExecServer(banner, output string) *execServer {
 		es.calls = append(es.calls, r.Method+" "+r.URL.Path)
 
 		switch {
-		case r.URL.Path == "/api/custom/stacks/stack1/services":
+		case r.URL.Path == "/api/custom/stacks/stack0000000001/services":
 			_, _ = w.Write([]byte(`[{"service_name":"web","container_id":"c-web"}]`))
 		case strings.HasSuffix(r.URL.Path, "/terminal/sessions"):
 			_, _ = w.Write([]byte(`{"session_id":"sess-1"}`))
@@ -151,7 +151,7 @@ func TestExecInContainerReturnsCommandOutput(t *testing.T) {
 	defer es.close()
 
 	_, out, err := execInContainer(es.client())(ctxWithKey(), nil, models.ExecInContainerInput{
-		StackID:     "stack1",
+		StackID:     "stack0000000001",
 		ServiceName: "web",
 		Command:     "ls /",
 	})
@@ -203,7 +203,7 @@ func TestExecInContainerWaitsThroughASilentStart(t *testing.T) {
 	es.slowOutput(1500 * time.Millisecond)
 
 	_, out, err := execInContainer(es.client())(ctxWithKey(), nil, models.ExecInContainerInput{
-		StackID:        "stack1",
+		StackID:        "stack0000000001",
 		ServiceName:    "web",
 		Command:        "du -sh /",
 		TimeoutSeconds: 10,
@@ -226,7 +226,7 @@ func TestExecInContainerReportsExitCode(t *testing.T) {
 	es.exits(1)
 
 	_, out, err := execInContainer(es.client())(ctxWithKey(), nil, models.ExecInContainerInput{
-		StackID:     "stack1",
+		StackID:     "stack0000000001",
 		ServiceName: "web",
 		Command:     "cat /nope",
 	})
@@ -254,7 +254,7 @@ func TestExecInContainerAlwaysClosesTheSession(t *testing.T) {
 	es.mu.Unlock()
 
 	_, _, err := execInContainer(es.client())(ctxWithKey(), nil, models.ExecInContainerInput{
-		StackID:     "stack1",
+		StackID:     "stack0000000001",
 		ServiceName: "web",
 		Command:     "ls /",
 	})
@@ -274,7 +274,7 @@ func TestExecInContainerTimesOutWithoutOutput(t *testing.T) {
 	es.exits(-1)
 
 	_, out, err := execInContainer(es.client())(ctxWithKey(), nil, models.ExecInContainerInput{
-		StackID:        "stack1",
+		StackID:        "stack0000000001",
 		ServiceName:    "web",
 		Command:        "sleep 600",
 		TimeoutSeconds: 1,
@@ -300,7 +300,7 @@ func TestExecInContainerRequiresCommand(t *testing.T) {
 	defer es.close()
 
 	_, _, err := execInContainer(es.client())(ctxWithKey(), nil, models.ExecInContainerInput{
-		StackID:     "stack1",
+		StackID:     "stack0000000001",
 		ServiceName: "web",
 		Command:     "   ",
 	})
@@ -317,7 +317,7 @@ func TestExecInContainerMissingAPIKey(t *testing.T) {
 	defer es.close()
 
 	_, _, err := execInContainer(es.client())(t.Context(), nil, models.ExecInContainerInput{
-		StackID: "stack1",
+		StackID: "stack0000000001",
 		Command: "ls",
 	})
 	if err == nil {

@@ -79,7 +79,11 @@ func Run() {
 		SubscribeHandler:   liveLogBridge.Subscribe,
 		UnsubscribeHandler: liveLogBridge.Unsubscribe,
 	})
-	tools.Register(mcpServer, wireopsClient)
+	toolSet, err := tools.ParseToolSet(os.Getenv("MCP_TOOLS"))
+	if err != nil {
+		log.Fatalf("[mcp] MCP_TOOLS: %v", err)
+	}
+	tools.Register(mcpServer, wireopsClient, toolSet)
 	resources.Register(mcpServer, wireopsClient)
 	prompts.Register(mcpServer, wireopsClient)
 
@@ -119,7 +123,8 @@ func Run() {
 		}
 	}()
 
-	log.Printf("[mcp] listening addr=%s wireops_server=%s", listenAddr, serverURL)
+	log.Printf("[mcp] listening addr=%s wireops_server=%s tools=read:%t,write:%t,exec:%t",
+		listenAddr, serverURL, toolSet.Read, toolSet.Write, toolSet.Exec)
 	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("[mcp] server error: %v", err)
 	}

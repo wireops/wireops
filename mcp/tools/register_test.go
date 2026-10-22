@@ -16,9 +16,14 @@ import (
 // and would otherwise only fail in production.
 func listRegisteredTools(t *testing.T) []*mcp.Tool {
 	t.Helper()
+	return listRegisteredToolsFor(t, AllTools())
+}
+
+func listRegisteredToolsFor(t *testing.T, set ToolSet) []*mcp.Tool {
+	t.Helper()
 
 	server := mcp.NewServer(&mcp.Implementation{Name: "wireops-mcp-test", Version: "test"}, nil)
-	Register(server, client.New("http://127.0.0.1:1"))
+	Register(server, client.New("http://127.0.0.1:1"), set)
 
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 	ctx := t.Context()
@@ -172,6 +177,95 @@ func TestRegisterDocumentsConfirmOnIrreversibleTools(t *testing.T) {
 		}
 		if hasConfirm && !strings.Contains(tool.Description, "confirm") {
 			t.Errorf("tool %q takes a confirm field but never mentions it in its description", tool.Name)
+		}
+	}
+}
+
+func TestParseToolSet(t *testing.T) {
+	cases := []struct {
+		raw     string
+		want    ToolSet
+		wantErr bool
+	}{
+		{raw: "", want: AllTools()},
+		{raw: "all", want: AllTools()},
+		{raw: "read", want: ToolSet{Read: true}},
+		{raw: " read , write ", want: ToolSet{Read: true, Write: true}},
+		{raw: "READ,EXEC", want: ToolSet{Read: true, Exec: true}},
+		{raw: "write", want: ToolSet{Write: true}},
+		{raw: "readonly", wantErr: true},
+		{raw: ",", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.raw, func(t *testing.T) {
+			got, err := ParseToolSet(tc.raw)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected an error for %q", tc.raw)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("ParseToolSet(%q) = %+v, want %+v", tc.raw, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRegisterReadOnlySetOmitsWriteTools(t *testing.T) {
+	tools := listRegisteredToolsFor(t, ToolSet{Read: true})
+
+	byName := map[string]*mcp.Tool{}
+	for _, tool := range tools {
+		byName[tool.Name] = tool
+		// The point of the read-only set is that nothing in it can change
+		// anything, so a client can run it unattended.
+		if !tool.Annotations.ReadOnlyHint {
+			t.Errorf("tool %q is in the read set but is not annotated read-only", tool.Name)
+		}
+	}
+	// Every read-only tool belongs to this set, including the ones that sit in
+	// the write files (lint_compose, preview_stack_migration, the repo
+	// browsers) — a diagnosis-only deployment needs exactly those.
+	for _, name := range []string{
+		"whoami", "list_stacks", "get_stack_status", "get_container_logs",
+		"lint_compose", "preview_stack_migration", "browse_repo_files",
+		"discover_importable_stacks", "list_job_groups",
+	} {
+		if _, ok := byName[name]; !ok {
+			t.Errorf("expected %q in the read set", name)
+		}
+	}
+	for _, name := range []string{"deploy_stack", "delete_stack", "sync_repository", "run_job", "revoke_worker", "exec_in_container"} {
+		if _, ok := byName[name]; ok {
+			t.Errorf("tool %q must not be registered for a read-only set", name)
+		}
+	}
+}
+
+func TestRegisterExecSetIsJustTheTerminalTool(t *testing.T) {
+	tools := listRegisteredToolsFor(t, ToolSet{Exec: true})
+	if len(tools) != 1 || tools[0].Name != "exec_in_container" {
+		names := make([]string, 0, len(tools))
+		for _, tool := range tools {
+			names = append(names, tool.Name)
+		}
+		t.Fatalf("expected only exec_in_container, got %v", names)
+	}
+}
+
+func TestRegisterDropsTheToolsNoAPIKeyCanUse(t *testing.T) {
+	tools := listRegisteredTools(t)
+	for _, tool := range tools {
+		// These called manage_settings/view_audit_logs routes, which a service
+		// account (viewer or operator only) can never reach: they were listed,
+		// described as available, and always 403ed.
+		switch tool.Name {
+		case "list_audit_logs", "list_integrations", "list_orphans", "get_system_info":
+			t.Errorf("tool %q is unreachable with any API key and must not be registered", tool.Name)
 		}
 	}
 }

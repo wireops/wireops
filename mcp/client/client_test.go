@@ -3,10 +3,12 @@ package client
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/wireops/wireops/internal/auth"
@@ -104,8 +106,8 @@ func TestEscapeFilterValue(t *testing.T) {
 		in   string
 		want string
 	}{
-		{name: "plain id", in: "stack1", want: "stack1"},
-		{name: "single quote", in: "stack1' || status='success", want: `stack1\' || status=\'success`},
+		{name: "plain id", in: "stack0000000001", want: "stack0000000001"},
+		{name: "single quote", in: "stack0000000001' || status='success", want: `stack0000000001\' || status=\'success`},
 		{name: "backslash", in: `a\b`, want: `a\\b`},
 		{name: "backslash before quote", in: `a\'b`, want: `a\\\'b`},
 	}
@@ -294,5 +296,115 @@ func TestGetRawSurfacesAPIError(t *testing.T) {
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusNotFound {
 		t.Fatalf("expected a 404 APIError, got %v", err)
+	}
+}
+
+func TestAPIErrorHintNamesTheMissingCapability(t *testing.T) {
+	err := &APIError{
+		StatusCode: http.StatusForbidden,
+		Body:       `{"error":"permission denied","required_capability":"manage_settings","minimum_role":"admin","actor_role":"operator"}`,
+	}
+	hint := err.Hint()
+	for _, want := range []string{"manage_settings", "admin", "operator", "whoami"} {
+		if !strings.Contains(hint, want) {
+			t.Errorf("hint %q should mention %q", hint, want)
+		}
+	}
+	// An admin-only route is unreachable with any API key at all, which is
+	// worth saying outright rather than leaving the caller to retry.
+	if !strings.Contains(hint, "No API key can hold an admin capability") {
+		t.Errorf("hint %q should say an API key can never pass an admin route", hint)
+	}
+	if !strings.Contains(err.Error(), hint) {
+		t.Errorf("Error() should carry the hint, got %q", err.Error())
+	}
+}
+
+func TestAPIErrorHintFallsBackOnAnOlderServerBody(t *testing.T) {
+	err := &APIError{StatusCode: http.StatusForbidden, Body: `{"error":"permission denied"}`}
+	if hint := err.Hint(); !strings.Contains(hint, "whoami") {
+		t.Errorf("expected a generic 403 hint, got %q", hint)
+	}
+}
+
+func TestAPIErrorHintPerStatus(t *testing.T) {
+	cases := map[int]string{
+		http.StatusUnauthorized:       "api key",
+		http.StatusNotFound:           "no such record",
+		http.StatusServiceUnavailable: "worker is offline",
+		http.StatusConflict:           "current state",
+	}
+	for status, want := range cases {
+		err := &APIError{StatusCode: status, Body: "{}"}
+		if got := strings.ToLower(err.Hint()); !strings.Contains(got, want) {
+			t.Errorf("status %d: hint %q should mention %q", status, got, want)
+		}
+	}
+	// A status with nothing useful to add stays silent rather than guessing.
+	plain := &APIError{StatusCode: http.StatusBadRequest, Body: `{"error":"compose_path required"}`}
+	if plain.Hint() != "" {
+		t.Errorf("expected no hint for a 400, got %q", plain.Hint())
+	}
+	if strings.Contains(plain.Error(), "—") {
+		t.Errorf("Error() should not append an empty hint: %q", plain.Error())
+	}
+}
+
+func TestStreamReadsNamedEvents(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Accept"); got != "text/event-stream" {
+			t.Errorf("Accept = %q, want text/event-stream", got)
+		}
+		w.WriteHeader(http.StatusOK)
+		flusher, _ := w.(http.Flusher)
+		fmt.Fprint(w, ": keep-alive\n\n")
+		fmt.Fprint(w, "data: [compose_up] pulling\n\n")
+		fmt.Fprint(w, "event: status\ndata: {\"status\":\"running\"}\n\n")
+		fmt.Fprint(w, "event: status\ndata: {\"status\":\"success\"}\n\n")
+		fmt.Fprint(w, "data: never read\n\n")
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}))
+	defer srv.Close()
+
+	var opened int
+	var events []StreamEvent
+	err := New(srv.URL).Stream(context.Background(), "wireops_sk_test", "/stream", nil,
+		func() { opened++ },
+		func(event StreamEvent) bool {
+			events = append(events, event)
+			return event.Name == "status" && strings.Contains(event.Data, "success")
+		})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// onOpen fires once the response is 2xx, before any event — a caller that
+	// must subscribe before triggering the work depends on that.
+	if opened != 1 {
+		t.Errorf("onOpen called %d times, want 1", opened)
+	}
+	if len(events) != 3 {
+		t.Fatalf("expected to stop after the third event, got %d: %+v", len(events), events)
+	}
+	if events[0].Name != "" || events[0].Data != "[compose_up] pulling" {
+		t.Errorf("first event = %+v, want an unnamed data frame", events[0])
+	}
+	if events[1].Name != "status" || events[1].Data != `{"status":"running"}` {
+		t.Errorf("second event = %+v", events[1])
+	}
+}
+
+func TestStreamSurfacesANonSuccessStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error":"permission denied","required_capability":"view_logs"}`))
+	}))
+	defer srv.Close()
+
+	err := New(srv.URL).Stream(context.Background(), "wireops_sk_viewer", "/stream", nil, nil, func(StreamEvent) bool { return true })
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected a 403 APIError, got %v", err)
 	}
 }

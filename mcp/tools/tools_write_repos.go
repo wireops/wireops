@@ -15,25 +15,9 @@ import (
 // operator-only repository reads that had no tool yet. Repository credentials
 // (repository_keys: SSH keys, git passwords) are deliberately out of scope —
 // nothing here creates, reads or attaches one.
-func registerRepoWriteTools(server *mcp.Server, c *client.Client) {
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "sync_repository",
-		Description: "Clone or fetch a wireops repository's tracked branch right now, refreshing the server's workspace copy. Does not deploy anything — stacks pick the new commit up on their own next reconcile, or immediately via deploy_stack. Useful after pushing a commit you want to act on without waiting for the poll.",
-		Annotations: additive(true),
-	}, syncRepository(c))
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "create_stack_from_compose",
-		Description: "Create a wireops stack from a compose file already committed in a repository — the primary way to go from scaffold_stack output to a running stack. compose_path is the directory inside the repository and compose_file the file name (default docker-compose.yml); the file's optional top-level 'x-wireops' block supplies the wireops settings. Set paused true when env vars still have to be written (set_stack_env_vars) before the first deploy, then call set_stack_paused with paused false.",
-		Annotations: additive(false),
-	}, createStackFromCompose(c))
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "create_stack_from_wireops",
-		Description: "DEPRECATED LAYOUT: create a wireops stack from a separate wireops.yaml plus docker-compose.yml pair in a repository. Prefer create_stack_from_compose with an embedded x-wireops block; use this only for a repository already on the two-file layout. wireops_file is the repository-relative path of the wireops.yaml.",
-		Annotations: additive(false),
-	}, createStackFromWireops(c))
-
+// registerRepoReadTools registers the read-only repository tools: linting, migration preview and file/definition browsing. They are annotated read-only, so they belong to
+// the read tool group even though they sit in this file.
+func registerRepoReadTools(server *mcp.Server, c *client.Client) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "lint_compose",
 		Description: "Statically analyse a compose file committed in a wireops repository and report problems before deploying it: syntax errors, undefined variables, and (when worker is given) violations of that worker's effective deploy security policy. Pass stack to resolve the env vars an existing stack would deploy with, which is what makes the undefined-variable check meaningful. Read-only: it fetches the repository and parses the file, nothing else.",
@@ -45,12 +29,6 @@ func registerRepoWriteTools(server *mcp.Server, c *client.Client) {
 		Description: "Dry-run moving a wireops stack to a different git repository: reports what would be written, which compose resources (services/volumes/networks) change identity, and what would break — without touching anything. Always run this before migrate_stack.",
 		Annotations: readOnly(),
 	}, previewStackMigration(c))
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "migrate_stack",
-		Description: "Move a wireops stack to a different git repository, repointing the stack record at the new repository and compose file. Run preview_stack_migration first. teardown_old_project additionally tears the stack down under its previous compose project name, which stops its current containers. confirm must be the stack's exact name.",
-		Annotations: destructive(false),
-	}, migrateStack(c))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "browse_repo_files",
@@ -75,6 +53,32 @@ func registerRepoWriteTools(server *mcp.Server, c *client.Client) {
 		Description: "Parse a job.yaml in a wireops repository and return its validated definition, before scheduling it with create_scheduled_job. For an already-scheduled job use get_job_definition instead.",
 		Annotations: readOnly(),
 	}, repoDefinition(c, "job-definition"))
+}
+
+func registerRepoWriteTools(server *mcp.Server, c *client.Client) {
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "sync_repository",
+		Description: "Clone or fetch a wireops repository's tracked branch right now, refreshing the server's workspace copy. Does not deploy anything — stacks pick the new commit up on their own next reconcile, or immediately via deploy_stack. Useful after pushing a commit you want to act on without waiting for the poll.",
+		Annotations: additive(true),
+	}, syncRepository(c))
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "create_stack_from_compose",
+		Description: "Create a wireops stack from a compose file already committed in a repository — the primary way to go from scaffold_stack output to a running stack. compose_path is the directory inside the repository and compose_file the file name (default docker-compose.yml); the file's optional top-level 'x-wireops' block supplies the wireops settings. Set paused true when env vars still have to be written (set_stack_env_vars) before the first deploy, then call set_stack_paused with paused false.",
+		Annotations: additive(false),
+	}, createStackFromCompose(c))
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "create_stack_from_wireops",
+		Description: "DEPRECATED LAYOUT: create a wireops stack from a separate wireops.yaml plus docker-compose.yml pair in a repository. Prefer create_stack_from_compose with an embedded x-wireops block; use this only for a repository already on the two-file layout. wireops_file is the repository-relative path of the wireops.yaml.",
+		Annotations: additive(false),
+	}, createStackFromWireops(c))
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "migrate_stack",
+		Description: "Move a wireops stack to a different git repository, repointing the stack record at the new repository and compose file. Run preview_stack_migration first. teardown_old_project additionally tears the stack down under its previous compose project name, which stops its current containers. confirm must be the stack's exact name.",
+		Annotations: destructive(false),
+	}, migrateStack(c))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "create_repository",
@@ -101,8 +105,12 @@ func syncRepository(c *client.Client) mcp.ToolHandlerFor[models.SyncRepositoryIn
 		if err != nil {
 			return nil, nil, err
 		}
+		repositoryID, err := resolveRepositoryID(ctx, c, apiKey, in.RepositoryID)
+		if err != nil {
+			return nil, nil, err
+		}
 		var out any
-		path := "/api/custom/repositories/" + url.PathEscape(in.RepositoryID) + "/sync"
+		path := "/api/custom/repositories/" + url.PathEscape(repositoryID) + "/sync"
 		if err := c.Post(ctx, apiKey, path, nil, struct{}{}, &out); err != nil {
 			return nil, nil, err
 		}
@@ -116,12 +124,20 @@ func createStackFromCompose(c *client.Client) mcp.ToolHandlerFor[models.CreateSt
 		if err != nil {
 			return nil, nil, err
 		}
-		if in.Repository == "" || in.Worker == "" {
+		repositoryID, err := resolveRepositoryID(ctx, c, apiKey, in.Repository)
+		if err != nil {
+			return nil, nil, err
+		}
+		workerID, err := resolveWorkerID(ctx, c, apiKey, in.Worker)
+		if err != nil {
+			return nil, nil, err
+		}
+		if repositoryID == "" || workerID == "" {
 			return nil, nil, fmt.Errorf("repository and worker are required")
 		}
 		body := map[string]any{
-			"repository":   in.Repository,
-			"worker":       in.Worker,
+			"repository":   repositoryID,
+			"worker":       workerID,
 			"compose_path": in.ComposePath,
 			"compose_file": in.ComposeFile,
 			"paused":       in.Paused,
@@ -140,12 +156,20 @@ func createStackFromWireops(c *client.Client) mcp.ToolHandlerFor[models.CreateSt
 		if err != nil {
 			return nil, nil, err
 		}
-		if in.Repository == "" || in.Worker == "" || in.WireopsFile == "" {
+		repositoryID, err := resolveRepositoryID(ctx, c, apiKey, in.Repository)
+		if err != nil {
+			return nil, nil, err
+		}
+		workerID, err := resolveWorkerID(ctx, c, apiKey, in.Worker)
+		if err != nil {
+			return nil, nil, err
+		}
+		if repositoryID == "" || workerID == "" || in.WireopsFile == "" {
 			return nil, nil, fmt.Errorf("repository, worker and wireops_file are required")
 		}
 		body := map[string]any{
-			"repository":   in.Repository,
-			"worker":       in.Worker,
+			"repository":   repositoryID,
+			"worker":       workerID,
 			"wireops_file": in.WireopsFile,
 			"paused":       in.Paused,
 		}
@@ -163,15 +187,27 @@ func lintCompose(c *client.Client) mcp.ToolHandlerFor[models.LintComposeInput, a
 		if err != nil {
 			return nil, nil, err
 		}
-		if in.Repository == "" {
+		repositoryID, err := resolveRepositoryID(ctx, c, apiKey, in.Repository)
+		if err != nil {
+			return nil, nil, err
+		}
+		workerID, err := resolveWorkerID(ctx, c, apiKey, in.Worker)
+		if err != nil {
+			return nil, nil, err
+		}
+		stackID, err := resolveStackID(ctx, c, apiKey, in.Stack)
+		if err != nil {
+			return nil, nil, err
+		}
+		if repositoryID == "" {
 			return nil, nil, fmt.Errorf("repository is required")
 		}
 		body := map[string]any{
-			"repository":   in.Repository,
+			"repository":   repositoryID,
 			"compose_path": in.ComposePath,
 			"compose_file": in.ComposeFile,
-			"worker":       in.Worker,
-			"stack":        in.Stack,
+			"worker":       workerID,
+			"stack":        stackID,
 		}
 		var out any
 		if err := c.Post(ctx, apiKey, "/api/custom/lint/compose", nil, body, &out); err != nil {
@@ -200,12 +236,20 @@ func previewStackMigration(c *client.Client) mcp.ToolHandlerFor[models.PreviewSt
 		if err != nil {
 			return nil, nil, err
 		}
-		if in.Repository == "" {
+		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		if err != nil {
+			return nil, nil, err
+		}
+		repositoryID, err := resolveRepositoryID(ctx, c, apiKey, in.Repository)
+		if err != nil {
+			return nil, nil, err
+		}
+		if repositoryID == "" {
 			return nil, nil, fmt.Errorf("repository is required")
 		}
-		body := migrateBody(in.Repository, in.ComposePath, in.ComposeFile, in.WireopsFile, false, false)
+		body := migrateBody(repositoryID, in.ComposePath, in.ComposeFile, in.WireopsFile, false, false)
 		var out any
-		path := "/api/custom/stacks/" + url.PathEscape(in.StackID) + "/migrate/preview"
+		path := "/api/custom/stacks/" + url.PathEscape(stackID) + "/migrate/preview"
 		if err := c.Post(ctx, apiKey, path, nil, body, &out); err != nil {
 			return nil, nil, err
 		}
@@ -219,17 +263,25 @@ func migrateStack(c *client.Client) mcp.ToolHandlerFor[models.MigrateStackInput,
 		if err != nil {
 			return nil, nil, err
 		}
-		if in.Repository == "" {
+		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		if err != nil {
+			return nil, nil, err
+		}
+		repositoryID, err := resolveRepositoryID(ctx, c, apiKey, in.Repository)
+		if err != nil {
+			return nil, nil, err
+		}
+		if repositoryID == "" {
 			return nil, nil, fmt.Errorf("repository is required")
 		}
-		if err := requireConfirm(ctx, c, apiKey, confirmStacks, in.StackID, in.Confirm); err != nil {
+		if err := requireConfirm(ctx, c, apiKey, confirmStacks, stackID, in.Confirm); err != nil {
 			return nil, nil, err
 		}
 		// The server has its own confirm:true gate; the name check above is
 		// what actually involves a human, so this one is just satisfied.
-		body := migrateBody(in.Repository, in.ComposePath, in.ComposeFile, in.WireopsFile, in.TeardownOldProject, true)
+		body := migrateBody(repositoryID, in.ComposePath, in.ComposeFile, in.WireopsFile, in.TeardownOldProject, true)
 		var out any
-		path := "/api/custom/stacks/" + url.PathEscape(in.StackID) + "/migrate"
+		path := "/api/custom/stacks/" + url.PathEscape(stackID) + "/migrate"
 		if err := c.Post(ctx, apiKey, path, nil, body, &out); err != nil {
 			return nil, nil, err
 		}
@@ -243,8 +295,12 @@ func browseRepoFiles(c *client.Client) mcp.ToolHandlerFor[models.BrowseRepoFiles
 		if err != nil {
 			return nil, nil, err
 		}
+		repositoryID, err := resolveRepositoryID(ctx, c, apiKey, in.RepositoryID)
+		if err != nil {
+			return nil, nil, err
+		}
 		var out []interface{}
-		path := "/api/custom/repositories/" + url.PathEscape(in.RepositoryID) + "/files"
+		path := "/api/custom/repositories/" + url.PathEscape(repositoryID) + "/files"
 		if err := c.Get(ctx, apiKey, path, nil, &out); err != nil {
 			return nil, nil, err
 		}
@@ -261,11 +317,15 @@ func repoDefinition(c *client.Client, kind string) mcp.ToolHandlerFor[models.Rep
 		if err != nil {
 			return nil, nil, err
 		}
+		repositoryID, err := resolveRepositoryID(ctx, c, apiKey, in.RepositoryID)
+		if err != nil {
+			return nil, nil, err
+		}
 		if in.Path == "" {
 			return nil, nil, fmt.Errorf("path is required")
 		}
 		var out any
-		path := "/api/custom/repositories/" + url.PathEscape(in.RepositoryID) + "/" + kind
+		path := "/api/custom/repositories/" + url.PathEscape(repositoryID) + "/" + kind
 		if err := c.Get(ctx, apiKey, path, url.Values{"file": {in.Path}}, &out); err != nil {
 			return nil, nil, err
 		}
@@ -301,6 +361,10 @@ func updateRepository(c *client.Client) mcp.ToolHandlerFor[models.UpdateReposito
 		if err != nil {
 			return nil, nil, err
 		}
+		repositoryID, err := resolveRepositoryID(ctx, c, apiKey, in.RepositoryID)
+		if err != nil {
+			return nil, nil, err
+		}
 		// Only send what was actually given: a PATCH with empty strings would
 		// blank fields the caller never mentioned.
 		body := map[string]any{}
@@ -311,7 +375,7 @@ func updateRepository(c *client.Client) mcp.ToolHandlerFor[models.UpdateReposito
 			return nil, nil, fmt.Errorf("nothing to update — pass at least one of name, git_url, branch")
 		}
 		var out any
-		path := "/api/collections/repositories/records/" + url.PathEscape(in.RepositoryID)
+		path := "/api/collections/repositories/records/" + url.PathEscape(repositoryID)
 		if err := c.Patch(ctx, apiKey, path, nil, body, &out); err != nil {
 			return nil, nil, err
 		}
@@ -325,13 +389,17 @@ func deleteRepository(c *client.Client) mcp.ToolHandlerFor[models.DeleteReposito
 		if err != nil {
 			return nil, nil, err
 		}
-		if err := requireConfirm(ctx, c, apiKey, confirmRepos, in.RepositoryID, in.Confirm); err != nil {
+		repositoryID, err := resolveRepositoryID(ctx, c, apiKey, in.RepositoryID)
+		if err != nil {
 			return nil, nil, err
 		}
-		path := "/api/collections/repositories/records/" + url.PathEscape(in.RepositoryID)
+		if err := requireConfirm(ctx, c, apiKey, confirmRepos, repositoryID, in.Confirm); err != nil {
+			return nil, nil, err
+		}
+		path := "/api/collections/repositories/records/" + url.PathEscape(repositoryID)
 		if err := c.Delete(ctx, apiKey, path, nil, nil); err != nil {
 			return nil, nil, err
 		}
-		return nil, map[string]any{"status": "deleted", "repository_id": in.RepositoryID}, nil
+		return nil, map[string]any{"status": "deleted", "repository_id": repositoryID}, nil
 	}
 }

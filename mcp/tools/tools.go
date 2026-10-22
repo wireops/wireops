@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"gopkg.in/yaml.v3"
@@ -29,31 +30,96 @@ import (
 	"github.com/wireops/wireops/mcp/utils"
 )
 
-// Register adds every wireops tool to server, calling the wireops REST API
-// at c on each invocation. The write tools are registered unconditionally:
-// gating them here would be a second, weaker copy of the server's RBAC, and
-// a viewer-scoped key already cannot use them.
-func Register(server *mcp.Server, c *client.Client) {
-	registerReadTools(server, c)
-	registerStackWriteTools(server, c)
-	registerRepoWriteTools(server, c)
-	registerJobWriteTools(server, c)
-	registerWorkerWriteTools(server, c)
-	registerExecTools(server, c)
+// ToolSet selects which groups of tools Register adds. It is a deployment
+// choice, not an authorization one — the server's RBAC still decides every
+// call, and a key that cannot write already gets a 403. What it buys is
+// context: the full set is ~60 tools whose schemas and descriptions every
+// session pays for before any work starts, and an instance used only for
+// diagnosis has no use for the write half.
+type ToolSet struct {
+	Read  bool
+	Write bool
+	Exec  bool
+}
+
+// AllTools is the default: every group.
+func AllTools() ToolSet {
+	return ToolSet{Read: true, Write: true, Exec: true}
+}
+
+// ParseToolSet reads a comma-separated group list ("read", "write", "exec",
+// or "all"). An empty value means all of them. An unknown group is an error
+// rather than a silent omission: a typo that quietly produced a read-only
+// server would be found only when a write failed.
+func ParseToolSet(raw string) (ToolSet, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return AllTools(), nil
+	}
+	var set ToolSet
+	for _, group := range strings.Split(raw, ",") {
+		switch strings.ToLower(strings.TrimSpace(group)) {
+		case "":
+			continue
+		case "all":
+			set = AllTools()
+		case "read":
+			set.Read = true
+		case "write":
+			set.Write = true
+		case "exec":
+			set.Exec = true
+		default:
+			return ToolSet{}, fmt.Errorf("unknown tool group %q — valid groups are read, write, exec, all", strings.TrimSpace(group))
+		}
+	}
+	if !set.Read && !set.Write && !set.Exec {
+		return ToolSet{}, fmt.Errorf("no tool groups selected")
+	}
+	return set, nil
+}
+
+// Register adds the selected wireops tools to server, calling the wireops
+// REST API at c on each invocation. Within a selected group the write tools
+// are registered unconditionally: gating them on the caller's role here would
+// be a second, weaker copy of the server's RBAC, and a viewer-scoped key
+// already cannot use them.
+func Register(server *mcp.Server, c *client.Client, set ToolSet) {
+	if set.Read {
+		registerReadTools(server, c)
+		registerStackReadTools(server, c)
+		registerRepoReadTools(server, c)
+		registerJobReadTools(server, c)
+	}
+	if set.Write {
+		registerStackWriteTools(server, c)
+		registerRepoWriteTools(server, c)
+		registerJobWriteTools(server, c)
+		registerWorkerWriteTools(server, c)
+	}
+	if set.Exec {
+		registerExecTools(server, c)
+	}
 }
 
 // registerReadTools adds the tools that never change wireops state, plus the
 // pure local generators (generate_*/scaffold_stack).
 func registerReadTools(server *mcp.Server, c *client.Client) {
 	mcp.AddTool(server, &mcp.Tool{
+		Name:        "whoami",
+		Description: "Report what the caller's own wireops API key is: its role (viewer or operator), the capabilities that role grants, the service account it belongs to, and the server's version plus its default git poll interval (scan_period_seconds, which is what a stack's sync_interval_seconds=0 resolves to). Call this before concluding that something is broken when a tool returns a permission error — a viewer-scoped key cannot deploy, and no API key can hold an admin capability at all.",
+		Annotations: readOnly(),
+	}, whoami(c))
+
+	mcp.AddTool(server, &mcp.Tool{
 		Name:        "list_stacks",
-		Description: "List all wireops stacks visible to the caller's API key, with their sync status. Records with active render-time overrides carry a _notice field pointing at get_stack_render_overrides. A status of \"paused\" means git sync/reconcile is disabled for that stack — it says nothing about whether the compose containers are running; check get_stack_services for that.",
+		Description: "List the wireops stacks visible to the caller's API key, newest first, with their sync status and deployed version. Filterable by status, name substring, repository and worker, and paged; returns a compact projection by default (pass fields [\"*\"] for whole records). Relations come back expanded, so the repository name and worker hostname are in the response rather than two more ids to look up. A _notice on a record explains anything about it that the fields alone do not.",
 		Annotations: readOnly(),
 	}, listStacks(c))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_stack_status",
-		Description: "Get a single wireops stack record by id, including its current sync/deploy status. If the stack has active render-time overrides, the response carries a _notice field pointing at get_stack_render_overrides. A status of \"paused\" means git sync/reconcile is disabled for that stack — it says nothing about whether the compose containers are running; check get_stack_services for that. A status of \"degraded\" means at least one non-init service isn't healthy, OR an initialization service (customization.init, see get_stack_services) exited non-zero or is stuck in a restart loop. A healthy or cleanly-exiting (code 0) init service is exempt and does not by itself degrade the stack.",
+		Description: "Get one wireops stack record, including its current sync/deploy status. A _notice in the response explains the status when it is one that is easy to misread (paused, degraded) and flags active render-time overrides.",
 		Annotations: readOnly(),
 	}, getStackStatus(c))
 
@@ -65,7 +131,7 @@ func registerReadTools(server *mcp.Server, c *client.Client) {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_stack_services",
-		Description: "List the running containers/services for a wireops stack. This reflects actual container/compose state, independent of the stack's sync status — a \"paused\" stack (git sync disabled) can still have running containers, and a stack that is actively syncing can have stopped containers. Each entry carries is_init and exit_code: is_init is true when the service is labeled customization.init (a run-to-completion container such as a migration or seed job). For those, status \"exited\" with exit_code 0 is the expected, healthy end state, not a failure — only a non-zero exit_code or repeated restarts indicate a problem. Both fields can come back null instead of 0/false, meaning unknown (not a known-good value) — this happens when the assigned worker is offline and the response falls back to last-known DB state, which doesn't track exit_code/is_init.",
+		Description: "List the containers/services of a wireops stack with their live state, which is independent of the stack's sync status. Each entry carries is_init and exit_code; a _notice in the response explains those two whenever the stack actually has a case where they matter.",
 		Annotations: readOnly(),
 	}, getStackServices(c))
 
@@ -92,12 +158,6 @@ func registerReadTools(server *mcp.Server, c *client.Client) {
 		Description: "Get live CPU/memory/network/block-IO usage for a single container in a wireops stack. Requires the stack's worker to be online. Pairs with get_container_logs and get_stack_services (which lists the container ids to pass here).",
 		Annotations: readOnly(),
 	}, getContainerStats(c))
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "list_audit_logs",
-		Description: "List wireops audit log entries (who did what, when, and the outcome) — covers actions like stack pause/resume/deploy, worker token issuance, settings changes, etc. Supports filtering by actor, action, resource, origin, status, and time range. Most recent first.",
-		Annotations: readOnly(),
-	}, listAuditLogs(c))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_stack_render_overrides",
@@ -190,24 +250,6 @@ func registerReadTools(server *mcp.Server, c *client.Client) {
 	}, getGlobalWorkerPolicy(c))
 
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "list_integrations",
-		Description: "List all wireops integration plugins (Traefik, Dozzle, notification providers, etc.), whether each is enabled, and its (secret-masked) config. Requires manage-settings capability on the caller's API key. For per-stack resolved container actions instead, use get_stack_integration_actions.",
-		Annotations: readOnly(),
-	}, listIntegrations(c))
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "list_orphans",
-		Description: "List directories in the repo workspace that aren't tracked by any wireops repository record — leftovers from deleted repos, failed imports, etc. Requires manage-settings capability on the caller's API key.",
-		Annotations: readOnly(),
-	}, listOrphans(c))
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "get_system_info",
-		Description: "Get wireops server build/version info and repo workspace disk usage. Requires manage-settings capability on the caller's API key.",
-		Annotations: readOnly(),
-	}, getSystemInfo(c))
-
-	mcp.AddTool(server, &mcp.Tool{
 		Name:        "generate_wireops_yaml",
 		Description: "DEPRECATED: Generate a valid standalone wireops.yaml file from structured fields, ready to commit to a repository. The standalone two-file layout is deprecated — for a new stack, use scaffold_stack instead, which by default embeds an equivalent 'x-wireops' block directly in the compose file (no separate wireops.yaml needed). Use this tool directly only to add/edit a standalone wireops.yaml for a repository that already uses the deprecated two-file layout. Does not create or modify any stack — the caller commits the returned content itself.",
 		Annotations: readOnly(),
@@ -221,7 +263,7 @@ func registerReadTools(server *mcp.Server, c *client.Client) {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "scaffold_stack",
-		Description: "Generate a single docker-compose.yml for a new stack from structured service definitions, ready to commit to a repository — this is the primary, recommended way to define a wireops stack. By default (two_file left false) the wireops fields are embedded as a top-level 'x-wireops' block directly in that one compose file, so only one file needs to be committed; create the stack via POST /api/custom/stacks/from-compose (compose_path/compose_file). Set two_file: true only to instead generate the deprecated two-file layout (separate wireops.yaml + docker-compose.yml, for POST /api/custom/stacks/from-wireops) — e.g. to match an existing repository already using that layout, or on an explicit user request; the two-file layout still works but is deprecated in favor of the embedded x-wireops block. If worker_id is given, validates the compose file against that worker's effective deploy security policy and reports violations instead of silently returning a file that would be rejected at deploy time. Does not create or import any stack. Before calling this tool, look up the current image tag, ports, volumes, and required environment variables for each service using a web search against the application's official site, official image registry page, or official GitHub repository — do not rely on memorized/training-data knowledge, which may be outdated. ComposeServiceInput has no labels/annotations field, so the wireops compose conventions — the `customization.image.slug` label (custom UI icon), the `dev.wireops.config.<name>` annotation (mounts a git-tracked file/directory into the container, source:target), and `customization.init` (a manually added label, not generated by this tool, marking a run-to-completion container such as a migration or seed job so wireops treats a clean exit as healthy instead of a failure) — must be hand-added to the returned YAML before committing, if wanted. These are unrelated to x-wireops (a stack-level, top-level key) and never overlap with it.",
+		Description: "Generate a docker-compose.yml for a new stack from structured service definitions — the recommended way to define a wireops stack. By default the wireops settings are embedded as a top-level x-wireops block in that one file, which POST /api/custom/stacks/from-compose (create_stack_from_compose) then creates the stack from; two_file true instead emits the deprecated separate wireops.yaml + docker-compose.yml pair. Pass worker_id to validate the result against that worker's effective deploy security policy instead of returning a file that would be rejected at deploy time. Creates nothing itself. Look up each image's current tag, ports, volumes and required environment variables from the project's official site, registry page or GitHub repository first — not from memory, which goes stale. The optional label/annotation conventions (service icon, git-tracked config mounts, run-to-completion services) are not generated by this tool: read the wireops://conventions/compose resource and hand-add the ones you want.",
 		Annotations: readOnly(),
 	}, scaffoldStack(c))
 }
@@ -240,11 +282,85 @@ func apiKeyFrom(ctx context.Context) (string, error) {
 // otherwise-opaque JSON field on its own.
 const renderOverridesNotice = "This stack has active render-time overrides (render_overrides) that differ from what's committed in Git and are reapplied on every reconcile. Call get_stack_render_overrides for the resolved details."
 
+// Status explanations, emitted only for the status actually returned. These
+// used to live in the tool descriptions, where every session paid for them
+// whether or not the stack was in that state — the description is read once
+// per session, the notice exactly when it applies.
+const (
+	pausedStatusNotice = "Status \"paused\" means wireops will not act on new commits for this stack. It says nothing about the containers, which may well be running — get_stack_services reports those. Resume with set_stack_paused."
+
+	degradedStatusNotice = "Status \"degraded\" means at least one non-init service is unhealthy, OR an init service (labeled customization.init) exited non-zero or is restart-looping. An init service that exited 0 is healthy and does not degrade a stack by itself. get_stack_services shows which service it is."
+
+	initServiceNotice = "This stack has one or more init services (labeled customization.init, is_init true): run-to-completion containers such as a migration or seed job. For those, status \"exited\" with exit_code 0 is the expected healthy end state, not a failure — only a non-zero exit_code or repeated restarts are a problem."
+
+	unknownServiceStateNotice = "Some entries carry null for is_init/exit_code, which means unknown rather than false/0: the assigned worker is offline and this response fell back to last-known database state, which does not track them. Check the worker with list_workers before drawing conclusions from the container states here."
+)
+
+// statusNotice returns the explanation for a stack status, "" for the ones
+// that mean what they say.
+func statusNotice(status string) string {
+	switch status {
+	case "paused":
+		return pausedStatusNotice
+	case "degraded":
+		return degradedStatusNotice
+	default:
+		return ""
+	}
+}
+
+// appendNotice adds text to a record's _notice, keeping any notice already
+// there — a stack can be both paused and carrying render overrides.
+func appendNotice(rec map[string]interface{}, text string) {
+	if text == "" {
+		return
+	}
+	if existing, ok := rec["_notice"].(string); ok && existing != "" {
+		rec["_notice"] = existing + " " + text
+		return
+	}
+	rec["_notice"] = text
+}
+
 // hasRenderOverrides reports whether a decoded stacks collection record has
 // a non-empty render_overrides field.
 func hasRenderOverrides(rec map[string]interface{}) bool {
 	overrides, ok := rec["render_overrides"].(map[string]interface{})
 	return ok && len(overrides) > 0
+}
+
+// whoamiCache memoizes GET /api/custom/me per API key. The identity half
+// changes only when the key is reconfigured, and the instance half
+// (version, scan period) not until a restart — but every stack record needs
+// scan_period_seconds to resolve sync_interval_seconds=0, so without a cache
+// that would be one extra request per list_stacks call.
+var whoamiCache = newTTLCache(5 * time.Minute)
+
+// fetchWhoami returns the caller's own identity/capability record, cached.
+func fetchWhoami(ctx context.Context, c *client.Client, apiKey string) (map[string]interface{}, error) {
+	if cached, ok := whoamiCache.get(apiKey); ok {
+		return cached, nil
+	}
+	var out map[string]interface{}
+	if err := c.Get(ctx, apiKey, "/api/custom/me", nil, &out); err != nil {
+		return nil, err
+	}
+	whoamiCache.put(apiKey, out)
+	return out, nil
+}
+
+func whoami(c *client.Client) mcp.ToolHandlerFor[models.WhoamiInput, any] {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, _ models.WhoamiInput) (*mcp.CallToolResult, any, error) {
+		apiKey, err := apiKeyFrom(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		out, err := fetchWhoami(ctx, c, apiKey)
+		if err != nil {
+			return nil, nil, err
+		}
+		return nil, out, nil
+	}
 }
 
 func listStacks(c *client.Client) mcp.ToolHandlerFor[models.ListStacksInput, any] {
@@ -253,19 +369,47 @@ func listStacks(c *client.Client) mcp.ToolHandlerFor[models.ListStacksInput, any
 		if err != nil {
 			return nil, nil, err
 		}
-		limit := in.Limit
-		if limit <= 0 {
-			limit = 50
+		repositoryID, err := resolveRepositoryID(ctx, c, apiKey, in.Repository)
+		if err != nil {
+			return nil, nil, err
 		}
-		q := url.Values{"perPage": {fmt.Sprint(limit)}, "sort": {"-updated"}}
+		workerID, err := resolveWorkerID(ctx, c, apiKey, in.Worker)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		q := paging(in.Limit, in.Page)
+		q.Set("sort", "-updated")
+		q.Set("expand", "repository,worker")
+		if fields := fieldsParam(in.Fields, stackListFields); fields != "" {
+			q.Set("fields", fields)
+		}
+		if filter := buildFilter([]filterClause{
+			{field: "status", op: "=", value: in.Status},
+			{field: "name", op: "~", value: in.NameContains},
+			{field: "repository", op: "=", value: repositoryID},
+			{field: "worker", op: "=", value: workerID},
+		}); filter != "" {
+			q.Set("filter", filter)
+		}
+
 		var out map[string]interface{}
 		if err := c.Get(ctx, apiKey, "/api/collections/stacks/records", q, &out); err != nil {
 			return nil, nil, err
 		}
+		globalSeconds := scanPeriodSeconds(ctx, c, apiKey)
 		if items, ok := out["items"].([]interface{}); ok {
 			for _, item := range items {
-				if rec, ok := item.(map[string]interface{}); ok && hasRenderOverrides(rec) {
-					rec["_notice"] = renderOverridesNotice
+				rec, ok := item.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				annotateSyncInterval(rec, globalSeconds)
+				if hasRenderOverrides(rec) {
+					appendNotice(rec, renderOverridesNotice)
+				}
+				if status, ok := rec["status"].(string); ok {
+					appendNotice(rec, statusNotice(status))
 				}
 			}
 		}
@@ -279,13 +423,20 @@ func getStackStatus(c *client.Client) mcp.ToolHandlerFor[models.StackIDInput, an
 		if err != nil {
 			return nil, nil, err
 		}
+		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		if err != nil {
+			return nil, nil, err
+		}
 		var out map[string]interface{}
-		path := "/api/collections/stacks/records/" + url.PathEscape(in.StackID)
+		path := "/api/collections/stacks/records/" + url.PathEscape(stackID)
 		if err := c.Get(ctx, apiKey, path, nil, &out); err != nil {
 			return nil, nil, err
 		}
 		if hasRenderOverrides(out) {
-			out["_notice"] = renderOverridesNotice
+			appendNotice(out, renderOverridesNotice)
+		}
+		if status, ok := out["status"].(string); ok {
+			appendNotice(out, statusNotice(status))
 		}
 		return nil, out, nil
 	}
@@ -297,12 +448,16 @@ func getSyncLogs(c *client.Client) mcp.ToolHandlerFor[models.SyncLogsInput, any]
 		if err != nil {
 			return nil, nil, err
 		}
+		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		if err != nil {
+			return nil, nil, err
+		}
 		limit := in.Limit
 		if limit <= 0 {
 			limit = 20
 		}
 		q := url.Values{
-			"filter":  {fmt.Sprintf("stack='%s'", in.StackID)},
+			"filter":  {fmt.Sprintf("stack='%s'", stackID)},
 			"sort":    {"-created"},
 			"perPage": {fmt.Sprint(limit)},
 		}
@@ -324,6 +479,38 @@ func fetchStackServices(ctx context.Context, c *client.Client, apiKey, stackID s
 		return nil, err
 	}
 	return out, nil
+}
+
+// serviceStateNotices reports which of the is_init/exit_code explanations
+// actually apply to a service listing: the init-service one when the stack has
+// such a service, and the unknown-state one when a field came back null
+// because the worker is offline.
+func serviceStateNotices(services []interface{}) []string {
+	var hasInit, hasUnknown bool
+	for _, svc := range services {
+		rec, ok := svc.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if isInit, present := rec["is_init"]; present {
+			if isInit == nil {
+				hasUnknown = true
+			} else if flag, ok := isInit.(bool); ok && flag {
+				hasInit = true
+			}
+		}
+		if exitCode, present := rec["exit_code"]; present && exitCode == nil {
+			hasUnknown = true
+		}
+	}
+	var notices []string
+	if hasInit {
+		notices = append(notices, initServiceNotice)
+	}
+	if hasUnknown {
+		notices = append(notices, unknownServiceStateNotice)
+	}
+	return notices
 }
 
 // resolveContainerIDByServiceName looks up a service's container id from the
@@ -400,11 +587,19 @@ func getStackServices(c *client.Client) mcp.ToolHandlerFor[models.StackIDInput, 
 		if err != nil {
 			return nil, nil, err
 		}
-		out, err := fetchStackServices(ctx, c, apiKey, in.StackID)
+		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
 		if err != nil {
 			return nil, nil, err
 		}
-		return nil, map[string]interface{}{"services": out}, nil
+		out, err := fetchStackServices(ctx, c, apiKey, stackID)
+		if err != nil {
+			return nil, nil, err
+		}
+		result := map[string]interface{}{"services": out}
+		for _, notice := range serviceStateNotices(out) {
+			appendNotice(result, notice)
+		}
+		return nil, result, nil
 	}
 }
 
@@ -414,13 +609,38 @@ func getStackResources(c *client.Client) mcp.ToolHandlerFor[models.StackIDInput,
 		if err != nil {
 			return nil, nil, err
 		}
+		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		if err != nil {
+			return nil, nil, err
+		}
 		var out any
-		path := "/api/custom/stacks/" + url.PathEscape(in.StackID) + "/resources"
+		path := "/api/custom/stacks/" + url.PathEscape(stackID) + "/resources"
 		if err := c.Get(ctx, apiKey, path, nil, &out); err != nil {
 			return nil, nil, err
 		}
 		return nil, out, nil
 	}
+}
+
+// interpolationPattern matches a compose variable reference: ${NAME},
+// ${NAME:-default} and ${NAME?err} all capture NAME. $$NAME is a compose
+// escape and deliberately not matched.
+var interpolationPattern = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)[^}]*\}`)
+
+// unresolvedInterpolations returns the variable names referenced in content
+// that are not in defined, in first-appearance order and without duplicates.
+func unresolvedInterpolations(content string, defined map[string]bool) []string {
+	seen := map[string]bool{}
+	var missing []string
+	for _, match := range interpolationPattern.FindAllStringSubmatch(content, -1) {
+		name := match[1]
+		if defined[name] || seen[name] {
+			continue
+		}
+		seen[name] = true
+		missing = append(missing, name)
+	}
+	return missing
 }
 
 func getStackCompose(c *client.Client) mcp.ToolHandlerFor[models.StackIDInput, any] {
@@ -429,13 +649,87 @@ func getStackCompose(c *client.Client) mcp.ToolHandlerFor[models.StackIDInput, a
 		if err != nil {
 			return nil, nil, err
 		}
-		var out any
-		path := "/api/custom/stacks/" + url.PathEscape(in.StackID) + "/compose"
+		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		if err != nil {
+			return nil, nil, err
+		}
+		var out map[string]interface{}
+		path := "/api/custom/stacks/" + url.PathEscape(stackID) + "/compose"
 		if err := c.Get(ctx, apiKey, path, nil, &out); err != nil {
 			return nil, nil, err
 		}
+
+		// wireops renders with --no-interpolate, so a ${VAR} survives into the
+		// revision and is substituted by the worker at `compose up`. One that
+		// nothing defines becomes an empty string there — no error, no log
+		// line, just a service that behaves as if the value were "". Naming
+		// them here is the cheapest place to catch that.
+		if content, ok := out["content"].(string); ok && content != "" {
+			if missing := unresolvedVariablesForStack(ctx, c, apiKey, stackID, content); len(missing) > 0 {
+				out["_notice"] = fmt.Sprintf(
+					"These variables are referenced by the compose file but defined by neither the stack's env vars nor a global env var bound to it: %s. "+
+						"wireops deploys with --no-interpolate, so the worker substitutes them at `compose up` and an undefined one becomes an empty string silently. "+
+						"Run lint_compose with this stack's id to confirm against the full resolved env (it also sees the repository's own .env and SOPS keys), or set them with set_stack_env_vars.",
+					strings.Join(missing, ", "))
+			}
+		}
 		return nil, out, nil
 	}
+}
+
+// unresolvedVariablesForStack lists the compose variable references in content
+// that the stack's own and bound-global env vars do not define. A lookup
+// failure yields no names rather than a wrong warning — this is an annotation,
+// not a gate, and lint_compose is the authoritative check.
+func unresolvedVariablesForStack(ctx context.Context, c *client.Client, apiKey, stackID, content string) []string {
+	defined := map[string]bool{}
+
+	secretKeys, nonSecretKeys, err := fetchStackEnvVarKeys(ctx, c, apiKey, stackID)
+	if err != nil {
+		return nil
+	}
+	for _, key := range append(secretKeys, nonSecretKeys...) {
+		defined[key] = true
+	}
+
+	globals, err := fetchStackGlobalEnvVarKeys(ctx, c, apiKey, stackID)
+	if err != nil {
+		return nil
+	}
+	for _, key := range globals {
+		defined[key] = true
+	}
+	return unresolvedInterpolations(content, defined)
+}
+
+// fetchStackGlobalEnvVarKeys lists the names of every global env var bound to
+// the stack, secret or not — names only, through the expanded relation.
+func fetchStackGlobalEnvVarKeys(ctx context.Context, c *client.Client, apiKey, stackID string) ([]string, error) {
+	var out struct {
+		Items []struct {
+			Expand struct {
+				GlobalEnvVar struct {
+					Key string `json:"key"`
+				} `json:"global_env_var"`
+			} `json:"expand"`
+		} `json:"items"`
+	}
+	q := url.Values{
+		"filter":  {fmt.Sprintf("stack='%s'", client.EscapeFilterValue(stackID))},
+		"expand":  {"global_env_var"},
+		"perPage": {"400"},
+		"fields":  {"expand.global_env_var.key"},
+	}
+	if err := c.Get(ctx, apiKey, "/api/collections/stack_global_env_vars/records", q, &out); err != nil {
+		return nil, err
+	}
+	keys := make([]string, 0, len(out.Items))
+	for _, item := range out.Items {
+		if key := item.Expand.GlobalEnvVar.Key; key != "" {
+			keys = append(keys, key)
+		}
+	}
+	return keys, nil
 }
 
 func getStackRevision(c *client.Client) mcp.ToolHandlerFor[models.StackRevisionInput, any] {
@@ -444,8 +738,12 @@ func getStackRevision(c *client.Client) mcp.ToolHandlerFor[models.StackRevisionI
 		if err != nil {
 			return nil, nil, err
 		}
+		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		if err != nil {
+			return nil, nil, err
+		}
 		var out any
-		path := "/api/custom/stacks/" + url.PathEscape(in.StackID) + "/revisions/" + fmt.Sprint(in.Version)
+		path := "/api/custom/stacks/" + url.PathEscape(stackID) + "/revisions/" + fmt.Sprint(in.Version)
 		if err := c.Get(ctx, apiKey, path, nil, &out); err != nil {
 			return nil, nil, err
 		}
@@ -459,46 +757,13 @@ func getContainerStats(c *client.Client) mcp.ToolHandlerFor[models.ContainerStat
 		if err != nil {
 			return nil, nil, err
 		}
-		var out any
-		path := "/api/custom/stacks/" + url.PathEscape(in.StackID) + "/container/" + url.PathEscape(in.ContainerID) + "/stats"
-		if err := c.Get(ctx, apiKey, path, nil, &out); err != nil {
-			return nil, nil, err
-		}
-		return nil, out, nil
-	}
-}
-
-func listAuditLogs(c *client.Client) mcp.ToolHandlerFor[models.AuditLogsInput, any] {
-	return func(ctx context.Context, _ *mcp.CallToolRequest, in models.AuditLogsInput) (*mcp.CallToolResult, any, error) {
-		apiKey, err := apiKeyFrom(ctx)
+		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
 		if err != nil {
 			return nil, nil, err
 		}
-		page := in.Page
-		if page <= 0 {
-			page = 1
-		}
-		perPage := in.PerPage
-		if perPage <= 0 {
-			perPage = 25
-		}
-		q := url.Values{"page": {fmt.Sprint(page)}, "perPage": {fmt.Sprint(perPage)}}
-		setIfNonEmpty := func(key, val string) {
-			if val != "" {
-				q.Set(key, val)
-			}
-		}
-		setIfNonEmpty("from", in.From)
-		setIfNonEmpty("to", in.To)
-		setIfNonEmpty("actor_type", in.ActorType)
-		setIfNonEmpty("actor_id", in.ActorID)
-		setIfNonEmpty("action", in.Action)
-		setIfNonEmpty("resource_type", in.ResourceType)
-		setIfNonEmpty("resource_id", in.ResourceID)
-		setIfNonEmpty("origin", in.Origin)
-		setIfNonEmpty("status", in.Status)
 		var out any
-		if err := c.Get(ctx, apiKey, "/api/custom/audit-logs", q, &out); err != nil {
+		path := "/api/custom/stacks/" + url.PathEscape(stackID) + "/container/" + url.PathEscape(in.ContainerID) + "/stats"
+		if err := c.Get(ctx, apiKey, path, nil, &out); err != nil {
 			return nil, nil, err
 		}
 		return nil, out, nil
@@ -511,8 +776,12 @@ func getStackRenderOverrides(c *client.Client) mcp.ToolHandlerFor[models.StackID
 		if err != nil {
 			return nil, nil, err
 		}
+		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		if err != nil {
+			return nil, nil, err
+		}
 		var out any
-		path := "/api/custom/stacks/" + url.PathEscape(in.StackID) + "/render-overrides"
+		path := "/api/custom/stacks/" + url.PathEscape(stackID) + "/render-overrides"
 		if err := c.Get(ctx, apiKey, path, nil, &out); err != nil {
 			return nil, nil, err
 		}
@@ -526,9 +795,13 @@ func diffStackVersion(c *client.Client) mcp.ToolHandlerFor[models.DiffStackVersi
 		if err != nil {
 			return nil, nil, err
 		}
+		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		if err != nil {
+			return nil, nil, err
+		}
 		var a, b any
-		pathA := "/api/custom/stacks/" + url.PathEscape(in.StackID) + "/revisions/" + fmt.Sprint(in.VersionA)
-		pathB := "/api/custom/stacks/" + url.PathEscape(in.StackID) + "/revisions/" + fmt.Sprint(in.VersionB)
+		pathA := "/api/custom/stacks/" + url.PathEscape(stackID) + "/revisions/" + fmt.Sprint(in.VersionA)
+		pathB := "/api/custom/stacks/" + url.PathEscape(stackID) + "/revisions/" + fmt.Sprint(in.VersionB)
 		if err := c.Get(ctx, apiKey, pathA, nil, &a); err != nil {
 			return nil, nil, fmt.Errorf("fetching version %d: %w", in.VersionA, err)
 		}
@@ -544,6 +817,40 @@ func diffStackVersion(c *client.Client) mcp.ToolHandlerFor[models.DiffStackVersi
 type secretSummary struct {
 	Key            string `json:"key"`
 	SecretProvider string `json:"secret_provider,omitempty"`
+}
+
+// fetchStackEnvVarKeys lists a stack's env var *names*, split by whether each
+// is marked secret. Only "key" and "secret" are requested, so no value — plain
+// or reference — is on the wire.
+//
+// list_secrets reported secrets only, which reads as "this stack has no env
+// vars configured" for a stack whose compose file interpolates plain ones:
+// wireops renders with --no-interpolate, so an undefined ${VAR} silently
+// becomes an empty string at deploy time instead of failing.
+func fetchStackEnvVarKeys(ctx context.Context, c *client.Client, apiKey, stackID string) (secret, nonSecret []string, err error) {
+	var out struct {
+		Items []struct {
+			Key    string `json:"key"`
+			Secret bool   `json:"secret"`
+		} `json:"items"`
+	}
+	q := url.Values{
+		"filter":  {fmt.Sprintf("stack='%s'", client.EscapeFilterValue(stackID))},
+		"perPage": {"400"},
+		"fields":  {"key,secret"},
+		"sort":    {"key"},
+	}
+	if err := c.Get(ctx, apiKey, "/api/collections/stack_env_vars/records", q, &out); err != nil {
+		return nil, nil, fmt.Errorf("fetching stack env var keys: %w", err)
+	}
+	for _, item := range out.Items {
+		if item.Secret {
+			secret = append(secret, item.Key)
+			continue
+		}
+		nonSecret = append(nonSecret, item.Key)
+	}
+	return secret, nonSecret, nil
 }
 
 // fetchStackEnvVarSecrets lists a stack's own secret env vars. The "fields"
@@ -613,32 +920,51 @@ func listSecrets(c *client.Client) mcp.ToolHandlerFor[models.StackIDInput, any] 
 		if err != nil {
 			return nil, nil, err
 		}
-
-		stackSecrets, err := fetchStackEnvVarSecrets(ctx, c, apiKey, in.StackID)
+		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
 		if err != nil {
 			return nil, nil, err
 		}
-		globalSecrets, err := fetchStackGlobalEnvVarSecrets(ctx, c, apiKey, in.StackID)
+
+		stackSecrets, err := fetchStackEnvVarSecrets(ctx, c, apiKey, stackID)
+		if err != nil {
+			return nil, nil, err
+		}
+		globalSecrets, err := fetchStackGlobalEnvVarSecrets(ctx, c, apiKey, stackID)
 		if err != nil {
 			return nil, nil, err
 		}
 		var sopsSecrets any
-		sopsPath := "/api/custom/stacks/" + url.PathEscape(in.StackID) + "/sops-env-vars"
+		sopsPath := "/api/custom/stacks/" + url.PathEscape(stackID) + "/sops-env-vars"
 		if err := c.Get(ctx, apiKey, sopsPath, nil, &sopsSecrets); err != nil {
 			return nil, nil, fmt.Errorf("fetching sops env var secrets: %w", err)
 		}
+		_, nonSecretKeys, err := fetchStackEnvVarKeys(ctx, c, apiKey, stackID)
+		if err != nil {
+			return nil, nil, err
+		}
 
-		return nil, map[string]any{
-			"stack_secrets":  stackSecrets,
-			"global_secrets": globalSecrets,
-			"sops_secrets":   sopsSecrets,
-		}, nil
+		result := map[string]any{
+			"stack_secrets":    stackSecrets,
+			"global_secrets":   globalSecrets,
+			"sops_secrets":     sopsSecrets,
+			"non_secret_keys":  nonSecretKeys,
+			"non_secret_count": len(nonSecretKeys),
+			"secret_count":     len(stackSecrets) + len(globalSecrets),
+		}
+		if len(stackSecrets) == 0 && len(globalSecrets) == 0 && len(nonSecretKeys) > 0 {
+			result["_notice"] = "This stack has no secret env vars, but it does have the plain env vars listed in non_secret_keys. An empty secret list does not mean the stack is unconfigured."
+		}
+		return nil, result, nil
 	}
 }
 
 func getContainerLogs(c *client.Client) mcp.ToolHandlerFor[models.ContainerLogsInput, any] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in models.ContainerLogsInput) (*mcp.CallToolResult, any, error) {
 		apiKey, err := apiKeyFrom(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -656,7 +982,7 @@ func getContainerLogs(c *client.Client) mcp.ToolHandlerFor[models.ContainerLogsI
 			if in.ServiceName == "" {
 				return nil, nil, fmt.Errorf("either container_id or service_name is required")
 			}
-			containerID, err = resolveContainerIDByServiceName(ctx, c, apiKey, in.StackID, in.ServiceName)
+			containerID, err = resolveContainerIDByServiceName(ctx, c, apiKey, stackID, in.ServiceName)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -667,7 +993,7 @@ func getContainerLogs(c *client.Client) mcp.ToolHandlerFor[models.ContainerLogsI
 			q = url.Values{"tail": {in.Tail}}
 		}
 		var out map[string]interface{}
-		path := "/api/custom/stacks/" + url.PathEscape(in.StackID) + "/container/" + url.PathEscape(containerID) + "/logs"
+		path := "/api/custom/stacks/" + url.PathEscape(stackID) + "/container/" + url.PathEscape(containerID) + "/logs"
 		if err := c.Get(ctx, apiKey, path, q, &out); err != nil {
 			return nil, nil, err
 		}
@@ -694,7 +1020,7 @@ func filterLines(logs string, re *regexp.Regexp) string {
 }
 
 func listJobs(c *client.Client) mcp.ToolHandlerFor[models.ListJobsInput, any] {
-	return func(ctx context.Context, _ *mcp.CallToolRequest, _ models.ListJobsInput) (*mcp.CallToolResult, any, error) {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, in models.ListJobsInput) (*mcp.CallToolResult, any, error) {
 		apiKey, err := apiKeyFrom(ctx)
 		if err != nil {
 			return nil, nil, err
@@ -703,7 +1029,16 @@ func listJobs(c *client.Client) mcp.ToolHandlerFor[models.ListJobsInput, any] {
 		if err := c.Get(ctx, apiKey, "/api/custom/jobs", nil, &out); err != nil {
 			return nil, nil, err
 		}
-		return nil, map[string]interface{}{"jobs": out}, nil
+		total := len(out)
+		filtered := filterRecords(out, in.Limit, func(rec map[string]interface{}) bool {
+			return matchesSubstring(recordString(rec, "name"), in.NameContains) &&
+				(in.Status == "" || recordString(rec, "status") == in.Status)
+		})
+		result := map[string]interface{}{"jobs": filtered, "total_before_filter": total}
+		if len(filtered) < total {
+			result["_notice"] = "The server returns every scheduled job in one response; name_contains/status/limit were applied by the MCP server after fetching, so total_before_filter is the real total."
+		}
+		return nil, result, nil
 	}
 }
 
@@ -713,8 +1048,12 @@ func getJobDefinition(c *client.Client) mcp.ToolHandlerFor[models.JobIDInput, an
 		if err != nil {
 			return nil, nil, err
 		}
+		jobID, err := resolveJobID(ctx, c, apiKey, in.JobID)
+		if err != nil {
+			return nil, nil, err
+		}
 		var out any
-		path := "/api/custom/jobs/" + url.PathEscape(in.JobID) + "/definition"
+		path := "/api/custom/jobs/" + url.PathEscape(jobID) + "/definition"
 		if err := c.Get(ctx, apiKey, path, nil, &out); err != nil {
 			return nil, nil, err
 		}
@@ -728,14 +1067,29 @@ func listRepos(c *client.Client) mcp.ToolHandlerFor[models.ListReposInput, any] 
 		if err != nil {
 			return nil, nil, err
 		}
-		limit := in.Limit
-		if limit <= 0 {
-			limit = 50
+		q := paging(in.Limit, in.Page)
+		q.Set("sort", "-updated")
+		if fields := fieldsParam(in.Fields, repoListFields); fields != "" {
+			q.Set("fields", fields)
 		}
-		q := url.Values{"perPage": {fmt.Sprint(limit)}, "sort": {"-updated"}}
-		var out any
+		if filter := buildFilter([]filterClause{
+			{field: "status", op: "=", value: in.Status},
+			{field: "name", op: "~", value: in.NameContains},
+		}); filter != "" {
+			q.Set("filter", filter)
+		}
+
+		var out map[string]interface{}
 		if err := c.Get(ctx, apiKey, "/api/collections/repositories/records", q, &out); err != nil {
 			return nil, nil, err
+		}
+		globalSeconds := scanPeriodSeconds(ctx, c, apiKey)
+		if items, ok := out["items"].([]interface{}); ok {
+			for _, item := range items {
+				if rec, ok := item.(map[string]interface{}); ok {
+					annotateSyncInterval(rec, globalSeconds)
+				}
+			}
 		}
 		return nil, out, nil
 	}
@@ -747,13 +1101,86 @@ func getRepoCommits(c *client.Client) mcp.ToolHandlerFor[models.RepositoryIDInpu
 		if err != nil {
 			return nil, nil, err
 		}
+		repositoryID, err := resolveRepositoryID(ctx, c, apiKey, in.RepositoryID)
+		if err != nil {
+			return nil, nil, err
+		}
 		var out []interface{}
-		path := "/api/custom/repositories/" + url.PathEscape(in.RepositoryID) + "/commits"
+		path := "/api/custom/repositories/" + url.PathEscape(repositoryID) + "/commits"
 		if err := c.Get(ctx, apiKey, path, nil, &out); err != nil {
 			return nil, nil, err
 		}
 		return nil, map[string]interface{}{"commits": out}, nil
 	}
+}
+
+// registeredStack is one stack of a repository, reduced to what identifies the
+// compose file it was created from.
+type registeredStack struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	ComposePath string `json:"compose_path"`
+	ComposeFile string `json:"compose_file"`
+}
+
+// composeFilePath rebuilds the repository-relative path of a stack's compose
+// file, matching how the stack-files route reports one ("stacks/web/
+// docker-compose.yml"). compose_file defaults to docker-compose.yml, the same
+// default the create routes apply.
+func (s registeredStack) composeFilePath() string {
+	file := s.ComposeFile
+	if file == "" {
+		file = "docker-compose.yml"
+	}
+	dir := strings.Trim(s.ComposePath, "/")
+	if dir == "" || dir == "." {
+		return file
+	}
+	return dir + "/" + file
+}
+
+// fetchRegisteredStacks lists the stacks a repository already has, so a file
+// listing can say which of its compose files are taken.
+func fetchRegisteredStacks(ctx context.Context, c *client.Client, apiKey, repositoryID string) ([]registeredStack, error) {
+	var out struct {
+		Items []registeredStack `json:"items"`
+	}
+	q := url.Values{
+		"filter":  {fmt.Sprintf("repository='%s'", client.EscapeFilterValue(repositoryID))},
+		"perPage": {"400"},
+		"fields":  {"id,name,compose_path,compose_file"},
+	}
+	if err := c.Get(ctx, apiKey, "/api/collections/stacks/records", q, &out); err != nil {
+		return nil, err
+	}
+	return out.Items, nil
+}
+
+// annotateRepoFiles turns the route's plain path strings into objects that say
+// whether each path is already registered as a wireops stack (or job).
+//
+// Finding a compose file in a repository and wireops managing it are separate
+// things, and nothing in the raw listing said so — the obvious misreading is
+// that a listed file is already a stack. A listing that cannot be annotated
+// (the lookup failed) is returned unchanged rather than marked false.
+func annotateRepoFiles(files []interface{}, registeredBy map[string]map[string]interface{}) []interface{} {
+	out := make([]interface{}, 0, len(files))
+	for _, file := range files {
+		path, ok := file.(string)
+		if !ok {
+			out = append(out, file)
+			continue
+		}
+		entry := map[string]interface{}{"path": path, "registered": false}
+		if meta, found := registeredBy[strings.TrimPrefix(path, "./")]; found {
+			entry["registered"] = true
+			for key, value := range meta {
+				entry[key] = value
+			}
+		}
+		out = append(out, entry)
+	}
+	return out
 }
 
 func listRepoStackFiles(c *client.Client) mcp.ToolHandlerFor[models.RepositoryIDInput, any] {
@@ -762,12 +1189,31 @@ func listRepoStackFiles(c *client.Client) mcp.ToolHandlerFor[models.RepositoryID
 		if err != nil {
 			return nil, nil, err
 		}
+		repositoryID, err := resolveRepositoryID(ctx, c, apiKey, in.RepositoryID)
+		if err != nil {
+			return nil, nil, err
+		}
 		var out []interface{}
-		path := "/api/custom/repositories/" + url.PathEscape(in.RepositoryID) + "/stack-files"
+		path := "/api/custom/repositories/" + url.PathEscape(repositoryID) + "/stack-files"
 		if err := c.Get(ctx, apiKey, path, nil, &out); err != nil {
 			return nil, nil, err
 		}
-		return nil, map[string]interface{}{"files": out}, nil
+
+		result := map[string]interface{}{"files": out}
+		stacks, err := fetchRegisteredStacks(ctx, c, apiKey, repositoryID)
+		if err != nil {
+			return nil, result, nil
+		}
+		registeredBy := make(map[string]map[string]interface{}, len(stacks))
+		for _, stack := range stacks {
+			registeredBy[stack.composeFilePath()] = map[string]interface{}{
+				"stack_id":   stack.ID,
+				"stack_name": stack.Name,
+			}
+		}
+		result["files"] = annotateRepoFiles(out, registeredBy)
+		result["_notice"] = "registered:false means the file is in git but no wireops stack points at it yet — creating one is a separate step (create_stack_from_compose)."
+		return nil, result, nil
 	}
 }
 
@@ -777,12 +1223,42 @@ func listRepoJobFiles(c *client.Client) mcp.ToolHandlerFor[models.RepositoryIDIn
 		if err != nil {
 			return nil, nil, err
 		}
+		repositoryID, err := resolveRepositoryID(ctx, c, apiKey, in.RepositoryID)
+		if err != nil {
+			return nil, nil, err
+		}
 		var out []interface{}
-		path := "/api/custom/repositories/" + url.PathEscape(in.RepositoryID) + "/job-files"
+		path := "/api/custom/repositories/" + url.PathEscape(repositoryID) + "/job-files"
 		if err := c.Get(ctx, apiKey, path, nil, &out); err != nil {
 			return nil, nil, err
 		}
-		return nil, map[string]interface{}{"files": out}, nil
+
+		result := map[string]interface{}{"files": out}
+		var jobs struct {
+			Items []struct {
+				ID      string `json:"id"`
+				Name    string `json:"name"`
+				JobFile string `json:"job_file"`
+			} `json:"items"`
+		}
+		q := url.Values{
+			"filter":  {fmt.Sprintf("repository='%s'", client.EscapeFilterValue(repositoryID))},
+			"perPage": {"400"},
+			"fields":  {"id,name,job_file"},
+		}
+		if err := c.Get(ctx, apiKey, "/api/collections/scheduled_jobs/records", q, &jobs); err != nil {
+			return nil, result, nil
+		}
+		registeredBy := make(map[string]map[string]interface{}, len(jobs.Items))
+		for _, job := range jobs.Items {
+			registeredBy[strings.TrimPrefix(job.JobFile, "./")] = map[string]interface{}{
+				"job_id":   job.ID,
+				"job_name": job.Name,
+			}
+		}
+		result["files"] = annotateRepoFiles(out, registeredBy)
+		result["_notice"] = "registered:false means the job.yaml is in git but no wireops scheduled job points at it yet — scheduling one is a separate step (create_scheduled_job)."
+		return nil, result, nil
 	}
 }
 
@@ -792,8 +1268,12 @@ func getStackIntegrationActions(c *client.Client) mcp.ToolHandlerFor[models.Stac
 		if err != nil {
 			return nil, nil, err
 		}
+		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		if err != nil {
+			return nil, nil, err
+		}
 		var out any
-		path := "/api/custom/stacks/" + url.PathEscape(in.StackID) + "/integration-actions"
+		path := "/api/custom/stacks/" + url.PathEscape(stackID) + "/integration-actions"
 		if err := c.Get(ctx, apiKey, path, nil, &out); err != nil {
 			return nil, nil, err
 		}
@@ -802,7 +1282,7 @@ func getStackIntegrationActions(c *client.Client) mcp.ToolHandlerFor[models.Stac
 }
 
 func listWorkers(c *client.Client) mcp.ToolHandlerFor[models.ListWorkersInput, any] {
-	return func(ctx context.Context, _ *mcp.CallToolRequest, _ models.ListWorkersInput) (*mcp.CallToolResult, any, error) {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, in models.ListWorkersInput) (*mcp.CallToolResult, any, error) {
 		apiKey, err := apiKeyFrom(ctx)
 		if err != nil {
 			return nil, nil, err
@@ -811,7 +1291,16 @@ func listWorkers(c *client.Client) mcp.ToolHandlerFor[models.ListWorkersInput, a
 		if err := c.Get(ctx, apiKey, "/api/custom/workers", nil, &out); err != nil {
 			return nil, nil, err
 		}
-		return nil, map[string]interface{}{"workers": out}, nil
+		total := len(out)
+		filtered := filterRecords(out, in.Limit, func(rec map[string]interface{}) bool {
+			return matchesSubstring(recordString(rec, "hostname"), in.HostnameContains) &&
+				(in.Status == "" || recordString(rec, "status") == in.Status)
+		})
+		result := map[string]interface{}{"workers": filtered, "total_before_filter": total}
+		if len(filtered) < total {
+			result["_notice"] = "The server returns every worker in one response; hostname_contains/status/limit were applied by the MCP server after fetching, so total_before_filter is the real total."
+		}
+		return nil, result, nil
 	}
 }
 
@@ -821,8 +1310,12 @@ func getWorkerMetrics(c *client.Client) mcp.ToolHandlerFor[models.WorkerIDInput,
 		if err != nil {
 			return nil, nil, err
 		}
+		workerID, err := resolveWorkerID(ctx, c, apiKey, in.WorkerID)
+		if err != nil {
+			return nil, nil, err
+		}
 		var out any
-		path := "/api/custom/workers/" + url.PathEscape(in.WorkerID) + "/metrics"
+		path := "/api/custom/workers/" + url.PathEscape(workerID) + "/metrics"
 		if err := c.Get(ctx, apiKey, path, nil, &out); err != nil {
 			return nil, nil, err
 		}
@@ -836,8 +1329,12 @@ func getWorkerPolicy(c *client.Client) mcp.ToolHandlerFor[models.WorkerIDInput, 
 		if err != nil {
 			return nil, nil, err
 		}
+		workerID, err := resolveWorkerID(ctx, c, apiKey, in.WorkerID)
+		if err != nil {
+			return nil, nil, err
+		}
 		var out any
-		path := "/api/custom/workers/" + url.PathEscape(in.WorkerID) + "/policy"
+		path := "/api/custom/workers/" + url.PathEscape(workerID) + "/policy"
 		if err := c.Get(ctx, apiKey, path, nil, &out); err != nil {
 			return nil, nil, err
 		}
@@ -853,48 +1350,6 @@ func getGlobalWorkerPolicy(c *client.Client) mcp.ToolHandlerFor[models.GetGlobal
 		}
 		var out any
 		if err := c.Get(ctx, apiKey, "/api/custom/settings/worker-policy", nil, &out); err != nil {
-			return nil, nil, err
-		}
-		return nil, out, nil
-	}
-}
-
-func listIntegrations(c *client.Client) mcp.ToolHandlerFor[models.ListIntegrationsInput, any] {
-	return func(ctx context.Context, _ *mcp.CallToolRequest, _ models.ListIntegrationsInput) (*mcp.CallToolResult, any, error) {
-		apiKey, err := apiKeyFrom(ctx)
-		if err != nil {
-			return nil, nil, err
-		}
-		var out []interface{}
-		if err := c.Get(ctx, apiKey, "/api/custom/integrations", nil, &out); err != nil {
-			return nil, nil, err
-		}
-		return nil, map[string]interface{}{"integrations": out}, nil
-	}
-}
-
-func listOrphans(c *client.Client) mcp.ToolHandlerFor[models.ListOrphansInput, any] {
-	return func(ctx context.Context, _ *mcp.CallToolRequest, _ models.ListOrphansInput) (*mcp.CallToolResult, any, error) {
-		apiKey, err := apiKeyFrom(ctx)
-		if err != nil {
-			return nil, nil, err
-		}
-		var out []interface{}
-		if err := c.Get(ctx, apiKey, "/api/custom/orphans", nil, &out); err != nil {
-			return nil, nil, err
-		}
-		return nil, map[string]interface{}{"orphans": out}, nil
-	}
-}
-
-func getSystemInfo(c *client.Client) mcp.ToolHandlerFor[models.GetSystemInfoInput, any] {
-	return func(ctx context.Context, _ *mcp.CallToolRequest, _ models.GetSystemInfoInput) (*mcp.CallToolResult, any, error) {
-		apiKey, err := apiKeyFrom(ctx)
-		if err != nil {
-			return nil, nil, err
-		}
-		var out any
-		if err := c.Get(ctx, apiKey, "/api/custom/system/info", nil, &out); err != nil {
 			return nil, nil, err
 		}
 		return nil, out, nil
@@ -1099,6 +1554,10 @@ func fetchEffectiveWorkerPolicy(ctx context.Context, c *client.Client, apiKey, w
 type scaffoldStackOutput struct {
 	Wireops *generatedFile `json:"wireops,omitempty"`
 	Compose generatedFile  `json:"compose"`
+	// Notice points at the conventions this tool cannot express, so the
+	// pointer travels with the generated file rather than living in the
+	// tool's description where every session pays for it.
+	Notice string `json:"_notice,omitempty"`
 }
 
 // xWireopsBlock converts a manifest.Definition to the plain
@@ -1146,7 +1605,11 @@ func scaffoldStack(c *client.Client) mcp.ToolHandlerFor[models.ScaffoldStackInpu
 			if err != nil {
 				return nil, nil, err
 			}
-			workerPolicy, err := fetchEffectiveWorkerPolicy(ctx, c, apiKey, in.WorkerID)
+			workerID, err := resolveWorkerID(ctx, c, apiKey, in.WorkerID)
+			if err != nil {
+				return nil, nil, err
+			}
+			workerPolicy, err := fetchEffectiveWorkerPolicy(ctx, c, apiKey, workerID)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -1162,6 +1625,7 @@ func scaffoldStack(c *client.Client) mcp.ToolHandlerFor[models.ScaffoldStackInpu
 
 		out := scaffoldStackOutput{
 			Compose: generatedFile{Filename: "docker-compose.yml", Content: string(composeContent)},
+			Notice:  "Generated from the structured input only. The wireops label/annotation conventions — customization.image.slug (UI icon), dev.wireops.config.<name> (mount a git-tracked file) and customization.init (run-to-completion service) — have no field in this tool's input and are not in the file above; read the wireops://conventions/compose resource and add the ones you want before committing.",
 		}
 		if in.TwoFile {
 			wireopsContent, err := yaml.Marshal(wireopsDef)

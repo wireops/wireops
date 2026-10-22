@@ -30,7 +30,7 @@ func TestDiagnoseStackFailureRequiresStackID(t *testing.T) {
 func TestDiagnoseStackFailureMissingAPIKey(t *testing.T) {
 	handler := diagnoseStackFailure(client.New("http://unused"))
 	_, err := handler(context.Background(), &mcp.GetPromptRequest{
-		Params: &mcp.GetPromptParams{Name: "diagnose_stack_failure", Arguments: map[string]string{"stack_id": "stack1"}},
+		Params: &mcp.GetPromptParams{Name: "diagnose_stack_failure", Arguments: map[string]string{"stack_id": "stack0000000001"}},
 	})
 	if err == nil {
 		t.Fatal("expected error when API key missing from context")
@@ -45,14 +45,14 @@ func TestDiagnoseStackFailureEscapesStackIDInFilter(t *testing.T) {
 			w.Write([]byte(`{"items":[]}`))
 			return
 		}
-		w.Write([]byte(`{"id":"stack1"}`))
+		w.Write([]byte(`{"id":"stack0000000001"}`))
 	}))
 	defer srv.Close()
 
 	handler := diagnoseStackFailure(client.New(srv.URL))
 	// A stack_id argument containing a bare quote must not be able to close
 	// the filter's string literal early and splice in extra clauses.
-	maliciousID := `stack1' || status='success`
+	maliciousID := `stack0000000001' || status='success`
 	_, err := handler(ctxWithKey(), &mcp.GetPromptRequest{
 		Params: &mcp.GetPromptParams{Name: "diagnose_stack_failure", Arguments: map[string]string{"stack_id": maliciousID}},
 	})
@@ -63,10 +63,10 @@ func TestDiagnoseStackFailureEscapesStackIDInFilter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unescape query: %v", err)
 	}
-	if strings.Contains(unescaped, "filter=stack='stack1' ||") {
+	if strings.Contains(unescaped, "filter=stack='stack0000000001' ||") {
 		t.Fatalf("stack id was not escaped, filter injection possible: %s", unescaped)
 	}
-	if !strings.Contains(unescaped, `stack1\' || status=\'success`) {
+	if !strings.Contains(unescaped, `stack0000000001\' || status=\'success`) {
 		t.Fatalf("expected escaped quotes in filter, got: %s", unescaped)
 	}
 }
@@ -79,7 +79,7 @@ func TestDiagnoseStackFailureFetchesStatusAndLogs(t *testing.T) {
 		queries = append(queries, r.URL.RawQuery)
 		switch {
 		case strings.Contains(r.URL.Path, "/stacks/records/"):
-			w.Write([]byte(`{"id":"stack1","status":"error"}`))
+			w.Write([]byte(`{"id":"stack0000000001","status":"error"}`))
 		default:
 			w.Write([]byte(`{"items":[{"status":"error","output":"image not found"}]}`))
 		}
@@ -88,7 +88,7 @@ func TestDiagnoseStackFailureFetchesStatusAndLogs(t *testing.T) {
 
 	handler := diagnoseStackFailure(client.New(srv.URL))
 	result, err := handler(ctxWithKey(), &mcp.GetPromptRequest{
-		Params: &mcp.GetPromptParams{Name: "diagnose_stack_failure", Arguments: map[string]string{"stack_id": "stack1"}},
+		Params: &mcp.GetPromptParams{Name: "diagnose_stack_failure", Arguments: map[string]string{"stack_id": "stack0000000001"}},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -97,13 +97,13 @@ func TestDiagnoseStackFailureFetchesStatusAndLogs(t *testing.T) {
 	if len(paths) != 2 {
 		t.Fatalf("expected 2 REST calls (status + logs), got %d: %v", len(paths), paths)
 	}
-	if paths[0] != "/api/collections/stacks/records/stack1" {
+	if paths[0] != "/api/collections/stacks/records/stack0000000001" {
 		t.Fatalf("unexpected first call path: %s", paths[0])
 	}
 	if paths[1] != "/api/collections/sync_logs/records" {
 		t.Fatalf("unexpected second call path: %s", paths[1])
 	}
-	if !strings.Contains(queries[1], "stack1") || !strings.Contains(queries[1], "perPage=5") {
+	if !strings.Contains(queries[1], "stack0000000001") || !strings.Contains(queries[1], "perPage=5") {
 		t.Fatalf("unexpected sync_logs query: %s", queries[1])
 	}
 
@@ -114,7 +114,7 @@ func TestDiagnoseStackFailureFetchesStatusAndLogs(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected TextContent, got %T", result.Messages[0].Content)
 	}
-	if !strings.Contains(text.Text, "stack1") || !strings.Contains(text.Text, "image not found") {
+	if !strings.Contains(text.Text, "stack0000000001") || !strings.Contains(text.Text, "image not found") {
 		t.Fatalf("expected prompt text to embed fetched data, got: %s", text.Text)
 	}
 }
@@ -200,7 +200,7 @@ func TestScaffoldNewStackTwoFileHintsAtSeparateWireopsFile(t *testing.T) {
 	}
 }
 
-func TestScaffoldNewStackExplainsConfigMountRules(t *testing.T) {
+func TestScaffoldNewStackPointsAtTheConventionsResource(t *testing.T) {
 	handler := scaffoldNewStack()
 	result, err := handler(context.Background(), &mcp.GetPromptRequest{
 		Params: &mcp.GetPromptParams{Name: "scaffold_new_stack", Arguments: map[string]string{"app_description": "a blog"}},
@@ -212,9 +212,18 @@ func TestScaffoldNewStackExplainsConfigMountRules(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected TextContent, got %T", result.Messages[0].Content)
 	}
-	for _, want := range []string{"directory", "recursively", "symlink", "1MB", "5MB", "\"../\""} {
+	// The conventions themselves live in the wireops://conventions/compose
+	// resource now — one copy, fetched when needed, instead of the same two
+	// kilobytes in this prompt and in scaffold_stack's description. The prompt
+	// still has to name each convention and where to read it.
+	for _, want := range []string{
+		"wireops://conventions/compose",
+		"customization.image.slug",
+		"dev.wireops.config.<name>",
+		"customization.init",
+	} {
 		if !strings.Contains(text.Text, want) {
-			t.Fatalf("expected prompt to explain config mount rule %q, got: %s", want, text.Text)
+			t.Fatalf("expected the prompt to mention %q, got: %s", want, text.Text)
 		}
 	}
 }
@@ -245,13 +254,13 @@ func TestDiagnoseStackFailureReferencesWorkerPolicy(t *testing.T) {
 			w.Write([]byte(`{"items":[]}`))
 			return
 		}
-		w.Write([]byte(`{"id":"stack1"}`))
+		w.Write([]byte(`{"id":"stack0000000001"}`))
 	}))
 	defer srv.Close()
 
 	handler := diagnoseStackFailure(client.New(srv.URL))
 	result, err := handler(ctxWithKey(), &mcp.GetPromptRequest{
-		Params: &mcp.GetPromptParams{Name: "diagnose_stack_failure", Arguments: map[string]string{"stack_id": "stack1"}},
+		Params: &mcp.GetPromptParams{Name: "diagnose_stack_failure", Arguments: map[string]string{"stack_id": "stack0000000001"}},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

@@ -15,22 +15,32 @@ import (
 // them maps onto a route the UI already calls, so the server-side RBAC check
 // (rbac.CapOperateStacks) and audit entry come for free — a viewer-scoped API
 // key gets a 403 back from the server exactly as it does from the browser.
+// registerStackReadTools registers the read-only stack tools that live beside the write ones (import discovery). They are annotated read-only, so they belong to
+// the read tool group even though they sit in this file.
+func registerStackReadTools(server *mcp.Server, c *client.Client) {
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "discover_importable_stacks",
+		Description: "List docker-compose projects already running on the connected workers that are not managed by wireops yet, as candidates for import_stack. Read-only.",
+		Annotations: readOnly(),
+	}, discoverImportableStacks(c))
+}
+
 func registerStackWriteTools(server *mcp.Server, c *client.Client) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "deploy_stack",
-		Description: "Trigger a git sync + deploy of a wireops stack right now, instead of waiting for the next poll. This is the normal \"apply what's in git\" action: it fetches the tracked branch, re-renders the compose file and, if the rendered output changed, dispatches a deploy to the stack's worker. Requires the stack's worker to be online. Returns as soon as the reconcile is queued — poll get_stack_status / get_sync_logs for the outcome.",
+		Description: "Trigger a git sync + deploy of a wireops stack right now, instead of waiting for the next poll. This is the normal \"apply what's in git\" action: it fetches the tracked branch, re-renders the compose file and, if the rendered output changed, dispatches a deploy to the stack's worker. Requires the stack's worker to be online. Set wait true to block until the reconcile finishes and get its outcome (final sync status, stack status and deploy log) in one call; left false it returns as soon as the reconcile is queued and you poll get_stack_status / get_sync_logs yourself.",
 		Annotations: additive(true),
 	}, deployStack(c))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "force_redeploy_stack",
-		Description: "Redeploy a wireops stack even when git has not changed, optionally recreating containers, volumes and networks. Use this to recover a stack whose containers drifted or died, or to re-pull a moving tag. recreate_volumes DESTROYS the stack's named volume data and therefore requires confirm to be the stack's exact name. By default the stack is paused after a successful redeploy (pause_after_redeploy), matching the UI — pass false to leave git sync running.",
+		Description: "Redeploy a wireops stack even when git has not changed, optionally recreating containers, volumes and networks. Use this to recover a stack whose containers drifted or died, or to re-pull a moving tag. recreate_volumes DESTROYS the stack's named volume data and therefore requires confirm to be the stack's exact name. By default the stack is paused after a successful redeploy (pause_after_redeploy), matching the UI — pass false to leave git sync running. Set wait true to block until the redeploy finishes and get its outcome in one call.",
 		Annotations: destructive(false),
 	}, forceRedeployStack(c))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "rollback_stack",
-		Description: "Redeploy a wireops stack from an earlier git commit. Find candidate commits with get_repo_commits, and compare the rendered output of two revisions with diff_stack_version first. Requires the stack's worker to be online.",
+		Description: "Redeploy a wireops stack from an earlier git commit. Find candidate commits with get_repo_commits, and compare the rendered output of two revisions with diff_stack_version first. Requires the stack's worker to be online. Set wait true to block until the rollback finishes and get its outcome in one call.",
 		Annotations: destructive(false),
 	}, rollbackStack(c))
 
@@ -89,12 +99,6 @@ func registerStackWriteTools(server *mcp.Server, c *client.Client) {
 	}, copyStackEnvVars(c))
 
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "discover_importable_stacks",
-		Description: "List docker-compose projects already running on the connected workers that are not managed by wireops yet, as candidates for import_stack. Read-only.",
-		Annotations: readOnly(),
-	}, discoverImportableStacks(c))
-
-	mcp.AddTool(server, &mcp.Tool{
 		Name:        "import_stack",
 		Description: "Adopt a compose project that already exists on a worker's host into wireops, by absolute path to its compose file on that host (see discover_importable_stacks). The stack is created unmanaged by git — migrate_stack moves it into a repository afterwards. recreate_volumes DESTROYS the existing volume data instead of adopting it; leave it false to keep the running data.",
 		Annotations: additive(false),
@@ -107,8 +111,22 @@ func deployStack(c *client.Client) mcp.ToolHandlerFor[models.DeployStackInput, a
 		if err != nil {
 			return nil, nil, err
 		}
+		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		if err != nil {
+			return nil, nil, err
+		}
+		path := "/api/custom/stacks/" + url.PathEscape(stackID) + "/sync"
+		trigger := func(triggerCtx context.Context) error {
+			return c.Post(triggerCtx, apiKey, path, nil, struct{}{}, nil)
+		}
+		if in.Wait {
+			out, err := awaitReconcile(ctx, c, apiKey, stackID, clampWaitTimeout(in.TimeoutSeconds), trigger)
+			if err != nil {
+				return nil, nil, err
+			}
+			return nil, out, nil
+		}
 		var out any
-		path := "/api/custom/stacks/" + url.PathEscape(in.StackID) + "/sync"
 		if err := c.Post(ctx, apiKey, path, nil, struct{}{}, &out); err != nil {
 			return nil, nil, err
 		}
@@ -122,10 +140,14 @@ func forceRedeployStack(c *client.Client) mcp.ToolHandlerFor[models.ForceRedeplo
 		if err != nil {
 			return nil, nil, err
 		}
+		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		if err != nil {
+			return nil, nil, err
+		}
 		// Only the volume recreation is unrecoverable, so that's the one
 		// branch that pays the confirmation cost.
 		if in.RecreateVolumes {
-			if err := requireConfirm(ctx, c, apiKey, confirmStacks, in.StackID, in.Confirm); err != nil {
+			if err := requireConfirm(ctx, c, apiKey, confirmStacks, stackID, in.Confirm); err != nil {
 				return nil, nil, err
 			}
 		}
@@ -142,8 +164,17 @@ func forceRedeployStack(c *client.Client) mcp.ToolHandlerFor[models.ForceRedeplo
 			"recreate_networks":    in.RecreateNetworks,
 			"pause_after_redeploy": pauseAfter,
 		}
+		path := "/api/custom/stacks/" + url.PathEscape(stackID) + "/force-redeploy"
+		if in.Wait {
+			out, err := awaitReconcile(ctx, c, apiKey, stackID, clampWaitTimeout(in.TimeoutSeconds), func(triggerCtx context.Context) error {
+				return c.Post(triggerCtx, apiKey, path, nil, body, nil)
+			})
+			if err != nil {
+				return nil, nil, err
+			}
+			return nil, out, nil
+		}
 		var out any
-		path := "/api/custom/stacks/" + url.PathEscape(in.StackID) + "/force-redeploy"
 		if err := c.Post(ctx, apiKey, path, nil, body, &out); err != nil {
 			return nil, nil, err
 		}
@@ -157,12 +188,26 @@ func rollbackStack(c *client.Client) mcp.ToolHandlerFor[models.RollbackStackInpu
 		if err != nil {
 			return nil, nil, err
 		}
+		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		if err != nil {
+			return nil, nil, err
+		}
 		if in.CommitSHA == "" {
 			return nil, nil, fmt.Errorf("commit_sha is required")
 		}
+		path := "/api/custom/stacks/" + url.PathEscape(stackID) + "/rollback"
+		body := map[string]any{"commit_sha": in.CommitSHA}
+		if in.Wait {
+			out, err := awaitReconcile(ctx, c, apiKey, stackID, clampWaitTimeout(in.TimeoutSeconds), func(triggerCtx context.Context) error {
+				return c.Post(triggerCtx, apiKey, path, nil, body, nil)
+			})
+			if err != nil {
+				return nil, nil, err
+			}
+			return nil, out, nil
+		}
 		var out any
-		path := "/api/custom/stacks/" + url.PathEscape(in.StackID) + "/rollback"
-		if err := c.Post(ctx, apiKey, path, nil, map[string]any{"commit_sha": in.CommitSHA}, &out); err != nil {
+		if err := c.Post(ctx, apiKey, path, nil, body, &out); err != nil {
 			return nil, nil, err
 		}
 		return nil, out, nil
@@ -175,9 +220,13 @@ func setStackPaused(c *client.Client) mcp.ToolHandlerFor[models.SetStackPausedIn
 		if err != nil {
 			return nil, nil, err
 		}
+		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		if err != nil {
+			return nil, nil, err
+		}
 		// Same mechanism the UI uses: pause/resume is a status write on the
 		// stacks record, not a custom route.
-		path := "/api/collections/stacks/records/" + url.PathEscape(in.StackID)
+		path := "/api/collections/stacks/records/" + url.PathEscape(stackID)
 		status := "paused"
 		if !in.Paused {
 			// "active" is only the right value to resume *into* when the stack
@@ -192,7 +241,7 @@ func setStackPaused(c *client.Client) mcp.ToolHandlerFor[models.SetStackPausedIn
 				return nil, nil, fmt.Errorf("reading the stack's current status: %w", err)
 			}
 			if current.Status != "paused" {
-				return nil, nil, fmt.Errorf("stack %q is not paused (status %q) — nothing to resume, and overwriting that status would hide it", in.StackID, current.Status)
+				return nil, nil, fmt.Errorf("stack %q is not paused (status %q) — nothing to resume, and overwriting that status would hide it", stackID, current.Status)
 			}
 			status = "active"
 		}
@@ -210,11 +259,15 @@ func setStackRenderOverrides(c *client.Client) mcp.ToolHandlerFor[models.SetStac
 		if err != nil {
 			return nil, nil, err
 		}
+		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		if err != nil {
+			return nil, nil, err
+		}
 		if len(in.Overrides) == 0 {
 			return nil, nil, fmt.Errorf("overrides must not be empty — use clear_stack_render_overrides to remove them")
 		}
 		var out any
-		path := "/api/custom/stacks/" + url.PathEscape(in.StackID) + "/render-overrides"
+		path := "/api/custom/stacks/" + url.PathEscape(stackID) + "/render-overrides"
 		if err := c.Put(ctx, apiKey, path, nil, map[string]any{"overrides": in.Overrides}, &out); err != nil {
 			return nil, nil, err
 		}
@@ -228,8 +281,12 @@ func clearStackRenderOverrides(c *client.Client) mcp.ToolHandlerFor[models.Clear
 		if err != nil {
 			return nil, nil, err
 		}
+		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		if err != nil {
+			return nil, nil, err
+		}
 		var out any
-		path := "/api/custom/stacks/" + url.PathEscape(in.StackID) + "/render-overrides"
+		path := "/api/custom/stacks/" + url.PathEscape(stackID) + "/render-overrides"
 		if err := c.Delete(ctx, apiKey, path, nil, &out); err != nil {
 			return nil, nil, err
 		}
@@ -243,12 +300,16 @@ func restartContainer(c *client.Client) mcp.ToolHandlerFor[models.ContainerActio
 		if err != nil {
 			return nil, nil, err
 		}
-		containerID, _, err := resolveContainerTarget(ctx, c, apiKey, in.StackID, in.ContainerID, in.ServiceName)
+		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		if err != nil {
+			return nil, nil, err
+		}
+		containerID, _, err := resolveContainerTarget(ctx, c, apiKey, stackID, in.ContainerID, in.ServiceName)
 		if err != nil {
 			return nil, nil, err
 		}
 		var out any
-		path := "/api/custom/stacks/" + url.PathEscape(in.StackID) + "/container/restart"
+		path := "/api/custom/stacks/" + url.PathEscape(stackID) + "/container/restart"
 		if err := c.Post(ctx, apiKey, path, nil, map[string]any{"container_id": containerID}, &out); err != nil {
 			return nil, nil, err
 		}
@@ -262,7 +323,11 @@ func stopContainer(c *client.Client) mcp.ToolHandlerFor[models.StopContainerInpu
 		if err != nil {
 			return nil, nil, err
 		}
-		containerID, serviceName, err := resolveContainerTarget(ctx, c, apiKey, in.StackID, in.ContainerID, in.ServiceName)
+		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		if err != nil {
+			return nil, nil, err
+		}
+		containerID, serviceName, err := resolveContainerTarget(ctx, c, apiKey, stackID, in.ContainerID, in.ServiceName)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -270,7 +335,7 @@ func stopContainer(c *client.Client) mcp.ToolHandlerFor[models.StopContainerInpu
 			return nil, nil, err
 		}
 		var out any
-		path := "/api/custom/stacks/" + url.PathEscape(in.StackID) + "/container/stop"
+		path := "/api/custom/stacks/" + url.PathEscape(stackID) + "/container/stop"
 		if err := c.Post(ctx, apiKey, path, nil, map[string]any{"container_id": containerID}, &out); err != nil {
 			return nil, nil, err
 		}
@@ -284,15 +349,23 @@ func transferStack(c *client.Client) mcp.ToolHandlerFor[models.TransferStackInpu
 		if err != nil {
 			return nil, nil, err
 		}
-		if in.TargetWorkerID == "" {
+		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		if err != nil {
+			return nil, nil, err
+		}
+		targetWorkerID, err := resolveWorkerID(ctx, c, apiKey, in.TargetWorkerID)
+		if err != nil {
+			return nil, nil, err
+		}
+		if targetWorkerID == "" {
 			return nil, nil, fmt.Errorf("target_worker_id is required")
 		}
-		if err := requireConfirm(ctx, c, apiKey, confirmStacks, in.StackID, in.Confirm); err != nil {
+		if err := requireConfirm(ctx, c, apiKey, confirmStacks, stackID, in.Confirm); err != nil {
 			return nil, nil, err
 		}
 		var out any
-		path := "/api/custom/stacks/" + url.PathEscape(in.StackID) + "/transfer"
-		if err := c.Post(ctx, apiKey, path, nil, map[string]any{"target_worker_id": in.TargetWorkerID}, &out); err != nil {
+		path := "/api/custom/stacks/" + url.PathEscape(stackID) + "/transfer"
+		if err := c.Post(ctx, apiKey, path, nil, map[string]any{"target_worker_id": targetWorkerID}, &out); err != nil {
 			return nil, nil, err
 		}
 		return nil, out, nil
@@ -305,7 +378,11 @@ func deleteStack(c *client.Client) mcp.ToolHandlerFor[models.DeleteStackInput, a
 		if err != nil {
 			return nil, nil, err
 		}
-		if err := requireConfirm(ctx, c, apiKey, confirmStacks, in.StackID, in.Confirm); err != nil {
+		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := requireConfirm(ctx, c, apiKey, confirmStacks, stackID, in.Confirm); err != nil {
 			return nil, nil, err
 		}
 		var q url.Values
@@ -313,7 +390,7 @@ func deleteStack(c *client.Client) mcp.ToolHandlerFor[models.DeleteStackInput, a
 			q = url.Values{"force": {"true"}}
 		}
 		var out any
-		path := "/api/custom/stacks/" + url.PathEscape(in.StackID)
+		path := "/api/custom/stacks/" + url.PathEscape(stackID)
 		if err := c.Delete(ctx, apiKey, path, q, &out); err != nil {
 			return nil, nil, err
 		}
@@ -327,16 +404,20 @@ func setStackEnvVars(c *client.Client) mcp.ToolHandlerFor[models.SetStackEnvVars
 		if err != nil {
 			return nil, nil, err
 		}
+		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		if err != nil {
+			return nil, nil, err
+		}
 		if err := validateEnvVarMode(in.Mode); err != nil {
 			return nil, nil, err
 		}
 		if in.Mode == envVarModeReplace {
-			if err := requireConfirm(ctx, c, apiKey, confirmStacks, in.StackID, in.Confirm); err != nil {
+			if err := requireConfirm(ctx, c, apiKey, confirmStacks, stackID, in.Confirm); err != nil {
 				return nil, nil, err
 			}
 		}
 		var out any
-		path := "/api/custom/stacks/" + url.PathEscape(in.StackID) + "/env-vars/bulk"
+		path := "/api/custom/stacks/" + url.PathEscape(stackID) + "/env-vars/bulk"
 		body := map[string]any{"mode": in.Mode, "vars": in.Vars}
 		if err := c.Post(ctx, apiKey, path, nil, body, &out); err != nil {
 			return nil, nil, err
@@ -351,16 +432,24 @@ func copyStackEnvVars(c *client.Client) mcp.ToolHandlerFor[models.CopyStackEnvVa
 		if err != nil {
 			return nil, nil, err
 		}
-		if in.SourceStack == "" {
+		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		if err != nil {
+			return nil, nil, err
+		}
+		sourceStackID, err := resolveStackID(ctx, c, apiKey, in.SourceStack)
+		if err != nil {
+			return nil, nil, err
+		}
+		if sourceStackID == "" {
 			return nil, nil, fmt.Errorf("source_stack is required")
 		}
 		body := map[string]any{
-			"source_stack": in.SourceStack,
+			"source_stack": sourceStackID,
 			"keys":         in.Keys,
 			"overwrite":    in.Overwrite,
 		}
 		var out any
-		path := "/api/custom/stacks/" + url.PathEscape(in.StackID) + "/env-vars/copy-from"
+		path := "/api/custom/stacks/" + url.PathEscape(stackID) + "/env-vars/copy-from"
 		if err := c.Post(ctx, apiKey, path, nil, body, &out); err != nil {
 			return nil, nil, err
 		}
@@ -388,12 +477,16 @@ func importStack(c *client.Client) mcp.ToolHandlerFor[models.ImportStackInput, a
 		if err != nil {
 			return nil, nil, err
 		}
-		if in.Name == "" || in.WorkerID == "" || in.ImportPath == "" {
+		workerID, err := resolveWorkerID(ctx, c, apiKey, in.WorkerID)
+		if err != nil {
+			return nil, nil, err
+		}
+		if in.Name == "" || workerID == "" || in.ImportPath == "" {
 			return nil, nil, fmt.Errorf("name, worker_id and import_path are required")
 		}
 		body := map[string]any{
 			"name":             in.Name,
-			"worker_id":        in.WorkerID,
+			"worker_id":        workerID,
 			"import_path":      in.ImportPath,
 			"recreate_volumes": in.RecreateVolumes,
 		}
