@@ -496,6 +496,30 @@ func TestExecInContainerSurfacesAnExecRouteError(t *testing.T) {
 	}
 }
 
+func TestExecInContainerSurfacesAConflictThatIsNotACapabilityGap(t *testing.T) {
+	// resolveStackAndWorker also answers 409 when the deployed project name
+	// cannot be resolved. Falling back on the status alone would open a pty
+	// session over that and hide the real error behind a worse exec.
+	srv, calls, _ := execRouteServer(t,
+		`{"error":"stack has no deployed project name yet"}`, http.StatusConflict)
+
+	handler := execInContainer(client.New(srv.URL))
+	_, _, err := handler(ctxWithKey(), nil, models.ExecInContainerInput{
+		StackID: "stack0000000001", ServiceName: "web", Command: "ls",
+	})
+	if err == nil {
+		t.Fatal("expected the 409 to surface")
+	}
+	if !strings.Contains(err.Error(), "deployed project name") {
+		t.Errorf("expected the server's own error, got %v", err)
+	}
+	for _, call := range *calls {
+		if strings.Contains(call, "/terminal/sessions") {
+			t.Errorf("only a missing-capability 409 may fall back to a pty, saw %v", *calls)
+		}
+	}
+}
+
 func TestExecInContainerFallbackExplainsItself(t *testing.T) {
 	// newExecServer answers /exec with 409, standing in for an old worker.
 	es := newExecServer("# ", "hello\n")

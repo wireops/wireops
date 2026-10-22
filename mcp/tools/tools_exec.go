@@ -33,6 +33,10 @@ const (
 	// this marker plus the exit status, and that line — not a lull in the
 	// output — is what ends the wait.
 	execMarkerPrefix = "WIREOPS_EOC_"
+	// execOneShotCapability is the capability the exec route names in its 409
+	// when the assigned worker predates one-shot exec. Mirrors
+	// protocol.CapabilityExecOneShotV1, which the MCP module does not import.
+	execOneShotCapability = "exec_one_shot_v1"
 )
 
 // registerExecTools adds the use_terminal-scoped tool.
@@ -74,8 +78,7 @@ func execInContainer(c *client.Client) mcp.ToolHandlerFor[models.ExecInContainer
 		if err == nil {
 			return nil, result, nil
 		}
-		var apiErr *client.APIError
-		if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusConflict {
+		if !isMissingExecCapability(err) {
 			return nil, nil, err
 		}
 
@@ -85,6 +88,26 @@ func execInContainer(c *client.Client) mcp.ToolHandlerFor[models.ExecInContainer
 		}
 		return nil, fallback, nil
 	}
+}
+
+// isMissingExecCapability reports whether err is the route's "this worker is
+// too old" refusal, the one case the pty fallback answers.
+//
+// The status alone is not enough: the route also answers 409 when the stack's
+// deployed project name cannot be resolved, and opening a terminal session
+// over that would hide the real error behind a worse exec.
+func isMissingExecCapability(err error) bool {
+	var apiErr *client.APIError
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusConflict {
+		return false
+	}
+	var body struct {
+		RequiredCapability string `json:"required_capability"`
+	}
+	if jsonErr := json.Unmarshal([]byte(apiErr.Body), &body); jsonErr != nil {
+		return false
+	}
+	return body.RequiredCapability == execOneShotCapability
 }
 
 // execArgv renders the tool's input as the argv the exec route takes: argv
@@ -142,7 +165,7 @@ func execViaRoute(ctx context.Context, c *client.Client, apiKey, stackID, contai
 		// Null, not 0: a command that was still running has no exit status,
 		// and 0 would read as success.
 		result["exit_code"] = nil
-		result["_notice"] = "The command did not finish within the timeout, so exit_code is unknown and the output may be cut short. The worker kills the exec at its own deadline."
+		result["_notice"] = "The command did not finish within the timeout, so exit_code is unknown and the output may be cut short. The worker stopped waiting for output, but the process may still be running inside the container — Docker has no way to kill an exec."
 	}
 	if out.StdoutTruncated || out.StderrTruncated {
 		appendNotice(result, "Output hit the worker's per-stream size cap and was truncated. Narrow the command (head, grep, --tail) rather than raising the cap.")

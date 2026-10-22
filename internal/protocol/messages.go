@@ -375,9 +375,12 @@ type ExecCommand struct {
 	WorkingDir string   `json:"working_dir,omitempty"`
 	User       string   `json:"user,omitempty"`
 	Env        []string `json:"env,omitempty"`
-	// TimeoutSeconds bounds the run on the worker side. The server bounds its
-	// own wait separately; this is what stops a runaway command from holding
-	// an exec open on the host after the server gave up.
+	// TimeoutSeconds bounds how long the worker waits for the exec's output
+	// before it gives up, closes the stream and reports TimedOut. Docker has
+	// no exec-kill API, so the process itself may keep running inside the
+	// container; this bounds the worker's wait, not the command's life. The
+	// server bounds its own wait separately, with a grace period on top of
+	// this one so the timed-out result still reaches the caller.
 	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
 }
 

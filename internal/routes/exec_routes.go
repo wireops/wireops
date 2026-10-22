@@ -17,12 +17,19 @@ import (
 )
 
 const (
-	// execRouteDefaultTimeout and execRouteMaxTimeout bound how long the
-	// server waits. The worker applies its own deadline to the exec itself,
-	// so a command outliving this one is still killed on the host rather than
-	// left running after the server stopped listening.
+	// execRouteDefaultTimeout and execRouteMaxTimeout bound the run. The
+	// worker applies the same deadline to the exec itself, so it stops
+	// reading a command that outlives it rather than holding the stream open
+	// after the server stopped listening.
 	execRouteDefaultTimeout = 30 * time.Second
 	execRouteMaxTimeout     = 300 * time.Second
+	// execRouteResultGrace is how much longer than the worker's own deadline
+	// the server waits for an answer. Both clocks measure the same timeout,
+	// but the server's starts first and the worker spends time on its
+	// ownership and host-escape checks before its own starts — so without
+	// this the dispatch context would always expire first and a timed-out run
+	// would surface as a 503 instead of its partial output and timed_out.
+	execRouteResultGrace = 15 * time.Second
 )
 
 // execRequest is the body of POST /api/custom/stacks/{id}/exec.
@@ -86,8 +93,9 @@ func (rr routeRegistrar) registerExecRoutes() {
 		}
 		// Dispatch's own fallback deadline is 5 minutes and only applies when
 		// the context carries none, so the caller's timeout has to be put on
-		// the context here.
-		ctx, cancel := context.WithTimeout(e.Request.Context(), timeout)
+		// the context here — plus the grace period, so the worker's own
+		// timed-out result wins the race against this deadline.
+		ctx, cancel := context.WithTimeout(e.Request.Context(), timeout+execRouteResultGrace)
 		defer cancel()
 
 		// Audited with the argv: the pty path records everything in a session
