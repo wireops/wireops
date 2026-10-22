@@ -143,9 +143,18 @@ func awaitReconcile(ctx context.Context, c *client.Client, apiKey, stackID strin
 	select {
 	case <-opened:
 	case res := <-done:
+		// Nothing has been triggered yet, so a stream that failed before it
+		// was usable is still just an error to report.
 		if res.err != nil {
 			return waitOutcome{}, fmt.Errorf("watching the stack's deploy stream: %w", res.err)
 		}
+		// The stream opened and ended before this select ran. onOpen fires
+		// immediately before the send, so both cases can be ready and Go
+		// picks one at random — put the result back for the wait below, which
+		// is the only other reader. The channel is buffered and now empty, so
+		// this cannot block. Dropping it would leave that wait with nothing
+		// to receive and stall it until the deadline.
+		done <- res
 	case <-watchCtx.Done():
 	}
 
@@ -160,13 +169,16 @@ func awaitReconcile(ctx context.Context, c *client.Client, apiKey, stackID strin
 	}
 
 	var frame statusFrame
+	var streamErr error
 	timedOut := false
 	select {
 	case res := <-done:
-		if res.err != nil && watchCtx.Err() == nil {
-			return waitOutcome{}, fmt.Errorf("watching the stack's deploy stream: %w", res.err)
-		}
 		frame = res.frame
+		// The read can fail after the trigger already landed (a dropped
+		// connection, a line past the reader's limit). Returning an error
+		// here would read as "the call failed" and invite a retry of a deploy
+		// that is already running, so it becomes part of the outcome instead.
+		streamErr = res.err
 		timedOut = watchCtx.Err() != nil
 	case <-watchCtx.Done():
 		timedOut = true
@@ -228,9 +240,15 @@ func awaitReconcile(ctx context.Context, c *client.Client, apiKey, stackID strin
 	// hand then was not observed as a transition of a finished reconcile, so
 	// calling it an outcome would be wrong in both directions.
 	if !out.Completed {
-		if out.TimedOut {
+		switch {
+		case out.TimedOut:
 			out.Notice = "The wait timed out before the reconcile reported an outcome; it may still be running. Poll get_stack_status, or read get_sync_logs for the rest of the output."
-		} else {
+		case streamErr != nil:
+			// The write already happened. Saying so explicitly is the point:
+			// a caller that reads this as a failed call might trigger the
+			// same deploy twice.
+			out.Notice = fmt.Sprintf("The operation was triggered successfully, but reading the deploy stream failed afterwards (%v), so this call did not observe the outcome. Do not retry — the reconcile is most likely running. Poll get_stack_status, or read get_sync_logs.", streamErr)
+		default:
 			out.Notice = "The log stream ended before the reconcile reported an outcome (the server may have restarted, or a proxy closed an idle connection). This is not a failure: poll get_stack_status, or read get_sync_logs."
 		}
 		return out, nil

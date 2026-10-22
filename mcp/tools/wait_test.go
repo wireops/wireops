@@ -38,6 +38,13 @@ type waitServer struct {
 	// endStream closes the stream after its frames instead of holding it
 	// open, standing in for a server restart or an idle proxy cut.
 	endStream bool
+	// endAtOpen closes the stream immediately after the 200, before the
+	// trigger is even sent — the window where the "opened" and "finished"
+	// signals race.
+	endAtOpen bool
+	// streamError makes the stream unreadable after the trigger lands, by
+	// writing a line past the reader's limit.
+	streamError bool
 	// frameLogID is the record id the status frames carry. The sync_logs
 	// listing answers with priorLogID until the trigger lands and with
 	// frameLogID after, mirroring the reconciler writing one row per
@@ -66,6 +73,8 @@ func newWaitServer(t *testing.T) *waitServer {
 		statuses := append([]string(nil), ws.statuses...)
 		hang := ws.hang
 		endStream := ws.endStream
+		endAtOpen := ws.endAtOpen
+		streamError := ws.streamError
 		frameLogID := ws.frameLogID
 		ws.mu.Unlock()
 
@@ -78,6 +87,9 @@ func newWaitServer(t *testing.T) *waitServer {
 		if flusher != nil {
 			flusher.Flush()
 		}
+		if endAtOpen {
+			return
+		}
 
 		deadline := time.Now().Add(5 * time.Second)
 		for !ws.wasTriggered() && time.Now().Before(deadline) {
@@ -89,6 +101,16 @@ func newWaitServer(t *testing.T) *waitServer {
 		}
 		if hang {
 			<-r.Context().Done()
+			return
+		}
+		if streamError {
+			// A single line longer than the reader's 1MiB buffer, so the scan
+			// fails rather than the connection dying — deterministic, and the
+			// same shape as a dropped read mid-frame.
+			writeFixture(w, strings.Repeat("x", 1200*1024))
+			if flusher != nil {
+				flusher.Flush()
+			}
 			return
 		}
 		for _, status := range statuses {
@@ -438,5 +460,83 @@ func TestDeployStackWaitIgnoresThePreviousReconcilesRow(t *testing.T) {
 	// — but not as a verdict.
 	if outcome.Output == "" {
 		t.Error("expected the deploy log to still be reported")
+	}
+}
+
+func TestDeployStackWaitReturnsPromptlyWhenTheStreamEndsAtOpen(t *testing.T) {
+	// The stream opens and ends before the waiter looks at it, which is the
+	// window where the "subscription is live" and "stream finished" signals
+	// can both be ready and the select picks one at random. Whichever wins,
+	// the wait must answer now rather than sit on its deadline.
+	//
+	// This covers the path, not the interleaving: in practice onOpen closes
+	// its channel before the stream goroutine finishes reading EOF, so the
+	// main goroutine almost always takes the "opened" case — removing the
+	// re-send that makes the other case safe does not fail this test. The
+	// re-send is kept because the interleaving is possible and the cost of
+	// getting it wrong is a 600-second stall, not because this reproduces it.
+	for i := 0; i < 20; i++ {
+		ws := newWaitServer(t)
+		ws.mu.Lock()
+		ws.endAtOpen = true
+		ws.logStatus = "running"
+		ws.mu.Unlock()
+
+		handler := deployStack(client.New(ws.URL))
+		start := time.Now()
+		_, out, err := handler(ctxWithKey(), nil, models.DeployStackInput{
+			StackID: "stack0000000001", Wait: true, TimeoutSeconds: 5,
+		})
+		elapsed := time.Since(start)
+		if err != nil {
+			t.Fatalf("iteration %d: unexpected error: %v", i, err)
+		}
+		if elapsed > 3*time.Second {
+			t.Fatalf("iteration %d: the wait took %v, so it sat on the deadline instead of answering", i, elapsed)
+		}
+
+		outcome := out.(waitOutcome)
+		if outcome.Completed || outcome.TimedOut {
+			t.Fatalf("iteration %d: expected an unknown, non-timed-out outcome, got %+v", i, outcome)
+		}
+		if !strings.Contains(outcome.Notice, "stream ended") {
+			t.Fatalf("iteration %d: expected the early-end notice, got %q", i, outcome.Notice)
+		}
+		if !ws.wasTriggered() {
+			t.Fatalf("iteration %d: the deploy must still have been triggered", i)
+		}
+	}
+}
+
+func TestDeployStackWaitAfterAStreamReadErrorSaysNotToRetry(t *testing.T) {
+	ws := newWaitServer(t)
+	ws.mu.Lock()
+	ws.streamError = true
+	ws.logStatus = "running"
+	ws.mu.Unlock()
+
+	handler := deployStack(client.New(ws.URL))
+	_, out, err := handler(ctxWithKey(), nil, models.DeployStackInput{
+		StackID: "stack0000000001", Wait: true, TimeoutSeconds: 5,
+	})
+	// The trigger already landed, so this is not a failed call: returning an
+	// error here would invite the caller to deploy the same stack twice.
+	if err != nil {
+		t.Fatalf("a post-trigger read failure must not surface as a call error: %v", err)
+	}
+	outcome := out.(waitOutcome)
+	if outcome.Completed {
+		t.Fatalf("expected an incomplete outcome, got %+v", outcome)
+	}
+	if outcome.TimedOut {
+		t.Errorf("no deadline passed, so timed_out must be false: %+v", outcome)
+	}
+	for _, want := range []string{"triggered successfully", "Do not retry"} {
+		if !strings.Contains(outcome.Notice, want) {
+			t.Errorf("notice %q should mention %q", outcome.Notice, want)
+		}
+	}
+	if !ws.wasTriggered() {
+		t.Error("expected the deploy to have been triggered")
 	}
 }
