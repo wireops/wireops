@@ -236,7 +236,7 @@ All custom routes are prefixed `/api/custom/`. PocketBase also auto-exposes CRUD
 | `GET` | `/stacks/{id}/render-overrides` | View persisted render-time overrides (+ diff vs git) |
 | `PUT` | `/stacks/{id}/render-overrides` | Set per-service image/ports/networks/scale overrides (not committed to git); gated by `allow_render_overrides` worker policy; image/ports/networks changes force-recreate, scale-only changes adjust replicas in place |
 | `DELETE` | `/stacks/{id}/render-overrides` | Clear render overrides; force-recreates |
-| `GET` | `/stacks/{id}/stream` | SSE log stream |
+| `GET` | `/stacks/{id}/stream` | SSE log stream. Unnamed `data:` frames carry output lines; named `event: status` frames carry `{record_id, status}` on every `sync_logs` status transition seen live (stored rows seed the status silently, so a reconnect cannot be mistaken for a fresh outcome). A 3s poll of the newest row recovers a transition whose broker event was dropped — `logstream.Publish` skips a subscriber whose 16-slot buffer is full, and a deploy publishes one event per output line, so the event carrying the terminal status is exactly the kind that can be lost. Output needs no such recovery: it is cumulative, so the next delivered event resends what was missed. `?history=false` streams only what happens from now on |
 | `GET` | `/stacks/{id}/container/{cid}/stats` | CPU/mem stats |
 | `GET` | `/stacks/{id}/container/{cid}/logs` | Container logs |
 | `POST` | `/stacks/{id}/container/stop` | Stop a container |
@@ -275,20 +275,38 @@ All custom routes are prefixed `/api/custom/`. PocketBase also auto-exposes CRUD
 | `POST` | `/api/custom/worker/tokens` | Generate worker token |
 | `POST` | `/api/custom/workers/{id}/revoke` | Revoke worker or a pending token (using `pending:{tokenRecordId}`) |
 
-### Worker Policy (`CapManageSettings`, not superuser-only)
+### Worker Policy (reads `CapViewWorkerPolicy`/operator, writes `CapManageSettings`/admin; not superuser-only)
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/custom/workers/{id}/policy` | Resolved effective deploy security policy for a worker, plus its local overrides |
-| `PUT` | `/api/custom/workers/{id}/policy` | Set per-worker policy overrides |
-| `DELETE` | `/api/custom/workers/{id}/policy` | Clear per-worker overrides (revert to inherit) |
-| `GET` | `/api/custom/settings/worker-policy` | Global `worker_policies` singleton |
-| `PUT` | `/api/custom/settings/worker-policy` | Update global `worker_policies` singleton |
+| `GET` | `/api/custom/workers/{id}/policy` | Resolved effective deploy security policy for a worker, plus its local overrides (`CapViewWorkerPolicy`) |
+| `PUT` | `/api/custom/workers/{id}/policy` | Set per-worker policy overrides (`CapManageSettings`) |
+| `DELETE` | `/api/custom/workers/{id}/policy` | Clear per-worker overrides (revert to inherit) (`CapManageSettings`) |
+| `GET` | `/api/custom/settings/worker-policy` | Global `worker_policies` singleton (`CapViewWorkerPolicy`) |
+| `PUT` | `/api/custom/settings/worker-policy` | Update global `worker_policies` singleton (`CapManageSettings`) |
+
+The reads sit at `CapViewWorkerPolicy` (minimum role `operator`) on purpose: a
+service account caps at `operator` (`internal/routes/service_accounts.go`), so
+with `CapManageSettings` on the GETs an API key could deploy a compose file but
+never read the policy that decides whether it would be rejected. Writing a
+policy is still an admin settings change.
 
 ### Audit (`admin` capability — `CapViewAuditLogs`)
 
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/api/custom/audit-logs` | Filterable audit log query (from/to/actor/action/resource/origin/status) |
+
+### Identity (any authenticated principal — no capability gate)
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/custom/me` | The caller's own `role`, resolved `capabilities[]`, actor type/id, plus `version`/`commit`/`build_date` and `scan_period_seconds` |
+
+Deliberately ungated (`internal/routes/me.go`): it reports only on the caller,
+and the one call a client makes to find out what it may do must not itself be
+able to 403. Anonymous requests get 401, a disabled user 403. The capability
+list comes from `rbac.CapabilitiesFor`, derived from the same
+`minimumRoleByCapability` table `rbac.Require` enforces, so it cannot drift.
 
 ### Users
 
@@ -388,7 +406,7 @@ A third deployable (`mcp/`, image from `Dockerfile.mcp`, binary `wireops-mcp`) t
 
 - **Pass-through auth, no credential of its own.** Each client supplies its own `service_accounts` API key per connection (`X-Wireops-Api-Key`, or `Authorization: Bearer`), stashed in the request context by `withAPIKeyMiddleware` and forwarded verbatim by `mcp/client`. Nothing is persisted, so the audit log keeps per-agent granularity and a key can be revoked individually. `mcp/client`'s `CheckRedirect` refuses any redirect off `SERVER_URL`'s origin, since Go would otherwise carry the key header to it.
 - **Authorization is the server's, never the MCP process's.** There is no per-tool capability check and no allowlist: all 67 tools are registered for every session, and a key that is not `operator` gets a 403 from `rbac.Require(...)` at call time. Deliberate — a gate here would be a second, weaker copy of the RBAC. Since `internal/routes/service_accounts.go` caps a service account at `viewer`/`operator`, the MCP ceiling is exactly the `operator` capability set (`operate_stacks`, `manage_repositories`, `manage_jobs`, `manage_workers`, `use_terminal`).
-  - Consequence worth knowing: the tools that call `manage_settings`/`view_audit_logs` routes (`list_audit_logs`, `get_worker_policy`, `get_global_worker_policy`, `list_integrations`, `list_orphans`, `get_system_info`) are **admin-only and therefore unreachable with any API key** — they always 403. `scaffold_stack`'s optional `worker_id` policy check inherits that. Not fixed here: resolving it means either allowing `admin` service accounts, lowering those routes' capability, or dropping the tools.
+  - Consequence worth knowing: a tool that calls a `manage_settings`/`view_audit_logs` route is **unreachable with any API key** — it always 403s, since a service account caps at `operator`. That is still true of `list_audit_logs`, `list_integrations`, `list_orphans` and `get_system_info`. `get_worker_policy`/`get_global_worker_policy` (and therefore `scaffold_stack`'s optional `worker_id` policy check) are no longer in that set: those two GETs moved to `CapViewWorkerPolicy` (operator) — see § Worker Policy.
 - **Tool annotations** (`mcp/tools/annotations.go`): every tool carries `ToolAnnotations` via one of `readOnly()` / `additive(idempotent)` / `destructive(idempotent)`, because the MCP default for an unannotated tool is `destructiveHint=true`. This is what lets a client decide unattended-vs-confirm. Keep new tools annotated; `lint_compose` and `preview_stack_migration` are `readOnly()` despite being POSTs, since they only parse.
 - **Confirm gate** (`mcp/tools/confirm.go`): the tools whose effect cannot be undone take a `confirm` field and run `requireConfirm`, which resolves the record's own name server-side and demands an exact match — `stacks`→`name`, `workers`→`hostname`, `repositories`→`name`, `scheduled_jobs`→`name`; `stop_container` matches the resolved compose service name and `delete_job_run` the literal `"delete"`. The error quotes the expected value on purpose, so the agent relays it and asks rather than retrying. `force_redeploy_stack` and `set_stack_env_vars`/`set_job_env_vars` require it only on their destructive branch (`recreate_volumes`, `mode: "replace"`). A mismatch must fail **before** any write request leaves the process — the tests assert exactly that. `matchConfirm` also refuses an *empty* expected value, since `""` would otherwise match an omitted `confirm`: `resolveContainerTarget` returns an empty service name for a container without a `com.docker.compose.service` label.
 - **Write tools map 1:1 onto routes the UI already calls**, so RBAC, worker-policy validation and audit entries all come for free. Pause/resume is a `PATCH` on the `stacks` record (`set_stack_paused`), the same mechanism `frontend/app/pages/stacks/[id].vue` uses — and, like the UI, resume is only allowed from `paused`: `status` also carries `error`/`degraded`/`syncing`, and blindly writing `active` would replace a real status with a healthy-looking one that nothing recomputes until the next reconcile; collection CRUD (`repositories`, `scheduled_jobs`) is audited by the global `OnRecord{Create,Update,Delete}Request` hooks in `internal/hooks/pb_hooks.go`.
@@ -401,7 +419,7 @@ A third deployable (`mcp/`, image from `Dockerfile.mcp`, binary `wireops-mcp`) t
 
 ## Access Control, Policy & Audit
 
-- **RBAC** (`internal/rbac/rbac.go`): four roles — `viewer` < `operator` < `admin`, plus a separate `monitoring` role scoped to metrics-only access. Capabilities (`CapViewStacks`, `CapOperateStacks`, `CapManageSettings`, `CapManageSecurity`, `CapViewAuditLogs`, …) map to a minimum required role; route handlers check capabilities, not raw role strings.
+- **RBAC** (`internal/rbac/rbac.go`): four roles — `viewer` < `operator` < `admin`, plus a separate `monitoring` role scoped to metrics-only access. Capabilities (`CapViewStacks`, `CapOperateStacks`, `CapViewWorkerPolicy`, `CapManageSettings`, `CapManageSecurity`, `CapViewAuditLogs`, …) map to a minimum required role; route handlers check capabilities, not raw role strings. `AllCapabilities()`/`CapabilitiesFor(role)` expose that table for introspection (`GET /api/custom/me`) — derived from `minimumRoleByCapability`, never a second copy of it. `Require`'s 403 body carries `required_capability`/`minimum_role`/`actor_role` next to the `"permission denied"` message, so a client can say *what* is missing; the message text itself is matched by `frontend/app/utils/error-parser.ts` and must stay verbatim.
 - **Worker deploy policy** (`internal/policy/`): resolves an effective `WorkerPolicy` per worker from the `worker_policies` singleton (global) with optional per-worker overrides. Enforces allowlists (volumes/networks/images/cap-add/devices/security-opt) and boolean blocks (`BlockPrivileged`, `BlockHostNetwork`, `BlockHostPID`, `BlockHostIPC`, `BlockDockerSocket`, `PreventLatestImages`, `BlockHostVolumes`), plus `AllowRenderOverrides` (off by default) gating whether a stack's `render_overrides` (per-service image/ports/networks/scale, not committed to git — see `internal/sync/renderer.go`'s `ApplyServiceOverrides`) may be applied at all; overridden values still pass through the same allowlist/block checks after being applied. Empty allowlist = open; first entry added = allowlist-only from then on. `policy_inherit` controls whether a worker without a local override falls back to the global value. Two entry points: `ValidateComposeConfig` returns the first violation and is what blocks a deploy (renderer, render-overrides route); `ComposeViolations` returns all of them, structured per service, and is what `internal/lint` reports. Both run off the same extraction and produce identical messages — keep it that way when adding a check.
 - **Path containment** (`internal/compose.openContained`): `safepath`'s `Validate*` helpers only inspect the path *string* — they reject `..`, absolute paths and bad extensions, which is everything a request parameter can express, but they cannot see what the filesystem does with the result. Git preserves symlinks on checkout (mode 120000), so a repository shipping `docker-compose.yml -> /etc/passwd` passes every string check: the extension check constrains the *link's name*, never its target. Reads whose path is influenced by repository content go through **`os.Root`** (Go 1.24+) rather than validating a path and re-opening it: `os.Root` performs the traversal itself, refuses symlinks that escape, and — because the caller keeps the descriptor — lets the size check and the read act on the same open file instead of re-consulting the path. That last part matters: the repo checkout is shared between concurrent requests and rewritten by every git fetch, so check-then-open is a genuine race. `compose.ResolveFile`/`ReadFile` use it, rooted at `ConfigOptions.Root`, which defaults to `WorkDir` so a forgotten root still cannot escape its own directory. `Config` **pipes the validated bytes to docker over stdin (`-f -`)** rather than naming the file: naming it would make docker resolve the path a second time, and a concurrent fetch into the shared checkout could swap it for a symlink in between. Compose resolves relative paths in a stdin document against the working directory — the same directory the file lives in — so bind sources, `env_file` and the derived project name are byte-identical to naming the file (verified against the CLI). This covers the compose file itself; `env_file`/`include` targets it references are still opened by docker from `WorkDir`.
 - **Compose config size limit** (`internal/compose/limitedbuffer.go`): every `compose.Config` call — renderer, lint, both render-override routes — buffers the CLI's stdout through a bounded writer capped at `COMPOSE_MAX_KB` (default 512 KB), with stderr separately capped at 64 KB since it only feeds error messages. The size is attacker-influenced (it comes from a repo's compose file), and the buffer is then JSON-decoded and walked, so it needs a ceiling. It **errors rather than truncates**: a truncated config would still parse, as a smaller stack missing services or the very fields the policy checks — always a hard failure, never a silent one. Callers can distinguish it with `errors.Is(err, compose.ErrOutputTooLarge)`.

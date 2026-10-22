@@ -25,6 +25,30 @@ changes in a minor release.
   write leaves the process.
 - Per-service **Restart All** and **Stop All** controls, plus multi-select
   restart/stop operations for arbitrary containers in a stack.
+- `GET /api/custom/me` reports the calling user's or API key's role, the
+  capabilities that role actually grants, and the server's version and default
+  poll interval. It needs no permission beyond being authenticated, so a client
+  (an agent through the MCP server, above all) can find out what it may do
+  instead of discovering it one `403` at a time.
+- A deploy's `403` now names the capability it needed, the minimum role that
+  capability requires, and the role the caller actually has — on every
+  capability-gated route, not just deploys.
+
+### Changed
+
+- Reading a worker's deploy security policy (`GET
+  /api/custom/workers/{id}/policy` and `GET /api/custom/settings/worker-policy`)
+  now requires the new `view_worker_policy` capability (`operator`) instead of
+  `manage_settings` (`admin`). Writing one still requires `manage_settings`.
+  Service accounts cap at `operator`, so an API key could previously deploy a
+  compose file while being unable to read the policy that decides whether the
+  deploy would be rejected.
+- The stack log stream (`GET /api/custom/stacks/{id}/stream`) additionally
+  emits a named `status` event on each sync status transition, and accepts
+  `?history=false` to skip replaying stored output. Existing consumers read
+  only the unnamed output frames and are unaffected. A connected stream also
+  re-reads the newest sync log every few seconds, so a status transition whose
+  broadcast was dropped under load still reaches the client.
 
 ### Security
 
