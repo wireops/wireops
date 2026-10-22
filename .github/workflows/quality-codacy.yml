@@ -65,6 +65,19 @@ jobs:
     name: Codacy Coverage (Frontend)
     runs-on: ubuntu-latest
     continue-on-error: true
+    # Runs after the backend coverage job on purpose, even though the two have
+    # nothing to do with each other. codacy-coverage-reporter-action always
+    # uploads its report with --partial and then always sends the "final"
+    # notification, with no input to suppress either (see its action.yml), so
+    # two independent jobs finalize the same commit twice. Whichever finishes
+    # first decides the coverage Codacy computes, and the other then
+    # re-finalizes on top of it: the backend job takes ~11 minutes and the
+    # frontend one ~1, so the project figure flipped between "frontend only"
+    # and "both", and the coverage-variation gate compared a PR measured one
+    # way against a base measured the other (it reported -21% for a branch
+    # that locally raises total coverage by 0.4 points). Serializing makes the
+    # order deterministic and identical on main and on pull requests.
+    needs: coverage
     permissions:
       contents: read
 
