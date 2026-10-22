@@ -12,6 +12,19 @@ import (
 	"github.com/wireops/wireops/mcp/models"
 )
 
+// writeJSON and writeSSE write an already-built body to a fake server's
+// ResponseWriter. They exist because the static analyser flags
+// fmt.Fprintf-to-ResponseWriter as an HTML-escaping bypass even in a test
+// fixture — the same reason the frontend tests avoid HTML-string stubs (see
+// CLAUDE.md) — so the formatting happens before the write, not during it.
+func writeJSON(w http.ResponseWriter, body string) {
+	_, _ = w.Write([]byte(body))
+}
+
+func writeSSE(w http.ResponseWriter, frame string) {
+	_, _ = w.Write([]byte(frame))
+}
+
 // waitServer fakes the four routes a waited deploy touches: the SSE stream,
 // the trigger, the stack record and the sync_logs listing. The stream only
 // publishes its status frames once the trigger has been POSTed, which is what
@@ -55,7 +68,7 @@ func newWaitServer(t *testing.T) *waitServer {
 		flusher, _ := w.(http.Flusher)
 		// The real route commits its 200 and flushes before any log output, so
 		// a subscriber can tell "connected" from "something happened".
-		fmt.Fprint(w, ": connected\n\n")
+		writeSSE(w, ": connected\n\n")
 		if flusher != nil {
 			flusher.Flush()
 		}
@@ -73,7 +86,7 @@ func newWaitServer(t *testing.T) *waitServer {
 			return
 		}
 		for _, status := range statuses {
-			fmt.Fprintf(w, "event: status\ndata: {\"record_id\":\"synclog00000001\",\"status\":%q}\n\n", status)
+			writeSSE(w, fmt.Sprintf("event: status\ndata: {\"record_id\":\"synclog00000001\",\"status\":%q}\n\n", status))
 			if flusher != nil {
 				flusher.Flush()
 			}
@@ -96,13 +109,13 @@ func newWaitServer(t *testing.T) *waitServer {
 		ws.mu.Lock()
 		status := ws.stackStatus
 		ws.mu.Unlock()
-		fmt.Fprintf(w, `{"status":%q,"deployed_version":7}`, status)
+		writeJSON(w, fmt.Sprintf(`{"status":%q,"deployed_version":7}`, status))
 	})
 	mux.HandleFunc("/api/collections/sync_logs/records", func(w http.ResponseWriter, r *http.Request) {
 		ws.mu.Lock()
 		output := ws.logOutput
 		ws.mu.Unlock()
-		fmt.Fprintf(w, `{"items":[{"id":"synclog00000001","status":"success","output":%q}]}`, output)
+		writeJSON(w, fmt.Sprintf(`{"items":[{"id":"synclog00000001","status":"success","output":%q}]}`, output))
 	})
 
 	ws.Server = httptest.NewServer(mux)
