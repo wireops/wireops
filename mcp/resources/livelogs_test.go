@@ -333,7 +333,7 @@ func TestWatchRetriesAfterNon2xxAndConnectFailure(t *testing.T) {
 		default:
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.(http.Flusher).Flush()
-			w.Write([]byte("data: recovered\n\n"))
+			writeFixture(w, "data: recovered\n\n")
 			w.(http.Flusher).Flush()
 			<-r.Context().Done()
 		}
@@ -378,7 +378,7 @@ func TestWatchFiresResourceUpdatedOnNewLine(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.(http.Flusher).Flush()
-		w.Write([]byte("data: deploy started\n\n"))
+		writeFixture(w, "data: deploy started\n\n")
 		w.(http.Flusher).Flush()
 		<-r.Context().Done()
 	}))

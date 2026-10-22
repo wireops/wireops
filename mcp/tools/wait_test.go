@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -11,19 +12,6 @@ import (
 	"github.com/wireops/wireops/mcp/client"
 	"github.com/wireops/wireops/mcp/models"
 )
-
-// writeJSON and writeSSE write an already-built body to a fake server's
-// ResponseWriter. They exist because the static analyser flags
-// fmt.Fprintf-to-ResponseWriter as an HTML-escaping bypass even in a test
-// fixture — the same reason the frontend tests avoid HTML-string stubs (see
-// CLAUDE.md) — so the formatting happens before the write, not during it.
-func writeJSON(w http.ResponseWriter, body string) {
-	_, _ = w.Write([]byte(body))
-}
-
-func writeSSE(w http.ResponseWriter, frame string) {
-	_, _ = w.Write([]byte(frame))
-}
 
 // waitServer fakes the four routes a waited deploy touches: the SSE stream,
 // the trigger, the stack record and the sync_logs listing. The stream only
@@ -42,7 +30,20 @@ type waitServer struct {
 	statuses    []string
 	stackStatus string
 	logOutput   string
-	hang        bool
+	// logStatus is what the sync_logs listing reports, which is what the
+	// waiter falls back to when it observed no status frame. A reconcile
+	// still in flight has a "running" row, not a finished one.
+	logStatus string
+	hang      bool
+	// endStream closes the stream after its frames instead of holding it
+	// open, standing in for a server restart or an idle proxy cut.
+	endStream bool
+	// frameLogID is the record id the status frames carry. The sync_logs
+	// listing answers with priorLogID until the trigger lands and with
+	// frameLogID after, mirroring the reconciler writing one row per
+	// reconcile.
+	frameLogID string
+	priorLogID string
 }
 
 func newWaitServer(t *testing.T) *waitServer {
@@ -52,6 +53,9 @@ func newWaitServer(t *testing.T) *waitServer {
 		statuses:    []string{"running", "success"},
 		stackStatus: "active",
 		logOutput:   "[compose_up] done",
+		logStatus:   "success",
+		frameLogID:  "synclog00000002",
+		priorLogID:  "synclog00000001",
 	}
 	mux := http.NewServeMux()
 
@@ -61,6 +65,8 @@ func newWaitServer(t *testing.T) *waitServer {
 		ws.historyPara = r.URL.Query().Get("history")
 		statuses := append([]string(nil), ws.statuses...)
 		hang := ws.hang
+		endStream := ws.endStream
+		frameLogID := ws.frameLogID
 		ws.mu.Unlock()
 
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -68,7 +74,7 @@ func newWaitServer(t *testing.T) *waitServer {
 		flusher, _ := w.(http.Flusher)
 		// The real route commits its 200 and flushes before any log output, so
 		// a subscriber can tell "connected" from "something happened".
-		writeSSE(w, ": connected\n\n")
+		writeFixture(w, ": connected\n\n")
 		if flusher != nil {
 			flusher.Flush()
 		}
@@ -86,10 +92,13 @@ func newWaitServer(t *testing.T) *waitServer {
 			return
 		}
 		for _, status := range statuses {
-			writeSSE(w, fmt.Sprintf("event: status\ndata: {\"record_id\":\"synclog00000001\",\"status\":%q}\n\n", status))
+			writeFixture(w, fmt.Sprintf("event: status\ndata: {\"record_id\":%q,\"status\":%q}\n\n", frameLogID, status))
 			if flusher != nil {
 				flusher.Flush()
 			}
+		}
+		if endStream {
+			return
 		}
 		<-r.Context().Done()
 	})
@@ -99,7 +108,7 @@ func newWaitServer(t *testing.T) *waitServer {
 		ws.triggered = true
 		ws.triggerPath = r.URL.Path
 		ws.mu.Unlock()
-		w.Write([]byte(`{"status":"triggered"}`))
+		writeFixture(w, `{"status":"triggered"}`)
 	}
 	mux.HandleFunc("/api/custom/stacks/stack0000000001/sync", trigger)
 	mux.HandleFunc("/api/custom/stacks/stack0000000001/force-redeploy", trigger)
@@ -109,13 +118,21 @@ func newWaitServer(t *testing.T) *waitServer {
 		ws.mu.Lock()
 		status := ws.stackStatus
 		ws.mu.Unlock()
-		writeJSON(w, fmt.Sprintf(`{"status":%q,"deployed_version":7}`, status))
+		writeFixture(w, fmt.Sprintf(`{"status":%q,"deployed_version":7}`, status))
 	})
 	mux.HandleFunc("/api/collections/sync_logs/records", func(w http.ResponseWriter, r *http.Request) {
 		ws.mu.Lock()
 		output := ws.logOutput
+		status := ws.logStatus
+		id := ws.priorLogID
+		if ws.triggered {
+			// The reconciler writes a new row per reconcile, so the newest row
+			// changes once the trigger lands. The waiter reads this route once
+			// before triggering to tell the two apart.
+			id = ws.frameLogID
+		}
 		ws.mu.Unlock()
-		writeJSON(w, fmt.Sprintf(`{"items":[{"id":"synclog00000001","status":"success","output":%q}]}`, output))
+		writeFixture(w, fmt.Sprintf(`{"items":[{"id":%q,"status":%q,"output":%q}]}`, id, status, output))
 	})
 
 	ws.Server = httptest.NewServer(mux)
@@ -271,6 +288,9 @@ func TestDeployStackWaitTimesOut(t *testing.T) {
 	ws := newWaitServer(t)
 	ws.mu.Lock()
 	ws.hang = true
+	// The reconcile is still in flight, so its row is not terminal either —
+	// a "success" row here would be the previous reconcile's.
+	ws.logStatus = "running"
 	ws.mu.Unlock()
 
 	handler := deployStack(client.New(ws.URL))
@@ -328,5 +348,95 @@ func TestClampWaitTimeout(t *testing.T) {
 	}
 	if got := clampWaitTimeout(100000); got != waitMaxTimeout {
 		t.Errorf("oversized should clamp, got %v", got)
+	}
+}
+
+func TestDeployStackWaitStreamEndingEarlyIsNotAFailure(t *testing.T) {
+	ws := newWaitServer(t)
+	ws.mu.Lock()
+	// The stream closes cleanly after a non-terminal frame — a server restart
+	// or a proxy cutting an idle connection. Client.Stream then returns nil,
+	// and no deadline passed, so neither "timed out" nor "failed" is true.
+	ws.statuses = []string{"running"}
+	ws.endStream = true
+	ws.logStatus = "running"
+	ws.mu.Unlock()
+
+	handler := deployStack(client.New(ws.URL))
+	_, out, err := handler(ctxWithKey(), nil, models.DeployStackInput{
+		StackID: "stack0000000001", Wait: true, TimeoutSeconds: 5,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	outcome := out.(waitOutcome)
+
+	if outcome.Completed {
+		t.Errorf("a non-terminal status is not a completed wait: %+v", outcome)
+	}
+	if outcome.TimedOut {
+		t.Errorf("no deadline passed, so timed_out must be false: %+v", outcome)
+	}
+	notice := outcome.Notice
+	if !strings.Contains(notice, "stream ended") || !strings.Contains(notice, "not a failure") {
+		t.Errorf("expected the notice to say the outcome is unknown, got %q", notice)
+	}
+}
+
+func TestDeployStackWaitFlagsAnAlreadyRunningReconcile(t *testing.T) {
+	ws := newWaitServer(t)
+	ws.mu.Lock()
+	// The terminal frame carries the row that already existed when the
+	// trigger was sent: wireops skips a trigger for a stack that is already
+	// syncing, so this is probably that reconcile's result, not this call's.
+	// The server exposes no per-operation handle, so the ambiguity is
+	// surfaced rather than hidden.
+	ws.frameLogID = ws.priorLogID
+	ws.mu.Unlock()
+
+	handler := deployStack(client.New(ws.URL))
+	_, out, err := handler(ctxWithKey(), nil, models.DeployStackInput{
+		StackID: "stack0000000001", Wait: true, TimeoutSeconds: 5,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	outcome := out.(waitOutcome)
+
+	if !outcome.Completed || outcome.SyncLogStatus != "success" {
+		t.Fatalf("expected the observed outcome to still be reported: %+v", outcome)
+	}
+	if !strings.Contains(outcome.Notice, "already existed when the trigger was sent") {
+		t.Errorf("expected the correlation caveat, got %q", outcome.Notice)
+	}
+}
+
+func TestDeployStackWaitIgnoresThePreviousReconcilesRow(t *testing.T) {
+	ws := newWaitServer(t)
+	ws.mu.Lock()
+	// No frames at all, and the newest row is the one from before the
+	// trigger: reporting its "success" would pass the previous reconcile's
+	// outcome off as this call's.
+	ws.statuses = nil
+	ws.endStream = true
+	ws.frameLogID = ws.priorLogID
+	ws.mu.Unlock()
+
+	handler := deployStack(client.New(ws.URL))
+	_, out, err := handler(ctxWithKey(), nil, models.DeployStackInput{
+		StackID: "stack0000000001", Wait: true, TimeoutSeconds: 5,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	outcome := out.(waitOutcome)
+
+	if outcome.Completed || outcome.SyncLogStatus != "" {
+		t.Fatalf("expected no outcome to be adopted, got %+v", outcome)
+	}
+	// The log output is still handed over — it is the only evidence available
+	// — but not as a verdict.
+	if outcome.Output == "" {
+		t.Error("expected the deploy log to still be reported")
 	}
 }

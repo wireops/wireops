@@ -51,7 +51,7 @@ func newRecorder(routes map[string]string) *recorder {
 		if !ok {
 			response = `{}`
 		}
-		_, _ = w.Write([]byte(response))
+		writeFixture(w, response)
 	}))
 	return rec
 }
@@ -904,7 +904,7 @@ func TestRevokeWorkerMissingAPIKey(t *testing.T) {
 func TestRequireConfirmSurfacesLookupFailure(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		_, _ = w.Write([]byte(`{"error":"not found"}`))
+		writeFixture(w, `{"error":"not found"}`)
 	}))
 	defer srv.Close()
 

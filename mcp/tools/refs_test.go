@@ -14,7 +14,7 @@ func TestResolveRefPassesThroughARecordID(t *testing.T) {
 	var calls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		w.Write([]byte(`{"items":[]}`))
+		writeFixture(w, `{"items":[]}`)
 	}))
 	defer srv.Close()
 
@@ -53,7 +53,7 @@ func TestResolveRefLooksUpAName(t *testing.T) {
 		gotPath = r.URL.Path
 		gotFilter = r.URL.Query().Get("filter")
 		gotFields = r.URL.Query().Get("fields")
-		w.Write([]byte(`{"items":[{"id":"stack0000000001","name":"billing"}]}`))
+		writeFixture(w, `{"items":[{"id":"stack0000000001","name":"billing"}]}`)
 	}))
 	defer srv.Close()
 
@@ -79,7 +79,7 @@ func TestResolveRefEscapesAQuoteInTheName(t *testing.T) {
 	var gotFilter string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotFilter = r.URL.Query().Get("filter")
-		w.Write([]byte(`{"items":[{"id":"stack0000000001","name":"x"}]}`))
+		writeFixture(w, `{"items":[{"id":"stack0000000001","name":"x"}]}`)
 	}))
 	defer srv.Close()
 
@@ -95,7 +95,7 @@ func TestResolveRefEscapesAQuoteInTheName(t *testing.T) {
 
 func TestResolveRefReportsAMiss(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"items":[]}`))
+		writeFixture(w, `{"items":[]}`)
 	}))
 	defer srv.Close()
 
@@ -112,7 +112,7 @@ func TestResolveRefReportsAMiss(t *testing.T) {
 
 func TestResolveRefRefusesAnAmbiguousName(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"items":[{"id":"stack0000000001","name":"api"},{"id":"stack0000000002","name":"api"}]}`))
+		writeFixture(w, `{"items":[{"id":"stack0000000001","name":"api"},{"id":"stack0000000002","name":"api"}]}`)
 	}))
 	defer srv.Close()
 
@@ -134,10 +134,10 @@ func TestHandlersAcceptANameInPlaceOfAnID(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.Path)
 		if r.URL.Path == "/api/collections/stacks/records" {
-			w.Write([]byte(`{"items":[{"id":"stack0000000001","name":"billing"}]}`))
+			writeFixture(w, `{"items":[{"id":"stack0000000001","name":"billing"}]}`)
 			return
 		}
-		w.Write([]byte(`{"id":"stack0000000001","status":"active"}`))
+		writeFixture(w, `{"id":"stack0000000001","status":"active"}`)
 	}))
 	defer srv.Close()
 

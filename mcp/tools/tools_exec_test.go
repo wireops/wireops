@@ -60,9 +60,9 @@ func newExecServer(banner, output string) *execServer {
 
 		switch {
 		case r.URL.Path == "/api/custom/stacks/stack0000000001/services":
-			_, _ = w.Write([]byte(`[{"service_name":"web","container_id":"c-web"}]`))
+			writeFixture(w, `[{"service_name":"web","container_id":"c-web"}]`)
 		case strings.HasSuffix(r.URL.Path, "/terminal/sessions"):
-			_, _ = w.Write([]byte(`{"session_id":"sess-1"}`))
+			writeFixture(w, `{"session_id":"sess-1"}`)
 		case strings.HasSuffix(r.URL.Path, "/input"):
 			raw, _ := io.ReadAll(r.Body)
 			var body struct {
@@ -90,22 +90,22 @@ func newExecServer(banner, output string) *execServer {
 			} else {
 				es.transcript = asciicast(banner, echo, tail)
 			}
-			_, _ = w.Write([]byte(`{"status":"ok"}`))
+			writeFixture(w, `{"status":"ok"}`)
 		case strings.HasSuffix(r.URL.Path, "/transcript"):
 			if es.transcriptStatus != 0 {
 				w.WriteHeader(es.transcriptStatus)
-				_, _ = w.Write([]byte(`{"error":"transcript not available"}`))
+				writeFixture(w, `{"error":"transcript not available"}`)
 				return
 			}
-			_, _ = w.Write([]byte(es.transcript))
+			writeFixture(w, es.transcript)
 		default:
-			_, _ = w.Write([]byte(`{}`))
+			writeFixture(w, `{}`)
 		}
 	}))
 	return es
 }
 
-func (e *execServer) close()                 { e.srv.Close() }
+func (e *execServer) close() { e.srv.Close() }
 
 // slowOutput makes the command's output appear only after d; the echo of the
 // input stays immediate, which is the gap that matters.

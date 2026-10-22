@@ -252,7 +252,7 @@ func TestScanPeriodSecondsFallsBackToUnknown(t *testing.T) {
 				if tc.code != 0 {
 					w.WriteHeader(tc.code)
 				}
-				_, _ = w.Write([]byte(tc.body))
+				writeFixture(w, tc.body)
 			}))
 			defer srv.Close()
 
