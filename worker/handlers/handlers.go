@@ -439,6 +439,26 @@ func HandleGetContainerLogs(sender Sender, payload interface{}) {
 	sender.SendResult(result)
 }
 
+// HandleExec runs one non-interactive command in a container and answers with
+// a single CommandResult. Like the other awaited handlers it registers its
+// cancel func in ActiveCommands, so a server-side timeout (which sends
+// MsgCancelCommand) actually stops the exec rather than leaving it running on
+// the host.
+func HandleExec(sender Sender, payload interface{}) {
+	cmd, ok := unmarshalPayloadOrReply[protocol.ExecCommand](sender, payload, "")
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	ActiveCommands.Store(cmd.CommandID, cancel)
+	defer func() {
+		cancel()
+		ActiveCommands.Delete(cmd.CommandID)
+	}()
+	result := executor.ExecOneShot(ctx, cmd)
+	sender.SendResult(result)
+}
+
 func HandleDiscoverProjects(sender Sender, payload interface{}) {
 	cmd, ok := unmarshalPayloadOrReply[protocol.DiscoverProjectsCommand](sender, payload, "")
 	if !ok {

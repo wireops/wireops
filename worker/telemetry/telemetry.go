@@ -30,7 +30,10 @@ func InitWorkerInfo() {
 		ComposeVersion: QueryComposeVersion(),
 		OS:             runtime.GOOS,
 		Arch:           runtime.GOARCH,
-		Capabilities:   []string{protocol.CapabilityProjectIdentityMigrationV1},
+		Capabilities: []string{
+			protocol.CapabilityProjectIdentityMigrationV1,
+			protocol.CapabilityExecOneShotV1,
+		},
 	}
 }
 

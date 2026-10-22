@@ -465,6 +465,11 @@ func readLoop(conn *websocket.Conn, disconnectCh chan<- DisconnectReason) {
 			handlers.DispatchThrottled(sender, handlers.InteractiveSemaphore, env.Type, env.Payload, handlers.HandleGetContainerStats)
 		case protocol.MsgGetContainerLogs:
 			handlers.DispatchThrottled(sender, handlers.InteractiveSemaphore, env.Type, env.Payload, handlers.HandleGetContainerLogs)
+		case protocol.MsgExec:
+			// Interactive class, like the terminal and the other
+			// human-waiting commands: an exec is short, but it must not queue
+			// behind a compose deploy.
+			handlers.DispatchThrottled(sender, handlers.InteractiveSemaphore, env.Type, env.Payload, handlers.HandleExec)
 		case protocol.MsgDiscoverProjects:
 			handlers.DispatchThrottled(sender, handlers.InteractiveSemaphore, env.Type, env.Payload, handlers.HandleDiscoverProjects)
 		case protocol.MsgReadFile:

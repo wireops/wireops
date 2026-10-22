@@ -67,6 +67,17 @@ changes in a minor release.
   (`read`, `write`, `exec`, or `all`; default unchanged). An instance used only
   for diagnosis registers the read group and halves what every session pays to
   list the tools.
+- Running a one-shot command in a container is now a real operation rather
+  than an emulated one: `POST /api/custom/stacks/{id}/exec` dispatches a
+  non-interactive `docker exec` to the worker and returns separated `stdout`
+  and `stderr` with the container runtime's own exit code. It needs the same
+  permission as the terminal (`use_terminal`) and is recorded in the audit log
+  with the command it ran.
+- MCP: `exec_in_container` uses that route, so it reports stdout, stderr and
+  the exit code as distinct fields, and accepts the command as an `argv` array
+  for an image with no shell. Against a worker too old to support it the tool
+  falls back to the previous terminal-session method and says so in the
+  response, where stdout and stderr are necessarily interleaved.
 
 ### Changed
 

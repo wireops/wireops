@@ -61,6 +61,12 @@ func newExecServer(banner, output string) *execServer {
 		switch {
 		case r.URL.Path == "/api/custom/stacks/stack0000000001/services":
 			writeFixture(w, `[{"service_name":"web","container_id":"c-web"}]`)
+		case strings.HasSuffix(r.URL.Path, "/exec"):
+			// This fake stands in for a worker too old for the one-shot exec
+			// command, which is exactly the case the pty path below still
+			// has to cover.
+			w.WriteHeader(http.StatusConflict)
+			writeFixture(w, `{"error":"the assigned worker does not support one-shot exec","required_capability":"exec_one_shot_v1"}`)
 		case strings.HasSuffix(r.URL.Path, "/terminal/sessions"):
 			writeFixture(w, `{"session_id":"sess-1"}`)
 		case strings.HasSuffix(r.URL.Path, "/input"):
@@ -331,5 +337,221 @@ func TestDecodeAsciicastSkipsHeaderAndMalformedLines(t *testing.T) {
 
 	if got := decodeAsciicast([]byte(raw)); got != "hello world" {
 		t.Fatalf("unexpected decode result %q", got)
+	}
+}
+
+// execRouteServer fakes a worker that does support one-shot exec: the
+// /exec route answers with separated streams and a real exit code.
+func execRouteServer(t *testing.T, result string, status int) (*httptest.Server, *[]string, *[]map[string]any) {
+	t.Helper()
+
+	var calls []string
+	var bodies []map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		switch {
+		case r.URL.Path == "/api/custom/stacks/stack0000000001/services":
+			writeFixture(w, `[{"service_name":"web","container_id":"c-web"}]`)
+		case strings.HasSuffix(r.URL.Path, "/exec"):
+			raw, _ := io.ReadAll(r.Body)
+			var body map[string]any
+			_ = json.Unmarshal(raw, &body)
+			bodies = append(bodies, body)
+			if status != 0 {
+				w.WriteHeader(status)
+			}
+			writeFixture(w, result)
+		default:
+			writeFixture(w, `{}`)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &calls, &bodies
+}
+
+func TestExecInContainerUsesTheExecRouteAndSeparatesStreams(t *testing.T) {
+	srv, calls, bodies := execRouteServer(t,
+		`{"stdout":"ok\n","stderr":"warn\n","exit_code":3,"timed_out":false}`, 0)
+
+	handler := execInContainer(client.New(srv.URL))
+	_, out, err := handler(ctxWithKey(), nil, models.ExecInContainerInput{
+		StackID: "stack0000000001", ServiceName: "web", Command: "cat /etc/hosts",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	result := out.(map[string]any)
+
+	// The whole point of the new command: two streams and the runtime's own
+	// exit code, not one interleaved blob and a parsed marker.
+	if result["stdout"] != "ok\n" || result["stderr"] != "warn\n" {
+		t.Errorf("expected separated streams, got %#v", result)
+	}
+	if result["exit_code"] != 3 {
+		t.Errorf("exit_code = %v, want 3", result["exit_code"])
+	}
+	if _, present := result["session_id"]; present {
+		t.Errorf("the exec route opens no terminal session: %#v", result)
+	}
+	if notice, present := result["_notice"]; present {
+		t.Errorf("a clean run needs no notice, got %v", notice)
+	}
+
+	// No pty session is opened at all on this path.
+	for _, call := range *calls {
+		if strings.Contains(call, "/terminal/sessions") {
+			t.Errorf("expected no terminal session, saw %v", *calls)
+		}
+	}
+	// A command goes through a shell, so pipes and redirection work.
+	cmd, _ := (*bodies)[0]["cmd"].([]any)
+	if len(cmd) != 3 || cmd[0] != "/bin/sh" || cmd[1] != "-c" || cmd[2] != "cat /etc/hosts" {
+		t.Errorf("unexpected argv %#v", cmd)
+	}
+}
+
+func TestExecInContainerSendsArgvWithoutAShell(t *testing.T) {
+	srv, _, bodies := execRouteServer(t, `{"stdout":"","stderr":"","exit_code":0}`, 0)
+
+	handler := execInContainer(client.New(srv.URL))
+	if _, _, err := handler(ctxWithKey(), nil, models.ExecInContainerInput{
+		StackID: "stack0000000001", ServiceName: "web", Argv: []string{"cat", "/etc/hosts"},
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	cmd, _ := (*bodies)[0]["cmd"].([]any)
+	if len(cmd) != 2 || cmd[0] != "cat" || cmd[1] != "/etc/hosts" {
+		t.Errorf("expected the argv passed through verbatim, got %#v", cmd)
+	}
+}
+
+func TestExecInContainerRejectsBothCommandAndArgv(t *testing.T) {
+	srv, _, _ := execRouteServer(t, `{}`, 0)
+
+	handler := execInContainer(client.New(srv.URL))
+	_, _, err := handler(ctxWithKey(), nil, models.ExecInContainerInput{
+		StackID: "stack0000000001", ServiceName: "web", Command: "ls", Argv: []string{"ls"},
+	})
+	if err == nil {
+		t.Fatal("expected an error when both are given")
+	}
+}
+
+func TestExecInContainerReportsATimedOutRun(t *testing.T) {
+	srv, _, _ := execRouteServer(t,
+		`{"stdout":"partial","stderr":"","exit_code":-1,"timed_out":true}`, 0)
+
+	handler := execInContainer(client.New(srv.URL))
+	_, out, err := handler(ctxWithKey(), nil, models.ExecInContainerInput{
+		StackID: "stack0000000001", ServiceName: "web", Command: "sleep 600",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	result := out.(map[string]any)
+	if result["timed_out"] != true {
+		t.Errorf("expected timed_out, got %#v", result)
+	}
+	// A run with no exit status reports null, never 0.
+	if result["exit_code"] != nil {
+		t.Errorf("exit_code = %v, want nil", result["exit_code"])
+	}
+	if notice, _ := result["_notice"].(string); !strings.Contains(notice, "did not finish") {
+		t.Errorf("expected a timeout notice, got %q", notice)
+	}
+}
+
+func TestExecInContainerNoticesTruncation(t *testing.T) {
+	srv, _, _ := execRouteServer(t,
+		`{"stdout":"lots","stderr":"","exit_code":0,"stdout_truncated":true}`, 0)
+
+	handler := execInContainer(client.New(srv.URL))
+	_, out, err := handler(ctxWithKey(), nil, models.ExecInContainerInput{
+		StackID: "stack0000000001", ServiceName: "web", Command: "cat /big",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if notice, _ := out.(map[string]any)["_notice"].(string); !strings.Contains(notice, "truncated") {
+		t.Errorf("expected a truncation notice, got %q", notice)
+	}
+}
+
+func TestExecInContainerSurfacesAnExecRouteError(t *testing.T) {
+	// Anything but a 409 is the server's answer, not a capability gap, so it
+	// must not silently fall back to the pty path.
+	srv, calls, _ := execRouteServer(t, `{"error":"container does not belong to stack"}`, http.StatusForbidden)
+
+	handler := execInContainer(client.New(srv.URL))
+	_, _, err := handler(ctxWithKey(), nil, models.ExecInContainerInput{
+		StackID: "stack0000000001", ServiceName: "web", Command: "ls",
+	})
+	if err == nil {
+		t.Fatal("expected the 403 to surface")
+	}
+	for _, call := range *calls {
+		if strings.Contains(call, "/terminal/sessions") {
+			t.Errorf("a 403 must not fall back to a pty session, saw %v", *calls)
+		}
+	}
+}
+
+func TestExecInContainerFallbackExplainsItself(t *testing.T) {
+	// newExecServer answers /exec with 409, standing in for an old worker.
+	es := newExecServer("# ", "hello\n")
+	defer es.close()
+
+	handler := execInContainer(client.New(es.srv.URL))
+	_, out, err := handler(ctxWithKey(), nil, models.ExecInContainerInput{
+		StackID: "stack0000000001", ServiceName: "web", Command: "echo hello",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	result := out.(map[string]any)
+	notice, _ := result["_notice"].(string)
+	// The fallback's limits are real and have to be stated, or the caller
+	// reads an interleaved stream as stdout.
+	for _, want := range []string{"does not support one-shot exec", "interleaved", "POSIX"} {
+		if !strings.Contains(notice, want) {
+			t.Errorf("notice %q should mention %q", notice, want)
+		}
+	}
+	if result["output"] == nil {
+		t.Errorf("the fallback still reports output: %#v", result)
+	}
+}
+
+func TestExecArgvRendering(t *testing.T) {
+	cases := []struct {
+		name string
+		in   models.ExecInContainerInput
+		want []string
+	}{
+		{name: "command through the default shell", in: models.ExecInContainerInput{Command: "ls -la"}, want: []string{"/bin/sh", "-c", "ls -la"}},
+		{name: "command through a chosen shell", in: models.ExecInContainerInput{Command: "ls", Shell: []string{"/bin/bash"}}, want: []string{"/bin/bash", "-c", "ls"}},
+		{name: "argv verbatim", in: models.ExecInContainerInput{Argv: []string{"ps", "aux"}}, want: []string{"ps", "aux"}},
+		{name: "argv ignores shell", in: models.ExecInContainerInput{Argv: []string{"ps"}, Shell: []string{"/bin/bash"}}, want: []string{"ps"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := execArgv(tc.in)
+			if len(got) != len(tc.want) {
+				t.Fatalf("execArgv = %v, want %v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("execArgv = %v, want %v", got, tc.want)
+				}
+			}
+		})
+	}
+}
+
+func TestShellQuoteEscapesASingleQuote(t *testing.T) {
+	// The fallback has to rebuild a shell line from an argv, so an argument
+	// containing a quote must not break out of it.
+	if got := shellQuote(`it's`); got != `'it'\''s'` {
+		t.Fatalf("shellQuote = %s", got)
 	}
 }

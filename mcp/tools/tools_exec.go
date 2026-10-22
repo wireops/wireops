@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -38,7 +39,7 @@ const (
 func registerExecTools(server *mcp.Server, c *client.Client) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "exec_in_container",
-		Description: "Run a one-shot shell command inside a container of a wireops stack and return its output and exit code — for inspection a log line cannot answer (reading a config file inside the image, a DNS lookup from the container's network, disk usage). Identify the container with container_id or service_name. This runs ARBITRARY commands as the container's user and can change or break its state, so prefer get_container_logs, get_stack_services and get_container_stats when they can answer the question. Everything typed and printed is recorded in an auditable transcript under the calling API key. Pass a command that terminates: an interactive or never-ending one (top, tail -f, a shell waiting for input) hits the timeout instead. A _notice in the response explains any caveat that applied to the run.",
+		Description: "Run a one-shot command inside a container of a wireops stack and return its stdout, stderr and exit code — for inspection a log line cannot answer (reading a config file inside the image, a DNS lookup from the container's network, disk usage). Give the command either as command (run through a shell, so pipes work) or as argv (run directly, for a container without a shell). Identify the container with container_id or service_name. This runs ARBITRARY commands as the container's user and can change or break its state, so prefer get_container_logs, get_stack_services and get_container_stats when they can answer the question. The call is recorded in the audit log with its argv. Pass a command that terminates: an interactive or never-ending one (top, tail -f, a shell waiting for input) hits the timeout instead. A _notice in the response explains any caveat that applied to the run.",
 		Annotations: destructive(false),
 	}, execInContainer(c))
 }
@@ -53,8 +54,11 @@ func execInContainer(c *client.Client) mcp.ToolHandlerFor[models.ExecInContainer
 		if err != nil {
 			return nil, nil, err
 		}
-		if strings.TrimSpace(in.Command) == "" {
-			return nil, nil, fmt.Errorf("command is required")
+		if strings.TrimSpace(in.Command) == "" && len(in.Argv) == 0 {
+			return nil, nil, fmt.Errorf("either command or argv is required")
+		}
+		if strings.TrimSpace(in.Command) != "" && len(in.Argv) > 0 {
+			return nil, nil, fmt.Errorf("pass either command or argv, not both")
 		}
 
 		containerID, serviceName, err := resolveContainerTarget(ctx, c, apiKey, stackID, in.ContainerID, in.ServiceName)
@@ -62,87 +66,187 @@ func execInContainer(c *client.Client) mcp.ToolHandlerFor[models.ExecInContainer
 			return nil, nil, err
 		}
 
-		timeout := execDefaultTimeout
-		if in.TimeoutSeconds > 0 {
-			timeout = time.Duration(in.TimeoutSeconds) * time.Second
-			if timeout > execMaxTimeout {
-				timeout = execMaxTimeout
-			}
+		// The server-side one-shot exec is the real thing: the container
+		// runtime reports the exit code and keeps stdout and stderr apart.
+		// A worker too old to support it answers 409, and only then is the
+		// pty session driven instead.
+		result, err := execViaRoute(ctx, c, apiKey, stackID, containerID, serviceName, in)
+		if err == nil {
+			return nil, result, nil
 		}
-
-		shell := in.Shell
-		if len(shell) == 0 {
-			shell = []string{"/bin/sh"}
-		}
-
-		var opened struct {
-			SessionID string `json:"session_id"`
-		}
-		openPath := "/api/custom/stacks/" + url.PathEscape(stackID) + "/terminal/sessions"
-		openBody := map[string]any{"container_id": containerID, "shell": shell, "rows": 24, "cols": 120}
-		if err := c.Post(ctx, apiKey, openPath, nil, openBody, &opened); err != nil {
-			return nil, nil, fmt.Errorf("opening terminal session: %w", err)
-		}
-		if opened.SessionID == "" {
-			return nil, nil, fmt.Errorf("terminal session response carried no session_id")
-		}
-		// Close on every path: an abandoned pty stays open until the
-		// server's 15-minute idle sweeper notices it, holding a shell in
-		// the container the whole time.
-		defer closeTerminalSession(c, apiKey, opened.SessionID)
-
-		// Whatever the shell prints on startup (banner, prompt) is not this
-		// command's output, so capture it as a baseline to subtract.
-		baseline, err := readTranscript(ctx, c, apiKey, opened.SessionID)
-		if err != nil {
+		var apiErr *client.APIError
+		if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusConflict {
 			return nil, nil, err
 		}
 
-		// The marker is passed to printf as an argument, so the line the pty
-		// echoes back carries it next to a quote while the real end of output
-		// carries it next to ":<exit status>" — which is how
-		// awaitTranscriptOutput tells the two apart. On its own line (leading
-		// \n) so a command whose output has no trailing newline can't run into
-		// it.
-		marker := execMarkerPrefix + opened.SessionID
-		inputPath := "/api/custom/terminal/sessions/" + url.PathEscape(opened.SessionID) + "/input"
-		data := in.Command + "\nprintf '\\n%s:%d\\n' '" + marker + "' $?\n"
-		if err := c.Post(ctx, apiKey, inputPath, nil, map[string]any{"data": data}, nil); err != nil {
-			return nil, nil, fmt.Errorf("sending command: %w", err)
-		}
-
-		output, exitCode, timedOut, err := awaitTranscriptOutput(ctx, c, apiKey, opened.SessionID, len(baseline), marker, timeout)
+		fallback, err := execViaTerminal(ctx, c, apiKey, stackID, containerID, serviceName, in)
 		if err != nil {
 			return nil, nil, err
 		}
-
-		result := map[string]any{
-			"stack_id":     stackID,
-			"container_id": containerID,
-			"service_name": serviceName,
-			"session_id":   opened.SessionID,
-			"command":      in.Command,
-			"output":       output,
-			"timed_out":    timedOut,
-			// Null rather than 0 when the marker never arrived: a timed-out
-			// command has no exit status, and reporting 0 would read as success.
-			"exit_code": nil,
-		}
-		if exitCode != nil {
-			result["exit_code"] = *exitCode
-		}
-		if timedOut {
-			result["_notice"] = "The command did not finish within the timeout, so exit_code is null (unknown, not 0) and the output above may be cut short. " +
-				"Completion is detected by a marker command appended after yours, which requires a POSIX shell and a command that returns control to it."
-		}
-		// stdout and stderr are interleaved because this runs through a pty,
-		// which is also why the shell has to be POSIX — said here, where it
-		// is about this specific run, rather than in the tool description.
-		if _, present := result["_notice"]; !present {
-			result["_notice"] = "output interleaves stdout and stderr: this runs through a pty, so the two are one stream."
-		}
-		return nil, result, nil
+		return nil, fallback, nil
 	}
+}
+
+// execArgv renders the tool's input as the argv the exec route takes: argv
+// as given, or the command line wrapped in the requested shell.
+func execArgv(in models.ExecInContainerInput) []string {
+	if len(in.Argv) > 0 {
+		return in.Argv
+	}
+	shell := in.Shell
+	if len(shell) == 0 {
+		shell = []string{"/bin/sh"}
+	}
+	return append(append([]string{}, shell...), "-c", in.Command)
+}
+
+// execViaRoute runs the command through POST /api/custom/stacks/{id}/exec.
+func execViaRoute(ctx context.Context, c *client.Client, apiKey, stackID, containerID, serviceName string, in models.ExecInContainerInput) (map[string]any, error) {
+	timeoutSeconds := int(execDefaultTimeout.Seconds())
+	if in.TimeoutSeconds > 0 {
+		timeoutSeconds = in.TimeoutSeconds
+		if max := int(execMaxTimeout.Seconds()); timeoutSeconds > max {
+			timeoutSeconds = max
+		}
+	}
+
+	body := map[string]any{
+		"container_id":    containerID,
+		"cmd":             execArgv(in),
+		"timeout_seconds": timeoutSeconds,
+	}
+	var out struct {
+		Stdout          string `json:"stdout"`
+		Stderr          string `json:"stderr"`
+		ExitCode        int    `json:"exit_code"`
+		TimedOut        bool   `json:"timed_out"`
+		StdoutTruncated bool   `json:"stdout_truncated"`
+		StderrTruncated bool   `json:"stderr_truncated"`
+	}
+	path := "/api/custom/stacks/" + url.PathEscape(stackID) + "/exec"
+	if err := c.Post(ctx, apiKey, path, nil, body, &out); err != nil {
+		return nil, err
+	}
+
+	result := map[string]any{
+		"stack_id":     stackID,
+		"container_id": containerID,
+		"service_name": serviceName,
+		"cmd":          execArgv(in),
+		"stdout":       out.Stdout,
+		"stderr":       out.Stderr,
+		"exit_code":    out.ExitCode,
+		"timed_out":    out.TimedOut,
+	}
+	if out.TimedOut {
+		// Null, not 0: a command that was still running has no exit status,
+		// and 0 would read as success.
+		result["exit_code"] = nil
+		result["_notice"] = "The command did not finish within the timeout, so exit_code is unknown and the output may be cut short. The worker kills the exec at its own deadline."
+	}
+	if out.StdoutTruncated || out.StderrTruncated {
+		appendNotice(result, "Output hit the worker's per-stream size cap and was truncated. Narrow the command (head, grep, --tail) rather than raising the cap.")
+	}
+	return result, nil
+}
+
+// execViaTerminal is the pre-exec-command path: open a pty session, send the
+// command followed by a marker that prints $?, read the transcript back. Kept
+// only for workers that do not advertise CapabilityExecOneShotV1 — it cannot
+// separate stdout from stderr (a pty is one stream) and needs a POSIX shell
+// for the marker.
+func execViaTerminal(ctx context.Context, c *client.Client, apiKey, stackID, containerID, serviceName string, in models.ExecInContainerInput) (map[string]any, error) {
+	command := in.Command
+	if command == "" {
+		// The pty path can only send a line of shell, so an argv has to be
+		// quoted back into one.
+		quoted := make([]string, 0, len(in.Argv))
+		for _, arg := range in.Argv {
+			quoted = append(quoted, shellQuote(arg))
+		}
+		command = strings.Join(quoted, " ")
+	}
+
+	timeout := execDefaultTimeout
+	if in.TimeoutSeconds > 0 {
+		timeout = time.Duration(in.TimeoutSeconds) * time.Second
+		if timeout > execMaxTimeout {
+			timeout = execMaxTimeout
+		}
+	}
+
+	shell := in.Shell
+	if len(shell) == 0 {
+		shell = []string{"/bin/sh"}
+	}
+
+	var opened struct {
+		SessionID string `json:"session_id"`
+	}
+	openPath := "/api/custom/stacks/" + url.PathEscape(stackID) + "/terminal/sessions"
+	openBody := map[string]any{"container_id": containerID, "shell": shell, "rows": 24, "cols": 120}
+	if err := c.Post(ctx, apiKey, openPath, nil, openBody, &opened); err != nil {
+		return nil, fmt.Errorf("opening terminal session: %w", err)
+	}
+	if opened.SessionID == "" {
+		return nil, fmt.Errorf("terminal session response carried no session_id")
+	}
+	// Close on every path: an abandoned pty stays open until the
+	// server's 15-minute idle sweeper notices it, holding a shell in
+	// the container the whole time.
+	defer closeTerminalSession(c, apiKey, opened.SessionID)
+
+	// Whatever the shell prints on startup (banner, prompt) is not this
+	// command's output, so capture it as a baseline to subtract.
+	baseline, err := readTranscript(ctx, c, apiKey, opened.SessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	// The marker is passed to printf as an argument, so the line the pty
+	// echoes back carries it next to a quote while the real end of output
+	// carries it next to ":<exit status>" — which is how
+	// awaitTranscriptOutput tells the two apart. On its own line (leading
+	// \n) so a command whose output has no trailing newline can't run into
+	// it.
+	marker := execMarkerPrefix + opened.SessionID
+	inputPath := "/api/custom/terminal/sessions/" + url.PathEscape(opened.SessionID) + "/input"
+	data := command + "\nprintf '\\n%s:%d\\n' '" + marker + "' $?\n"
+	if err := c.Post(ctx, apiKey, inputPath, nil, map[string]any{"data": data}, nil); err != nil {
+		return nil, fmt.Errorf("sending command: %w", err)
+	}
+
+	output, exitCode, timedOut, err := awaitTranscriptOutput(ctx, c, apiKey, opened.SessionID, len(baseline), marker, timeout)
+	if err != nil {
+		return nil, err
+	}
+
+	result := map[string]any{
+		"stack_id":     stackID,
+		"container_id": containerID,
+		"service_name": serviceName,
+		"session_id":   opened.SessionID,
+		"command":      command,
+		"output":       output,
+		"timed_out":    timedOut,
+		// Null rather than 0 when the marker never arrived: a timed-out
+		// command has no exit status, and reporting 0 would read as success.
+		"exit_code": nil,
+	}
+	if exitCode != nil {
+		result["exit_code"] = *exitCode
+	}
+	appendNotice(result, "This worker does not support one-shot exec, so the command ran through a pty session: stdout and stderr are interleaved in output (not separate fields), the shell must be POSIX, and completion is detected by a marker command appended after yours. Upgrade the worker for exact results.")
+	if timedOut {
+		appendNotice(result, "The command did not finish within the timeout, so exit_code is null (unknown, not 0) and the output above may be cut short.")
+	}
+	return result, nil
+}
+
+// shellQuote wraps an argv element in single quotes for the pty fallback,
+// escaping any single quote it contains.
+func shellQuote(arg string) string {
+	return "'" + strings.ReplaceAll(arg, "'", `'\''`) + "'"
 }
 
 // closeTerminalSession tears the pty down, ignoring errors — the caller is
