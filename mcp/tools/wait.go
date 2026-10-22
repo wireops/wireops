@@ -22,11 +22,18 @@ const (
 // terminalSyncStatuses are the sync_logs statuses that end a reconcile. The
 // reconciler writes one row per reconcile, so the row reaching one of these is
 // the signal that the deploy is over.
+//
+// These are exactly the values the collection allows (pb_migrations 01, 40 and
+// 43) minus the ones that mean "still going": "running", "queued" (the worker
+// was offline and the reconcile will resume on reconnect) and "waiting_jobs"
+// (paused until in-flight job runs on the repository finish). "noop" matters
+// most in practice — it is what a sync whose rendered output did not change
+// ends as, i.e. the normal outcome of deploy_stack when git has not moved.
 var terminalSyncStatuses = map[string]bool{
-	"success": true,
-	"failed":  true,
-	"error":   true,
-	"skipped": true,
+	"success":  true,
+	"error":    true,
+	"noop":     true,
+	"degraded": true,
 }
 
 // statusFrame is the payload of the stream's named "status" event.
@@ -168,12 +175,24 @@ func awaitReconcile(ctx context.Context, c *client.Client, apiKey, stackID strin
 		}
 	}
 
-	switch {
-	case timedOut:
+	// A timeout is reported ahead of any status, because on that path the
+	// status was read from the newest sync_logs row rather than from a
+	// transition this wait saw — it may well belong to an earlier reconcile.
+	if timedOut {
 		out.Notice = "The wait timed out; the reconcile may still be running. Poll get_stack_status, or read get_sync_logs for the rest of the output."
-	case strings.EqualFold(out.SyncLogStatus, "success"):
+		return out, nil
+	}
+	switch strings.ToLower(out.SyncLogStatus) {
+	case "success":
 		// Nothing to add: the output is the evidence.
-	case out.SyncLogStatus != "":
+	case "noop":
+		out.Notice = "The reconcile finished with nothing to do: the rendered compose output is identical to what is already deployed. That is the normal outcome when git has not changed — use force_redeploy_stack to redeploy the same revision anyway."
+	case "degraded":
+		out.Notice = "The deploy ran, but the stack came up degraded: at least one non-init service is unhealthy, or an init service exited non-zero. get_stack_services shows which, and get_container_logs why."
+	case "":
+		// Nothing was observed and nothing was stored; the caller has the
+		// stack status and can poll.
+	default:
 		out.Notice = "The reconcile did not succeed. The output above is the deploy log; lint_compose (with this stack's id) catches compose and undefined-variable problems, and get_container_logs the ones that only show up once a container starts."
 	}
 	return out, nil

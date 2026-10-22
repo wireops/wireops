@@ -175,7 +175,10 @@ func TestDeployStackWaitSubscribesBeforeTriggering(t *testing.T) {
 func TestDeployStackWaitOnFailureNamesTheNextStep(t *testing.T) {
 	ws := newWaitServer(t)
 	ws.mu.Lock()
-	ws.statuses = []string{"running", "failed"}
+	// "error", not "failed": these are the values the sync_logs status field
+	// actually allows (pb_migrations 01/40/43), and a status outside that set
+	// would never be recognized as terminal.
+	ws.statuses = []string{"running", "error"}
 	ws.stackStatus = "error"
 	ws.mu.Unlock()
 
@@ -185,11 +188,69 @@ func TestDeployStackWaitOnFailureNamesTheNextStep(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	outcome := out.(waitOutcome)
-	if outcome.SyncLogStatus != "failed" {
-		t.Fatalf("sync_log_status = %q, want failed", outcome.SyncLogStatus)
+	if outcome.SyncLogStatus != "error" {
+		t.Fatalf("sync_log_status = %q, want error", outcome.SyncLogStatus)
 	}
 	if outcome.Notice == "" {
 		t.Error("expected a notice pointing at the diagnosis tools")
+	}
+}
+
+func TestDeployStackWaitRecognizesEveryTerminalStatus(t *testing.T) {
+	// A status the waiter does not recognize as terminal means it waits out
+	// its whole timeout and reports timed_out for a reconcile that actually
+	// finished. "noop" is the one that matters most: it is what a sync whose
+	// rendered output did not change ends as, i.e. the normal outcome of
+	// deploy_stack when git has not moved.
+	for _, status := range []string{"success", "error", "noop", "degraded"} {
+		t.Run(status, func(t *testing.T) {
+			ws := newWaitServer(t)
+			ws.mu.Lock()
+			ws.statuses = []string{"running", status}
+			ws.mu.Unlock()
+
+			handler := deployStack(client.New(ws.URL))
+			_, out, err := handler(ctxWithKey(), nil, models.DeployStackInput{
+				StackID: "stack0000000001", Wait: true, TimeoutSeconds: 5,
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			outcome := out.(waitOutcome)
+			if outcome.TimedOut {
+				t.Fatalf("status %q was not recognized as terminal: %+v", status, outcome)
+			}
+			if outcome.SyncLogStatus != status {
+				t.Fatalf("sync_log_status = %q, want %q", outcome.SyncLogStatus, status)
+			}
+			// Each non-success outcome has to say what it means, or "noop"
+			// reads as a failed deploy and "degraded" as a successful one.
+			if status != "success" && outcome.Notice == "" {
+				t.Errorf("expected a notice explaining %q", status)
+			}
+		})
+	}
+}
+
+func TestDeployStackWaitKeepsWaitingThroughNonTerminalStatuses(t *testing.T) {
+	ws := newWaitServer(t)
+	ws.mu.Lock()
+	// queued = the worker was offline and the reconcile resumes on reconnect;
+	// waiting_jobs = paused until in-flight job runs finish. Neither is an
+	// outcome, so the wait must run on to the real one.
+	ws.statuses = []string{"queued", "waiting_jobs", "running", "success"}
+	ws.mu.Unlock()
+
+	handler := deployStack(client.New(ws.URL))
+	_, out, err := handler(ctxWithKey(), nil, models.DeployStackInput{
+		StackID: "stack0000000001", Wait: true, TimeoutSeconds: 5,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	outcome := out.(waitOutcome)
+	if outcome.TimedOut || outcome.SyncLogStatus != "success" {
+		t.Fatalf("expected the wait to continue to success, got %+v", outcome)
 	}
 }
 

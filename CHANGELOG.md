@@ -45,7 +45,8 @@ changes in a minor release.
   `wait: true`, which blocks until the reconcile finishes and returns its
   outcome — final sync status, stack status and deploy log — in one call,
   instead of leaving the caller to poll. It watches the server's log stream, so
-  it adds no polling of its own.
+  it adds no polling of its own, and it recognizes every way a reconcile can
+  end, including the one where there was nothing to deploy.
 - MCP: `list_stacks` and `list_repos` take filters (status, name substring,
   and for stacks the repository and worker), pages, and a field projection,
   and return a compact default projection with the repository and worker
