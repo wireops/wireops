@@ -2,98 +2,98 @@
 // handlers and the caller — the input schema for each tool call.
 package models
 
+// WhoamiInput is the input for the whoami tool. It takes nothing: the API
+// key on the session is the subject.
+type WhoamiInput struct{}
+
 // ListStacksInput is the input for the list_stacks tool.
 type ListStacksInput struct {
-	Limit int `json:"limit,omitempty" jsonschema:"Maximum number of stacks to return (default 50)."`
+	Limit        int      `json:"limit,omitempty" jsonschema:"Maximum number of stacks per page (default 50, max 200)."`
+	Page         int      `json:"page,omitempty" jsonschema:"Page number, 1-indexed (default 1)."`
+	Status       string   `json:"status,omitempty" jsonschema:"Only stacks with this exact status (active, paused, syncing, error, degraded). Optional."`
+	NameContains string   `json:"name_contains,omitempty" jsonschema:"Only stacks whose name contains this substring, case-insensitive. Optional."`
+	Repository   string   `json:"repository,omitempty" jsonschema:"Only stacks in this repository (record id or exact name). Optional."`
+	Worker       string   `json:"worker,omitempty" jsonschema:"Only stacks assigned to this worker (record id or exact hostname). Optional."`
+	Fields       []string `json:"fields,omitempty" jsonschema:"Which record fields to return. Optional — the default is a compact diagnostic projection (id, name, status, repository, worker, versions, last error, sync interval). Pass [\"*\"] for the complete records."`
 }
 
 // StackIDInput is the input for tools that operate on a single stack.
 type StackIDInput struct {
-	StackID string `json:"stack_id" jsonschema:"The wireops stack record id."`
+	StackID string `json:"stack_id" jsonschema:"The wireops stack: its record id, or its exact name (resolved for you; an ambiguous name is reported with the candidate ids instead of guessed)."`
 }
 
 // SyncLogsInput is the input for the get_sync_logs tool.
 type SyncLogsInput struct {
-	StackID string `json:"stack_id" jsonschema:"The wireops stack record id."`
+	StackID string `json:"stack_id" jsonschema:"The wireops stack: its record id, or its exact name (resolved for you; an ambiguous name is reported with the candidate ids instead of guessed)."`
 	Limit   int    `json:"limit,omitempty" jsonschema:"Maximum number of log entries to return (default 20)."`
 }
 
 // ContainerLogsInput is the input for the get_container_logs tool.
 type ContainerLogsInput struct {
-	StackID     string `json:"stack_id" jsonschema:"The wireops stack record id."`
+	StackID     string `json:"stack_id" jsonschema:"The wireops stack: its record id, or its exact name (resolved for you; an ambiguous name is reported with the candidate ids instead of guessed)."`
 	ContainerID string `json:"container_id,omitempty" jsonschema:"The Docker container id or name, as returned by get_stack_services. Required unless service_name is given."`
 	ServiceName string `json:"service_name,omitempty" jsonschema:"The compose service name to fetch logs for, resolved to a container id via get_stack_services. Alternative to container_id."`
 	Tail        string `json:"tail,omitempty" jsonschema:"Number of trailing log lines to fetch (default 100)."`
 	Pattern     string `json:"pattern,omitempty" jsonschema:"Regex pattern; only log lines matching it are returned. Useful for cutting noise in crash-loop logs."`
 }
 
-// ListJobsInput is the input for the list_jobs tool.
-type ListJobsInput struct{}
+// ListJobsInput is the input for the list_jobs tool. The route returns every
+// job in one array, so these narrow the response rather than the query.
+type ListJobsInput struct {
+	NameContains string `json:"name_contains,omitempty" jsonschema:"Only jobs whose name contains this substring, case-insensitive. Optional."`
+	Status       string `json:"status,omitempty" jsonschema:"Only jobs with this exact status. Optional."`
+	Limit        int    `json:"limit,omitempty" jsonschema:"Return at most this many jobs. Optional — unset returns all of them."`
+}
 
 // JobIDInput is the input for tools that operate on a single scheduled job.
 type JobIDInput struct {
-	JobID string `json:"job_id" jsonschema:"The wireops scheduled job record id."`
+	JobID string `json:"job_id" jsonschema:"The wireops scheduled job: its record id, or its exact name."`
 }
 
 // RepositoryIDInput is the input for tools that operate on a single repository.
 type RepositoryIDInput struct {
-	RepositoryID string `json:"repository_id" jsonschema:"The wireops repository record id."`
+	RepositoryID string `json:"repository_id" jsonschema:"The wireops repository: its record id, or its exact name."`
 }
 
 // ListReposInput is the input for the list_repos tool.
 type ListReposInput struct {
-	Limit int `json:"limit,omitempty" jsonschema:"Maximum number of repositories to return (default 50)."`
+	Limit        int      `json:"limit,omitempty" jsonschema:"Maximum number of repositories per page (default 50, max 200)."`
+	Page         int      `json:"page,omitempty" jsonschema:"Page number, 1-indexed (default 1)."`
+	Status       string   `json:"status,omitempty" jsonschema:"Only repositories with this exact status. Optional."`
+	NameContains string   `json:"name_contains,omitempty" jsonschema:"Only repositories whose name contains this substring, case-insensitive. Optional."`
+	Fields       []string `json:"fields,omitempty" jsonschema:"Which record fields to return. Optional — the default is a compact projection. Pass [\"*\"] for the complete records."`
 }
 
 // DiffStackVersionInput is the input for the diff_stack_version tool.
 type DiffStackVersionInput struct {
-	StackID  string `json:"stack_id" jsonschema:"The wireops stack record id."`
+	StackID  string `json:"stack_id" jsonschema:"The wireops stack: its record id, or its exact name (resolved for you; an ambiguous name is reported with the candidate ids instead of guessed)."`
 	VersionA int    `json:"version_a" jsonschema:"The first rendered revision number to compare, e.g. 33."`
 	VersionB int    `json:"version_b" jsonschema:"The second rendered revision number to compare, e.g. 34."`
 }
 
 // ContainerStatsInput is the input for the get_container_stats tool.
 type ContainerStatsInput struct {
-	StackID     string `json:"stack_id" jsonschema:"The wireops stack record id."`
+	StackID     string `json:"stack_id" jsonschema:"The wireops stack: its record id, or its exact name (resolved for you; an ambiguous name is reported with the candidate ids instead of guessed)."`
 	ContainerID string `json:"container_id" jsonschema:"The Docker container id or name, as returned by get_stack_services."`
 }
 
 // StackRevisionInput is the input for the get_stack_revision tool.
 type StackRevisionInput struct {
-	StackID string `json:"stack_id" jsonschema:"The wireops stack record id."`
+	StackID string `json:"stack_id" jsonschema:"The wireops stack: its record id, or its exact name (resolved for you; an ambiguous name is reported with the candidate ids instead of guessed)."`
 	Version int    `json:"version" jsonschema:"The rendered revision number to fetch, e.g. 34."`
 }
 
-// AuditLogsInput is the input for the list_audit_logs tool.
-type AuditLogsInput struct {
-	Page         int    `json:"page,omitempty" jsonschema:"Page number, 1-indexed (default 1)."`
-	PerPage      int    `json:"per_page,omitempty" jsonschema:"Entries per page, max 100 (default 25)."`
-	From         string `json:"from,omitempty" jsonschema:"RFC3339 timestamp lower bound on the log's created time. Optional."`
-	To           string `json:"to,omitempty" jsonschema:"RFC3339 timestamp upper bound on the log's created time. Optional."`
-	ActorType    string `json:"actor_type,omitempty" jsonschema:"Filter by actor type (e.g. 'user', 'api_key', 'system'). Optional."`
-	ActorID      string `json:"actor_id,omitempty" jsonschema:"Filter by actor record id. Optional."`
-	Action       string `json:"action,omitempty" jsonschema:"Filter by action name (e.g. 'stack.pause', 'stack.deploy'). Optional."`
-	ResourceType string `json:"resource_type,omitempty" jsonschema:"Filter by resource type (e.g. 'stack', 'worker'). Optional."`
-	ResourceID   string `json:"resource_id,omitempty" jsonschema:"Filter by resource record id. Optional."`
-	Origin       string `json:"origin,omitempty" jsonschema:"Filter by request origin. Optional."`
-	Status       string `json:"status,omitempty" jsonschema:"Filter by outcome status (e.g. 'success', 'failure'). Optional."`
+// ListWorkersInput is the input for the list_workers tool. The route returns
+// every worker in one array, so these narrow the response rather than the query.
+type ListWorkersInput struct {
+	HostnameContains string `json:"hostname_contains,omitempty" jsonschema:"Only workers whose hostname contains this substring, case-insensitive. Optional."`
+	Status           string `json:"status,omitempty" jsonschema:"Only workers with this live status (ACTIVE or OFFLINE). Optional."`
+	Limit            int    `json:"limit,omitempty" jsonschema:"Return at most this many workers. Optional — unset returns all of them."`
 }
-
-// ListIntegrationsInput is the input for the list_integrations tool.
-type ListIntegrationsInput struct{}
-
-// ListOrphansInput is the input for the list_orphans tool.
-type ListOrphansInput struct{}
-
-// GetSystemInfoInput is the input for the get_system_info tool.
-type GetSystemInfoInput struct{}
-
-// ListWorkersInput is the input for the list_workers tool.
-type ListWorkersInput struct{}
 
 // WorkerIDInput is the input for tools that operate on a single worker.
 type WorkerIDInput struct {
-	WorkerID string `json:"worker_id" jsonschema:"The wireops worker record id."`
+	WorkerID string `json:"worker_id" jsonschema:"The wireops worker: its record id, or its exact hostname."`
 }
 
 // GetGlobalWorkerPolicyInput is the input for the get_global_worker_policy tool.
@@ -146,7 +146,7 @@ type ScaffoldStackInput struct {
 	Name     string                   `json:"name" jsonschema:"Stack name (required)."`
 	Wireops  GenerateWireopsYAMLInput `json:"wireops" jsonschema:"wireops fields for this stack. 'name' inside this object is optional and defaults to the top-level 'name'."`
 	Services []ComposeServiceInput    `json:"services" jsonschema:"The docker-compose services to generate (required, at least one)."`
-	WorkerID string                   `json:"worker_id,omitempty" jsonschema:"If set, validates the generated compose file against this worker's effective deploy security policy before returning."`
+	WorkerID string                   `json:"worker_id,omitempty" jsonschema:"If set (record id or hostname), validates the generated compose file against this worker's effective deploy security policy before returning."`
 	TwoFile  bool                     `json:"two_file,omitempty" jsonschema:"Leave this false (the default and the recommended, primary way to define a wireops stack): the wireops fields are embedded as a top-level 'x-wireops' extension block inside the single returned compose file, ready for POST /api/custom/stacks/from-compose. docker compose ignores unknown top-level 'x-*' keys, and this block never overlaps the service-level dev.wireops.* labels/annotations wireops itself injects or reads. Set true only to generate the legacy two-file layout (a separate wireops.yaml plus docker-compose.yml, for POST /api/custom/stacks/from-wireops) — e.g. to match an existing repository that already uses that layout, or on an explicit user request."`
 }
 
@@ -157,28 +157,34 @@ type ScaffoldStackInput struct {
 
 // DeployStackInput is the input for the deploy_stack tool.
 type DeployStackInput struct {
-	StackID string `json:"stack_id" jsonschema:"The wireops stack record id."`
+	StackID        string `json:"stack_id" jsonschema:"The wireops stack: its record id, or its exact name (resolved for you; an ambiguous name is reported with the candidate ids instead of guessed)."`
+	Wait           bool   `json:"wait,omitempty" jsonschema:"Block until the reconcile finishes and return its outcome (final sync status, stack status, deploy log) instead of returning as soon as it is queued. Optional."`
+	TimeoutSeconds int    `json:"timeout_seconds,omitempty" jsonschema:"How long to wait when wait is true. Optional — defaults to 120, capped at 600."`
 }
 
 // ForceRedeployStackInput is the input for the force_redeploy_stack tool.
 type ForceRedeployStackInput struct {
-	StackID            string `json:"stack_id" jsonschema:"The wireops stack record id."`
+	StackID            string `json:"stack_id" jsonschema:"The wireops stack: its record id, or its exact name (resolved for you; an ambiguous name is reported with the candidate ids instead of guessed)."`
 	RecreateContainers bool   `json:"recreate_containers,omitempty" jsonschema:"Recreate every container even if its config is unchanged. Optional."`
 	RecreateVolumes    bool   `json:"recreate_volumes,omitempty" jsonschema:"DESTROYS DATA: delete and recreate the stack's named volumes. Requires confirm. Optional."`
 	RecreateNetworks   bool   `json:"recreate_networks,omitempty" jsonschema:"Delete and recreate the stack's networks. Optional."`
 	PauseAfter         *bool  `json:"pause_after_redeploy,omitempty" jsonschema:"Pause git sync after a successful redeploy. Defaults to true, matching the UI."`
 	Confirm            string `json:"confirm,omitempty" jsonschema:"Required only when recreate_volumes is true: the stack's exact name, confirming the volume data loss."`
+	Wait               bool   `json:"wait,omitempty" jsonschema:"Block until the reconcile finishes and return its outcome (final sync status, stack status, deploy log) instead of returning as soon as it is queued. Optional."`
+	TimeoutSeconds     int    `json:"timeout_seconds,omitempty" jsonschema:"How long to wait when wait is true. Optional — defaults to 120, capped at 600."`
 }
 
 // RollbackStackInput is the input for the rollback_stack tool.
 type RollbackStackInput struct {
-	StackID   string `json:"stack_id" jsonschema:"The wireops stack record id."`
-	CommitSHA string `json:"commit_sha" jsonschema:"The git commit SHA to roll the stack back to."`
+	StackID        string `json:"stack_id" jsonschema:"The wireops stack: its record id, or its exact name (resolved for you; an ambiguous name is reported with the candidate ids instead of guessed)."`
+	CommitSHA      string `json:"commit_sha" jsonschema:"The git commit SHA to roll the stack back to."`
+	Wait           bool   `json:"wait,omitempty" jsonschema:"Block until the reconcile finishes and return its outcome (final sync status, stack status, deploy log) instead of returning as soon as it is queued. Optional."`
+	TimeoutSeconds int    `json:"timeout_seconds,omitempty" jsonschema:"How long to wait when wait is true. Optional — defaults to 120, capped at 600."`
 }
 
 // SetStackPausedInput is the input for the set_stack_paused tool.
 type SetStackPausedInput struct {
-	StackID string `json:"stack_id" jsonschema:"The wireops stack record id."`
+	StackID string `json:"stack_id" jsonschema:"The wireops stack: its record id, or its exact name (resolved for you; an ambiguous name is reported with the candidate ids instead of guessed)."`
 	Paused  bool   `json:"paused" jsonschema:"true pauses git sync/reconcile for this stack, false resumes it (only allowed when the stack is currently paused). Does not start or stop any container."`
 }
 
@@ -193,25 +199,25 @@ type ServiceOverrideInput struct {
 
 // SetStackRenderOverridesInput is the input for the set_stack_render_overrides tool.
 type SetStackRenderOverridesInput struct {
-	StackID   string                          `json:"stack_id" jsonschema:"The wireops stack record id."`
+	StackID   string                          `json:"stack_id" jsonschema:"The wireops stack: its record id, or its exact name (resolved for you; an ambiguous name is reported with the candidate ids instead of guessed)."`
 	Overrides map[string]ServiceOverrideInput `json:"overrides" jsonschema:"Map of compose service name to the override applied to it. Replaces the stack's whole override set; must not be empty."`
 }
 
 // ClearStackRenderOverridesInput is the input for the clear_stack_render_overrides tool.
 type ClearStackRenderOverridesInput struct {
-	StackID string `json:"stack_id" jsonschema:"The wireops stack record id."`
+	StackID string `json:"stack_id" jsonschema:"The wireops stack: its record id, or its exact name (resolved for you; an ambiguous name is reported with the candidate ids instead of guessed)."`
 }
 
 // ContainerActionInput is the input for the restart_container tool.
 type ContainerActionInput struct {
-	StackID     string `json:"stack_id" jsonschema:"The wireops stack record id."`
+	StackID     string `json:"stack_id" jsonschema:"The wireops stack: its record id, or its exact name (resolved for you; an ambiguous name is reported with the candidate ids instead of guessed)."`
 	ContainerID string `json:"container_id,omitempty" jsonschema:"The Docker container id, as returned by get_stack_services. Required unless service_name is given."`
 	ServiceName string `json:"service_name,omitempty" jsonschema:"The compose service name, resolved to a container id via get_stack_services. Alternative to container_id."`
 }
 
 // StopContainerInput is the input for the stop_container tool.
 type StopContainerInput struct {
-	StackID     string `json:"stack_id" jsonschema:"The wireops stack record id."`
+	StackID     string `json:"stack_id" jsonschema:"The wireops stack: its record id, or its exact name (resolved for you; an ambiguous name is reported with the candidate ids instead of guessed)."`
 	ContainerID string `json:"container_id,omitempty" jsonschema:"The Docker container id, as returned by get_stack_services. Required unless service_name is given."`
 	ServiceName string `json:"service_name,omitempty" jsonschema:"The compose service name, resolved to a container id via get_stack_services. Alternative to container_id."`
 	Confirm     string `json:"confirm" jsonschema:"The exact compose service name of the container being stopped, confirming the intended target."`
@@ -219,14 +225,14 @@ type StopContainerInput struct {
 
 // TransferStackInput is the input for the transfer_stack tool.
 type TransferStackInput struct {
-	StackID        string `json:"stack_id" jsonschema:"The wireops stack record id."`
-	TargetWorkerID string `json:"target_worker_id" jsonschema:"The worker record id to move the stack to. Must be online."`
+	StackID        string `json:"stack_id" jsonschema:"The wireops stack: its record id, or its exact name (resolved for you; an ambiguous name is reported with the candidate ids instead of guessed)."`
+	TargetWorkerID string `json:"target_worker_id" jsonschema:"The worker to move the stack to: its record id, or its exact hostname. Must be online."`
 	Confirm        string `json:"confirm" jsonschema:"The stack's exact name. Transferring tears the stack down on its current worker."`
 }
 
 // DeleteStackInput is the input for the delete_stack tool.
 type DeleteStackInput struct {
-	StackID string `json:"stack_id" jsonschema:"The wireops stack record id."`
+	StackID string `json:"stack_id" jsonschema:"The wireops stack: its record id, or its exact name (resolved for you; an ambiguous name is reported with the candidate ids instead of guessed)."`
 	Force   bool   `json:"force,omitempty" jsonschema:"Delete the wireops record even if the assigned worker is offline, leaving the containers running on the host. Optional."`
 	Confirm string `json:"confirm" jsonschema:"The stack's exact name. This tears the stack down and deletes its record."`
 }
@@ -242,7 +248,7 @@ type BulkEnvVarInput struct {
 
 // SetStackEnvVarsInput is the input for the set_stack_env_vars tool.
 type SetStackEnvVarsInput struct {
-	StackID string            `json:"stack_id" jsonschema:"The wireops stack record id."`
+	StackID string            `json:"stack_id" jsonschema:"The wireops stack: its record id, or its exact name (resolved for you; an ambiguous name is reported with the candidate ids instead of guessed)."`
 	Mode    string            `json:"mode" jsonschema:"'append' upserts the given keys and leaves the rest alone; 'replace' makes the stack's env vars exactly this list, deleting any key not present."`
 	Vars    []BulkEnvVarInput `json:"vars" jsonschema:"The env vars to write."`
 	Confirm string            `json:"confirm,omitempty" jsonschema:"Required only when mode is 'replace': the stack's exact name, confirming that unlisted keys get deleted."`
@@ -250,8 +256,8 @@ type SetStackEnvVarsInput struct {
 
 // CopyStackEnvVarsInput is the input for the copy_stack_env_vars tool.
 type CopyStackEnvVarsInput struct {
-	StackID     string   `json:"stack_id" jsonschema:"The destination wireops stack record id."`
-	SourceStack string   `json:"source_stack" jsonschema:"The stack record id to copy env vars from."`
+	StackID     string   `json:"stack_id" jsonschema:"The destination wireops stack: its record id, or its exact name."`
+	SourceStack string   `json:"source_stack" jsonschema:"The stack to copy env vars from: its record id, or its exact name."`
 	Keys        []string `json:"keys" jsonschema:"The env var keys to copy. Required — an empty list copies nothing. Use list_secrets plus the stack_env_vars collection to find the available keys."`
 	Overwrite   bool     `json:"overwrite,omitempty" jsonschema:"Overwrite keys that already exist on the destination stack. Optional."`
 }
@@ -262,20 +268,20 @@ type DiscoverImportableStacksInput struct{}
 // ImportStackInput is the input for the import_stack tool.
 type ImportStackInput struct {
 	Name            string `json:"name" jsonschema:"Name for the new wireops stack."`
-	WorkerID        string `json:"worker_id" jsonschema:"The worker record id whose host holds the compose file. Must be online."`
+	WorkerID        string `json:"worker_id" jsonschema:"The worker whose host holds the compose file: its record id, or its exact hostname. Must be online."`
 	ImportPath      string `json:"import_path" jsonschema:"Absolute path to the existing docker-compose .yml/.yaml file on the worker's host. No '..' allowed."`
 	RecreateVolumes bool   `json:"recreate_volumes,omitempty" jsonschema:"DESTROYS DATA: recreate the imported stack's volumes instead of adopting them. Optional."`
 }
 
 // SyncRepositoryInput is the input for the sync_repository tool.
 type SyncRepositoryInput struct {
-	RepositoryID string `json:"repository_id" jsonschema:"The wireops repository record id."`
+	RepositoryID string `json:"repository_id" jsonschema:"The wireops repository: its record id, or its exact name."`
 }
 
 // CreateStackFromComposeInput is the input for the create_stack_from_compose tool.
 type CreateStackFromComposeInput struct {
-	Repository  string `json:"repository" jsonschema:"The wireops repository record id holding the compose file."`
-	Worker      string `json:"worker" jsonschema:"The worker record id to deploy the stack on."`
+	Repository  string `json:"repository" jsonschema:"The wireops repository holding the compose file: its record id, or its exact name."`
+	Worker      string `json:"worker" jsonschema:"The worker to deploy the stack on: its record id, or its exact hostname."`
 	ComposePath string `json:"compose_path,omitempty" jsonschema:"Directory inside the repository containing the compose file. Optional — defaults to the repository root."`
 	ComposeFile string `json:"compose_file,omitempty" jsonschema:"Compose file name. Optional — defaults to docker-compose.yml."`
 	Paused      bool   `json:"paused,omitempty" jsonschema:"Create the stack paused instead of deploying it immediately — useful when env vars still have to be filled in. Optional."`
@@ -283,8 +289,8 @@ type CreateStackFromComposeInput struct {
 
 // CreateStackFromWireopsInput is the input for the create_stack_from_wireops tool.
 type CreateStackFromWireopsInput struct {
-	Repository  string `json:"repository" jsonschema:"The wireops repository record id holding the wireops.yaml."`
-	Worker      string `json:"worker" jsonschema:"The worker record id to deploy the stack on."`
+	Repository  string `json:"repository" jsonschema:"The wireops repository holding the wireops.yaml: its record id, or its exact name."`
+	Worker      string `json:"worker" jsonschema:"The worker to deploy the stack on: its record id, or its exact hostname."`
 	WireopsFile string `json:"wireops_file" jsonschema:"Repository-relative path of the wireops.yaml, as returned by browse_repo_files."`
 	Paused      bool   `json:"paused,omitempty" jsonschema:"Create the stack paused instead of deploying it immediately. Optional."`
 }
@@ -293,18 +299,18 @@ type CreateStackFromWireopsInput struct {
 // server's lintComposeRequest — the linter reads the file out of the
 // repository workspace, it does not take raw YAML.
 type LintComposeInput struct {
-	Repository  string `json:"repository" jsonschema:"The wireops repository record id holding the compose file."`
+	Repository  string `json:"repository" jsonschema:"The wireops repository holding the compose file: its record id, or its exact name."`
 	ComposePath string `json:"compose_path,omitempty" jsonschema:"Directory inside the repository containing the compose file. Optional — defaults to the repository root."`
 	ComposeFile string `json:"compose_file,omitempty" jsonschema:"Compose file name. Optional — defaults to docker-compose.yml."`
-	Worker      string `json:"worker,omitempty" jsonschema:"Also check the file against this worker's effective deploy security policy. Optional — without it the report carries advisory findings only."`
-	Stack       string `json:"stack,omitempty" jsonschema:"Resolve env vars from this existing stack, which is what makes the undefined-variable check meaningful. Optional — omit for a stack that does not exist yet."`
+	Worker      string `json:"worker,omitempty" jsonschema:"Also check the file against this worker's effective deploy security policy (record id or hostname). Optional — without it the report carries advisory findings only."`
+	Stack       string `json:"stack,omitempty" jsonschema:"Resolve env vars from this existing stack (record id or name), which is what makes the undefined-variable check meaningful. Optional — omit for a stack that does not exist yet."`
 }
 
 // PreviewStackMigrationInput is the input for the preview_stack_migration
 // tool. Mirrors the server's migrateRequestBody, minus the mutating fields.
 type PreviewStackMigrationInput struct {
-	StackID     string `json:"stack_id" jsonschema:"The wireops stack record id to migrate to another repository."`
-	Repository  string `json:"repository" jsonschema:"The destination repository record id. Must differ from the stack's current repository."`
+	StackID     string `json:"stack_id" jsonschema:"The wireops stack to migrate to another repository: its record id, or its exact name."`
+	Repository  string `json:"repository" jsonschema:"The destination repository: its record id, or its exact name. Must differ from the stack's current repository."`
 	ComposePath string `json:"compose_path,omitempty" jsonschema:"Directory inside the destination repository holding the compose file. Optional."`
 	ComposeFile string `json:"compose_file,omitempty" jsonschema:"Compose file name in the destination repository. Optional — defaults to docker-compose.yml."`
 	WireopsFile string `json:"wireops_file,omitempty" jsonschema:"wireops.yaml path in the destination repository, for the deprecated two-file layout. Optional."`
@@ -314,8 +320,8 @@ type PreviewStackMigrationInput struct {
 // additionally requires its own confirm:true in the body; the tool sets that
 // itself once the name confirmation below has passed.
 type MigrateStackInput struct {
-	StackID            string `json:"stack_id" jsonschema:"The wireops stack record id to migrate to another repository."`
-	Repository         string `json:"repository" jsonschema:"The destination repository record id. Must differ from the stack's current repository."`
+	StackID            string `json:"stack_id" jsonschema:"The wireops stack to migrate to another repository: its record id, or its exact name."`
+	Repository         string `json:"repository" jsonschema:"The destination repository: its record id, or its exact name. Must differ from the stack's current repository."`
 	ComposePath        string `json:"compose_path,omitempty" jsonschema:"Directory inside the destination repository holding the compose file. Optional."`
 	ComposeFile        string `json:"compose_file,omitempty" jsonschema:"Compose file name in the destination repository. Optional — defaults to docker-compose.yml."`
 	WireopsFile        string `json:"wireops_file,omitempty" jsonschema:"wireops.yaml path in the destination repository, for the deprecated two-file layout. Optional."`
@@ -325,13 +331,13 @@ type MigrateStackInput struct {
 
 // BrowseRepoFilesInput is the input for the browse_repo_files tool.
 type BrowseRepoFilesInput struct {
-	RepositoryID string `json:"repository_id" jsonschema:"The wireops repository record id."`
+	RepositoryID string `json:"repository_id" jsonschema:"The wireops repository: its record id, or its exact name."`
 }
 
 // RepoFileDefinitionInput is the input for the tools that parse one file out
 // of a repository (compose, wireops.yaml, job.yaml).
 type RepoFileDefinitionInput struct {
-	RepositoryID string `json:"repository_id" jsonschema:"The wireops repository record id."`
+	RepositoryID string `json:"repository_id" jsonschema:"The wireops repository: its record id, or its exact name."`
 	Path         string `json:"path" jsonschema:"Repository-relative path of the file to parse, as returned by list_repo_stack_files / list_repo_job_files / browse_repo_files."`
 }
 
@@ -344,7 +350,7 @@ type CreateRepositoryInput struct {
 
 // UpdateRepositoryInput is the input for the update_repository tool.
 type UpdateRepositoryInput struct {
-	RepositoryID string `json:"repository_id" jsonschema:"The wireops repository record id."`
+	RepositoryID string `json:"repository_id" jsonschema:"The wireops repository: its record id, or its exact name."`
 	Name         string `json:"name,omitempty" jsonschema:"New display name. Optional."`
 	GitURL       string `json:"git_url,omitempty" jsonschema:"New clone URL. Optional."`
 	Branch       string `json:"branch,omitempty" jsonschema:"New tracked branch. Optional."`
@@ -352,13 +358,13 @@ type UpdateRepositoryInput struct {
 
 // DeleteRepositoryInput is the input for the delete_repository tool.
 type DeleteRepositoryInput struct {
-	RepositoryID string `json:"repository_id" jsonschema:"The wireops repository record id."`
+	RepositoryID string `json:"repository_id" jsonschema:"The wireops repository: its record id, or its exact name."`
 	Confirm      string `json:"confirm" jsonschema:"The repository's exact name."`
 }
 
 // RunJobInput is the input for the run_job tool.
 type RunJobInput struct {
-	JobID string `json:"job_id" jsonschema:"The wireops scheduled job record id."`
+	JobID string `json:"job_id" jsonschema:"The wireops scheduled job: its record id, or its exact name."`
 }
 
 // JobRunInput is the input for the job-run tools (cancel, delete).
@@ -374,13 +380,15 @@ type DeleteJobRunInput struct {
 
 // SetJobEnvVarsInput is the input for the set_job_env_vars tool.
 type SetJobEnvVarsInput struct {
-	JobID   string            `json:"job_id" jsonschema:"The wireops scheduled job record id."`
+	JobID   string            `json:"job_id" jsonschema:"The wireops scheduled job: its record id, or its exact name."`
 	Mode    string            `json:"mode" jsonschema:"'append' upserts the given keys and leaves the rest alone; 'replace' makes the job's env vars exactly this list, deleting any key not present."`
 	Vars    []BulkEnvVarInput `json:"vars" jsonschema:"The env vars to write."`
 	Confirm string            `json:"confirm,omitempty" jsonschema:"Required only when mode is 'replace': the job's exact name, confirming that unlisted keys get deleted."`
 }
 
-// ListJobGroupsInput is the input for the list_job_groups tool.
+// ListJobGroupsInput is the input for the list_job_groups tool. It takes
+// nothing: the route answers with a short list of group *names*, so there is
+// nothing to filter or page.
 type ListJobGroupsInput struct{}
 
 // CreateScheduledJobInput is the input for the create_scheduled_job tool.
@@ -388,7 +396,7 @@ type ListJobGroupsInput struct{}
 // this record only points at that file. Use generate_job_yaml to produce one.
 type CreateScheduledJobInput struct {
 	Name        string `json:"name" jsonschema:"Display name for the scheduled job."`
-	Repository  string `json:"repository" jsonschema:"The wireops repository record id holding the job.yaml."`
+	Repository  string `json:"repository" jsonschema:"The wireops repository holding the job.yaml: its record id, or its exact name."`
 	JobFile     string `json:"job_file" jsonschema:"Repository-relative path of the job.yaml, as returned by list_repo_job_files."`
 	Description string `json:"description,omitempty" jsonschema:"Human-readable description. Optional."`
 	Enabled     bool   `json:"enabled,omitempty" jsonschema:"Whether the cron schedule is live. Optional — defaults to false, so the job is created without running."`
@@ -397,9 +405,9 @@ type CreateScheduledJobInput struct {
 // UpdateScheduledJobInput is the input for the update_scheduled_job tool.
 // Only the fields present in the call are sent to the server.
 type UpdateScheduledJobInput struct {
-	JobID       string `json:"job_id" jsonschema:"The wireops scheduled job record id."`
+	JobID       string `json:"job_id" jsonschema:"The wireops scheduled job: its record id, or its exact name."`
 	Name        string `json:"name,omitempty" jsonschema:"New display name. Optional."`
-	Repository  string `json:"repository,omitempty" jsonschema:"New repository record id. Optional."`
+	Repository  string `json:"repository,omitempty" jsonschema:"New repository: its record id, or its exact name. Optional."`
 	JobFile     string `json:"job_file,omitempty" jsonschema:"New repository-relative job.yaml path. Optional."`
 	Description string `json:"description,omitempty" jsonschema:"New description. Optional."`
 	Enabled     *bool  `json:"enabled,omitempty" jsonschema:"Enable or disable the cron schedule. Optional."`
@@ -408,19 +416,19 @@ type UpdateScheduledJobInput struct {
 
 // DeleteScheduledJobInput is the input for the delete_scheduled_job tool.
 type DeleteScheduledJobInput struct {
-	JobID   string `json:"job_id" jsonschema:"The wireops scheduled job record id."`
+	JobID   string `json:"job_id" jsonschema:"The wireops scheduled job: its record id, or its exact name."`
 	Confirm string `json:"confirm" jsonschema:"The job's exact name."`
 }
 
 // RevokeWorkerInput is the input for the revoke_worker tool.
 type RevokeWorkerInput struct {
-	WorkerID string `json:"worker_id" jsonschema:"The wireops worker record id."`
+	WorkerID string `json:"worker_id" jsonschema:"The wireops worker: its record id, or its exact hostname."`
 	Confirm  string `json:"confirm" jsonschema:"The worker's exact hostname. Revoking disconnects it and invalidates its token."`
 }
 
 // ExecInContainerInput is the input for the exec_in_container tool.
 type ExecInContainerInput struct {
-	StackID        string   `json:"stack_id" jsonschema:"The wireops stack record id."`
+	StackID        string   `json:"stack_id" jsonschema:"The wireops stack: its record id, or its exact name (resolved for you; an ambiguous name is reported with the candidate ids instead of guessed)."`
 	ContainerID    string   `json:"container_id,omitempty" jsonschema:"The Docker container id, as returned by get_stack_services. Required unless service_name is given."`
 	ServiceName    string   `json:"service_name,omitempty" jsonschema:"The compose service name, resolved to a container id via get_stack_services. Alternative to container_id."`
 	Command        string   `json:"command" jsonschema:"The shell command line to run inside the container. Executed by the shell below, followed by a marker command that reports the exit status, so the command must leave the shell able to read another line."`

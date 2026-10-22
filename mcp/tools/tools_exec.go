@@ -38,7 +38,7 @@ const (
 func registerExecTools(server *mcp.Server, c *client.Client) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "exec_in_container",
-		Description: "Run a one-shot shell command inside a container of a wireops stack and return its output and exit code — the MCP equivalent of the panel's terminal, for inspection a log line can't answer (checking a config file inside the image, a DNS lookup from the container's network, disk usage). It opens a real pty session, sends the command, waits for it to finish, then closes the session; everything typed and printed is recorded in that session's auditable transcript under the calling API key. This runs ARBITRARY commands as the container's user, so it can change or break the container's state — prefer get_container_logs, get_stack_services and get_container_stats when they can answer the question. Identify the container with container_id or service_name. Completion is detected by appending a POSIX-shell marker command, so: the shell must be POSIX (the default /bin/sh is), and a long-running or interactive command (top, tail -f, a shell waiting for input) never reaches the marker and hits the timeout instead — pass a command that terminates. On timeout, timed_out is true, exit_code is null and output holds whatever had been printed by then.",
+		Description: "Run a one-shot shell command inside a container of a wireops stack and return its output and exit code — for inspection a log line cannot answer (reading a config file inside the image, a DNS lookup from the container's network, disk usage). Identify the container with container_id or service_name. This runs ARBITRARY commands as the container's user and can change or break its state, so prefer get_container_logs, get_stack_services and get_container_stats when they can answer the question. Everything typed and printed is recorded in an auditable transcript under the calling API key. Pass a command that terminates: an interactive or never-ending one (top, tail -f, a shell waiting for input) hits the timeout instead. A _notice in the response explains any caveat that applied to the run.",
 		Annotations: destructive(false),
 	}, execInContainer(c))
 }
@@ -49,11 +49,15 @@ func execInContainer(c *client.Client) mcp.ToolHandlerFor[models.ExecInContainer
 		if err != nil {
 			return nil, nil, err
 		}
+		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		if err != nil {
+			return nil, nil, err
+		}
 		if strings.TrimSpace(in.Command) == "" {
 			return nil, nil, fmt.Errorf("command is required")
 		}
 
-		containerID, serviceName, err := resolveContainerTarget(ctx, c, apiKey, in.StackID, in.ContainerID, in.ServiceName)
+		containerID, serviceName, err := resolveContainerTarget(ctx, c, apiKey, stackID, in.ContainerID, in.ServiceName)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -74,7 +78,7 @@ func execInContainer(c *client.Client) mcp.ToolHandlerFor[models.ExecInContainer
 		var opened struct {
 			SessionID string `json:"session_id"`
 		}
-		openPath := "/api/custom/stacks/" + url.PathEscape(in.StackID) + "/terminal/sessions"
+		openPath := "/api/custom/stacks/" + url.PathEscape(stackID) + "/terminal/sessions"
 		openBody := map[string]any{"container_id": containerID, "shell": shell, "rows": 24, "cols": 120}
 		if err := c.Post(ctx, apiKey, openPath, nil, openBody, &opened); err != nil {
 			return nil, nil, fmt.Errorf("opening terminal session: %w", err)
@@ -113,7 +117,7 @@ func execInContainer(c *client.Client) mcp.ToolHandlerFor[models.ExecInContainer
 		}
 
 		result := map[string]any{
-			"stack_id":     in.StackID,
+			"stack_id":     stackID,
 			"container_id": containerID,
 			"service_name": serviceName,
 			"session_id":   opened.SessionID,
@@ -126,6 +130,16 @@ func execInContainer(c *client.Client) mcp.ToolHandlerFor[models.ExecInContainer
 		}
 		if exitCode != nil {
 			result["exit_code"] = *exitCode
+		}
+		if timedOut {
+			result["_notice"] = "The command did not finish within the timeout, so exit_code is null (unknown, not 0) and the output above may be cut short. " +
+				"Completion is detected by a marker command appended after yours, which requires a POSIX shell and a command that returns control to it."
+		}
+		// stdout and stderr are interleaved because this runs through a pty,
+		// which is also why the shell has to be POSIX — said here, where it
+		// is about this specific run, rather than in the tool description.
+		if _, present := result["_notice"]; !present {
+			result["_notice"] = "output interleaves stdout and stderr: this runs through a pty, so the two are one stream."
 		}
 		return nil, result, nil
 	}

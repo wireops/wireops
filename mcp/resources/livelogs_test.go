@@ -37,7 +37,7 @@ func waitFor(t *testing.T, timeout time.Duration, cond func() bool) {
 func TestSubscribeMissingAPIKey(t *testing.T) {
 	b := NewLiveLogBridge("http://unused", func() *mcp.Server { return nil })
 	err := b.Subscribe(context.Background(), &mcp.SubscribeRequest{
-		Params: &mcp.SubscribeParams{URI: "wireops://stacks/stack1/logs/live"},
+		Params: &mcp.SubscribeParams{URI: "wireops://stacks/stack0000000001/logs/live"},
 	})
 	if err == nil {
 		t.Fatal("expected error when API key missing from context")
@@ -47,7 +47,7 @@ func TestSubscribeMissingAPIKey(t *testing.T) {
 func TestSubscribeUnsupportedURI(t *testing.T) {
 	b := NewLiveLogBridge("http://unused", func() *mcp.Server { return nil })
 	err := b.Subscribe(ctxWithKey(), &mcp.SubscribeRequest{
-		Params: &mcp.SubscribeParams{URI: "wireops://stacks/stack1/compose"},
+		Params: &mcp.SubscribeParams{URI: "wireops://stacks/stack0000000001/compose"},
 	})
 	if err == nil {
 		t.Fatal("expected error for a URI that isn't the live-logs template")
@@ -73,7 +73,7 @@ func TestSubscribeRefCountsAndUnsubscribeStopsWatcher(t *testing.T) {
 	defer srv.Close()
 
 	b := NewLiveLogBridge(srv.URL, func() *mcp.Server { return nil })
-	uri := "wireops://stacks/stack1/logs/live"
+	uri := "wireops://stacks/stack0000000001/logs/live"
 
 	if err := b.Subscribe(ctxWithKey(), &mcp.SubscribeRequest{Params: &mcp.SubscribeParams{URI: uri}}); err != nil {
 		t.Fatalf("first subscribe: %v", err)
@@ -140,7 +140,7 @@ func TestUnsubscribeUnknownURIIsNoop(t *testing.T) {
 func TestUnsubscribeMissingAPIKey(t *testing.T) {
 	b := NewLiveLogBridge("http://unused", func() *mcp.Server { return nil })
 	err := b.Unsubscribe(context.Background(), &mcp.UnsubscribeRequest{
-		Params: &mcp.UnsubscribeParams{URI: "wireops://stacks/stack1/logs/live"},
+		Params: &mcp.UnsubscribeParams{URI: "wireops://stacks/stack0000000001/logs/live"},
 	})
 	if err == nil {
 		t.Fatal("expected error when API key missing from context")
@@ -162,7 +162,7 @@ func TestSubscribeDifferentAPIKeyGetsSeparateWatcher(t *testing.T) {
 	defer srv.Close()
 
 	b := NewLiveLogBridge(srv.URL, func() *mcp.Server { return nil })
-	uri := "wireops://stacks/stack1/logs/live"
+	uri := "wireops://stacks/stack0000000001/logs/live"
 
 	otherCtx := mcpauth.WithAPIKey(context.Background(), "wireops_sk_other")
 
@@ -226,7 +226,7 @@ func TestSubscribeRejectsUnauthorizedAPIKeyAlongsideAuthorizedWatcher(t *testing
 	defer srv.Close()
 
 	b := NewLiveLogBridge(srv.URL, func() *mcp.Server { return nil })
-	uri := "wireops://stacks/stack1/logs/live"
+	uri := "wireops://stacks/stack0000000001/logs/live"
 
 	// The authorized session subscribes first and gets a real watcher.
 	if err := b.Subscribe(ctxWithKey(), &mcp.SubscribeRequest{Params: &mcp.SubscribeParams{URI: uri}}); err != nil {
@@ -293,7 +293,7 @@ func TestSubscribeRefusesCrossOriginRedirect(t *testing.T) {
 	defer origin.Close()
 
 	b := NewLiveLogBridge(origin.URL, func() *mcp.Server { return nil })
-	uri := "wireops://stacks/stack1/logs/live"
+	uri := "wireops://stacks/stack0000000001/logs/live"
 
 	err := b.Subscribe(ctxWithKey(), &mcp.SubscribeRequest{Params: &mcp.SubscribeParams{URI: uri}})
 	if err == nil {
@@ -333,7 +333,7 @@ func TestWatchRetriesAfterNon2xxAndConnectFailure(t *testing.T) {
 		default:
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.(http.Flusher).Flush()
-			w.Write([]byte("data: recovered\n\n"))
+			writeFixture(w, "data: recovered\n\n")
 			w.(http.Flusher).Flush()
 			<-r.Context().Done()
 		}
@@ -358,7 +358,7 @@ func TestWatchRetriesAfterNon2xxAndConnectFailure(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	go b.watch(ctx, "wireops://stacks/stack1/logs/live", "stack1", "wireops_sk_test")
+	go b.watch(ctx, "wireops://stacks/stack0000000001/logs/live", "stack0000000001", "wireops_sk_test")
 
 	select {
 	case <-notified:
@@ -378,7 +378,7 @@ func TestWatchFiresResourceUpdatedOnNewLine(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.(http.Flusher).Flush()
-		w.Write([]byte("data: deploy started\n\n"))
+		writeFixture(w, "data: deploy started\n\n")
 		w.(http.Flusher).Flush()
 		<-r.Context().Done()
 	}))
@@ -405,7 +405,7 @@ func TestWatchFiresResourceUpdatedOnNewLine(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	go b.watch(ctx, "wireops://stacks/stack1/logs/live", "stack1", "wireops_sk_test")
+	go b.watch(ctx, "wireops://stacks/stack0000000001/logs/live", "stack0000000001", "wireops_sk_test")
 
 	deadline := time.After(2 * time.Second)
 	for {

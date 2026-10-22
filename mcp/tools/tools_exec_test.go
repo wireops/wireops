@@ -59,10 +59,10 @@ func newExecServer(banner, output string) *execServer {
 		es.calls = append(es.calls, r.Method+" "+r.URL.Path)
 
 		switch {
-		case r.URL.Path == "/api/custom/stacks/stack1/services":
-			_, _ = w.Write([]byte(`[{"service_name":"web","container_id":"c-web"}]`))
+		case r.URL.Path == "/api/custom/stacks/stack0000000001/services":
+			writeFixture(w, `[{"service_name":"web","container_id":"c-web"}]`)
 		case strings.HasSuffix(r.URL.Path, "/terminal/sessions"):
-			_, _ = w.Write([]byte(`{"session_id":"sess-1"}`))
+			writeFixture(w, `{"session_id":"sess-1"}`)
 		case strings.HasSuffix(r.URL.Path, "/input"):
 			raw, _ := io.ReadAll(r.Body)
 			var body struct {
@@ -90,22 +90,22 @@ func newExecServer(banner, output string) *execServer {
 			} else {
 				es.transcript = asciicast(banner, echo, tail)
 			}
-			_, _ = w.Write([]byte(`{"status":"ok"}`))
+			writeFixture(w, `{"status":"ok"}`)
 		case strings.HasSuffix(r.URL.Path, "/transcript"):
 			if es.transcriptStatus != 0 {
 				w.WriteHeader(es.transcriptStatus)
-				_, _ = w.Write([]byte(`{"error":"transcript not available"}`))
+				writeFixture(w, `{"error":"transcript not available"}`)
 				return
 			}
-			_, _ = w.Write([]byte(es.transcript))
+			writeFixture(w, es.transcript)
 		default:
-			_, _ = w.Write([]byte(`{}`))
+			writeFixture(w, `{}`)
 		}
 	}))
 	return es
 }
 
-func (e *execServer) close()                 { e.srv.Close() }
+func (e *execServer) close() { e.srv.Close() }
 
 // slowOutput makes the command's output appear only after d; the echo of the
 // input stays immediate, which is the gap that matters.
@@ -151,7 +151,7 @@ func TestExecInContainerReturnsCommandOutput(t *testing.T) {
 	defer es.close()
 
 	_, out, err := execInContainer(es.client())(ctxWithKey(), nil, models.ExecInContainerInput{
-		StackID:     "stack1",
+		StackID:     "stack0000000001",
 		ServiceName: "web",
 		Command:     "ls /",
 	})
@@ -203,7 +203,7 @@ func TestExecInContainerWaitsThroughASilentStart(t *testing.T) {
 	es.slowOutput(1500 * time.Millisecond)
 
 	_, out, err := execInContainer(es.client())(ctxWithKey(), nil, models.ExecInContainerInput{
-		StackID:        "stack1",
+		StackID:        "stack0000000001",
 		ServiceName:    "web",
 		Command:        "du -sh /",
 		TimeoutSeconds: 10,
@@ -226,7 +226,7 @@ func TestExecInContainerReportsExitCode(t *testing.T) {
 	es.exits(1)
 
 	_, out, err := execInContainer(es.client())(ctxWithKey(), nil, models.ExecInContainerInput{
-		StackID:     "stack1",
+		StackID:     "stack0000000001",
 		ServiceName: "web",
 		Command:     "cat /nope",
 	})
@@ -254,7 +254,7 @@ func TestExecInContainerAlwaysClosesTheSession(t *testing.T) {
 	es.mu.Unlock()
 
 	_, _, err := execInContainer(es.client())(ctxWithKey(), nil, models.ExecInContainerInput{
-		StackID:     "stack1",
+		StackID:     "stack0000000001",
 		ServiceName: "web",
 		Command:     "ls /",
 	})
@@ -274,7 +274,7 @@ func TestExecInContainerTimesOutWithoutOutput(t *testing.T) {
 	es.exits(-1)
 
 	_, out, err := execInContainer(es.client())(ctxWithKey(), nil, models.ExecInContainerInput{
-		StackID:        "stack1",
+		StackID:        "stack0000000001",
 		ServiceName:    "web",
 		Command:        "sleep 600",
 		TimeoutSeconds: 1,
@@ -300,7 +300,7 @@ func TestExecInContainerRequiresCommand(t *testing.T) {
 	defer es.close()
 
 	_, _, err := execInContainer(es.client())(ctxWithKey(), nil, models.ExecInContainerInput{
-		StackID:     "stack1",
+		StackID:     "stack0000000001",
 		ServiceName: "web",
 		Command:     "   ",
 	})
@@ -317,7 +317,7 @@ func TestExecInContainerMissingAPIKey(t *testing.T) {
 	defer es.close()
 
 	_, _, err := execInContainer(es.client())(t.Context(), nil, models.ExecInContainerInput{
-		StackID: "stack1",
+		StackID: "stack0000000001",
 		Command: "ls",
 	})
 	if err == nil {

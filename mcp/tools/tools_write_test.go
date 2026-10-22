@@ -51,7 +51,7 @@ func newRecorder(routes map[string]string) *recorder {
 		if !ok {
 			response = `{}`
 		}
-		_, _ = w.Write([]byte(response))
+		writeFixture(w, response)
 	}))
 	return rec
 }
@@ -106,13 +106,13 @@ func (r *recorder) expectNoWrites(t *testing.T) {
 
 // stackNamed serves the fields=name lookup requireConfirm does.
 func stackNamed(name string) map[string]string {
-	return map[string]string{"GET /api/collections/stacks/records/stack1": `{"name":"` + name + `"}`}
+	return map[string]string{"GET /api/collections/stacks/records/stack0000000001": `{"name":"` + name + `"}`}
 }
 
 // stackStatus serves the fields=status lookup set_stack_paused does before
 // resuming a stack.
 func stackStatus(status string) map[string]string {
-	return map[string]string{"GET /api/collections/stacks/records/stack1": `{"status":"` + status + `"}`}
+	return map[string]string{"GET /api/collections/stacks/records/stack0000000001": `{"status":"` + status + `"}`}
 }
 
 func mergeRoutes(sets ...map[string]string) map[string]string {
@@ -129,7 +129,7 @@ func mergeRoutes(sets ...map[string]string) map[string]string {
 // against.
 func servicesRoute() map[string]string {
 	return map[string]string{
-		"GET /api/custom/stacks/stack1/services": `[{"service_name":"web","container_id":"c-web"},{"service_name":"db","container_id":"c-db"}]`,
+		"GET /api/custom/stacks/stack0000000001/services": `[{"service_name":"web","container_id":"c-web"},{"service_name":"db","container_id":"c-db"}]`,
 	}
 }
 
@@ -141,18 +141,18 @@ func TestDeployStackPostsSync(t *testing.T) {
 	rec := newRecorder(nil)
 	defer rec.close()
 
-	_, _, err := deployStack(rec.client())(ctxWithKey(), nil, models.DeployStackInput{StackID: "stack1"})
+	_, _, err := deployStack(rec.client())(ctxWithKey(), nil, models.DeployStackInput{StackID: "stack0000000001"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	rec.expectLast(t, http.MethodPost, "/api/custom/stacks/stack1/sync")
+	rec.expectLast(t, http.MethodPost, "/api/custom/stacks/stack0000000001/sync")
 }
 
 func TestDeployStackMissingAPIKey(t *testing.T) {
 	rec := newRecorder(nil)
 	defer rec.close()
 
-	if _, _, err := deployStack(rec.client())(t.Context(), nil, models.DeployStackInput{StackID: "stack1"}); err == nil {
+	if _, _, err := deployStack(rec.client())(t.Context(), nil, models.DeployStackInput{StackID: "stack0000000001"}); err == nil {
 		t.Fatal("expected error when no API key on context")
 	}
 }
@@ -162,13 +162,13 @@ func TestForceRedeployStackDefaultsPauseAfterToTrue(t *testing.T) {
 	defer rec.close()
 
 	_, _, err := forceRedeployStack(rec.client())(ctxWithKey(), nil, models.ForceRedeployStackInput{
-		StackID:            "stack1",
+		StackID:            "stack0000000001",
 		RecreateContainers: true,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	got := rec.expectLast(t, http.MethodPost, "/api/custom/stacks/stack1/force-redeploy")
+	got := rec.expectLast(t, http.MethodPost, "/api/custom/stacks/stack0000000001/force-redeploy")
 	if got.Body["pause_after_redeploy"] != true {
 		t.Fatalf("expected pause_after_redeploy to default to true, got %v", got.Body["pause_after_redeploy"])
 	}
@@ -183,7 +183,7 @@ func TestForceRedeployStackHonorsExplicitPauseAfterFalse(t *testing.T) {
 
 	pauseAfter := false
 	_, _, err := forceRedeployStack(rec.client())(ctxWithKey(), nil, models.ForceRedeployStackInput{
-		StackID:    "stack1",
+		StackID:    "stack0000000001",
 		PauseAfter: &pauseAfter,
 	})
 	if err != nil {
@@ -199,7 +199,7 @@ func TestForceRedeployStackRequiresConfirmForVolumeRecreation(t *testing.T) {
 	defer rec.close()
 
 	_, _, err := forceRedeployStack(rec.client())(ctxWithKey(), nil, models.ForceRedeployStackInput{
-		StackID:         "stack1",
+		StackID:         "stack0000000001",
 		RecreateVolumes: true,
 		Confirm:         "billling",
 	})
@@ -217,21 +217,21 @@ func TestForceRedeployStackProceedsWithMatchingConfirm(t *testing.T) {
 	defer rec.close()
 
 	_, _, err := forceRedeployStack(rec.client())(ctxWithKey(), nil, models.ForceRedeployStackInput{
-		StackID:         "stack1",
+		StackID:         "stack0000000001",
 		RecreateVolumes: true,
 		Confirm:         "billing",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	rec.expectLast(t, http.MethodPost, "/api/custom/stacks/stack1/force-redeploy")
+	rec.expectLast(t, http.MethodPost, "/api/custom/stacks/stack0000000001/force-redeploy")
 }
 
 func TestRollbackStackRequiresCommitSHA(t *testing.T) {
 	rec := newRecorder(nil)
 	defer rec.close()
 
-	if _, _, err := rollbackStack(rec.client())(ctxWithKey(), nil, models.RollbackStackInput{StackID: "stack1"}); err == nil {
+	if _, _, err := rollbackStack(rec.client())(ctxWithKey(), nil, models.RollbackStackInput{StackID: "stack0000000001"}); err == nil {
 		t.Fatal("expected error without commit_sha")
 	}
 	rec.expectNoWrites(t)
@@ -241,11 +241,11 @@ func TestRollbackStackPostsCommitSHA(t *testing.T) {
 	rec := newRecorder(nil)
 	defer rec.close()
 
-	_, _, err := rollbackStack(rec.client())(ctxWithKey(), nil, models.RollbackStackInput{StackID: "stack1", CommitSHA: "abc123"})
+	_, _, err := rollbackStack(rec.client())(ctxWithKey(), nil, models.RollbackStackInput{StackID: "stack0000000001", CommitSHA: "abc123"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	got := rec.expectLast(t, http.MethodPost, "/api/custom/stacks/stack1/rollback")
+	got := rec.expectLast(t, http.MethodPost, "/api/custom/stacks/stack0000000001/rollback")
 	if got.Body["commit_sha"] != "abc123" {
 		t.Fatalf("expected commit_sha forwarded, got %v", got.Body["commit_sha"])
 	}
@@ -266,11 +266,11 @@ func TestSetStackPausedPatchesStatus(t *testing.T) {
 			rec := newRecorder(stackStatus(tc.current))
 			defer rec.close()
 
-			_, _, err := setStackPaused(rec.client())(ctxWithKey(), nil, models.SetStackPausedInput{StackID: "stack1", Paused: tc.paused})
+			_, _, err := setStackPaused(rec.client())(ctxWithKey(), nil, models.SetStackPausedInput{StackID: "stack0000000001", Paused: tc.paused})
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			got := rec.expectLast(t, http.MethodPatch, "/api/collections/stacks/records/stack1")
+			got := rec.expectLast(t, http.MethodPatch, "/api/collections/stacks/records/stack0000000001")
 			if got.Body["status"] != tc.want {
 				t.Fatalf("expected status %q, got %v", tc.want, got.Body["status"])
 			}
@@ -286,7 +286,7 @@ func TestSetStackPausedRefusesToResumeAStackThatIsNotPaused(t *testing.T) {
 			rec := newRecorder(stackStatus(current))
 			defer rec.close()
 
-			_, _, err := setStackPaused(rec.client())(ctxWithKey(), nil, models.SetStackPausedInput{StackID: "stack1"})
+			_, _, err := setStackPaused(rec.client())(ctxWithKey(), nil, models.SetStackPausedInput{StackID: "stack0000000001"})
 			if err == nil {
 				t.Fatalf("expected resuming a %q stack to be refused", current)
 			}
@@ -302,7 +302,7 @@ func TestSetStackRenderOverridesRejectsEmptySet(t *testing.T) {
 	rec := newRecorder(nil)
 	defer rec.close()
 
-	if _, _, err := setStackRenderOverrides(rec.client())(ctxWithKey(), nil, models.SetStackRenderOverridesInput{StackID: "stack1"}); err == nil {
+	if _, _, err := setStackRenderOverrides(rec.client())(ctxWithKey(), nil, models.SetStackRenderOverridesInput{StackID: "stack0000000001"}); err == nil {
 		t.Fatal("expected error for an empty override set")
 	}
 	rec.expectNoWrites(t)
@@ -313,13 +313,13 @@ func TestSetStackRenderOverridesPutsOverrides(t *testing.T) {
 	defer rec.close()
 
 	_, _, err := setStackRenderOverrides(rec.client())(ctxWithKey(), nil, models.SetStackRenderOverridesInput{
-		StackID:   "stack1",
+		StackID:   "stack0000000001",
 		Overrides: map[string]models.ServiceOverrideInput{"web": {Image: "nginx:1.29"}},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	got := rec.expectLast(t, http.MethodPut, "/api/custom/stacks/stack1/render-overrides")
+	got := rec.expectLast(t, http.MethodPut, "/api/custom/stacks/stack0000000001/render-overrides")
 	overrides, ok := got.Body["overrides"].(map[string]any)
 	if !ok {
 		t.Fatalf("expected an overrides object, got %v", got.Body)
@@ -334,22 +334,22 @@ func TestClearStackRenderOverridesDeletes(t *testing.T) {
 	rec := newRecorder(nil)
 	defer rec.close()
 
-	_, _, err := clearStackRenderOverrides(rec.client())(ctxWithKey(), nil, models.ClearStackRenderOverridesInput{StackID: "stack1"})
+	_, _, err := clearStackRenderOverrides(rec.client())(ctxWithKey(), nil, models.ClearStackRenderOverridesInput{StackID: "stack0000000001"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	rec.expectLast(t, http.MethodDelete, "/api/custom/stacks/stack1/render-overrides")
+	rec.expectLast(t, http.MethodDelete, "/api/custom/stacks/stack0000000001/render-overrides")
 }
 
 func TestRestartContainerResolvesServiceName(t *testing.T) {
 	rec := newRecorder(servicesRoute())
 	defer rec.close()
 
-	_, _, err := restartContainer(rec.client())(ctxWithKey(), nil, models.ContainerActionInput{StackID: "stack1", ServiceName: "db"})
+	_, _, err := restartContainer(rec.client())(ctxWithKey(), nil, models.ContainerActionInput{StackID: "stack0000000001", ServiceName: "db"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	got := rec.expectLast(t, http.MethodPost, "/api/custom/stacks/stack1/container/restart")
+	got := rec.expectLast(t, http.MethodPost, "/api/custom/stacks/stack0000000001/container/restart")
 	if got.Body["container_id"] != "c-db" {
 		t.Fatalf("expected the resolved container id, got %v", got.Body["container_id"])
 	}
@@ -359,7 +359,7 @@ func TestRestartContainerRequiresATarget(t *testing.T) {
 	rec := newRecorder(servicesRoute())
 	defer rec.close()
 
-	if _, _, err := restartContainer(rec.client())(ctxWithKey(), nil, models.ContainerActionInput{StackID: "stack1"}); err == nil {
+	if _, _, err := restartContainer(rec.client())(ctxWithKey(), nil, models.ContainerActionInput{StackID: "stack0000000001"}); err == nil {
 		t.Fatal("expected error without container_id or service_name")
 	}
 	rec.expectNoWrites(t)
@@ -370,7 +370,7 @@ func TestStopContainerConfirmsWithServiceName(t *testing.T) {
 	defer rec.close()
 
 	_, _, err := stopContainer(rec.client())(ctxWithKey(), nil, models.StopContainerInput{
-		StackID:     "stack1",
+		StackID:     "stack0000000001",
 		ContainerID: "c-web",
 		Confirm:     "db",
 	})
@@ -383,14 +383,14 @@ func TestStopContainerConfirmsWithServiceName(t *testing.T) {
 	rec.expectNoWrites(t)
 
 	_, _, err = stopContainer(rec.client())(ctxWithKey(), nil, models.StopContainerInput{
-		StackID:     "stack1",
+		StackID:     "stack0000000001",
 		ContainerID: "c-web",
 		Confirm:     "web",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	got := rec.expectLast(t, http.MethodPost, "/api/custom/stacks/stack1/container/stop")
+	got := rec.expectLast(t, http.MethodPost, "/api/custom/stacks/stack0000000001/container/stop")
 	if got.Body["container_id"] != "c-web" {
 		t.Fatalf("expected container id forwarded, got %v", got.Body["container_id"])
 	}
@@ -398,7 +398,7 @@ func TestStopContainerConfirmsWithServiceName(t *testing.T) {
 
 func TestStopContainerRefusesAnUnnamedService(t *testing.T) {
 	rec := newRecorder(map[string]string{
-		"GET /api/custom/stacks/stack1/services": `[{"service_name":"","container_id":"c-orphan"}]`,
+		"GET /api/custom/stacks/stack0000000001/services": `[{"service_name":"","container_id":"c-orphan"}]`,
 	})
 	defer rec.close()
 
@@ -406,7 +406,7 @@ func TestStopContainerRefusesAnUnnamedService(t *testing.T) {
 	// against. An omitted confirm must not match that empty string and turn
 	// the guard off.
 	_, _, err := stopContainer(rec.client())(ctxWithKey(), nil, models.StopContainerInput{
-		StackID:     "stack1",
+		StackID:     "stack0000000001",
 		ContainerID: "c-orphan",
 	})
 	if err == nil {
@@ -420,8 +420,8 @@ func TestTransferStackRequiresConfirm(t *testing.T) {
 	defer rec.close()
 
 	_, _, err := transferStack(rec.client())(ctxWithKey(), nil, models.TransferStackInput{
-		StackID:        "stack1",
-		TargetWorkerID: "worker2",
+		StackID:        "stack0000000001",
+		TargetWorkerID: "worker000000002",
 	})
 	if err == nil {
 		t.Fatal("expected missing confirm to fail")
@@ -434,15 +434,15 @@ func TestTransferStackPostsTargetWorker(t *testing.T) {
 	defer rec.close()
 
 	_, _, err := transferStack(rec.client())(ctxWithKey(), nil, models.TransferStackInput{
-		StackID:        "stack1",
-		TargetWorkerID: "worker2",
+		StackID:        "stack0000000001",
+		TargetWorkerID: "worker000000002",
 		Confirm:        "billing",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	got := rec.expectLast(t, http.MethodPost, "/api/custom/stacks/stack1/transfer")
-	if got.Body["target_worker_id"] != "worker2" {
+	got := rec.expectLast(t, http.MethodPost, "/api/custom/stacks/stack0000000001/transfer")
+	if got.Body["target_worker_id"] != "worker000000002" {
 		t.Fatalf("expected target_worker_id forwarded, got %v", got.Body["target_worker_id"])
 	}
 }
@@ -451,7 +451,7 @@ func TestDeleteStackRefusesOnConfirmMismatch(t *testing.T) {
 	rec := newRecorder(stackNamed("billing"))
 	defer rec.close()
 
-	_, _, err := deleteStack(rec.client())(ctxWithKey(), nil, models.DeleteStackInput{StackID: "stack1", Confirm: "nope"})
+	_, _, err := deleteStack(rec.client())(ctxWithKey(), nil, models.DeleteStackInput{StackID: "stack0000000001", Confirm: "nope"})
 	if err == nil {
 		t.Fatal("expected confirm mismatch to fail")
 	}
@@ -462,11 +462,11 @@ func TestDeleteStackSendsForceQuery(t *testing.T) {
 	rec := newRecorder(stackNamed("billing"))
 	defer rec.close()
 
-	_, _, err := deleteStack(rec.client())(ctxWithKey(), nil, models.DeleteStackInput{StackID: "stack1", Force: true, Confirm: "billing"})
+	_, _, err := deleteStack(rec.client())(ctxWithKey(), nil, models.DeleteStackInput{StackID: "stack0000000001", Force: true, Confirm: "billing"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	got := rec.expectLast(t, http.MethodDelete, "/api/custom/stacks/stack1")
+	got := rec.expectLast(t, http.MethodDelete, "/api/custom/stacks/stack0000000001")
 	if got.Query != "force=true" {
 		t.Fatalf("expected force=true query, got %q", got.Query)
 	}
@@ -476,7 +476,7 @@ func TestSetStackEnvVarsRejectsUnknownMode(t *testing.T) {
 	rec := newRecorder(nil)
 	defer rec.close()
 
-	_, _, err := setStackEnvVars(rec.client())(ctxWithKey(), nil, models.SetStackEnvVarsInput{StackID: "stack1", Mode: "merge"})
+	_, _, err := setStackEnvVars(rec.client())(ctxWithKey(), nil, models.SetStackEnvVarsInput{StackID: "stack0000000001", Mode: "merge"})
 	if err == nil {
 		t.Fatal("expected an unknown mode to fail")
 	}
@@ -488,14 +488,14 @@ func TestSetStackEnvVarsAppendNeedsNoConfirm(t *testing.T) {
 	defer rec.close()
 
 	_, _, err := setStackEnvVars(rec.client())(ctxWithKey(), nil, models.SetStackEnvVarsInput{
-		StackID: "stack1",
+		StackID: "stack0000000001",
 		Mode:    "append",
 		Vars:    []models.BulkEnvVarInput{{Key: "PORT", Value: "8080"}},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	got := rec.expectLast(t, http.MethodPost, "/api/custom/stacks/stack1/env-vars/bulk")
+	got := rec.expectLast(t, http.MethodPost, "/api/custom/stacks/stack0000000001/env-vars/bulk")
 	if got.Body["mode"] != "append" {
 		t.Fatalf("expected mode forwarded, got %v", got.Body["mode"])
 	}
@@ -506,7 +506,7 @@ func TestSetStackEnvVarsReplaceRequiresConfirm(t *testing.T) {
 	defer rec.close()
 
 	_, _, err := setStackEnvVars(rec.client())(ctxWithKey(), nil, models.SetStackEnvVarsInput{
-		StackID: "stack1",
+		StackID: "stack0000000001",
 		Mode:    "replace",
 		Vars:    []models.BulkEnvVarInput{{Key: "PORT", Value: "8080"}},
 	})
@@ -520,7 +520,7 @@ func TestCopyStackEnvVarsRequiresSourceStack(t *testing.T) {
 	rec := newRecorder(nil)
 	defer rec.close()
 
-	if _, _, err := copyStackEnvVars(rec.client())(ctxWithKey(), nil, models.CopyStackEnvVarsInput{StackID: "stack1"}); err == nil {
+	if _, _, err := copyStackEnvVars(rec.client())(ctxWithKey(), nil, models.CopyStackEnvVarsInput{StackID: "stack0000000001"}); err == nil {
 		t.Fatal("expected error without source_stack")
 	}
 	rec.expectNoWrites(t)
@@ -542,7 +542,7 @@ func TestImportStackPostsBody(t *testing.T) {
 
 	_, _, err := importStack(rec.client())(ctxWithKey(), nil, models.ImportStackInput{
 		Name:       "legacy",
-		WorkerID:   "worker1",
+		WorkerID:   "worker000000001",
 		ImportPath: "/srv/legacy/docker-compose.yml",
 	})
 	if err != nil {
@@ -562,11 +562,11 @@ func TestSyncRepositoryPosts(t *testing.T) {
 	rec := newRecorder(nil)
 	defer rec.close()
 
-	_, _, err := syncRepository(rec.client())(ctxWithKey(), nil, models.SyncRepositoryInput{RepositoryID: "repo1"})
+	_, _, err := syncRepository(rec.client())(ctxWithKey(), nil, models.SyncRepositoryInput{RepositoryID: "repo00000000001"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	rec.expectLast(t, http.MethodPost, "/api/custom/repositories/repo1/sync")
+	rec.expectLast(t, http.MethodPost, "/api/custom/repositories/repo00000000001/sync")
 }
 
 func TestCreateStackFromComposePostsBody(t *testing.T) {
@@ -574,8 +574,8 @@ func TestCreateStackFromComposePostsBody(t *testing.T) {
 	defer rec.close()
 
 	_, _, err := createStackFromCompose(rec.client())(ctxWithKey(), nil, models.CreateStackFromComposeInput{
-		Repository:  "repo1",
-		Worker:      "worker1",
+		Repository:  "repo00000000001",
+		Worker:      "worker000000001",
 		ComposePath: "apps/web",
 		Paused:      true,
 	})
@@ -593,8 +593,8 @@ func TestCreateStackFromWireopsRequiresWireopsFile(t *testing.T) {
 	defer rec.close()
 
 	_, _, err := createStackFromWireops(rec.client())(ctxWithKey(), nil, models.CreateStackFromWireopsInput{
-		Repository: "repo1",
-		Worker:     "worker1",
+		Repository: "repo00000000001",
+		Worker:     "worker000000001",
 	})
 	if err == nil {
 		t.Fatal("expected error without wireops_file")
@@ -617,13 +617,13 @@ func TestPreviewStackMigrationDoesNotConfirmServerSide(t *testing.T) {
 	defer rec.close()
 
 	_, _, err := previewStackMigration(rec.client())(ctxWithKey(), nil, models.PreviewStackMigrationInput{
-		StackID:    "stack1",
-		Repository: "repo2",
+		StackID:    "stack0000000001",
+		Repository: "repo00000000002",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	got := rec.expectLast(t, http.MethodPost, "/api/custom/stacks/stack1/migrate/preview")
+	got := rec.expectLast(t, http.MethodPost, "/api/custom/stacks/stack0000000001/migrate/preview")
 	if got.Body["confirm"] != false {
 		t.Fatalf("expected the preview to send confirm=false, got %v", got.Body["confirm"])
 	}
@@ -634,8 +634,8 @@ func TestMigrateStackSetsServerConfirmOnlyAfterNameMatches(t *testing.T) {
 	defer rec.close()
 
 	_, _, err := migrateStack(rec.client())(ctxWithKey(), nil, models.MigrateStackInput{
-		StackID:    "stack1",
-		Repository: "repo2",
+		StackID:    "stack0000000001",
+		Repository: "repo00000000002",
 		Confirm:    "wrong",
 	})
 	if err == nil {
@@ -644,14 +644,14 @@ func TestMigrateStackSetsServerConfirmOnlyAfterNameMatches(t *testing.T) {
 	rec.expectNoWrites(t)
 
 	_, _, err = migrateStack(rec.client())(ctxWithKey(), nil, models.MigrateStackInput{
-		StackID:    "stack1",
-		Repository: "repo2",
+		StackID:    "stack0000000001",
+		Repository: "repo00000000002",
 		Confirm:    "billing",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	got := rec.expectLast(t, http.MethodPost, "/api/custom/stacks/stack1/migrate")
+	got := rec.expectLast(t, http.MethodPost, "/api/custom/stacks/stack0000000001/migrate")
 	if got.Body["confirm"] != true {
 		t.Fatalf("expected the server's confirm gate to be set, got %v", got.Body["confirm"])
 	}
@@ -662,13 +662,13 @@ func TestRepoDefinitionSendsFileQuery(t *testing.T) {
 	defer rec.close()
 
 	_, _, err := repoDefinition(rec.client(), "job-definition")(ctxWithKey(), nil, models.RepoFileDefinitionInput{
-		RepositoryID: "repo1",
+		RepositoryID: "repo00000000001",
 		Path:         "jobs/backup.yaml",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	got := rec.expectLast(t, http.MethodGet, "/api/custom/repositories/repo1/job-definition")
+	got := rec.expectLast(t, http.MethodGet, "/api/custom/repositories/repo00000000001/job-definition")
 	if got.Query != "file=jobs%2Fbackup.yaml" {
 		t.Fatalf("unexpected query: %q", got.Query)
 	}
@@ -678,7 +678,7 @@ func TestRepoDefinitionRequiresPath(t *testing.T) {
 	rec := newRecorder(nil)
 	defer rec.close()
 
-	_, _, err := repoDefinition(rec.client(), "compose-definition")(ctxWithKey(), nil, models.RepoFileDefinitionInput{RepositoryID: "repo1"})
+	_, _, err := repoDefinition(rec.client(), "compose-definition")(ctxWithKey(), nil, models.RepoFileDefinitionInput{RepositoryID: "repo00000000001"})
 	if err == nil {
 		t.Fatal("expected error without path")
 	}
@@ -706,13 +706,13 @@ func TestUpdateRepositoryOnlySendsGivenFields(t *testing.T) {
 	defer rec.close()
 
 	_, _, err := updateRepository(rec.client())(ctxWithKey(), nil, models.UpdateRepositoryInput{
-		RepositoryID: "repo1",
+		RepositoryID: "repo00000000001",
 		Branch:       "develop",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	got := rec.expectLast(t, http.MethodPatch, "/api/collections/repositories/records/repo1")
+	got := rec.expectLast(t, http.MethodPatch, "/api/collections/repositories/records/repo00000000001")
 	if len(got.Body) != 1 || got.Body["branch"] != "develop" {
 		t.Fatalf("expected only branch in the payload, got %v", got.Body)
 	}
@@ -722,28 +722,28 @@ func TestUpdateRepositoryRejectsEmptyUpdate(t *testing.T) {
 	rec := newRecorder(nil)
 	defer rec.close()
 
-	if _, _, err := updateRepository(rec.client())(ctxWithKey(), nil, models.UpdateRepositoryInput{RepositoryID: "repo1"}); err == nil {
+	if _, _, err := updateRepository(rec.client())(ctxWithKey(), nil, models.UpdateRepositoryInput{RepositoryID: "repo00000000001"}); err == nil {
 		t.Fatal("expected error when nothing was passed to update")
 	}
 	rec.expectNoWrites(t)
 }
 
 func TestDeleteRepositoryConfirmsAgainstName(t *testing.T) {
-	routes := map[string]string{"GET /api/collections/repositories/records/repo1": `{"name":"infra"}`}
+	routes := map[string]string{"GET /api/collections/repositories/records/repo00000000001": `{"name":"infra"}`}
 	rec := newRecorder(routes)
 	defer rec.close()
 
-	_, _, err := deleteRepository(rec.client())(ctxWithKey(), nil, models.DeleteRepositoryInput{RepositoryID: "repo1", Confirm: "infa"})
+	_, _, err := deleteRepository(rec.client())(ctxWithKey(), nil, models.DeleteRepositoryInput{RepositoryID: "repo00000000001", Confirm: "infa"})
 	if err == nil {
 		t.Fatal("expected confirm mismatch to fail")
 	}
 	rec.expectNoWrites(t)
 
-	_, _, err = deleteRepository(rec.client())(ctxWithKey(), nil, models.DeleteRepositoryInput{RepositoryID: "repo1", Confirm: "infra"})
+	_, _, err = deleteRepository(rec.client())(ctxWithKey(), nil, models.DeleteRepositoryInput{RepositoryID: "repo00000000001", Confirm: "infra"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	rec.expectLast(t, http.MethodDelete, "/api/collections/repositories/records/repo1")
+	rec.expectLast(t, http.MethodDelete, "/api/collections/repositories/records/repo00000000001")
 }
 
 // ---------------------------------------------------------------------------
@@ -754,10 +754,10 @@ func TestRunJobPosts(t *testing.T) {
 	rec := newRecorder(nil)
 	defer rec.close()
 
-	if _, _, err := runJob(rec.client())(ctxWithKey(), nil, models.RunJobInput{JobID: "job1"}); err != nil {
+	if _, _, err := runJob(rec.client())(ctxWithKey(), nil, models.RunJobInput{JobID: "job000000000001"}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	rec.expectLast(t, http.MethodPost, "/api/custom/jobs/job1/run")
+	rec.expectLast(t, http.MethodPost, "/api/custom/jobs/job000000000001/run")
 }
 
 func TestCancelJobRunPosts(t *testing.T) {
@@ -786,12 +786,12 @@ func TestDeleteJobRunRequiresLiteralConfirm(t *testing.T) {
 }
 
 func TestSetJobEnvVarsReplaceConfirmsAgainstJobName(t *testing.T) {
-	routes := map[string]string{"GET /api/collections/scheduled_jobs/records/job1": `{"name":"nightly-backup"}`}
+	routes := map[string]string{"GET /api/collections/scheduled_jobs/records/job000000000001": `{"name":"nightly-backup"}`}
 	rec := newRecorder(routes)
 	defer rec.close()
 
 	_, _, err := setJobEnvVars(rec.client())(ctxWithKey(), nil, models.SetJobEnvVarsInput{
-		JobID: "job1",
+		JobID: "job000000000001",
 		Mode:  "replace",
 		Vars:  []models.BulkEnvVarInput{{Key: "TARGET", Value: "s3"}},
 	})
@@ -801,7 +801,7 @@ func TestSetJobEnvVarsReplaceConfirmsAgainstJobName(t *testing.T) {
 	rec.expectNoWrites(t)
 
 	_, _, err = setJobEnvVars(rec.client())(ctxWithKey(), nil, models.SetJobEnvVarsInput{
-		JobID:   "job1",
+		JobID:   "job000000000001",
 		Mode:    "replace",
 		Vars:    []models.BulkEnvVarInput{{Key: "TARGET", Value: "s3"}},
 		Confirm: "nightly-backup",
@@ -809,7 +809,7 @@ func TestSetJobEnvVarsReplaceConfirmsAgainstJobName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	rec.expectLast(t, http.MethodPost, "/api/custom/jobs/job1/env-vars/bulk")
+	rec.expectLast(t, http.MethodPost, "/api/custom/jobs/job000000000001/env-vars/bulk")
 }
 
 func TestCreateScheduledJobRequiresFileAndRepository(t *testing.T) {
@@ -828,7 +828,7 @@ func TestCreateScheduledJobDefaultsToDisabled(t *testing.T) {
 
 	_, _, err := createScheduledJob(rec.client())(ctxWithKey(), nil, models.CreateScheduledJobInput{
 		Name:       "nightly",
-		Repository: "repo1",
+		Repository: "repo00000000001",
 		JobFile:    "jobs/backup.yaml",
 	})
 	if err != nil {
@@ -845,22 +845,22 @@ func TestUpdateScheduledJobSendsEnabledFalseWhenExplicit(t *testing.T) {
 	defer rec.close()
 
 	enabled := false
-	_, _, err := updateScheduledJob(rec.client())(ctxWithKey(), nil, models.UpdateScheduledJobInput{JobID: "job1", Enabled: &enabled})
+	_, _, err := updateScheduledJob(rec.client())(ctxWithKey(), nil, models.UpdateScheduledJobInput{JobID: "job000000000001", Enabled: &enabled})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	got := rec.expectLast(t, http.MethodPatch, "/api/collections/scheduled_jobs/records/job1")
+	got := rec.expectLast(t, http.MethodPatch, "/api/collections/scheduled_jobs/records/job000000000001")
 	if len(got.Body) != 1 || got.Body["enabled"] != false {
 		t.Fatalf("expected only enabled=false in the payload, got %v", got.Body)
 	}
 }
 
 func TestDeleteScheduledJobConfirmsAgainstName(t *testing.T) {
-	routes := map[string]string{"GET /api/collections/scheduled_jobs/records/job1": `{"name":"nightly-backup"}`}
+	routes := map[string]string{"GET /api/collections/scheduled_jobs/records/job000000000001": `{"name":"nightly-backup"}`}
 	rec := newRecorder(routes)
 	defer rec.close()
 
-	if _, _, err := deleteScheduledJob(rec.client())(ctxWithKey(), nil, models.DeleteScheduledJobInput{JobID: "job1", Confirm: "nightly"}); err == nil {
+	if _, _, err := deleteScheduledJob(rec.client())(ctxWithKey(), nil, models.DeleteScheduledJobInput{JobID: "job000000000001", Confirm: "nightly"}); err == nil {
 		t.Fatal("expected confirm mismatch to fail")
 	}
 	rec.expectNoWrites(t)
@@ -871,28 +871,28 @@ func TestDeleteScheduledJobConfirmsAgainstName(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRevokeWorkerConfirmsAgainstHostname(t *testing.T) {
-	routes := map[string]string{"GET /api/collections/workers/records/worker1": `{"hostname":"edge-01"}`}
+	routes := map[string]string{"GET /api/collections/workers/records/worker000000001": `{"hostname":"edge-01"}`}
 	rec := newRecorder(routes)
 	defer rec.close()
 
-	_, _, err := revokeWorker(rec.client())(ctxWithKey(), nil, models.RevokeWorkerInput{WorkerID: "worker1", Confirm: "edge-1"})
+	_, _, err := revokeWorker(rec.client())(ctxWithKey(), nil, models.RevokeWorkerInput{WorkerID: "worker000000001", Confirm: "edge-1"})
 	if err == nil || !strings.Contains(err.Error(), "edge-01") {
 		t.Fatalf("expected the error to name the hostname, got %v", err)
 	}
 	rec.expectNoWrites(t)
 
-	_, _, err = revokeWorker(rec.client())(ctxWithKey(), nil, models.RevokeWorkerInput{WorkerID: "worker1", Confirm: "edge-01"})
+	_, _, err = revokeWorker(rec.client())(ctxWithKey(), nil, models.RevokeWorkerInput{WorkerID: "worker000000001", Confirm: "edge-01"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	rec.expectLast(t, http.MethodPost, "/api/custom/workers/worker1/revoke")
+	rec.expectLast(t, http.MethodPost, "/api/custom/workers/worker000000001/revoke")
 }
 
 func TestRevokeWorkerMissingAPIKey(t *testing.T) {
 	rec := newRecorder(nil)
 	defer rec.close()
 
-	if _, _, err := revokeWorker(rec.client())(t.Context(), nil, models.RevokeWorkerInput{WorkerID: "worker1"}); err == nil {
+	if _, _, err := revokeWorker(rec.client())(t.Context(), nil, models.RevokeWorkerInput{WorkerID: "worker000000001"}); err == nil {
 		t.Fatal("expected error when no API key on context")
 	}
 }
@@ -904,7 +904,7 @@ func TestRevokeWorkerMissingAPIKey(t *testing.T) {
 func TestRequireConfirmSurfacesLookupFailure(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		_, _ = w.Write([]byte(`{"error":"not found"}`))
+		writeFixture(w, `{"error":"not found"}`)
 	}))
 	defer srv.Close()
 

@@ -39,6 +39,14 @@ func Register(server *mcp.Server, c *client.Client) {
 		MIMEType:    "text/plain",
 	}, readJobRaw(c))
 
+	// A plain resource, not a template: it describes wireops, not a record.
+	server.AddResource(&mcp.Resource{
+		Name:        "compose_conventions",
+		Description: "The wireops compose conventions: the customization.image.slug label (UI icon), the dev.wireops.config.<name> annotation (mount a git-tracked file into a container) and the customization.init label (run-to-completion service), with the rules the renderer enforces.",
+		URI:         composeConventionsURI,
+		MIMEType:    "text/markdown",
+	}, readComposeConventions())
+
 	server.AddResourceTemplate(&mcp.ResourceTemplate{
 		Name:        "stack_logs_live",
 		Description: "The most recent sync_logs output for a wireops stack. Supports resources/subscribe for live updates as new sync output is written.",
@@ -165,4 +173,21 @@ func latestSyncLogOutput(ctx context.Context, c *client.Client, apiKey, stackID 
 		return "", nil
 	}
 	return out.Items[0].Output, nil
+}
+
+// readComposeConventions serves the static conventions document. It needs no
+// API key: nothing about it is instance-specific.
+func readComposeConventions() mcp.ResourceHandler {
+	return func(_ context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+		if req.Params.URI != composeConventionsURI {
+			return nil, mcp.ResourceNotFoundError(req.Params.URI)
+		}
+		return &mcp.ReadResourceResult{
+			Contents: []*mcp.ResourceContents{{
+				URI:      composeConventionsURI,
+				MIMEType: "text/markdown",
+				Text:     composeConventions,
+			}},
+		}, nil
+	}
 }

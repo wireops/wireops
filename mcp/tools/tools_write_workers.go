@@ -28,11 +28,15 @@ func revokeWorker(c *client.Client) mcp.ToolHandlerFor[models.RevokeWorkerInput,
 		if err != nil {
 			return nil, nil, err
 		}
-		if err := requireConfirm(ctx, c, apiKey, confirmWorkers, in.WorkerID, in.Confirm); err != nil {
+		workerID, err := resolveWorkerID(ctx, c, apiKey, in.WorkerID)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := requireConfirm(ctx, c, apiKey, confirmWorkers, workerID, in.Confirm); err != nil {
 			return nil, nil, err
 		}
 		var out any
-		path := "/api/custom/workers/" + url.PathEscape(in.WorkerID) + "/revoke"
+		path := "/api/custom/workers/" + url.PathEscape(workerID) + "/revoke"
 		if err := c.Post(ctx, apiKey, path, nil, struct{}{}, &out); err != nil {
 			return nil, nil, err
 		}
