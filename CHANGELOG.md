@@ -46,7 +46,9 @@ changes in a minor release.
 - The stack log stream (`GET /api/custom/stacks/{id}/stream`) additionally
   emits a named `status` event on each sync status transition, and accepts
   `?history=false` to skip replaying stored output. Existing consumers read
-  only the unnamed output frames and are unaffected.
+  only the unnamed output frames and are unaffected. A connected stream also
+  re-reads the newest sync log every few seconds, so a status transition whose
+  broadcast was dropped under load still reaches the client.
 
 ### Security
 

@@ -29,12 +29,20 @@ func RegisterMeRoutes(r *router.Router[*core.RequestEvent], app core.App) {
 		}
 
 		role, actorType, actorID := rbac.ResolveActor(e)
-		if role == "" {
-			// A disabled user authenticates but satisfies nothing — report it
-			// as such rather than as an empty capability list with a role of "".
+
+		// A disabled user authenticates but satisfies nothing. Report that as
+		// what it is, read from the record rather than inferred from the empty
+		// role: ResolveActor also blanks the role of a record whose role field
+		// is unset or unrecognized, and calling that account "disabled" would
+		// send an operator looking for the wrong switch.
+		if e.Auth.GetBool("disabled") {
 			return e.JSON(http.StatusForbidden, map[string]string{"error": "this account is disabled"})
 		}
 
+		// An unknown or unset role satisfies nothing, which CapabilitiesFor
+		// already reports as an empty list — the honest answer for a
+		// misconfigured record, and more useful than an error, since this is
+		// the route a client calls to find out what it may do.
 		capabilities := rbac.CapabilitiesFor(role)
 		capNames := make([]string, 0, len(capabilities))
 		for _, capability := range capabilities {

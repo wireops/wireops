@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	stdsync "sync"
+	"time"
 
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -347,6 +348,15 @@ func (rr routeRegistrar) registerStreamRoutes() {
 		// and observed below, so the handoff bookkeeping is unchanged — a
 		// caller that only wants to watch one reconcile (the MCP server's
 		// deploy wait) does not have to receive every past deploy's log first.
+		//
+		// "From now on" means "not already stored when the snapshot was
+		// read", which is a hair later than the subscribe below: bytes
+		// written in that window are in the snapshot and are therefore
+		// skipped, not resent. Status transitions are unaffected (they are
+		// tracked separately and recovered by the ticker further down), and
+		// a caller that needs the full log reads sync_logs directly, so the
+		// alternative — a second pre-subscribe query purely to narrow that
+		// window — would buy nothing.
 		history := e.Request.URL.Query().Get("history") != "false"
 
 		// Subscribe before loading the historical snapshot so writes that land
@@ -387,6 +397,11 @@ func (rr routeRegistrar) registerStreamRoutes() {
 				writeLines(logRecord.GetString("output"))
 			}
 			state.observeSnapshot(logRecord.Id, logRecord.GetString("output"))
+			// Seed the status without emitting a frame: a row that was
+			// already finished when the client connected must not be
+			// announced as an outcome, but it must also not be announced
+			// later by the recovery ticker below.
+			state.observeStatus(logRecord.Id, logRecord.GetString("status"))
 		}
 
 		// Drain events queued during the gap between Subscribe and the
@@ -410,11 +425,31 @@ func (rr routeRegistrar) registerStreamRoutes() {
 			}
 		}
 
+		// The broker drops an event for a subscriber whose buffer is full
+		// rather than blocking the writer (logstream.Publish, 16 slots) —
+		// and a deploy publishes one event per output line, so the single
+		// event carrying the terminal status is exactly the kind that can be
+		// lost. Output survives that: it is cumulative, so the next event
+		// delivered resends everything missed. A terminal status has no next
+		// event, so it is re-read from the newest row instead. A consumer
+		// waiting for a reconcile therefore gets its answer late at worst,
+		// never not at all.
+		ticker := time.NewTicker(statusRecoveryInterval)
+		defer ticker.Stop()
+
 		ctx := e.Request.Context()
 		for {
 			select {
 			case <-ctx.Done():
 				return nil
+			case <-ticker.C:
+				recordID, status, ok := rr.latestSyncLogStatus(id)
+				if !ok {
+					continue
+				}
+				if changed, isChanged := state.applyStatus(logstream.Event{RecordID: recordID, Status: status}); isChanged {
+					writeStatus(recordID, changed)
+				}
 			case ev, ok := <-sub:
 				if !ok {
 					return nil
@@ -428,6 +463,26 @@ func (rr routeRegistrar) registerStreamRoutes() {
 			}
 		}
 	}).BindFunc(rbac.Require(rbac.CapViewLogs))
+}
+
+// statusRecoveryInterval is how often an open stream re-reads the newest
+// sync_logs row to catch a status transition whose broker event was dropped.
+// It only reads id+status of a single row, so the cost is one indexed SQLite
+// lookup per connected stream. A var, not a const, so a test can shrink it
+// instead of waiting the real interval out (see internal/worker's
+// dispatchNoDeadlineFallback for the same pattern).
+var statusRecoveryInterval = 3 * time.Second
+
+// latestSyncLogStatus returns the id and status of the newest sync_logs row
+// for a stack. It reports ok=false when the stack has none yet, or on a query
+// error — this is a recovery path, so it stays quiet rather than ending the
+// stream over a transient failure.
+func (rr routeRegistrar) latestSyncLogStatus(stackID string) (string, string, bool) {
+	records, err := rr.app.FindRecordsByFilter("sync_logs", "stack = {:stack}", "-created", 1, 0, dbx.Params{"stack": stackID})
+	if err != nil || len(records) == 0 {
+		return "", "", false
+	}
+	return records[0].Id, records[0].GetString("status"), true
 }
 
 // streamHandoffState tracks, per sync_logs RecordID, how many bytes of
@@ -454,13 +509,21 @@ func (s *streamHandoffState) observeSnapshot(recordID, output string) {
 	s.lastLen[recordID] = len(output)
 }
 
+// observeStatus records a status as already known without reporting it, for
+// the rows loaded from the historical snapshot. Replaying a finished deploy's
+// "success" to a client that just connected would read as the outcome of
+// whatever that client is waiting for, and seeding is what keeps the recovery
+// ticker from doing exactly that.
+func (s *streamHandoffState) observeStatus(recordID, status string) {
+	if status != "" {
+		s.lastStatus[recordID] = status
+	}
+}
+
 // applyStatus reports ev's status when it differs from the last one emitted
 // for that record, so a consumer waiting on a reconcile sees each transition
 // once. A record first seen through the broker (the usual case for a reconcile
-// that starts after the stream is open) reports its status immediately;
-// records only seen in the historical snapshot are deliberately not seeded
-// here, since replaying a finished deploy's "success" to a client that just
-// connected would read as the outcome of whatever it is waiting for.
+// that starts after the stream is open) reports its status immediately.
 func (s *streamHandoffState) applyStatus(ev logstream.Event) (string, bool) {
 	if ev.Status == "" || s.lastStatus[ev.RecordID] == ev.Status {
 		return "", false
