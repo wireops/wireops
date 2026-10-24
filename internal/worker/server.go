@@ -482,6 +482,11 @@ func (s *WorkerServer) Dispatch(ctx context.Context, workerID string, cmd interf
 	case protocol.GetContainerLogsCommand:
 		msgType = protocol.MsgGetContainerLogs
 		commandID = v.CommandID
+	case protocol.ExecCommand:
+		// Deliberately absent from isDurableCommand: an exec must never be
+		// replayed when a worker reconnects.
+		msgType = protocol.MsgExec
+		commandID = v.CommandID
 	case protocol.DiscoverProjectsCommand:
 		msgType = protocol.MsgDiscoverProjects
 		commandID = v.CommandID

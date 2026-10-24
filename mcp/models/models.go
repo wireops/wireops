@@ -431,7 +431,8 @@ type ExecInContainerInput struct {
 	StackID        string   `json:"stack_id" jsonschema:"The wireops stack: its record id, or its exact name (resolved for you; an ambiguous name is reported with the candidate ids instead of guessed)."`
 	ContainerID    string   `json:"container_id,omitempty" jsonschema:"The Docker container id, as returned by get_stack_services. Required unless service_name is given."`
 	ServiceName    string   `json:"service_name,omitempty" jsonschema:"The compose service name, resolved to a container id via get_stack_services. Alternative to container_id."`
-	Command        string   `json:"command" jsonschema:"The shell command line to run inside the container. Executed by the shell below, followed by a marker command that reports the exit status, so the command must leave the shell able to read another line."`
-	Shell          []string `json:"shell,omitempty" jsonschema:"Shell to spawn, as an argv array. Must be a POSIX shell. Optional — defaults to ['/bin/sh']."`
-	TimeoutSeconds int      `json:"timeout_seconds,omitempty" jsonschema:"How long to wait for the command to finish before giving up and closing the session. Optional — defaults to 30, capped at 120."`
+	Command        string   `json:"command,omitempty" jsonschema:"The shell command line to run inside the container, e.g. \"cat /etc/nginx/nginx.conf\". Run through the shell below, so pipes and redirection work. Either this or argv is required."`
+	Argv           []string `json:"argv,omitempty" jsonschema:"The command as an argv array, run directly with no shell in between, e.g. [\"cat\",\"/etc/nginx/nginx.conf\"]. Use this when the container has no shell, or to avoid shell quoting entirely. Alternative to command."`
+	Shell          []string `json:"shell,omitempty" jsonschema:"Shell used to run command, as an argv array. Optional — defaults to ['/bin/sh']. Ignored when argv is given."`
+	TimeoutSeconds int      `json:"timeout_seconds,omitempty" jsonschema:"How long to wait for the command to finish. Optional — defaults to 30, capped at 120."`
 }

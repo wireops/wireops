@@ -42,15 +42,19 @@ changes in a minor release.
   candidate ids rather than resolved by guessing, and an id costs no extra
   request.
 - MCP: `deploy_stack`, `force_redeploy_stack` and `rollback_stack` take
-  `wait: true`, which blocks until the reconcile finishes and returns its
-  outcome — final sync status, stack status and deploy log — in one call,
-  instead of leaving the caller to poll. It watches the server's log stream, so
-  it adds no polling of its own, and it recognizes every way a reconcile can
-  end, including the one where there was nothing to deploy. The result says
-  whether an outcome was actually observed, so a stream that ends early (a
-  server restart, an idle proxy) is reported as unknown rather than as a failed
-  deploy, and an outcome that may belong to a reconcile which was already
-  running when the trigger was sent is flagged as such.
+  `wait: true`, which watches the server's log stream until the reconcile
+  reports a terminal status, the wait deadline passes, or the stream ends.
+  On a terminal status it returns the outcome — final sync status, stack
+  status and deploy log — in one call, instead of leaving the caller to poll;
+  it recognizes every way a reconcile can end, including the one where there
+  was nothing to deploy. Otherwise `completed` is false and the caller polls:
+  `timed_out` tells a deadline apart from a stream that ended early (a server
+  restart, an idle proxy), and neither is reported as a failed deploy. A
+  stream that becomes unreadable after the trigger landed says so and says
+  not to retry, since the deploy is already running. An outcome that may
+  belong to a reconcile which was already running when the trigger was sent
+  is flagged as such. It reads `sync_logs` once before the trigger and once
+  after the wait, and never polls in between.
 - MCP: `list_stacks` and `list_repos` take filters (status, name substring,
   and for stacks the repository and worker), pages, and a field projection,
   and return a compact default projection with the repository and worker
@@ -67,6 +71,17 @@ changes in a minor release.
   (`read`, `write`, `exec`, or `all`; default unchanged). An instance used only
   for diagnosis registers the read group and halves what every session pays to
   list the tools.
+- Running a one-shot command in a container is now a real operation rather
+  than an emulated one: `POST /api/custom/stacks/{id}/exec` dispatches a
+  non-interactive `docker exec` to the worker and returns separated `stdout`
+  and `stderr` with the container runtime's own exit code. It needs the same
+  permission as the terminal (`use_terminal`) and is recorded in the audit log
+  with the command it ran.
+- MCP: `exec_in_container` uses that route, so it reports stdout, stderr and
+  the exit code as distinct fields, and accepts the command as an `argv` array
+  for an image with no shell. Against a worker too old to support it the tool
+  falls back to the previous terminal-session method and says so in the
+  response, where stdout and stderr are necessarily interleaved.
 
 ### Changed
 

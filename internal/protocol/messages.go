@@ -4,6 +4,12 @@ package protocol
 
 const CapabilityProjectIdentityMigrationV1 = "project_identity_migration_v1"
 
+// CapabilityExecOneShotV1 marks a worker that handles MsgExec: a single
+// non-interactive `docker exec` returning separated stdout/stderr and the real
+// exit code. A server talking to a worker without it has to fall back to
+// driving a pty session, which can only return one interleaved stream.
+const CapabilityExecOneShotV1 = "exec_one_shot_v1"
+
 // MessageType identifies the type of a WebSocket message.
 type MessageType string
 
@@ -20,6 +26,7 @@ const (
 	MsgRestartContainer  MessageType = "restart_container"
 	MsgGetContainerStats MessageType = "get_container_stats"
 	MsgGetContainerLogs  MessageType = "get_container_logs"
+	MsgExec              MessageType = "exec"
 
 	MsgDiscoverProjects MessageType = "discover_projects"
 	MsgReadFile         MessageType = "read_file"
@@ -345,6 +352,54 @@ type GetContainerLogsCommand struct {
 	ProjectName string `json:"project_name"`
 	ContainerID string `json:"container_id"`
 	Tail        string `json:"tail"`
+}
+
+// ExecCommand asks the worker to run one non-interactive command inside a
+// container of a stack and report what it printed and how it ended.
+//
+// Unlike MsgTerminalOpen this is a normal request/response command: the worker
+// runs it to completion and answers with a single CommandResult, so the caller
+// needs no completion heuristic. It is deliberately not durable — an exec must
+// never be replayed on reconnect.
+type ExecCommand struct {
+	CommandID   string `json:"command_id"`
+	StackID     string `json:"stack_id"`
+	ProjectName string `json:"project_name"`
+	ContainerID string `json:"container_id"`
+	// Cmd is the argv to execute. It is passed to the container's exec API
+	// as-is, with no shell in between, so the caller decides whether a shell
+	// is involved (e.g. ["/bin/sh", "-c", "..."]) instead of the protocol
+	// assuming one.
+	Cmd []string `json:"cmd"`
+	// WorkingDir, User and Env are optional exec overrides.
+	WorkingDir string   `json:"working_dir,omitempty"`
+	User       string   `json:"user,omitempty"`
+	Env        []string `json:"env,omitempty"`
+	// TimeoutSeconds bounds how long the worker waits for the exec's output
+	// before it gives up, closes the stream and reports TimedOut. Docker has
+	// no exec-kill API, so the process itself may keep running inside the
+	// container; this bounds the worker's wait, not the command's life. The
+	// server bounds its own wait separately, with a grace period on top of
+	// this one so the timed-out result still reaches the caller.
+	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
+}
+
+// ExecResult is the JSON payload inside CommandResult.Output after an
+// ExecCommand, following the same convention as ProbeResult/InspectResult.
+type ExecResult struct {
+	// Stdout and Stderr are separate because the exec runs without a TTY —
+	// the whole reason this command exists. ExitCode is the real status from
+	// the container runtime, not inferred from the output.
+	Stdout   string `json:"stdout"`
+	Stderr   string `json:"stderr"`
+	ExitCode int    `json:"exit_code"`
+	// TimedOut reports that the command was still running when the worker's
+	// deadline passed; ExitCode is then meaningless and the streams hold
+	// whatever had been written. StdoutTruncated/StderrTruncated report that
+	// a stream hit the worker's byte cap.
+	TimedOut        bool `json:"timed_out"`
+	StdoutTruncated bool `json:"stdout_truncated,omitempty"`
+	StderrTruncated bool `json:"stderr_truncated,omitempty"`
 }
 
 // terminalOpenCommandIDPrefix marks a CommandID as belonging to a

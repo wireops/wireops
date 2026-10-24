@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -383,5 +384,63 @@ func TestHandleDeployDedupesRedeliveredDuplicate(t *testing.T) {
 	results := sender.Results()
 	if len(results) != 1 || results[0].Output != "already-deployed" {
 		t.Fatalf("expected cached deploy result to be replayed instead of re-executing, got %+v", results)
+	}
+}
+
+func TestHandleExecRejectsAMalformedPayload(t *testing.T) {
+	sender := &MockSender{}
+	// A payload that cannot decode into an ExecCommand still has to answer on
+	// the command id, because the server is blocked waiting for it.
+	HandleExec(sender, map[string]any{
+		"command_id": "exec-bad",
+		"cmd":        "ls -la",
+	})
+
+	results := sender.Results()
+	if len(results) != 1 {
+		t.Fatalf("expected exactly one result, got %d", len(results))
+	}
+	if results[0].CommandID != "exec-bad" {
+		t.Errorf("command_id = %q, want exec-bad", results[0].CommandID)
+	}
+	if !strings.Contains(results[0].Error, "invalid payload") {
+		t.Errorf("expected an invalid-payload error, got %q", results[0].Error)
+	}
+}
+
+func TestHandleExecRejectsAnEmptyArgv(t *testing.T) {
+	sender := &MockSender{}
+	// No Docker involved: the argv check happens before anything is created,
+	// which is also what keeps this test runnable without a daemon.
+	HandleExec(sender, map[string]any{
+		"command_id":   "exec-empty",
+		"stack_id":     "stack-1",
+		"container_id": "c-web",
+	})
+
+	results := sender.Results()
+	if len(results) != 1 {
+		t.Fatalf("expected exactly one result, got %d", len(results))
+	}
+	if results[0].CommandID != "exec-empty" {
+		t.Errorf("command_id = %q, want exec-empty", results[0].CommandID)
+	}
+	if !strings.Contains(results[0].Error, "non-empty cmd") {
+		t.Errorf("expected the argv requirement in the error, got %q", results[0].Error)
+	}
+}
+
+func TestHandleExecClearsItsActiveCommandEntry(t *testing.T) {
+	sender := &MockSender{}
+	HandleExec(sender, map[string]any{
+		"command_id":   "exec-cleanup",
+		"stack_id":     "stack-1",
+		"container_id": "c-web",
+	})
+	// A leaked entry would keep a cancel func (and the command id) alive for
+	// the life of the worker, and MsgCancelCommand would cancel a context
+	// nothing is using.
+	if _, present := ActiveCommands.Load("exec-cleanup"); present {
+		t.Error("expected the ActiveCommands entry to be deleted after the handler returned")
 	}
 }
