@@ -340,6 +340,7 @@ func (s *Service) UpdateWorkerInfo(workerID string, info protocol.WorkerInfo) er
 	record.Set("os", info.OS)
 	record.Set("arch", info.Arch)
 	record.Set("capabilities", info.Capabilities)
+	record.Set("heavy_concurrency", info.HeavyConcurrency)
 	return s.app.Save(record)
 }
 
@@ -353,5 +354,7 @@ func (s *Service) UpdateWorkerTelemetry(workerID string, t protocol.TelemetryInf
 	record.Set("memory_usage", t.MemoryUsagePercent)
 	record.Set("disk_usage", t.DiskUsagePercent)
 	record.Set("docker_online", t.DockerOnline)
+	record.Set("active_heavy", t.ActiveHeavy)
+	record.Set("queued_heavy", t.QueuedHeavy)
 	return s.app.Save(record)
 }

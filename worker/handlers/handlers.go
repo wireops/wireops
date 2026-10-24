@@ -156,6 +156,25 @@ func InitSemaphores(heavy, light, interactive, queueDepth int) {
 	acceptingWork.Store(true)
 }
 
+// HeavyConcurrencyLimit reports how many heavy commands (deploy/redeploy/
+// teardown and one-shot jobs) may run at once — the configured
+// WORKER_HEAVY_CONCURRENCY. Reported to the server in WorkerInfo so the UI
+// can show a worker's deploy capacity.
+func HeavyConcurrencyLimit() int {
+	return cap(HeavySemaphore)
+}
+
+// ActiveHeavyCount reports how many heavy slots are busy right now.
+func ActiveHeavyCount() int {
+	return len(HeavySemaphore)
+}
+
+// QueuedHeavyCount reports how many commands are waiting for a heavy slot.
+// Same counter the Prometheus wireops_worker_queued_tasks gauge serves.
+func QueuedHeavyCount() int {
+	return int(atomic.LoadInt64(&metrics.QueuedTasks))
+}
+
 func SetAcceptingWork(accept bool) {
 	acceptingWork.Store(accept)
 }

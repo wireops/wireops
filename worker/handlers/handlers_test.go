@@ -444,3 +444,30 @@ func TestHandleExecClearsItsActiveCommandEntry(t *testing.T) {
 		t.Error("expected the ActiveCommands entry to be deleted after the handler returned")
 	}
 }
+
+// TestHeavyConcurrencyAccessors covers the numbers the worker reports to the
+// server on every heartbeat, so the UI's deploy-slot gauge keeps matching the
+// semaphore it is supposed to describe.
+func TestHeavyConcurrencyAccessors(t *testing.T) {
+	InitSemaphores(2, 1, 1, 5)
+	atomic.StoreInt64(&metrics.QueuedTasks, 0)
+	t.Cleanup(func() { atomic.StoreInt64(&metrics.QueuedTasks, 0) })
+
+	if got := HeavyConcurrencyLimit(); got != 2 {
+		t.Fatalf("HeavyConcurrencyLimit() = %d, want 2", got)
+	}
+	if got := ActiveHeavyCount(); got != 0 {
+		t.Fatalf("ActiveHeavyCount() = %d, want 0 on an idle worker", got)
+	}
+
+	HeavySemaphore <- struct{}{}
+	if got := ActiveHeavyCount(); got != 1 {
+		t.Fatalf("ActiveHeavyCount() = %d, want 1 while a slot is taken", got)
+	}
+	<-HeavySemaphore
+
+	atomic.StoreInt64(&metrics.QueuedTasks, 3)
+	if got := QueuedHeavyCount(); got != 3 {
+		t.Fatalf("QueuedHeavyCount() = %d, want 3", got)
+	}
+}

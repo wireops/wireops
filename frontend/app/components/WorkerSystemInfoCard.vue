@@ -15,6 +15,9 @@ const props = defineProps<{
     cpu_usage?: number
     memory_usage?: number
     disk_usage?: number
+    heavy_concurrency?: number
+    active_heavy?: number
+    queued_heavy?: number
   }
 }>()
 
@@ -31,6 +34,17 @@ const allTelemetryZero = computed(() =>
   && !(props.worker.cpu_usage)
   && !(props.worker.memory_usage)
   && !(props.worker.disk_usage)
+)
+
+// Deploy slots are only shown for a worker that reported its capacity:
+// an agent older than the heavy_concurrency field would otherwise read as
+// "0 / 0 slots" rather than "not reported".
+const hasConcurrency = computed(() => (props.worker.heavy_concurrency ?? 0) > 0)
+const concurrencyLimit = computed(() => props.worker.heavy_concurrency ?? 0)
+const concurrencyActive = computed(() => props.worker.active_heavy ?? 0)
+const concurrencyQueued = computed(() => props.worker.queued_heavy ?? 0)
+const concurrencyPercent = computed(() =>
+  concurrencyLimit.value > 0 ? roundUsage((concurrencyActive.value / concurrencyLimit.value) * 100) : 0
 )
 
 const usageRows = computed(() => [
@@ -89,6 +103,21 @@ const usageRows = computed(() => [
           Telemetry may report 0% on non-Linux hosts.
         </p>
       </div>
+    </div>
+
+    <div v-if="hasConcurrency" class="pt-4 mt-4 border-t border-gray-300 dark:border-carbon-700">
+      <span class="text-xs text-gray-500 dark:text-wire-200/50 uppercase tracking-wide font-semibold block mb-3">Deploy Concurrency</span>
+
+      <div class="flex items-center gap-3">
+        <span class="w-16 shrink-0 text-xs text-gray-500 dark:text-wire-200/50">Slots</span>
+        <!-- Neutral on purpose: a worker with every deploy slot busy is
+             working, not unhealthy, unlike a disk at 100%. -->
+        <UProgress :model-value="concurrencyPercent" size="sm" color="primary" class="flex-1" />
+        <span class="w-10 shrink-0 text-right text-xs font-medium text-gray-900 dark:text-wire-200">{{ concurrencyActive }}/{{ concurrencyLimit }}</span>
+      </div>
+      <p v-if="concurrencyQueued > 0" class="mt-2 text-xs text-gray-500 dark:text-wire-200/50">
+        {{ concurrencyQueued }} command{{ concurrencyQueued === 1 ? '' : 's' }} waiting for a slot.
+      </p>
     </div>
   </UCard>
 </template>

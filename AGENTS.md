@@ -160,7 +160,7 @@ All collections are defined via Go migrations in `pb_migrations/`.
 | `stack_revisions` | `stack`, `version` — numbered snapshots of rendered compose YAML |
 | `stack_pending_reconciles` | `stack`, `trigger`, `commit_sha` — queue for offline worker reconnect |
 | `sync_logs` | `stack`, `trigger`, `status`, `output`, `duration_ms` |
-| `workers` | `hostname`, `fingerprint`, `status` (ACTIVE/REVOKED), `health_history` |
+| `workers` | `hostname`, `fingerprint`, `status` (ACTIVE/REVOKED), `health_history`, `heavy_concurrency`/`active_heavy`/`queued_heavy` (deploy slot capacity and live occupancy, from heartbeats) |
 | `scheduled_jobs` | `repository`, `job_file`, `enabled`, `status` |
 | `job_runs` | `job`, `worker`, `status`, `output`, `expires_at` (30-day TTL) |
 | `integrations` | `slug`, `enabled`, `config` (JSON) — also stores Vault/Infisical backend config (address/token, site_url/client_id/client_secret, etc.) |
@@ -190,6 +190,8 @@ repositories ─── 1:N ──→ scheduled_jobs ─── 1:N ──→ job_
 7. `sync/postcheck.go` queries live container state and derives the stack's post-deploy status (`active`/`degraded`/`error`) via `evaluatePostCheck`. A service labeled `customization.init: "true"` is treated as run-to-completion: exiting 0 (or being gone entirely) counts as healthy, so a one-shot migration/seed container doesn't degrade the stack the way a crashed long-running service would — only a non-zero exit or a restart loop does.
 8. Persists a `sync_logs` entry, updates stack status, fires webhook/ntfy notification.
 
+**Concurrency.** Stacks reconcile in parallel, not in a queue: one goroutine and ticker per stack (`sync/scheduler.go`), bounded by `MAX_CONCURRENT_SYNCS` on the server and `WORKER_HEAVY_CONCURRENCY` on each worker, with repo fetches drawing on their own `MAX_CONCURRENT_FETCHES` pool. Dispatch is correlated per `command_id`, so one worker runs many deploys at once. The only per-stack serialization is `Reconciler.stackMutex` — and it is load-bearing: the worker deduplicates by `CommandID` only (`beginDurableCommand`), so nothing there would stop two concurrent `docker compose up` runs on the same project. Two narrower locks remain alongside it: `repoMutex` (held just for the checkout reads, released before dispatch) and `projectMutex` (worker + Compose project, so an identity migration cannot race another deploy tearing the same previous project down). There is deliberately no lock on the checkout *directory*: stacks sharing a repo and compose path deploy concurrently.
+
 ### Single-file stacks (`x-wireops`) — the primary way to define a stack
 A stack is normally driven by a compose file alone, not a compose file plus a separate `wireops.yaml`. A top-level `x-wireops:` block in the compose file carries the exact same fields as standalone `wireops.yaml` (`version`, `name`, `group`, `timeout`, `compose.remove_orphans`/`force_pull`, `jobs.wait_running`, `worker.tags`, `sync.interval`) — `internal/manifest.ParseComposeManifest` parses it with the same `manifest.Definition`/`Validate()` used for the standalone file. `x-*` is a [compose extension field](https://docs.docker.com/reference/compose-file/extension/) that `docker compose` itself ignores, so the file stays a valid, directly-runnable compose file. The separate-`wireops.yaml` two-file layout (`/stacks/from-wireops`) still works unchanged and stays fully supported, but is **deprecated** — prefer `x-wireops` for anything new.
 - Create via `POST /stacks/from-compose` (`repository`, `worker`, `compose_path`, `compose_file`); the resulting stack gets `config_source: compose_embedded` and the same field-immutability treatment as `config_source: wireops_file` (`internal/hooks/pb_hooks.go`, `internal/sync/reconciler.go`).
@@ -206,7 +208,8 @@ A stack is normally driven by a compose file alone, not a compose file plus a se
 5. Server dispatches typed commands (`DeployCommand`, `TeardownCommand`, `RunJobCommand`, etc.) as JSON `Envelope` messages.
 6. Worker sends heartbeats every 30s; job completions are pushed as unsolicited `MsgJobCompleted` messages.
 7. If a worker is offline when a change is detected, a `stack_pending_reconciles` record is created and replayed on reconnect.
-8. Workers advertise what they can do in `WorkerInfo.Capabilities` (`worker/telemetry`), persisted on the `workers` record. The server checks one before dispatching a command an older worker would never answer — `project_identity_migration_v1` and `exec_one_shot_v1` today. Add a capability string for any new command rather than assuming the fleet is up to date; `MsgExec` returns a `409` naming the missing one so the caller can fall back.
+8. Heartbeats also carry the worker's deploy capacity: `WorkerInfo.HeavyConcurrency` (static, from `WORKER_HEAVY_CONCURRENCY`) plus `TelemetryInfo.ActiveHeavy`/`QueuedHeavy` (live occupancy), persisted on the `workers` record and shown on the worker detail page. Dynamic counters belong on `TelemetryInfo`: `CachedWorkerInfo` is one shared pointer sent on every heartbeat and must stay immutable.
+9. Workers advertise what they can do in `WorkerInfo.Capabilities` (`worker/telemetry`), persisted on the `workers` record. The server checks one before dispatching a command an older worker would never answer — `project_identity_migration_v1` and `exec_one_shot_v1` today. Add a capability string for any new command rather than assuming the fleet is up to date; `MsgExec` returns a `409` naming the missing one so the caller can fall back.
 
 ### Scheduled Jobs
 1. A `scheduled_jobs` record points to a `job.yaml` file inside a repository.
@@ -359,6 +362,9 @@ list comes from `rbac.CapabilitiesFor`, derived from the same
 | `PB_DATA_DIR` | Optional override for PocketBase SQLite data directory (default: `DATA_DIR/pb_data`) |
 | `REPOS_WORKSPACE` | Optional override for Git clone workspace (default: `DATA_DIR/repos`) |
 | `COMPOSE_MAX_KB` | Max size of a resolved `docker compose config` the server will buffer and parse (default: `512` KB). Bounds memory driven by repository content; raise only for a genuinely huge stack |
+| `SCAN_PERIOD` | Fallback poll interval in seconds for stacks and repositories without their own `sync_interval_seconds` (default: `10`) |
+| `MAX_CONCURRENT_SYNCS` | Reconciles running at once across the whole server — cron ticks, manual syncs, rollbacks, force-redeploys, transfers (default: `10`). Per stack, `stackMutex` still allows only one |
+| `MAX_CONCURRENT_FETCHES` | Repository git fetches running at once (default: `5`). A separate pool from `MAX_CONCURRENT_SYNCS`, so a slow remote cannot starve deploys |
 
 ### Worker
 | Variable | Description |
@@ -366,6 +372,10 @@ list comes from `rbac.CapabilitiesFor`, derived from the same
 | `SERVER_URL` | **Required.** HTTPS URL of the wireops server |
 | `WORKER_TOKEN` | **Required.** Worker authorization token |
 | `WORKER_TAGS` | **Required.** Comma-separated tags (used for job routing). No spaces or special characters — letters, numbers, `-` and `_` only |
+| `WORKER_HEAVY_CONCURRENCY` | Heavy commands run at once: deploy/redeploy/teardown **and** `run_job`, which share one pool (default: `3`). Deprecated alias: `WORKER_MAX_CONCURRENT_TASKS`. Reported to the server on every heartbeat and shown on the worker page |
+| `WORKER_LIGHT_CONCURRENCY` | Probe/inspect/status/resources commands run at once (default: `5`) |
+| `WORKER_INTERACTIVE_CONCURRENCY` | Human-waiting commands (container actions, logs, exec, terminal) run at once (default: `3`) |
+| `WORKER_MAX_QUEUE_DEPTH` | Commands allowed to wait for a slot before new ones are answered `rejected: worker overloaded` (default: `50`) |
 
 ### MCP Server
 | Variable | Description |

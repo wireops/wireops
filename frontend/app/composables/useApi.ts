@@ -295,6 +295,9 @@ export function useApi() {
     memory_usage?: number
     disk_usage?: number
     docker_online?: boolean
+    heavy_concurrency?: number
+    active_heavy?: number
+    queued_heavy?: number
   }
   const getWorkers = () => customGet<WorkerInfo[]>('/api/custom/workers')
   const createWorkerToken = () => customPost<{ token: string; token_id: string; status: string; expires_at: string }>('/api/custom/worker/tokens')

@@ -47,7 +47,7 @@ type Reconciler struct {
 	app             core.App
 	mu              sync.Map
 	repoMu          sync.Map
-	workDirMu       sync.Map
+	projectMu       sync.Map
 	notifier        *notify.Notifier
 	renderer        *Renderer
 	dispatcher      WorkerDispatcher
@@ -271,12 +271,21 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	}
 
 	// From here on we read commit objects and compose/env files out of the
-	// repo's shared working tree (workspace/<repoID>). Hold the read lock for
-	// the rest of the reconcile so a concurrent fetch/reset (repo ticker or
-	// another trigger) can't rewrite those files out from under us mid-read.
+	// repo's shared working tree (workspace/<repoID>), so a concurrent
+	// fetch/reset (repo ticker or another trigger) must not rewrite those
+	// files out from under us mid-read.
+	//
+	// The lock is released as soon as the last of those reads is done
+	// (GenerateRevision below), not at function exit: an RWMutex gives
+	// writers priority, so a single queued fetch waiting behind a deploy
+	// would block every other stack's RLock for the whole deploy. Everything
+	// after the render works from memory and DATA_DIR, never the checkout.
+	// sync.OnceFunc keeps the early release and the deferred one from
+	// double-unlocking, the same idiom used for TryLockStack.
 	repoRLock := r.repoMutex(repoID)
 	repoRLock.RLock()
-	defer repoRLock.RUnlock()
+	releaseRepoRead := sync.OnceFunc(repoRLock.RUnlock)
+	defer releaseRepoRead()
 
 	// The fetch above ran (and released its lock) before we got here, so a
 	// concurrent fetch/reset could have moved the working tree past the SHA
@@ -325,11 +334,6 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		r.markSyncError(stack, errMsg)
 		return fmt.Errorf("%s", errMsg)
 	}
-	// Other stacks pointed at this same compose_path (same repo) would
-	// otherwise race on the .env/.gitignore writes below; serialize them.
-	workDirLock := r.workDirMutex(workDir)
-	workDirLock.Lock()
-	defer workDirLock.Unlock()
 
 	composeFile, err := r.resolveComposeFile(stack, workDir, stackID, trigger, remoteSHA)
 	if err != nil {
@@ -396,6 +400,11 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		r.markSyncError(stack, errMsg)
 		return fmt.Errorf("%s", errMsg)
 	}
+	// Last read of the repo checkout is done. The rendered revision lives in
+	// DATA_DIR and the env/SOPS values are already in memory, so the dispatch
+	// loop, the post-check and the record writes below need no repo lock.
+	releaseRepoRead()
+
 	renderDuration := time.Since(renderStart).Milliseconds()
 	r.upsertStackConfigTracking(stackID, renderRes.ConfigFiles)
 
@@ -455,6 +464,12 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	var lastComposeContent []byte
 
 	_ = pt.start(constants.PhaseDispatch)
+
+	// Held across the retry loop so a project-identity migration never races
+	// another stack tearing the same previous project down. Released as soon
+	// as the deploy is over — the post-check only reads container state.
+	releaseProject := sync.OnceFunc(r.lockDeployProject(workerID, renderRes))
+	defer releaseProject()
 
 	var lastAttemptStart time.Time
 	var composeUpMs int64
@@ -524,6 +539,8 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 			}
 		}
 	}
+
+	releaseProject()
 
 	if runErr != nil {
 		_ = pt.finish(constants.PhaseDispatch, constants.PhaseStatusError, runErr.Error())
@@ -766,6 +783,11 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 	if b64Err != nil {
 		runErr = fmt.Errorf("failed to serialize env vars for remote rollback: %w", b64Err)
 	} else {
+		// Same project guard as ReconcileStack: a rollback can carry a
+		// project-identity migration too. Released when the function
+		// returns, like the cancelDispatch below it.
+		defer r.lockDeployProject(workerID, renderRes)()
+
 		forcePull, removeOrphans := resolveComposeRuntimeFlags(stack)
 		registryAuthB64, insecureRegistries := r.resolveRegistryAuth(stack)
 		dispatchCtx, cancelDispatch := withDeployTimeout(ctx, stack)
@@ -1044,6 +1066,10 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 	if b64Err != nil {
 		runErr = fmt.Errorf("failed to serialize env vars for remote redeploy: %w", b64Err)
 	} else {
+		// Same project guard as ReconcileStack. Released when the function
+		// returns, like the cancelDispatch below it.
+		defer r.lockDeployProject(workerID, renderRes)()
+
 		forcePull, removeOrphans := resolveComposeRuntimeFlags(stack)
 		registryAuthB64, insecureRegistries := r.resolveRegistryAuth(stack)
 		dispatchCtx, cancelDispatch := withDeployTimeout(ctx, stack)
@@ -1206,14 +1232,38 @@ func (r *Reconciler) RemoveRepoWorkspace(repoID string) error {
 	return nil
 }
 
-// workDirMutex returns a mutex scoped to a single stack's compose working
-// directory (workspace/<repoID>[/<compose_path>]). Stacks in the same repo
-// that share a compose_path share this directory too; this mutex serializes
-// their .env/.gitignore writes and the render that reads them so concurrent
-// reconciles can't corrupt each other's files.
-func (r *Reconciler) workDirMutex(workDir string) *sync.Mutex {
-	mu, _ := r.workDirMu.LoadOrStore(workDir, &sync.Mutex{})
+// projectMutex guards one Compose project on one worker. Project names are
+// unique per worker (the renderer forces the top-level `name`, and migration
+// 75 backs it with a unique index), so this normally never contends — it
+// exists for the one case where two stacks really do act on the same project:
+// a project-identity migration, where the deploy also tears the *previous*
+// project down (see deployCommandForRender). Two legacy stacks that shared a
+// checkout directory derived the same basename project name, and the old
+// workDir mutex is what kept their first post-upgrade deploys from tearing
+// each other down. Keyed on worker + project, it keeps that guarantee without
+// serializing unrelated stacks that merely share a directory.
+func (r *Reconciler) projectMutex(workerID, projectName string) *sync.Mutex {
+	mu, _ := r.projectMu.LoadOrStore(workerID+"|"+projectName, &sync.Mutex{})
 	return mu.(*sync.Mutex)
+}
+
+// lockDeployProject locks the Compose project a deploy of render is about to
+// touch and returns its release func. During an identity migration that is
+// the previous project (the one being torn down); otherwise it is the target.
+func (r *Reconciler) lockDeployProject(workerID string, render *RenderResult) func() {
+	name := ""
+	if render != nil {
+		name = render.ProjectName
+		if render.PreviousProjectName != "" && render.PreviousProjectName != render.ProjectName {
+			name = render.PreviousProjectName
+		}
+	}
+	if name == "" {
+		return func() {}
+	}
+	mu := r.projectMutex(workerID, name)
+	mu.Lock()
+	return mu.Unlock
 }
 
 // FetchRepo clones or fetches the given repository's working tree and persists

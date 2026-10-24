@@ -177,34 +177,6 @@ func Run() {
 	stackDir := getStackDir()
 	log.Printf("[worker] using stack directory: %s (for security, ensure this path is backed by a tmpfs/in-memory filesystem)", stackDir)
 	cleanupLeftoverWorkdirs(stackDir)
-	telemetry.InitWorkerInfo()
-
-	serverURL := os.Getenv("SERVER_URL")
-	workerToken := os.Getenv("WORKER_TOKEN")
-	hostname := os.Getenv("HOSTNAME")
-	workerTags := os.Getenv("WORKER_TAGS")
-
-	if serverURL == "" {
-		log.Fatal("SERVER_URL must be set")
-	}
-	if workerToken == "" {
-		log.Fatal("WORKER_TOKEN must be set")
-	}
-	tags, err := parseTags(workerTags)
-	if err != nil {
-		log.Fatalf("[worker] %v", err)
-	}
-	if len(tags) == 0 {
-		log.Fatal("WORKER_TAGS must be set")
-	}
-	if hostname == "" {
-		h, err := os.Hostname()
-		if err == nil {
-			hostname = h
-		} else {
-			hostname = "unknown-worker"
-		}
-	}
 
 	heavyLimit := 3
 	if limitStr := os.Getenv("WORKER_HEAVY_CONCURRENCY"); limitStr != "" {
@@ -239,6 +211,37 @@ func Run() {
 	}
 
 	handlers.InitSemaphores(heavyLimit, lightLimit, interactiveLimit, maxQueueDepth)
+
+	// After InitSemaphores: the cached WorkerInfo reports the deploy slot
+	// count, so the server (and the UI) know this worker's capacity.
+	telemetry.InitWorkerInfo(heavyLimit)
+
+	serverURL := os.Getenv("SERVER_URL")
+	workerToken := os.Getenv("WORKER_TOKEN")
+	hostname := os.Getenv("HOSTNAME")
+	workerTags := os.Getenv("WORKER_TAGS")
+
+	if serverURL == "" {
+		log.Fatal("SERVER_URL must be set")
+	}
+	if workerToken == "" {
+		log.Fatal("WORKER_TOKEN must be set")
+	}
+	tags, err := parseTags(workerTags)
+	if err != nil {
+		log.Fatalf("[worker] %v", err)
+	}
+	if len(tags) == 0 {
+		log.Fatal("WORKER_TAGS must be set")
+	}
+	if hostname == "" {
+		h, err := os.Hostname()
+		if err == nil {
+			hostname = h
+		} else {
+			hostname = "unknown-worker"
+		}
+	}
 
 	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
 	sigChan := make(chan os.Signal, 1)
