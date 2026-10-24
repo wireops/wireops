@@ -121,6 +121,7 @@ describe('WorkerSystemInfoCard', () => {
 
   it('shows deploy slot occupancy when the worker reports its concurrency', () => {
     const worker = {
+      status: 'ACTIVE',
       os: 'linux',
       docker_version: '27.0.0',
       cpu_usage: 10,
@@ -150,9 +151,26 @@ describe('WorkerSystemInfoCard', () => {
   })
 
   it('singularizes the waiting-command line', () => {
-    const worker = { os: 'linux', docker_version: '27.0.0', heavy_concurrency: 2, active_heavy: 2, queued_heavy: 1 }
+    const worker = { status: 'ACTIVE', os: 'linux', docker_version: '27.0.0', heavy_concurrency: 2, active_heavy: 2, queued_heavy: 1 }
     const wrapper = mount(WorkerSystemInfoCard, { props: { worker }, global: { stubs } })
 
     expect(wrapper.text()).toContain('1 command waiting for a slot.')
+  })
+
+  it('does not present a disconnected worker\'s retained counts as live occupancy', () => {
+    const worker = {
+      status: 'OFFLINE',
+      os: 'linux',
+      docker_version: '27.0.0',
+      heavy_concurrency: 4,
+      active_heavy: 3,
+      queued_heavy: 2,
+    }
+    const wrapper = mount(WorkerSystemInfoCard, { props: { worker }, global: { stubs } })
+
+    expect(wrapper.text()).toContain('Deploy Concurrency')
+    expect(wrapper.text()).toContain('4 deploy slots configured')
+    expect(wrapper.text()).not.toContain('3/4')
+    expect(wrapper.text()).not.toContain('waiting for a slot')
   })
 })

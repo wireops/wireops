@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
 	"github.com/wireops/wireops/internal/notify"
@@ -161,8 +162,28 @@ func newConcurrencyTestApp(t *testing.T) (*tests.TestApp, *Reconciler, []string,
 	stacks.Fields.Add(&core.TextField{Name: "deployed_checksum"})
 	stacks.Fields.Add(&core.DateField{Name: "deployed_at"})
 	stacks.Fields.Add(&core.TextField{Name: "last_synced_at"})
+	stacks.Fields.Add(&core.TextField{Name: "wait_running_jobs"})
+	stacks.Fields.Add(&core.NumberField{Name: "wait_running_jobs_timeout_seconds"})
 	if err := app.Save(stacks); err != nil {
 		t.Fatalf("failed to create stacks collection: %v", err)
+	}
+
+	jobs := core.NewBaseCollection("scheduled_jobs")
+	jobs.Fields.Add(&core.RelationField{Name: "repository", CollectionId: repos.Id, Required: true, MaxSelect: 1})
+	jobs.Fields.Add(&core.TextField{Name: "job_file", Required: true})
+	jobs.Fields.Add(&core.BoolField{Name: "enabled"})
+	if err := app.Save(jobs); err != nil {
+		t.Fatalf("failed to create scheduled_jobs collection: %v", err)
+	}
+
+	runs := core.NewBaseCollection("job_runs")
+	runs.Fields.Add(&core.RelationField{Name: "job", CollectionId: jobs.Id, Required: true, MaxSelect: 1})
+	runs.Fields.Add(&core.SelectField{Name: "trigger", Values: []string{"cron", "manual"}})
+	runs.Fields.Add(&core.SelectField{Name: "status", Values: []string{"pending", "running", "success", "error", "stalled", "forgotten"}})
+	runs.Fields.Add(&core.AutodateField{Name: "created", OnCreate: true})
+	runs.Fields.Add(&core.AutodateField{Name: "updated", OnCreate: true, OnUpdate: true})
+	if err := app.Save(runs); err != nil {
+		t.Fatalf("failed to create job_runs collection: %v", err)
 	}
 
 	revisions := core.NewBaseCollection("stack_revisions")
@@ -178,7 +199,7 @@ func newConcurrencyTestApp(t *testing.T) (*tests.TestApp, *Reconciler, []string,
 	syncLogs := core.NewBaseCollection("sync_logs")
 	syncLogs.Fields.Add(&core.RelationField{Name: "stack", CollectionId: stacks.Id, Required: true, MaxSelect: 1})
 	syncLogs.Fields.Add(&core.SelectField{Name: "trigger", Values: []string{"cron", "webhook", "manual", "redeploy", "rollback", "transfer", "queue"}})
-	syncLogs.Fields.Add(&core.SelectField{Name: "status", Values: []string{"running", "success", "error", "queued", "noop", "degraded"}})
+	syncLogs.Fields.Add(&core.SelectField{Name: "status", Values: []string{"running", "success", "error", "queued", "noop", "degraded", "waiting_jobs"}})
 	syncLogs.Fields.Add(&core.TextField{Name: "commit_sha"})
 	syncLogs.Fields.Add(&core.TextField{Name: "commit_message"})
 	syncLogs.Fields.Add(&core.TextField{Name: "output"})
@@ -373,20 +394,34 @@ func TestLockDeployProjectKeysOnWorkerAndProject(t *testing.T) {
 		t.Fatal("projectMutex shared one instance across different workers")
 	}
 
+	// A migration acts on both projects — it tears the previous one down and
+	// brings the target up — so both have to be held.
 	release := r.lockDeployProject("w1", &RenderResult{ProjectName: "new", PreviousProjectName: "old"})
 	if r.projectMutex("w1", "old").TryLock() {
 		t.Fatal("a migrating deploy must hold the previous project's lock")
 	}
-	if !r.projectMutex("w1", "new").TryLock() {
-		t.Fatal("the target project should be free while the previous one is held")
+	if r.projectMutex("w1", "new").TryLock() {
+		t.Fatal("a migrating deploy must hold the target project's lock too")
 	}
-	r.projectMutex("w1", "new").Unlock()
 	release()
 
-	if !r.projectMutex("w1", "old").TryLock() {
-		t.Fatal("release did not unlock the previous project")
+	for _, name := range []string{"old", "new"} {
+		if !r.projectMutex("w1", name).TryLock() {
+			t.Fatalf("release did not unlock project %q", name)
+		}
+		r.projectMutex("w1", name).Unlock()
 	}
-	r.projectMutex("w1", "old").Unlock()
+
+	// No migration: only the target is touched, so only it is locked.
+	release = r.lockDeployProject("w1", &RenderResult{ProjectName: "solo"})
+	if r.projectMutex("w1", "solo").TryLock() {
+		t.Fatal("a plain deploy must hold its own project's lock")
+	}
+	release()
+	if !r.projectMutex("w1", "solo").TryLock() {
+		t.Fatal("release did not unlock the target project")
+	}
+	r.projectMutex("w1", "solo").Unlock()
 
 	// No render result: nothing to lock, and the release must still be safe.
 	r.lockDeployProject("w1", nil)()
@@ -398,5 +433,66 @@ func TestLockDeployProjectKeysOnWorkerAndProject(t *testing.T) {
 func TestConcurrencyFixtureUsesRealPhaseList(t *testing.T) {
 	if !strings.Contains(strings.Join(deployPhases, ","), "render") {
 		t.Fatalf("deployPhases = %v, want it to include the render phase", deployPhases)
+	}
+}
+
+// TestReconcileWaitsForJobsWithoutHoldingRepoLock covers the wait_running_jobs
+// policy, which can block a deploy indefinitely ("always"). That wait must sit
+// outside the repository read lock — otherwise one stack waiting on a job
+// holds every fetch, and with it (RWMutex writer priority) every other
+// stack's reconcile, for as long as the jobs run.
+func TestReconcileWaitsForJobsWithoutHoldingRepoLock(t *testing.T) {
+	requireCompose(t)
+	app, r, stackIDs, repoID := newConcurrencyTestApp(t)
+	withFastWaitJobsPoll(t)
+
+	stack, err := app.FindRecordById("stacks", stackIDs[0])
+	if err != nil {
+		t.Fatalf("failed to load stack: %v", err)
+	}
+	stack.Set("wait_running_jobs", "always")
+	if err := app.Save(stack); err != nil {
+		t.Fatalf("failed to set wait policy: %v", err)
+	}
+	run := createRunningJob(t, app, repoID)
+
+	dispatcher := newBlockingDispatcher(1)
+	close(dispatcher.release) // the deploy itself is not what we are testing
+	r.dispatcher = dispatcher
+	postCheckInterval = time.Millisecond
+	t.Cleanup(func() { postCheckInterval = 3 * time.Second })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- r.ReconcileStack(ctx, stackIDs[0], "cron", 0) }()
+
+	// Wait until the reconcile is parked on the running job.
+	waitingDeadline := time.After(30 * time.Second)
+	for {
+		logs, lerr := app.FindAllRecords("sync_logs", dbx.HashExp{"stack": stackIDs[0], "status": "waiting_jobs"})
+		if lerr == nil && len(logs) > 0 {
+			break
+		}
+		select {
+		case <-waitingDeadline:
+			t.Fatal("reconcile never reached the waiting_jobs state")
+		case err := <-done:
+			t.Fatalf("reconcile finished without waiting: %v", err)
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+
+	if !r.repoMutex(repoID).TryLock() {
+		t.Fatal("repository lock is held while the deploy waits on running jobs")
+	}
+	r.repoMutex(repoID).Unlock()
+
+	run.Set("status", "success")
+	if err := app.Save(run); err != nil {
+		t.Fatalf("failed to finish job run: %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("ReconcileStack failed: %v", err)
 	}
 }

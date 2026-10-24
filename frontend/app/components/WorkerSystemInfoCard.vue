@@ -40,6 +40,14 @@ const allTelemetryZero = computed(() =>
 // an agent older than the heavy_concurrency field would otherwise read as
 // "0 / 0 slots" rather than "not reported".
 const hasConcurrency = computed(() => (props.worker.heavy_concurrency ?? 0) > 0)
+// Occupancy comes from the last heartbeat and is retained after a worker
+// drops off, so a worker that disconnected mid-deploy would keep showing
+// busy slots forever. Capacity is static and stays; live counts do not.
+const concurrencyIsLive = computed(() =>
+  props.worker.status !== WORKER_STATUS.OFFLINE
+  && props.worker.status !== WORKER_STATUS.REVOKED
+  && props.worker.status !== WORKER_STATUS.PENDING
+)
 const concurrencyLimit = computed(() => props.worker.heavy_concurrency ?? 0)
 const concurrencyActive = computed(() => props.worker.active_heavy ?? 0)
 const concurrencyQueued = computed(() => props.worker.queued_heavy ?? 0)
@@ -108,14 +116,17 @@ const usageRows = computed(() => [
     <div v-if="hasConcurrency" class="pt-4 mt-4 border-t border-gray-300 dark:border-carbon-700">
       <span class="text-xs text-gray-500 dark:text-wire-200/50 uppercase tracking-wide font-semibold block mb-3">Deploy Concurrency</span>
 
-      <div class="flex items-center gap-3">
+      <div v-if="concurrencyIsLive" class="flex items-center gap-3">
         <span class="w-16 shrink-0 text-xs text-gray-500 dark:text-wire-200/50">Slots</span>
         <!-- Neutral on purpose: a worker with every deploy slot busy is
              working, not unhealthy, unlike a disk at 100%. -->
         <UProgress :model-value="concurrencyPercent" size="sm" color="primary" class="flex-1" />
         <span class="w-10 shrink-0 text-right text-xs font-medium text-gray-900 dark:text-wire-200">{{ concurrencyActive }}/{{ concurrencyLimit }}</span>
       </div>
-      <p v-if="concurrencyQueued > 0" class="mt-2 text-xs text-gray-500 dark:text-wire-200/50">
+      <p v-else class="text-sm text-gray-400 dark:text-wire-200/40">
+        {{ concurrencyLimit }} deploy slot{{ concurrencyLimit === 1 ? '' : 's' }} configured. Occupancy is only reported while the worker is connected.
+      </p>
+      <p v-if="concurrencyIsLive && concurrencyQueued > 0" class="mt-2 text-xs text-gray-500 dark:text-wire-200/50">
         {{ concurrencyQueued }} command{{ concurrencyQueued === 1 ? '' : 's' }} waiting for a slot.
       </p>
     </div>

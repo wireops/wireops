@@ -24,6 +24,13 @@ var (
 	MaxQueueDepth        int
 	acceptingWork        atomic.Bool
 
+	// queuedHeavy counts only the commands waiting on HeavySemaphore.
+	// metrics.QueuedTasks deliberately stays global — it backs
+	// IsQueueFull and the wireops_worker_queued_tasks gauge — but the
+	// deploy-slot figure the server shows must not count a queued probe
+	// or exec as waiting deploy work.
+	queuedHeavy atomic.Int64
+
 	// completedDurableCommands caches the final CommandResult of durable
 	// (deploy/redeploy/teardown) commands for a while so a redelivered copy
 	// of an already-finished command (e.g. resent after the server missed
@@ -153,6 +160,7 @@ func InitSemaphores(heavy, light, interactive, queueDepth int) {
 	LightSemaphore = make(chan struct{}, light)
 	InteractiveSemaphore = make(chan struct{}, interactive)
 	MaxQueueDepth = queueDepth
+	queuedHeavy.Store(0)
 	acceptingWork.Store(true)
 }
 
@@ -170,9 +178,10 @@ func ActiveHeavyCount() int {
 }
 
 // QueuedHeavyCount reports how many commands are waiting for a heavy slot.
-// Same counter the Prometheus wireops_worker_queued_tasks gauge serves.
+// Narrower than the global wireops_worker_queued_tasks gauge, which also
+// counts light and interactive commands waiting on their own semaphores.
 func QueuedHeavyCount() int {
-	return int(atomic.LoadInt64(&metrics.QueuedTasks))
+	return int(queuedHeavy.Load())
 }
 
 func SetAcceptingWork(accept bool) {
@@ -754,11 +763,18 @@ func TryScheduleThrottled(sem chan struct{}, msgType protocol.MessageType, fn fu
 		atomic.AddInt64(&metrics.QueuedTasks, -1)
 		return false
 	}
+	heavy := sem == HeavySemaphore
+	if heavy {
+		queuedHeavy.Add(1)
+	}
 
 	go func() {
 		log.Printf("[worker] task %s queued due to concurrency limits", msgType)
 		RunThrottled(sem, msgType, func() {
 			atomic.AddInt64(&metrics.QueuedTasks, -1)
+			if heavy {
+				queuedHeavy.Add(-1)
+			}
 			fn()
 		})
 	}()
