@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
-	"strconv"
 	"sync"
 	"time"
 
@@ -28,28 +26,29 @@ type Scheduler struct {
 	rootCtx    context.Context
 	rootCancel context.CancelFunc
 
-	syncSemaphore chan struct{} // global limit for concurrent reconciles/syncs
+	// syncSemaphore bounds concurrent reconciles (cron ticks, manual syncs,
+	// rollbacks, force-redeploys, transfers). fetchSemaphore is a separate
+	// pool for the repo-level git fetch tickers, so a slow remote cannot eat
+	// the capacity deploys run in. A reconcile that fetches inline
+	// (ensureRepoFetched) deliberately does NOT take a fetch slot: it already
+	// holds a sync slot, and nesting the two would invite deadlock.
+	syncSemaphore  chan struct{}
+	fetchSemaphore chan struct{}
 }
 
 func NewScheduler(app core.App, dispatcher WorkerDispatcher) *Scheduler {
 	notifier := notify.New(app)
 	rootCtx, rootCancel := context.WithCancel(context.Background())
 
-	limit := 5
-	if limitStr := os.Getenv("MAX_CONCURRENT_SYNCS"); limitStr != "" {
-		if val, err := strconv.Atoi(limitStr); err == nil && val > 0 {
-			limit = val
-		}
-	}
-
 	return &Scheduler{
-		jobs:          make(map[string]context.CancelFunc),
-		repoJobs:      make(map[string]context.CancelFunc),
-		reconciler:    NewReconciler(app, notifier, dispatcher),
-		app:           app,
-		rootCtx:       rootCtx,
-		rootCancel:    rootCancel,
-		syncSemaphore: make(chan struct{}, limit),
+		jobs:           make(map[string]context.CancelFunc),
+		repoJobs:       make(map[string]context.CancelFunc),
+		reconciler:     NewReconciler(app, notifier, dispatcher),
+		app:            app,
+		rootCtx:        rootCtx,
+		rootCancel:     rootCancel,
+		syncSemaphore:  make(chan struct{}, config.GetMaxConcurrentSyncs()),
+		fetchSemaphore: make(chan struct{}, config.GetMaxConcurrentFetches()),
 	}
 }
 
@@ -423,8 +422,8 @@ func (s *Scheduler) startRepoJobLocked(repo *core.Record) {
 				s.safeRun(reconcileCtx, fmt.Sprintf("repo-cron[%s]", repoID), func() error {
 					defer cancel()
 					select {
-					case s.syncSemaphore <- struct{}{}:
-						defer func() { <-s.syncSemaphore }()
+					case s.fetchSemaphore <- struct{}{}:
+						defer func() { <-s.fetchSemaphore }()
 					case <-reconcileCtx.Done():
 						return reconcileCtx.Err()
 					}

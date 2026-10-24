@@ -23,7 +23,10 @@ var (
 	lastCPUIdle      uint64
 )
 
-func InitWorkerInfo() {
+// InitWorkerInfo caches the static facts this worker reports on every
+// heartbeat. heavyConcurrency is the deploy slot count the semaphores were
+// initialized with, so it must be called after they are sized.
+func InitWorkerInfo(heavyConcurrency int) {
 	CachedWorkerInfo = &protocol.WorkerInfo{
 		Version:        WorkerVersion(),
 		DockerVersion:  QueryDockerVersion(),
@@ -34,6 +37,7 @@ func InitWorkerInfo() {
 			protocol.CapabilityProjectIdentityMigrationV1,
 			protocol.CapabilityExecOneShotV1,
 		},
+		HeavyConcurrency: heavyConcurrency,
 	}
 }
 

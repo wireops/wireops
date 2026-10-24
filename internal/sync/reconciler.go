@@ -47,7 +47,7 @@ type Reconciler struct {
 	app             core.App
 	mu              sync.Map
 	repoMu          sync.Map
-	workDirMu       sync.Map
+	projectMu       sync.Map
 	notifier        *notify.Notifier
 	renderer        *Renderer
 	dispatcher      WorkerDispatcher
@@ -270,19 +270,39 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		return nil
 	}
 
+	// The job-wait policy runs before any checkout read and outside the
+	// repository lock: with wait_running_jobs: always it blocks for as long
+	// as jobs keep running, and holding a read lock across that would stall
+	// every fetch — and, through the RWMutex's writer priority, every other
+	// stack's reconcile — for the whole wait.
+	reusedSyncLog, err := r.waitForRunningJobs(ctx, stack, repoID, stackID, trigger, remoteSHA)
+	if err != nil {
+		return err
+	}
+
 	// From here on we read commit objects and compose/env files out of the
-	// repo's shared working tree (workspace/<repoID>). Hold the read lock for
-	// the rest of the reconcile so a concurrent fetch/reset (repo ticker or
-	// another trigger) can't rewrite those files out from under us mid-read.
+	// repo's shared working tree (workspace/<repoID>), so a concurrent
+	// fetch/reset (repo ticker or another trigger) must not rewrite those
+	// files out from under us mid-read.
+	//
+	// The lock is released as soon as the last of those reads is done
+	// (GenerateRevision below), not at function exit: an RWMutex gives
+	// writers priority, so a single queued fetch waiting behind a deploy
+	// would block every other stack's RLock for the whole deploy. Everything
+	// after the render works from memory and DATA_DIR, never the checkout.
+	// sync.OnceFunc keeps the early release and the deferred one from
+	// double-unlocking, the same idiom used for TryLockStack.
 	repoRLock := r.repoMutex(repoID)
 	repoRLock.RLock()
-	defer repoRLock.RUnlock()
+	releaseRepoRead := sync.OnceFunc(repoRLock.RUnlock)
+	defer releaseRepoRead()
 
-	// The fetch above ran (and released its lock) before we got here, so a
-	// concurrent fetch/reset could have moved the working tree past the SHA
-	// captured earlier. Reload under the read lock so the SHA we render and
-	// record as deployed_commit matches the checked-out files we're about to
-	// read.
+	// The fetch above ran (and released its lock) before we got here, and
+	// the job wait may have taken minutes, so a concurrent fetch/reset could
+	// have moved the working tree past the SHA captured earlier. Reload
+	// under the read lock so the SHA we render and record as
+	// deployed_commit matches the checked-out files we're about to read.
+	shaBeforeWait := remoteSHA
 	if fresh, ferr := r.app.FindRecordById("repositories", repoID); ferr == nil {
 		if sha := fresh.GetString("last_commit_sha"); sha != "" {
 			remoteSHA = sha
@@ -292,14 +312,19 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		gitRepo = reopened
 	}
 
+	// waitForRunningJobs stamped its sync log with the pre-wait SHA, and the
+	// row is reused as this deploy's log. updateSyncLog only writes
+	// status/output/duration, so realign commit_sha explicitly rather than
+	// reporting the deploy against a commit it did not build.
+	if reusedSyncLog != nil && remoteSHA != shaBeforeWait {
+		if err := r.updateSyncLogCommit(reusedSyncLog.Id, remoteSHA); err != nil {
+			log.Printf("[reconciler] warning: failed to realign sync log %s to commit %s: %v", reusedSyncLog.Id, remoteSHA, err)
+		}
+	}
+
 	commitMsg := ""
 	if obj, err := gitRepo.CommitObject(mustParseHash(remoteSHA)); err == nil {
 		commitMsg = obj.Message
-	}
-
-	reusedSyncLog, err := r.waitForRunningJobs(ctx, stack, repoID, stackID, trigger, remoteSHA)
-	if err != nil {
-		return err
 	}
 
 	// --- compose deploy ---
@@ -325,11 +350,6 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		r.markSyncError(stack, errMsg)
 		return fmt.Errorf("%s", errMsg)
 	}
-	// Other stacks pointed at this same compose_path (same repo) would
-	// otherwise race on the .env/.gitignore writes below; serialize them.
-	workDirLock := r.workDirMutex(workDir)
-	workDirLock.Lock()
-	defer workDirLock.Unlock()
 
 	composeFile, err := r.resolveComposeFile(stack, workDir, stackID, trigger, remoteSHA)
 	if err != nil {
@@ -396,6 +416,11 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		r.markSyncError(stack, errMsg)
 		return fmt.Errorf("%s", errMsg)
 	}
+	// Last read of the repo checkout is done. The rendered revision lives in
+	// DATA_DIR and the env/SOPS values are already in memory, so the dispatch
+	// loop, the post-check and the record writes below need no repo lock.
+	releaseRepoRead()
+
 	renderDuration := time.Since(renderStart).Milliseconds()
 	r.upsertStackConfigTracking(stackID, renderRes.ConfigFiles)
 
@@ -455,6 +480,12 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	var lastComposeContent []byte
 
 	_ = pt.start(constants.PhaseDispatch)
+
+	// Held across the retry loop so a project-identity migration never races
+	// another stack tearing the same previous project down. Released as soon
+	// as the deploy is over — the post-check only reads container state.
+	releaseProject := sync.OnceFunc(r.lockDeployProject(workerID, renderRes))
+	defer releaseProject()
 
 	var lastAttemptStart time.Time
 	var composeUpMs int64
@@ -524,6 +555,8 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 			}
 		}
 	}
+
+	releaseProject()
 
 	if runErr != nil {
 		_ = pt.finish(constants.PhaseDispatch, constants.PhaseStatusError, runErr.Error())
@@ -766,6 +799,11 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 	if b64Err != nil {
 		runErr = fmt.Errorf("failed to serialize env vars for remote rollback: %w", b64Err)
 	} else {
+		// Same project guard as ReconcileStack: a rollback can carry a
+		// project-identity migration too. Released when the function
+		// returns, like the cancelDispatch below it.
+		defer r.lockDeployProject(workerID, renderRes)()
+
 		forcePull, removeOrphans := resolveComposeRuntimeFlags(stack)
 		registryAuthB64, insecureRegistries := r.resolveRegistryAuth(stack)
 		dispatchCtx, cancelDispatch := withDeployTimeout(ctx, stack)
@@ -1044,6 +1082,10 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 	if b64Err != nil {
 		runErr = fmt.Errorf("failed to serialize env vars for remote redeploy: %w", b64Err)
 	} else {
+		// Same project guard as ReconcileStack. Released when the function
+		// returns, like the cancelDispatch below it.
+		defer r.lockDeployProject(workerID, renderRes)()
+
 		forcePull, removeOrphans := resolveComposeRuntimeFlags(stack)
 		registryAuthB64, insecureRegistries := r.resolveRegistryAuth(stack)
 		dispatchCtx, cancelDispatch := withDeployTimeout(ctx, stack)
@@ -1206,14 +1248,56 @@ func (r *Reconciler) RemoveRepoWorkspace(repoID string) error {
 	return nil
 }
 
-// workDirMutex returns a mutex scoped to a single stack's compose working
-// directory (workspace/<repoID>[/<compose_path>]). Stacks in the same repo
-// that share a compose_path share this directory too; this mutex serializes
-// their .env/.gitignore writes and the render that reads them so concurrent
-// reconciles can't corrupt each other's files.
-func (r *Reconciler) workDirMutex(workDir string) *sync.Mutex {
-	mu, _ := r.workDirMu.LoadOrStore(workDir, &sync.Mutex{})
+// projectMutex guards one Compose project on one worker. Project names are
+// unique per worker (the renderer forces the top-level `name`, and migration
+// 75 backs it with a unique index), so this normally never contends — it
+// exists for the one case where two stacks really do act on the same project:
+// a project-identity migration, where the deploy also tears the *previous*
+// project down (see deployCommandForRender). Two legacy stacks that shared a
+// checkout directory derived the same basename project name, and the old
+// workDir mutex is what kept their first post-upgrade deploys from tearing
+// each other down. Keyed on worker + project, it keeps that guarantee without
+// serializing unrelated stacks that merely share a directory.
+func (r *Reconciler) projectMutex(workerID, projectName string) *sync.Mutex {
+	mu, _ := r.projectMu.LoadOrStore(workerID+"|"+projectName, &sync.Mutex{})
 	return mu.(*sync.Mutex)
+}
+
+// lockDeployProject locks every Compose project a deploy of render is about
+// to touch and returns a release func for all of them. An identity migration
+// touches two: it tears the previous project down and brings the target up,
+// and target names are only unique among *persisted* records — an in-flight
+// render elsewhere can still be heading for the same one — so holding just
+// one of the pair would leave the other open to a concurrent `up`.
+//
+// Names are locked in sorted order so two deploys that overlap on both
+// projects can never take them in opposite orders and deadlock.
+func (r *Reconciler) lockDeployProject(workerID string, render *RenderResult) func() {
+	var names []string
+	if render != nil {
+		if render.ProjectName != "" {
+			names = append(names, render.ProjectName)
+		}
+		if render.PreviousProjectName != "" && render.PreviousProjectName != render.ProjectName {
+			names = append(names, render.PreviousProjectName)
+		}
+	}
+	if len(names) == 0 {
+		return func() {}
+	}
+	sort.Strings(names)
+
+	locked := make([]*sync.Mutex, 0, len(names))
+	for _, name := range names {
+		mu := r.projectMutex(workerID, name)
+		mu.Lock()
+		locked = append(locked, mu)
+	}
+	return func() {
+		for i := len(locked) - 1; i >= 0; i-- {
+			locked[i].Unlock()
+		}
+	}
 }
 
 // FetchRepo clones or fetches the given repository's working tree and persists
@@ -1993,6 +2077,22 @@ func (r *Reconciler) updateSyncLog(id, status, output string, durationMs int64) 
 	record.Set("duration_ms", durationMs)
 	if err := r.app.Save(record); err != nil {
 		return fmt.Errorf("update sync log id=%s status=%s: %w", id, status, err)
+	}
+	return nil
+}
+
+// updateSyncLogCommit repoints an existing sync_logs row at another commit.
+// Only the wait-for-jobs path needs it: its row is created before the wait
+// and reused afterwards, by which time a concurrent fetch may have advanced
+// the repository.
+func (r *Reconciler) updateSyncLogCommit(id, commitSHA string) error {
+	record, err := r.app.FindRecordById("sync_logs", id)
+	if err != nil {
+		return fmt.Errorf("update sync log commit id=%s: %w", id, err)
+	}
+	record.Set("commit_sha", commitSHA)
+	if err := r.app.Save(record); err != nil {
+		return fmt.Errorf("update sync log commit id=%s: %w", id, err)
 	}
 	return nil
 }

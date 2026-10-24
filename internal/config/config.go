@@ -93,6 +93,33 @@ func GetScanPeriod() time.Duration {
 	return defaultSeconds * time.Second
 }
 
+// GetMaxConcurrentSyncs returns how many stack reconciles (cron ticks, manual
+// syncs, rollbacks, force-redeploys and transfers) may run at once across the
+// whole server. Configured via MAX_CONCURRENT_SYNCS, default 10. Repository
+// git fetches draw on a separate pool — see GetMaxConcurrentFetches — so a
+// slow remote cannot starve deploys.
+func GetMaxConcurrentSyncs() int {
+	return positiveIntEnv("MAX_CONCURRENT_SYNCS", 10)
+}
+
+// GetMaxConcurrentFetches returns how many repository git fetches may run at
+// once across the whole server. Configured via MAX_CONCURRENT_FETCHES,
+// default 5.
+func GetMaxConcurrentFetches() int {
+	return positiveIntEnv("MAX_CONCURRENT_FETCHES", 5)
+}
+
+// positiveIntEnv reads a positive integer from the environment, falling back
+// to def for an unset, malformed or non-positive value.
+func positiveIntEnv(name string, def int) int {
+	if raw := strings.TrimSpace(os.Getenv(name)); raw != "" {
+		if val, err := strconv.Atoi(raw); err == nil && val > 0 {
+			return val
+		}
+	}
+	return def
+}
+
 // GetDeployTimeout returns the global default deploy timeout applied when a
 // stack does not declare its own deploy_timeout_seconds (via wireops.yaml's
 // timeout field). Configured via DEPLOY_TIMEOUT (seconds), default 5m.

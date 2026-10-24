@@ -335,3 +335,31 @@ func TestRegisterRepoSurvivesOverflowingInterval(t *testing.T) {
 		t.Fatal("RegisterRepo did not start a ticker for a repo with an overflowing interval")
 	}
 }
+
+// TestSchedulerUsesSeparateFetchAndSyncPools pins the split that keeps a slow
+// git fetch from eating deploy capacity: the two semaphores are distinct
+// channels, sized from their own env vars, and filling one leaves the other
+// free.
+func TestSchedulerUsesSeparateFetchAndSyncPools(t *testing.T) {
+	t.Setenv("MAX_CONCURRENT_SYNCS", "3")
+	t.Setenv("MAX_CONCURRENT_FETCHES", "1")
+	app := newSchedulerTestApp(t)
+	s := NewScheduler(app, &fakeDispatcher{})
+	t.Cleanup(s.Shutdown)
+
+	if got := cap(s.syncSemaphore); got != 3 {
+		t.Fatalf("cap(syncSemaphore) = %d, want 3", got)
+	}
+	if got := cap(s.fetchSemaphore); got != 1 {
+		t.Fatalf("cap(fetchSemaphore) = %d, want 1", got)
+	}
+
+	s.fetchSemaphore <- struct{}{} // a repo fetch occupies the whole fetch pool
+	select {
+	case s.syncSemaphore <- struct{}{}:
+		<-s.syncSemaphore
+	default:
+		t.Fatal("a saturated fetch pool must not consume reconcile capacity")
+	}
+	<-s.fetchSemaphore
+}

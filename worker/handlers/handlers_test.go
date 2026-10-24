@@ -444,3 +444,80 @@ func TestHandleExecClearsItsActiveCommandEntry(t *testing.T) {
 		t.Error("expected the ActiveCommands entry to be deleted after the handler returned")
 	}
 }
+
+// TestHeavyConcurrencyAccessors covers the numbers the worker reports to the
+// server on every heartbeat, so the UI's deploy-slot gauge keeps matching the
+// semaphore it is supposed to describe.
+func TestHeavyConcurrencyAccessors(t *testing.T) {
+	InitSemaphores(2, 1, 1, 5)
+	atomic.StoreInt64(&metrics.QueuedTasks, 0)
+	t.Cleanup(func() { atomic.StoreInt64(&metrics.QueuedTasks, 0) })
+
+	if got := HeavyConcurrencyLimit(); got != 2 {
+		t.Fatalf("HeavyConcurrencyLimit() = %d, want 2", got)
+	}
+	if got := ActiveHeavyCount(); got != 0 {
+		t.Fatalf("ActiveHeavyCount() = %d, want 0 on an idle worker", got)
+	}
+
+	HeavySemaphore <- struct{}{}
+	if got := ActiveHeavyCount(); got != 1 {
+		t.Fatalf("ActiveHeavyCount() = %d, want 1 while a slot is taken", got)
+	}
+	<-HeavySemaphore
+
+	// The global queue-depth counter is not the deploy-queue figure: only
+	// commands actually waiting on HeavySemaphore count here (see
+	// TestQueuedHeavyCountIgnoresOtherSemaphores).
+	atomic.StoreInt64(&metrics.QueuedTasks, 3)
+	if got := QueuedHeavyCount(); got != 0 {
+		t.Fatalf("QueuedHeavyCount() = %d, want 0 — no heavy command is queued", got)
+	}
+}
+
+// TestQueuedHeavyCountIgnoresOtherSemaphores pins the distinction between the
+// global queue-depth counter and the deploy-slot figure the server shows: a
+// queued probe is waiting work, but it is not waiting *deploy* work.
+func TestQueuedHeavyCountIgnoresOtherSemaphores(t *testing.T) {
+	InitSemaphores(1, 1, 1, 10)
+	t.Cleanup(func() {
+		atomic.StoreInt64(&metrics.QueuedTasks, 0)
+		InitSemaphores(1, 1, 1, 10)
+	})
+
+	// Saturate both pools so the next command of each class has to queue.
+	HeavySemaphore <- struct{}{}
+	LightSemaphore <- struct{}{}
+
+	release := make(chan struct{})
+	if ok := TryScheduleThrottled(LightSemaphore, protocol.MsgProbe, func() { <-release }); !ok {
+		t.Fatal("expected the queued probe to be accepted")
+	}
+	if got := QueuedHeavyCount(); got != 0 {
+		t.Fatalf("QueuedHeavyCount() = %d after queueing a probe, want 0", got)
+	}
+	if got := atomic.LoadInt64(&metrics.QueuedTasks); got != 1 {
+		t.Fatalf("global QueuedTasks = %d, want 1 — it must still count every class", got)
+	}
+
+	if ok := TryScheduleThrottled(HeavySemaphore, protocol.MsgDeploy, func() { <-release }); !ok {
+		t.Fatal("expected the queued deploy to be accepted")
+	}
+	if got := QueuedHeavyCount(); got != 1 {
+		t.Fatalf("QueuedHeavyCount() = %d after queueing a deploy, want 1", got)
+	}
+
+	// Drain: both queued tasks start, run and release their slots.
+	<-HeavySemaphore
+	<-LightSemaphore
+	close(release)
+
+	deadline := time.After(2 * time.Second)
+	for QueuedHeavyCount() != 0 {
+		select {
+		case <-deadline:
+			t.Fatalf("QueuedHeavyCount() stayed at %d after the deploy ran", QueuedHeavyCount())
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+}

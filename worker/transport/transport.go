@@ -335,12 +335,18 @@ func sendInitialHeartbeat() {
 
 func sendHeartbeat() {
 	activeIDs := handlers.GetActiveJobsList()
+	// Deploy-slot occupancy is read per heartbeat and lives on the telemetry
+	// struct (a fresh value each call), never on the shared CachedWorkerInfo
+	// pointer, which every heartbeat sends and must stay immutable.
+	t := telemetry.GetTelemetry(currentStackDir)
+	t.ActiveHeavy = handlers.ActiveHeavyCount()
+	t.QueuedHeavy = handlers.QueuedHeavyCount()
 	hb := protocol.Envelope{
 		Type: protocol.MsgHeartbeat,
 		Payload: protocol.HeartbeatPayload{
 			ActiveJobRunIDs: activeIDs,
 			WorkerInfo:      telemetry.CachedWorkerInfo,
-			Telemetry:       telemetry.GetTelemetry(currentStackDir),
+			Telemetry:       t,
 		},
 	}
 	if err := sendEnvelope(hb); err != nil {

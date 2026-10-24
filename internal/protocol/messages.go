@@ -710,6 +710,10 @@ type WorkerInfo struct {
 	OS             string   `json:"os"`
 	Arch           string   `json:"arch"`
 	Capabilities   []string `json:"capabilities,omitempty"`
+	// HeavyConcurrency is how many heavy commands (deploy/redeploy/teardown
+	// and one-shot jobs) this worker runs at once — cap(HeavySemaphore), set
+	// by WORKER_HEAVY_CONCURRENCY. Omitted by workers older than this field.
+	HeavyConcurrency int `json:"heavy_concurrency,omitempty"`
 }
 
 type TelemetryInfo struct {
@@ -717,6 +721,12 @@ type TelemetryInfo struct {
 	MemoryUsagePercent float64 `json:"memory_usage_percent"`
 	DiskUsagePercent   float64 `json:"disk_usage_percent"`
 	DockerOnline       bool    `json:"docker_online"`
+	// ActiveHeavy / QueuedHeavy are the live occupancy of the heavy
+	// (deploy) semaphore at heartbeat time: how many slots are busy and how
+	// many commands are waiting for one. Static capacity lives in
+	// WorkerInfo.HeavyConcurrency.
+	ActiveHeavy int `json:"active_heavy"`
+	QueuedHeavy int `json:"queued_heavy"`
 }
 
 type CancelCommand struct {

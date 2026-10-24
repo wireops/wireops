@@ -26,6 +26,24 @@ var multilineValues = map[string]string{
 	"singleLineBackslash": "value $TOKEN\\",
 }
 
+// writeTestEnvFile materializes pairs as a .env file on disk, the way the
+// worker does from DeployCommand.EnvFileB64. The server no longer writes .env
+// into the repo checkout, so the tests below own this step instead of sharing
+// a production helper: what they verify is the serializer's quoting, read back
+// by the real Compose parser.
+func writeTestEnvFile(t *testing.T, dir string, pairs []string) string {
+	t.Helper()
+	content, err := serializeEnvContent(pairs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, ".env")
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return content
+}
+
 func TestEnvFileMultiline(t *testing.T) {
 	for name, value := range multilineValues {
 		t.Run(name, func(t *testing.T) {
@@ -46,9 +64,7 @@ func TestEnvFileMultiline(t *testing.T) {
 				t.Fatal("transport changed content")
 			}
 			dir := t.TempDir()
-			if err := WriteEnvFile(dir, pairs); err != nil {
-				t.Fatal(err)
-			}
+			writeTestEnvFile(t, dir, pairs)
 			data, err := os.ReadFile(filepath.Join(dir, ".env"))
 			if err != nil || string(data) != content {
 				t.Fatal("disk content differs from transport")
@@ -80,9 +96,7 @@ func TestEnvFileComposeRoundTrip(t *testing.T) {
 	for name, value := range multilineValues {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
-			if err := WriteEnvFile(dir, []string{"WIREOPS_TEST_VALUE=" + value}); err != nil {
-				t.Fatal(err)
-			}
+			writeTestEnvFile(t, dir, []string{"WIREOPS_TEST_VALUE=" + value})
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
 			cmd := exec.CommandContext(ctx, "docker", "compose", "--project-name", "env-check", "--project-directory", dir, "--env-file", filepath.Join(dir, ".env"), "-f", "-", "config", "--environment")
@@ -108,9 +122,7 @@ func TestEnvFileDockerContainers(t *testing.T) {
 	for name, value := range multilineValues {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
-			if err := WriteEnvFile(dir, []string{"VALUE=" + value}); err != nil {
-				t.Fatal(err)
-			}
+			writeTestEnvFile(t, dir, []string{"VALUE=" + value})
 			config := map[string]any{"services": map[string]any{"test": map[string]any{
 				"image": image, "network_mode": "none", "environment": map[string]string{"VALUE": "${VALUE}"},
 				"entrypoint": []string{"sh", "-c", `printf '%s' "$$VALUE"`},

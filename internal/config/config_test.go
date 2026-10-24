@@ -554,3 +554,38 @@ func TestGetComposeMaxBytes(t *testing.T) {
 		}
 	})
 }
+
+func TestConcurrencyLimits(t *testing.T) {
+	cases := []struct {
+		name    string
+		env     string
+		get     func() int
+		wantDef int
+	}{
+		{"syncs", "MAX_CONCURRENT_SYNCS", GetMaxConcurrentSyncs, 10},
+		{"fetches", "MAX_CONCURRENT_FETCHES", GetMaxConcurrentFetches, 5},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name+" default", func(t *testing.T) {
+			t.Setenv(tc.env, "")
+			os.Unsetenv(tc.env)
+			if got := tc.get(); got != tc.wantDef {
+				t.Errorf("%s() = %d, want the default %d", tc.env, got, tc.wantDef)
+			}
+		})
+		t.Run(tc.name+" configured", func(t *testing.T) {
+			t.Setenv(tc.env, "17")
+			if got := tc.get(); got != 17 {
+				t.Errorf("%s() = %d, want 17", tc.env, got)
+			}
+		})
+		t.Run(tc.name+" invalid or non-positive falls back", func(t *testing.T) {
+			for _, raw := range []string{"not-a-number", "0", "-3", "  "} {
+				t.Setenv(tc.env, raw)
+				if got := tc.get(); got != tc.wantDef {
+					t.Errorf("%s=%q gave %d, want the default %d", tc.env, raw, got, tc.wantDef)
+				}
+			}
+		})
+	}
+}

@@ -43,6 +43,13 @@ func ensureWorkerCollections(t *testing.T, app core.App) {
 		col.Fields.Add(&core.JSONField{Name: "capabilities"})
 		col.Fields.Add(&core.TextField{Name: "os"})
 		col.Fields.Add(&core.TextField{Name: "arch"})
+		col.Fields.Add(&core.BoolField{Name: "docker_online"})
+		col.Fields.Add(&core.NumberField{Name: "cpu_usage"})
+		col.Fields.Add(&core.NumberField{Name: "memory_usage"})
+		col.Fields.Add(&core.NumberField{Name: "disk_usage"})
+		col.Fields.Add(&core.NumberField{Name: "heavy_concurrency", OnlyInt: true})
+		col.Fields.Add(&core.NumberField{Name: "active_heavy", OnlyInt: true})
+		col.Fields.Add(&core.NumberField{Name: "queued_heavy", OnlyInt: true})
 		if err := app.Save(col); err != nil {
 			t.Fatalf("failed to create workers collection: %v", err)
 		}
@@ -255,5 +262,46 @@ func TestUpdateWorkerInfoPersistsVersion(t *testing.T) {
 	}
 	if got := refreshed.GetString("arch"); got != "amd64" {
 		t.Fatalf("arch = %q, want %q", got, "amd64")
+	}
+}
+
+// TestWorkerConcurrencyReportingPersists covers the deploy-capacity fields a
+// heartbeat carries: the static limit from WorkerInfo and the live occupancy
+// from TelemetryInfo, which the workers UI reads back.
+func TestWorkerConcurrencyReportingPersists(t *testing.T) {
+	app := newWorkerTestApp(t)
+	svc := NewService(app)
+
+	collection, err := app.FindCollectionByNameOrId("workers")
+	if err != nil {
+		t.Fatalf("failed to load workers collection: %v", err)
+	}
+	record := core.NewRecord(collection)
+	record.Set("hostname", "worker-1")
+	record.Set("fingerprint", "fp-1")
+	record.Set("status", "ACTIVE")
+	if err := app.Save(record); err != nil {
+		t.Fatalf("failed to create worker: %v", err)
+	}
+
+	if err := svc.UpdateWorkerInfo(record.Id, protocol.WorkerInfo{HeavyConcurrency: 4}); err != nil {
+		t.Fatalf("UpdateWorkerInfo: %v", err)
+	}
+	if err := svc.UpdateWorkerTelemetry(record.Id, protocol.TelemetryInfo{ActiveHeavy: 2, QueuedHeavy: 1}); err != nil {
+		t.Fatalf("UpdateWorkerTelemetry: %v", err)
+	}
+
+	reloaded, err := app.FindRecordById("workers", record.Id)
+	if err != nil {
+		t.Fatalf("failed to reload worker: %v", err)
+	}
+	if got := reloaded.GetInt("heavy_concurrency"); got != 4 {
+		t.Fatalf("heavy_concurrency = %d, want 4", got)
+	}
+	if got := reloaded.GetInt("active_heavy"); got != 2 {
+		t.Fatalf("active_heavy = %d, want 2", got)
+	}
+	if got := reloaded.GetInt("queued_heavy"); got != 1 {
+		t.Fatalf("queued_heavy = %d, want 1", got)
 	}
 }
