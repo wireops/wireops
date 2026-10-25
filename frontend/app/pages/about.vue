@@ -33,9 +33,9 @@ function truncatePath(path: string): string {
       </div>
 
       <div class="space-y-2">
-        <p class="text-wire-400 tracking-wide">GitOps Controller for Docker Compose</p>
+        <p class="text-wire-400 tracking-wide">Container Management for AI</p>
         <p class="text-gray-500 dark:text-wire-200/50 text-sm max-w-lg mx-auto">
-          Self-hosted. Single binary. Embedded PocketBase.
+          Self-hosted. GitOps underneath. MCP for your agents.
         </p>
       </div>
 

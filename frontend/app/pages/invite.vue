@@ -100,7 +100,7 @@ async function handleSubmit() {
         <h1 class="text-3xl font-black tracking-widest uppercase text-yellow-400 drop-shadow-[0_0_12px_rgba(255,198,0,0.4)]">
           wireops
         </h1>
-        <p class="text-sm text-wire-400 mt-1 tracking-wide">GitOps Orchestrator</p>
+        <p class="text-sm text-wire-400 mt-1 tracking-wide">Container Management for AI</p>
       </div>
 
       <div class="rounded-2xl border border-carbon-800 bg-carbon-900 p-6 shadow-2xl">

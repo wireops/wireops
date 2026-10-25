@@ -6,6 +6,16 @@ changes in a minor release.
 
 ## Unreleased
 
+### Changed
+
+- The project now describes itself as container management for AI: the README,
+  the agent-context files and the in-app taglines lead with the MCP server as
+  the primary agent-facing surface, with GitOps sync presented as the mechanism
+  underneath. No behaviour, API or configuration changed — the login, invite,
+  reset-password and About screens read "Container Management for AI" where
+  they previously read "GitOps Orchestrator" / "GitOps Controller for Docker
+  Compose".
+
 ### Added
 
 - File-managed stacks can now refresh their committed definition explicitly
