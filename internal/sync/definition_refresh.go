@@ -9,6 +9,7 @@ import (
 	"github.com/wireops/wireops/internal/compose"
 	"github.com/wireops/wireops/internal/config"
 	"github.com/wireops/wireops/internal/manifest"
+	"github.com/wireops/wireops/internal/safepath"
 	"github.com/wireops/wireops/internal/stackdef"
 )
 
@@ -38,13 +39,13 @@ func (c scheduleChange) String() string {
 // The caller must hold the stack lock: the save has to be ordered against the
 // deploy that reads these values. Returns the applied changes, which is empty
 // when the definition already matches.
-func (r *Reconciler) refreshScheduleFromDefinition(stack *core.Record, repoID, workDir, composeFile string) ([]scheduleChange, error) {
+func (r *Reconciler) refreshScheduleFromDefinition(stack *core.Record, repoID string) ([]scheduleChange, error) {
 	source := stack.GetString("config_source")
 	if !scheduleRefreshApplies(source) {
 		return nil, nil
 	}
 
-	def, err := r.parseStackDefinition(stack, source, repoID, workDir, composeFile)
+	def, err := r.parseStackDefinition(stack, source, repoID)
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +100,7 @@ func scheduleChangesFor(stack *core.Record, def *manifest.Definition) []schedule
 // parseStackDefinition reads the definition from the already-fetched
 // workspace, using the stack's persisted source identity rather than anything
 // derived at call time.
-func (r *Reconciler) parseStackDefinition(stack *core.Record, source, repoID, workDir, composeFile string) (*manifest.Definition, error) {
+func (r *Reconciler) parseStackDefinition(stack *core.Record, source, repoID string) (*manifest.Definition, error) {
 	if source == "wireops_file" {
 		wireopsFile := stack.GetString("wireops_file_path")
 		if wireopsFile == "" {
@@ -112,6 +113,20 @@ func (r *Reconciler) parseStackDefinition(stack *core.Record, source, repoID, wo
 		return def, nil
 	}
 
+	// Resolved here rather than taken from the caller: this runs before the
+	// render phase computes them, and it must not reuse resolveComposeFile,
+	// whose failure path marks the stack as errored.
+	workDir, err := r.stackWorkDir(stack, repoID)
+	if err != nil {
+		return nil, err
+	}
+	composeFile := stack.GetString("compose_file")
+	if composeFile == "" {
+		composeFile = "docker-compose.yml"
+	}
+	if err := safepath.ValidateComposeFile(composeFile); err != nil {
+		return nil, err
+	}
 	repoRoot := filepath.Join(r.reposWorkspace(), repoID)
 	data, _, err := compose.ReadFile(repoRoot, workDir, composeFile, config.GetComposeMaxBytes())
 	if err != nil {

@@ -206,6 +206,20 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		return fmt.Errorf("%s: %w", errMsg, err)
 	}
 
+	// Re-read the committed schedule straight after the fetch, before any of
+	// the skip gates below. It has to run even on a reconcile that deploys
+	// nothing: the renderer strips the x-wireops block, so editing only
+	// `timeout:` or `sync.interval` leaves the rendered compose byte-identical
+	// and every gate below would short-circuit — which is exactly the case
+	// this exists for. A definition that cannot be read is logged and the
+	// stored values are kept; the render phase validates the compose properly
+	// and fails with a better message than this would.
+	if changes, defErr := r.refreshScheduleFromDefinition(stack, repoID); defErr != nil {
+		log.Printf("[reconciler] stack %s: keeping stored schedule, committed definition unreadable: %v", stackID, defErr)
+	} else if len(changes) > 0 {
+		log.Printf("[reconciler] stack %s: refreshed schedule from git (%s)", stackID, formatScheduleChanges(changes))
+	}
+
 	// lastSHA is this stack's own last deployed commit (not the repo's prior
 	// fetch state, since the repo fetch cadence is now decoupled from this
 	// stack's tick): a stack has "changes to pick up" when the repo's current
@@ -354,19 +368,6 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	composeFile, err := r.resolveComposeFile(stack, workDir, stackID, trigger, remoteSHA)
 	if err != nil {
 		return err
-	}
-
-	// Re-read the committed schedule before anything consumes it. Both the
-	// deploy budget (withDeployTimeout, below) and the next poll interval come
-	// from the stack record, which is otherwise written only at create time —
-	// so without this a `timeout:` edited in git never takes effect, and the
-	// only remedy is recreating the stack. A definition that cannot be read is
-	// logged and the stored values are kept: GenerateRevision below validates
-	// the compose itself and fails with a better message than this would.
-	if changes, defErr := r.refreshScheduleFromDefinition(stack, repoID, workDir, composeFile); defErr != nil {
-		log.Printf("[reconciler] stack %s: keeping stored schedule, committed definition unreadable: %v", stackID, defErr)
-	} else if len(changes) > 0 {
-		log.Printf("[reconciler] stack %s: refreshed schedule from git (%s)", stackID, formatScheduleChanges(changes))
 	}
 
 	envVars, envErr := r.loadEnvVars(renderCtx, stackID)
