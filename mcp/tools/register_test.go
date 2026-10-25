@@ -139,7 +139,7 @@ func TestRegisterAdvertisesObservationAndAliasInputs(t *testing.T) {
 	for _, tool := range tools {
 		byName[tool.Name] = tool
 	}
-	for _, name := range []string{"get_stack_status", "get_stack_resources", "get_container_stats", "exec_in_container"} {
+	for _, name := range []string{"get_stack_status", "get_stack_resources", "get_container_stats", "exec_in_container", "resync_stack_definition"} {
 		properties := schemaProperties(t, byName[name])
 		if _, ok := properties["stack_id"]; !ok {
 			t.Errorf("%s does not advertise stack_id", name)

@@ -252,6 +252,8 @@ func MatchCustomRoute(method, path string) (Event, bool) {
 		switch p[2] {
 		case "sync":
 			return custom("stack.sync", "stack", p[1]), true
+		case "resync-definition":
+			return custom("stack.resync_definition", "stack", p[1]), true
 		case "rollback":
 			return custom("stack.rollback", "stack", p[1]), true
 		case "force-redeploy":

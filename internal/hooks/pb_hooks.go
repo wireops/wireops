@@ -171,7 +171,7 @@ func isFileManagedConfigSource(configSource string) bool {
 }
 
 func validateWireopsFieldsImmutable(app core.App, record *core.Record) error {
-	if isMigrationBypass(record.Id) {
+	if isWireopsDefinitionBypass(record.Id) {
 		return nil
 	}
 	original := record.Original()

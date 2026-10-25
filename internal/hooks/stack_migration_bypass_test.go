@@ -31,7 +31,7 @@ func TestWireopsManagedStackMigrationBypassClearedAfterUse(t *testing.T) {
 		t.Fatalf("bypass fn returned error: %v", err)
 	}
 
-	if isMigrationBypass(stack.Id) {
+	if isWireopsDefinitionBypass(stack.Id) {
 		t.Fatal("expected bypass to be cleared after WithMigrationBypass returns")
 	}
 

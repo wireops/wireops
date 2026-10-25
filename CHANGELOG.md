@@ -8,6 +8,11 @@ changes in a minor release.
 
 ### Added
 
+- File-managed stacks can now refresh their committed definition explicitly
+  with `POST /api/custom/stacks/{id}/resync-definition` or the MCP
+  `resync_stack_definition` tool. This re-fetches and validates the stack's
+  `x-wireops` block or `wireops.yaml`, applies changed Git-managed settings
+  such as `timeout`, and returns a field-by-field diff without deploying.
 - The MCP server now exposes the `operator` actions, not only reads: deploy,
   force redeploy, rollback, pause/resume, render-time overrides, container
   restart/stop, transfer, delete, env var writes, stack import, stack creation

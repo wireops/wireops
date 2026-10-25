@@ -207,6 +207,14 @@ type DeployStackInput struct {
 	TimeoutSeconds int    `json:"timeout_seconds,omitempty" jsonschema:"How long to wait when wait is true. Optional — defaults to 120, capped at 600."`
 }
 
+// ResyncStackDefinitionInput is the input for resync_stack_definition. It
+// deliberately carries no editable definition values: the server fetches and
+// re-parses the stack's committed x-wireops block or wireops.yaml itself.
+type ResyncStackDefinitionInput struct {
+	StackID string `json:"stack_id,omitempty" jsonschema:"The wireops stack id or exact name. Alias: stack."`
+	Stack   string `json:"stack,omitempty" jsonschema:"Alias for stack_id. May be supplied together only with the same value."`
+}
+
 // ForceRedeployStackInput is the input for the force_redeploy_stack tool.
 type ForceRedeployStackInput struct {
 	StackID            string `json:"stack_id,omitempty" jsonschema:"The wireops stack id or exact name. Alias: stack."`

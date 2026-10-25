@@ -33,6 +33,12 @@ func registerStackWriteTools(server *mcp.Server, c *client.Client) {
 	}, deployStack(c))
 
 	mcp.AddTool(server, &mcp.Tool{
+		Name:        "resync_stack_definition",
+		Description: "Fetch the tracked repository and re-read this stack's committed x-wireops block or wireops.yaml. It updates only Git-managed stack settings, including timeout, compose flags, sync interval, job wait mode and worker tags; it returns the before/after diff and does NOT deploy containers. Use deploy_stack afterwards when you are ready to apply the compose revision. This works only for stacks created from x-wireops or wireops.yaml.",
+		Annotations: additive(true),
+	}, resyncStackDefinition(c))
+
+	mcp.AddTool(server, &mcp.Tool{
 		Name:        "force_redeploy_stack",
 		Description: "Redeploy a wireops stack even when git has not changed, optionally recreating containers, volumes and networks. Use this to recover a stack whose containers drifted or died, or to re-pull a moving tag. recreate_volumes DESTROYS the stack's named volume data and therefore requires confirm to be the stack's exact name. By default the stack is paused after a successful redeploy (pause_after_redeploy), matching the UI — pass false to leave git sync running. Set wait true to block until the redeploy finishes and get its outcome in one call.",
 		Annotations: destructive(false),
@@ -127,6 +133,25 @@ func deployStack(c *client.Client) mcp.ToolHandlerFor[models.DeployStackInput, a
 			return nil, out, nil
 		}
 		var out any
+		if err := c.Post(ctx, apiKey, path, nil, struct{}{}, &out); err != nil {
+			return nil, nil, err
+		}
+		return nil, out, nil
+	}
+}
+
+func resyncStackDefinition(c *client.Client) mcp.ToolHandlerFor[models.ResyncStackDefinitionInput, any] {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, in models.ResyncStackDefinitionInput) (*mcp.CallToolResult, any, error) {
+		apiKey, err := apiKeyFrom(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		stackID, err := resolveStackInput(ctx, c, apiKey, in.StackID, in.Stack)
+		if err != nil {
+			return nil, nil, err
+		}
+		var out any
+		path := "/api/custom/stacks/" + url.PathEscape(stackID) + "/resync-definition"
 		if err := c.Post(ctx, apiKey, path, nil, struct{}{}, &out); err != nil {
 			return nil, nil, err
 		}
