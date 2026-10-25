@@ -196,6 +196,40 @@ describe('stackLastError', () => {
     })
   })
 
+  it('gives a timeout-killed deploy its own heading and icon', () => {
+    expect(stackLastError({
+      last_error_category: 'deploy',
+      last_error_reason: 'timeout',
+      last_error_message: 'Container A Starting\nContainer B Starting\n\nerror: docker compose up failed: signal: killed',
+      last_error_at: '2026-01-01T00:00:00Z',
+    })).toMatchObject({
+      category: 'deploy',
+      reason: 'timeout',
+      label: 'Deploy Timed Out',
+      icon: 'i-lucide-clock',
+      color: 'error',
+    })
+  })
+
+  it.each(['dispatch', 'compose', ''])('keeps the generic heading for reason %p', (reason) => {
+    expect(stackLastError({
+      last_error_category: 'deploy',
+      last_error_reason: reason,
+      last_error_message: 'boom',
+    })).toMatchObject({
+      reason,
+      label: 'Error Summary',
+      icon: 'i-lucide-triangle-alert',
+    })
+  })
+
+  it('reports an empty reason when the backend could not tell', () => {
+    expect(stackLastError({
+      last_error_category: 'sync',
+      last_error_message: 'git fetch failed',
+    })).toMatchObject({ reason: '' })
+  })
+
   it('returns null for an unrecognized category', () => {
     expect(stackLastError({ last_error_category: 'bogus', last_error_message: 'x' })).toBeNull()
   })

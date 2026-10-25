@@ -201,6 +201,18 @@ type CommandResult struct {
 	// or a command type that doesn't run compose up), in which case the
 	// server treats compose_up as "unknown" rather than showing a false 0ms.
 	ComposeUpMs int64 `json:"compose_up_ms,omitempty"`
+	// TimedOut reports that the worker killed the command because one of the
+	// budgets it was handed expired (DeployCommand.PullTimeoutSeconds /
+	// UpTimeoutSeconds), rather than because the command itself failed.
+	// Error still carries docker's own message, but that message is only
+	// `signal: killed` — indistinguishable from an OOM kill — so the reason
+	// has to travel as a flag rather than be matched out of the text.
+	// TimedOutStep names which budget ran out: "pull" or "up".
+	//
+	// Optional: an older worker omits both, which the server reads as "not a
+	// timeout" and handles exactly as it did before the fields existed.
+	TimedOut     bool   `json:"timed_out,omitempty"`
+	TimedOutStep string `json:"timed_out_step,omitempty"`
 }
 
 // ProbeCommand is sent from the server to a worker to check whether a compose

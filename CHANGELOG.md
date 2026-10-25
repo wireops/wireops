@@ -147,6 +147,34 @@ changes in a minor release.
   `wireops://conventions/compose` resource instead of being duplicated in
   `scaffold_stack`'s description and the `scaffold_new_stack` prompt.
 
+### Fixed
+
+- A deploy killed by `deploy_timeout_seconds` no longer leaves the stack record
+  describing a host that does not exist. `docker compose up` is not atomic, so
+  the containers it had already recreated keep running the new revision while
+  `deployed_commit` still named the old one — `status: error` next to a health
+  rollup reporting the services up, and only `force_redeploy_stack` able to
+  converge it, since `deploy_stack` correctly reported `noop` against the
+  already-matching render. A timed-out deploy now asks the worker what is
+  actually on the host and, when the containers carry the revision it was
+  deploying, records that revision and takes its status from the post-check
+  (`active`, or `degraded` when only some services came up). The deploy still
+  counts as failed: `last_error_*` says so, and the sync log stays `error`.
+  Nothing is converged when the containers are still on the old revision or
+  the post-check could not verify anything.
+- Stacks now carry `last_error_reason` (`timeout`, `dispatch` or `compose`)
+  alongside `last_error_category`, so a caller can tell a deploy that ran out
+  of time from one that failed on its own terms without matching
+  `signal: killed` out of a compose progress log — which an out-of-memory kill
+  produces identically. Workers report the timeout as a flag rather than as
+  text; an older worker simply reports no reason, as before.
+- MCP: a validation error for an argument a tool does not take now names the
+  parameter it does. Sending `lines` to a tool that is not
+  `get_container_logs` used to come back as
+  `unexpected additional properties ["lines"]` with no pointer at `tail`. The
+  input schemas stay closed — the fix is to say what the right name is, not to
+  start accepting the wrong one.
+
 ### Removed
 
 - MCP: the `list_audit_logs`, `list_integrations`, `list_orphans` and

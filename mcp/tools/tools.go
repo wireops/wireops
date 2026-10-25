@@ -625,7 +625,7 @@ func resolveContainerTarget(ctx context.Context, c *client.Client, apiKey, stack
 }
 
 func resolveContainerInput(ctx context.Context, c *client.Client, apiKey, stackID, containerID, containerName, serviceName string) (string, string, error) {
-	ref, err := models.CanonicalOrAlias(containerID, containerName, "container_id", "container_name")
+	ref, err := models.CanonicalOrAlias(containerID, containerName, paramContainerID, paramContainerName)
 	if err != nil {
 		return "", "", err
 	}
@@ -825,7 +825,7 @@ func getContainerStats(c *client.Client) mcp.ToolHandlerFor[models.ContainerStat
 		if err != nil {
 			return nil, nil, err
 		}
-		containerRef, err := models.CanonicalOrAlias(in.ContainerID, in.ContainerName, "container_id", "container_name")
+		containerRef, err := models.CanonicalOrAlias(in.ContainerID, in.ContainerName, paramContainerID, paramContainerName)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1048,7 +1048,7 @@ func getContainerLogs(c *client.Client) mcp.ToolHandlerFor[models.ContainerLogsI
 		if err != nil {
 			return nil, nil, err
 		}
-		pattern, err := models.CanonicalOrAliasLiteral(in.Pattern, in.Search, "pattern", "search")
+		pattern, err := models.CanonicalOrAliasLiteral(in.Pattern, in.Search, paramPattern, paramSearch)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1059,11 +1059,11 @@ func getContainerLogs(c *client.Client) mcp.ToolHandlerFor[models.ContainerLogsI
 				return nil, nil, fmt.Errorf("invalid pattern: %w", err)
 			}
 		}
-		tail, err := models.CanonicalOrAlias(in.Tail, in.Lines, "tail", "lines")
+		tail, err := models.CanonicalOrAlias(in.Tail, in.Lines, paramTail, paramLines)
 		if err != nil {
 			return nil, nil, err
 		}
-		containerRef, err := models.CanonicalOrAlias(in.ContainerID, in.ContainerName, "container_id", "container_name")
+		containerRef, err := models.CanonicalOrAlias(in.ContainerID, in.ContainerName, paramContainerID, paramContainerName)
 		if err != nil {
 			return nil, nil, err
 		}

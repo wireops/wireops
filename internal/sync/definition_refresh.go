@@ -2,6 +2,7 @@ package sync
 
 import (
 	"fmt"
+	"log"
 	"path/filepath"
 	"strings"
 
@@ -23,6 +24,28 @@ type scheduleChange struct {
 
 func (c scheduleChange) String() string {
 	return fmt.Sprintf("%s %d -> %d", c.Field, c.From, c.To)
+}
+
+// refreshScheduleUnderRepoLock runs refreshScheduleFromDefinition with the
+// repository's read lock held, and logs whichever of the three outcomes
+// happened. The lock is the point of the wrapper: the definition is read out
+// of the shared checkout (workspace/<repoID>), which every git fetch rewrites,
+// and this runs ahead of the render phase's own read lock rather than under
+// it. It is released again here instead of being held until the render — an
+// RWMutex gives writers priority, so re-entering it while a queued fetch waits
+// would deadlock.
+func (r *Reconciler) refreshScheduleUnderRepoLock(stack *core.Record, repoID, stackID string) {
+	repoRead := r.repoMutex(repoID)
+	repoRead.RLock()
+	defer repoRead.RUnlock()
+
+	changes, err := r.refreshScheduleFromDefinition(stack, repoID)
+	switch {
+	case err != nil:
+		log.Printf("[reconciler] stack %s: keeping stored schedule, committed definition unreadable: %v", stackID, err)
+	case len(changes) > 0:
+		log.Printf("[reconciler] stack %s: refreshed schedule from git (%s)", stackID, formatScheduleChanges(changes))
+	}
 }
 
 // refreshScheduleFromDefinition re-reads the stack's committed wireops

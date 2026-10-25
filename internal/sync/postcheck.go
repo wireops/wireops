@@ -24,9 +24,17 @@ var postCheckInterval = 3 * time.Second
 // `docker compose up` reported success. Status is one of "active" (all
 // expected services running/healthy), "degraded" (some but not all), or
 // "error" (none of the expected services came up).
+//
+// Skipped means no verification actually happened — the compose file could
+// not be parsed, the worker could not be queried, or the context ended. Those
+// cases report Status "active" because on the success path compose had
+// already said the deploy worked, so "cannot verify" falls back to taking its
+// word. A caller reached from a *failed* deploy has no such word to fall back
+// on and must check this before believing Status (see convergeAfterTimeout).
 type postCheckResult struct {
-	Status string
-	Detail string
+	Status  string
+	Detail  string
+	Skipped bool
 }
 
 // postDeployCheck queries the worker for live container status after a
@@ -39,7 +47,7 @@ func (r *Reconciler) postDeployCheck(ctx context.Context, workerID, stackID, wor
 	expected, err := compose.ExpectedServiceNames(composeContent)
 	if err != nil || len(expected) == 0 {
 		log.Printf("[reconciler] post-check: could not determine expected services for stack %s, skipping: %v", stackID, err)
-		return postCheckResult{Status: "active", Detail: "post-check skipped: could not parse expected services from compose"}
+		return postCheckResult{Status: "active", Skipped: true, Detail: "post-check skipped: could not parse expected services from compose"}
 	}
 	// Best-effort: if the compose file can't be parsed for init labels, treat
 	// no service as an init container rather than failing the whole check.
@@ -87,7 +95,7 @@ func (r *Reconciler) postDeployCheck(ctx context.Context, workerID, stackID, wor
 		if attempt < postCheckAttempts {
 			select {
 			case <-ctx.Done():
-				return postCheckResult{Status: "active", Detail: "post-check skipped: interrupted: " + ctx.Err().Error()}
+				return postCheckResult{Status: "active", Skipped: true, Detail: "post-check skipped: interrupted: " + ctx.Err().Error()}
 			case <-time.After(postCheckInterval):
 			}
 		}
@@ -95,7 +103,7 @@ func (r *Reconciler) postDeployCheck(ctx context.Context, workerID, stackID, wor
 
 	if !gotStatus {
 		log.Printf("[reconciler] post-check: failed to query status for stack %s after %d attempts: %v", stackID, postCheckAttempts, queryErr)
-		return postCheckResult{Status: "active", Detail: "post-check skipped: could not query worker status: " + queryErr.Error()}
+		return postCheckResult{Status: "active", Skipped: true, Detail: "post-check skipped: could not query worker status: " + queryErr.Error()}
 	}
 
 	return evaluatePostCheck(expected, initSet, statuses)

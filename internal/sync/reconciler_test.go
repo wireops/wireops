@@ -426,12 +426,21 @@ func newReconcilerPhase1TestApp(t *testing.T) (*tests.TestApp, *core.Record) {
 
 	stacks := core.NewBaseCollection("stacks")
 	stacks.Fields.Add(&core.TextField{Name: "name", Required: true})
-	stacks.Fields.Add(&core.SelectField{Name: "status", Values: []string{"active", "syncing", "paused", "error", "pending"}})
+	// The select option sets mirror the real collection (pb_migrations 01/43
+	// for status, 61/78 for the error fields) — as plain text fields these
+	// assertions would pass for a value the live schema rejects.
+	stacks.Fields.Add(&core.SelectField{Name: "status", Values: []string{"active", "syncing", "paused", "error", "pending", "degraded"}})
 	stacks.Fields.Add(&core.DateField{Name: "last_synced_at"})
-	stacks.Fields.Add(&core.TextField{Name: "last_error_category"})
+	stacks.Fields.Add(&core.SelectField{Name: "last_error_category", MaxSelect: 1, Values: []string{"sync", "deploy"}})
+	stacks.Fields.Add(&core.SelectField{Name: "last_error_reason", MaxSelect: 1, Values: []string{"timeout", "dispatch", "compose"}})
 	stacks.Fields.Add(&core.TextField{Name: "last_error_message"})
 	stacks.Fields.Add(&core.DateField{Name: "last_error_at"})
 	stacks.Fields.Add(&core.TextField{Name: "last_error_commit"})
+	stacks.Fields.Add(&core.NumberField{Name: "deployed_version"})
+	stacks.Fields.Add(&core.TextField{Name: "deployed_commit"})
+	stacks.Fields.Add(&core.TextField{Name: "deployed_checksum"})
+	stacks.Fields.Add(&core.DateField{Name: "deployed_at"})
+	stacks.Fields.Add(&core.TextField{Name: "compose_project_name"})
 	if err := app.Save(stacks); err != nil {
 		t.Fatalf("failed to create stacks collection: %v", err)
 	}
@@ -535,7 +544,12 @@ func newForceRedeployNilNotifierTestApp(t *testing.T) (*tests.TestApp, *core.Rec
 	stacks.Fields.Add(&core.TextField{Name: "name", Required: true})
 	stacks.Fields.Add(&core.RelationField{Name: "repository", CollectionId: repos.Id, Required: true, MaxSelect: 1})
 	stacks.Fields.Add(&core.TextField{Name: "compose_path"})
-	stacks.Fields.Add(&core.SelectField{Name: "status", Values: []string{"active", "syncing", "paused", "error", "pending"}})
+	stacks.Fields.Add(&core.SelectField{Name: "status", Values: []string{"active", "syncing", "paused", "error", "pending", "degraded"}})
+	stacks.Fields.Add(&core.SelectField{Name: "last_error_category", MaxSelect: 1, Values: []string{"sync", "deploy"}})
+	stacks.Fields.Add(&core.SelectField{Name: "last_error_reason", MaxSelect: 1, Values: []string{"timeout", "dispatch", "compose"}})
+	stacks.Fields.Add(&core.TextField{Name: "last_error_message"})
+	stacks.Fields.Add(&core.DateField{Name: "last_error_at"})
+	stacks.Fields.Add(&core.TextField{Name: "last_error_commit"})
 	stacks.Fields.Add(&core.NumberField{Name: "deployed_version"})
 	stacks.Fields.Add(&core.TextField{Name: "deployed_commit"})
 	stacks.Fields.Add(&core.TextField{Name: "deployed_checksum"})
