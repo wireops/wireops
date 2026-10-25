@@ -3,6 +3,7 @@ package compose
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"path"
@@ -275,10 +276,9 @@ func GetStackVolumes(ctx context.Context, cli *dockerclient.Client, projectName 
 
 	bindMounts, err := getStackBindMounts(ctx, cli, projectName)
 	if err != nil {
-		log.Printf("failed to list bind mounts for project %s: %v", projectName, err)
-	} else {
-		infos = append(infos, bindMounts...)
+		return infos, fmt.Errorf("inspect bind mounts: %w", err)
 	}
+	infos = append(infos, bindMounts...)
 
 	return infos, nil
 }
@@ -301,8 +301,7 @@ func getStackBindMounts(ctx context.Context, cli *dockerclient.Client, projectNa
 	for _, c := range containers {
 		inspect, ierr := cli.ContainerInspect(ctx, c.ID)
 		if ierr != nil {
-			log.Printf("failed to inspect container %s: %v", c.ID, ierr)
-			continue
+			return infos, fmt.Errorf("inspect container %s for bind mounts: %w", c.ID, ierr)
 		}
 		for _, m := range inspect.Mounts {
 			if m.Type != mount.TypeBind {
@@ -356,10 +355,9 @@ func GetStackNetworks(ctx context.Context, cli *dockerclient.Client, projectName
 
 	externalInfos, err := getExternalStackNetworks(ctx, cli, projectName, seenIDs)
 	if err != nil {
-		log.Printf("failed to list external networks for project %s: %v", projectName, err)
-	} else {
-		infos = append(infos, externalInfos...)
+		return infos, fmt.Errorf("inspect external networks: %w", err)
 	}
+	infos = append(infos, externalInfos...)
 
 	return infos, nil
 }
@@ -420,8 +418,11 @@ func getExternalStackNetworks(ctx context.Context, cli *dockerclient.Client, pro
 	var infos []protocol.NetworkInfo
 	for _, c := range containers {
 		inspect, ierr := cli.ContainerInspect(ctx, c.ID)
-		if ierr != nil || inspect.NetworkSettings == nil {
-			continue
+		if ierr != nil {
+			return infos, fmt.Errorf("inspect container %s for networks: %w", c.ID, ierr)
+		}
+		if inspect.NetworkSettings == nil {
+			return infos, fmt.Errorf("inspect container %s for networks: no network settings", c.ID)
 		}
 		for netName, endpoint := range inspect.NetworkSettings.Networks {
 			networkID := netName
@@ -438,8 +439,7 @@ func getExternalStackNetworks(ctx context.Context, cli *dockerclient.Client, pro
 
 			netInspect, nerr := cli.NetworkInspect(ctx, networkID, dockernetwork.InspectOptions{})
 			if nerr != nil {
-				log.Printf("failed to inspect network %s: %v", netName, nerr)
-				continue
+				return infos, fmt.Errorf("inspect external network %s: %w", netName, nerr)
 			}
 			if seenNetworkIDs[netInspect.ID] {
 				continue

@@ -240,6 +240,8 @@ function toggleContainer(id: string) {
 
 const volumes = ref<VolumeInfo[]>([])
 const networks = ref<NetworkInfo[]>([])
+const resourcesState = ref<'loading' | 'confirmed' | 'partial' | 'failed'>('loading')
+const resourceWarnings = ref<string[]>([])
 const openVolumeDetails = ref<Record<string, boolean>>({})
 const openNetworkDetails = ref<Record<string, boolean>>({})
 
@@ -252,13 +254,19 @@ function toggleNetworkDetails(name: string) {
 }
 
 async function refreshResources() {
+  resourcesState.value = 'loading'
+  resourceWarnings.value = []
   try {
     const res = await getStackResources(props.stackId)
     volumes.value = res.volumes ?? []
     networks.value = res.networks ?? []
+    resourceWarnings.value = res.warnings ?? []
+    resourcesState.value = res.partial ? 'partial' : 'confirmed'
   } catch {
     volumes.value = []
     networks.value = []
+    resourcesState.value = 'failed'
+    resourceWarnings.value = ['The resource inventory could not be retrieved. Check that the worker is online and try again.']
   }
 }
 
@@ -663,6 +671,20 @@ watch(() => props.services, (services) => {
           <p class="text-xs text-gray-500 dark:text-gray-400 pl-[42px]">Persistent storage volumes for data</p>
         </div>
 
+        <div
+          v-if="resourcesState === 'partial' || resourcesState === 'failed'"
+          class="rounded-lg border px-3 py-2 text-xs"
+          :class="resourcesState === 'failed'
+            ? 'border-red-200 bg-red-50 text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200'
+            : 'border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100'"
+          data-testid="resource-inventory-state"
+        >
+          <p class="font-medium">{{ resourcesState === 'failed' ? 'Resource inventory unavailable' : 'Partial resource inventory' }}</p>
+          <ul v-if="resourceWarnings.length" class="mt-1 list-disc pl-4">
+            <li v-for="warning in resourceWarnings" :key="warning">{{ warning }}</li>
+          </ul>
+        </div>
+
         <div v-if="volumes.length" class="space-y-3">
           <div
             v-for="vol in volumes"
@@ -731,7 +753,9 @@ watch(() => props.services, (services) => {
             </div>
           </div>
         </div>
-        <p v-else class="text-sm text-gray-500 py-2 text-center">No volumes found. Run a sync first.</p>
+        <p v-else-if="resourcesState === 'confirmed'" class="text-sm text-gray-500 py-2 text-center">No volumes are attached to this stack.</p>
+        <p v-else-if="resourcesState === 'loading'" class="text-sm text-gray-500 py-2 text-center">Loading resource inventory…</p>
+        <p v-else class="text-sm text-gray-500 py-2 text-center">No volume data is available from this resource inventory.</p>
       </section>
 
       <hr class="border-gray-300 dark:border-carbon-800 my-4">
@@ -839,7 +863,9 @@ watch(() => props.services, (services) => {
             </div>
           </div>
         </div>
-        <p v-else class="text-sm text-gray-500 py-2 text-center">No networks found. Run a sync first.</p>
+        <p v-else-if="resourcesState === 'confirmed'" class="text-sm text-gray-500 py-2 text-center">No networks are attached to this stack.</p>
+        <p v-else-if="resourcesState === 'loading'" class="text-sm text-gray-500 py-2 text-center">Loading resource inventory…</p>
+        <p v-else class="text-sm text-gray-500 py-2 text-center">No network data is available from this resource inventory.</p>
       </section>
     </div>
   </AppPanelCard>

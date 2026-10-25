@@ -428,6 +428,10 @@ func newReconcilerPhase1TestApp(t *testing.T) (*tests.TestApp, *core.Record) {
 	stacks.Fields.Add(&core.TextField{Name: "name", Required: true})
 	stacks.Fields.Add(&core.SelectField{Name: "status", Values: []string{"active", "syncing", "paused", "error", "pending"}})
 	stacks.Fields.Add(&core.DateField{Name: "last_synced_at"})
+	stacks.Fields.Add(&core.TextField{Name: "last_error_category"})
+	stacks.Fields.Add(&core.TextField{Name: "last_error_message"})
+	stacks.Fields.Add(&core.DateField{Name: "last_error_at"})
+	stacks.Fields.Add(&core.TextField{Name: "last_error_commit"})
 	if err := app.Save(stacks); err != nil {
 		t.Fatalf("failed to create stacks collection: %v", err)
 	}
@@ -480,6 +484,36 @@ func newReconcilerPhase1TestApp(t *testing.T) (*tests.TestApp, *core.Record) {
 		t.Fatalf("failed to create stack: %v", err)
 	}
 	return app, stack
+}
+
+func TestLastErrorCommitTracksOnlyTheAttemptedRevision(t *testing.T) {
+	app, stack := newReconcilerPhase1TestApp(t)
+	r := &Reconciler{app: app}
+	if err := r.markDeployError(stack, "deploy failed", "commit-a"); err != nil {
+		t.Fatalf("mark deploy error: %v", err)
+	}
+	refreshed, err := app.FindRecordById("stacks", stack.Id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := refreshed.GetString("last_error_commit"); got != "commit-a" {
+		t.Fatalf("last_error_commit = %q, want commit-a", got)
+	}
+
+	// A later repository fetch can learn B without rewriting the failure that
+	// happened while attempting A. Success clears the complete denormalized
+	// error bundle explicitly.
+	r.clearLastError(refreshed)
+	if err := app.Save(refreshed); err != nil {
+		t.Fatalf("save success cleanup: %v", err)
+	}
+	refreshed, err = app.FindRecordById("stacks", stack.Id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := refreshed.GetString("last_error_commit"); got != "" {
+		t.Fatalf("last_error_commit after success = %q, want empty", got)
+	}
 }
 
 func newForceRedeployNilNotifierTestApp(t *testing.T) (*tests.TestApp, *core.Record) {

@@ -307,6 +307,21 @@ func (c *Client) Post(ctx context.Context, apiKey, path string, query url.Values
 	return c.do(ctx, apiKey, http.MethodPost, path, query, body, out)
 }
 
+// PostWithTimeout is for a request whose server-side contract legitimately
+// exceeds the client's ordinary 30-second API timeout (currently one-shot
+// container exec). It copies the configured redirect policy and otherwise
+// uses the exact same authenticated request path as Post.
+func (c *Client) PostWithTimeout(ctx context.Context, apiKey, path string, query url.Values, body, out any, timeout time.Duration) error {
+	if timeout <= 0 {
+		return c.Post(ctx, apiKey, path, query, body, out)
+	}
+	copyClient := *c
+	copyHTTP := *c.http
+	copyHTTP.Timeout = timeout
+	copyClient.http = &copyHTTP
+	return copyClient.do(ctx, apiKey, http.MethodPost, path, query, body, out)
+}
+
 // Put issues an authenticated PUT with a JSON body.
 func (c *Client) Put(ctx context.Context, apiKey, path string, query url.Values, body, out any) error {
 	return c.do(ctx, apiKey, http.MethodPut, path, query, body, out)

@@ -298,6 +298,48 @@ func ExpectedServiceNames(data []byte) ([]string, error) {
 	return names, nil
 }
 
+// ExpectedService describes one service that should participate in a live
+// health check. Scale zero services are intentionally excluded: Compose has
+// been told not to create a container for them, so treating them as missing
+// would make an otherwise healthy stack permanently unhealthy.
+type ExpectedService struct {
+	Name     string
+	IsInit   bool
+	Replicas int
+}
+
+// ExpectedServices extracts services that Compose is expected to run, along
+// with the run-to-completion marker used by health checks.
+func ExpectedServices(data []byte) ([]ExpectedService, error) {
+	var doc struct {
+		Services map[string]struct {
+			Labels any `yaml:"labels"`
+			Deploy struct {
+				Replicas *int `yaml:"replicas"`
+			} `yaml:"deploy"`
+		} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, fmt.Errorf("failed to parse compose services: %w", err)
+	}
+	services := make([]ExpectedService, 0, len(doc.Services))
+	for name, svc := range doc.Services {
+		if svc.Deploy.Replicas != nil && *svc.Deploy.Replicas == 0 {
+			continue
+		}
+		replicas := 1
+		if svc.Deploy.Replicas != nil {
+			replicas = *svc.Deploy.Replicas
+		}
+		services = append(services, ExpectedService{
+			Name:     name,
+			IsInit:   isLabelTruthy(labelsToMap(svc.Labels), initLabel),
+			Replicas: replicas,
+		})
+	}
+	return services, nil
+}
+
 // ExtractProjectName reads the top-level `name` field from a rendered
 // compose file. The renderer (see sync.Renderer.GenerateRevision) always
 // bakes this in as the wireops stack's own sanitized name, so callers that

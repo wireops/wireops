@@ -197,6 +197,37 @@ func TestGetStackStatusNoNoticeWithoutRenderOverrides(t *testing.T) {
 	}
 }
 
+func TestGetInventoryResolvesWorkerHostnameAndPages(t *testing.T) {
+	var gotInventoryQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/collections/workers/records":
+			writeFixture(w, `{"items":[{"id":"worker000000001","hostname":"edge-a"}]}`)
+		case "/api/custom/inventory":
+			gotInventoryQuery = r.URL.RawQuery
+			writeFixture(w, `{"page":2,"per_page":200,"stacks":[]}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			writeFixture(w, `{"error":"unexpected path"}`)
+		}
+	}))
+	defer srv.Close()
+
+	_, out, err := getInventory(client.New(srv.URL))(ctxWithKey(), nil, models.InventoryInput{Worker: "edge-a", Group: "prod", Limit: 500, Page: 2})
+	if err != nil {
+		t.Fatalf("get inventory: %v", err)
+	}
+	result := out.(map[string]interface{})
+	if result["per_page"] != float64(200) {
+		t.Fatalf("expected capped response, got %#v", result)
+	}
+	for _, part := range []string{"worker=worker000000001", "group=prod", "per_page=200", "page=2"} {
+		if !strings.Contains(gotInventoryQuery, part) {
+			t.Errorf("inventory query %q is missing %q", gotInventoryQuery, part)
+		}
+	}
+}
+
 func TestGetSyncLogsFiltersByStackID(t *testing.T) {
 	var gotQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1296,6 +1327,9 @@ func TestListSecretsReportsNonSecretKeyNames(t *testing.T) {
 	}
 	if result["non_secret_count"] != 1 {
 		t.Errorf("non_secret_count = %v, want 1", result["non_secret_count"])
+	}
+	if result["secret_count_scope"] != "stack_secrets + global_secrets; excludes sops_secrets" {
+		t.Errorf("unexpected secret_count scope: %#v", result["secret_count_scope"])
 	}
 	// An empty secret list used to read as "this stack has no env vars at all",
 	// which is how an undefined ${MQTT_USER} reached a deploy.

@@ -154,3 +154,22 @@ func TestHandlersAcceptANameInPlaceOfAnID(t *testing.T) {
 	}
 	t.Fatalf("expected the resolved id in the record path, got %v", paths)
 }
+
+func TestResolveStackInputAcceptsAliasAndRejectsConflict(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/collections/stacks/records" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		writeFixture(w, `{"items":[{"id":"stack0000000001","name":"billing"}]}`)
+	}))
+	defer srv.Close()
+
+	got, err := resolveStackInput(ctxWithKey(), client.New(srv.URL), "wireops_sk_test", "", "billing")
+	if err != nil || got != "stack0000000001" {
+		t.Fatalf("alias resolved id=%q err=%v", got, err)
+	}
+	if _, err := resolveStackInput(ctxWithKey(), client.New(srv.URL), "wireops_sk_test", "a", "b"); err == nil {
+		t.Fatal("expected conflicting aliases to fail")
+	}
+}

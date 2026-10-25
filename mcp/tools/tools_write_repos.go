@@ -195,7 +195,11 @@ func lintCompose(c *client.Client) mcp.ToolHandlerFor[models.LintComposeInput, a
 		if err != nil {
 			return nil, nil, err
 		}
-		stackID, err := resolveStackID(ctx, c, apiKey, in.Stack)
+		stackRef, err := models.CanonicalOrAlias(in.StackID, in.Stack, "stack_id", "stack")
+		if err != nil {
+			return nil, nil, err
+		}
+		stackID, err := resolveStackID(ctx, c, apiKey, stackRef)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -236,7 +240,7 @@ func previewStackMigration(c *client.Client) mcp.ToolHandlerFor[models.PreviewSt
 		if err != nil {
 			return nil, nil, err
 		}
-		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		stackID, err := resolveStackInput(ctx, c, apiKey, in.StackID, in.Stack)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -263,7 +267,7 @@ func migrateStack(c *client.Client) mcp.ToolHandlerFor[models.MigrateStackInput,
 		if err != nil {
 			return nil, nil, err
 		}
-		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		stackID, err := resolveStackInput(ctx, c, apiKey, in.StackID, in.Stack)
 		if err != nil {
 			return nil, nil, err
 		}

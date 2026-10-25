@@ -2,6 +2,7 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -12,12 +13,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/wireops/wireops/internal/compose"
 	"github.com/wireops/wireops/internal/docker"
 	"github.com/wireops/wireops/internal/protocol"
@@ -340,22 +343,35 @@ func GetResources(ctx context.Context, cmd protocol.GetResourcesCommand) protoco
 	}
 	defer client.Close()
 
+	result := protocol.GetResourcesResult{
+		Volumes:  []protocol.VolumeInfo{},
+		Networks: []protocol.NetworkInfo{},
+	}
 	volumes, err := compose.GetStackVolumes(ctx, client.Raw(), cmd.ProjectName)
+	if volumes == nil {
+		volumes = []protocol.VolumeInfo{}
+	}
+	result.Volumes = volumes
 	if err != nil {
 		log.Printf("[executor] get_resources volumes error stack=%s: %v", cmd.StackID, err)
-		volumes = []protocol.VolumeInfo{}
+		result.Partial = true
+		result.Warnings = append(result.Warnings, "could not collect volumes: "+err.Error())
 	}
 
 	networks, err := compose.GetStackNetworks(ctx, client.Raw(), cmd.ProjectName)
-	if err != nil {
-		log.Printf("[executor] get_resources networks error stack=%s: %v", cmd.StackID, err)
+	if networks == nil {
 		networks = []protocol.NetworkInfo{}
 	}
+	result.Networks = networks
+	if err != nil {
+		log.Printf("[executor] get_resources networks error stack=%s: %v", cmd.StackID, err)
+		result.Partial = true
+		result.Warnings = append(result.Warnings, "could not collect networks: "+err.Error())
+	}
 
-	result := protocol.GetResourcesResult{Volumes: volumes, Networks: networks}
 	encoded, _ := json.Marshal(result)
 
-	log.Printf("[executor] get_resources done stack=%s volumes=%d networks=%d", cmd.StackID, len(volumes), len(networks))
+	log.Printf("[executor] get_resources done stack=%s volumes=%d networks=%d partial=%t", cmd.StackID, len(result.Volumes), len(result.Networks), result.Partial)
 	return protocol.CommandResult{CommandID: cmd.CommandID, Output: string(encoded)}
 }
 
@@ -1096,10 +1112,21 @@ func GetContainerLogs(ctx context.Context, cmd protocol.GetContainerLogsCommand)
 		tail = "100"
 	}
 
+	if cmd.Pattern != "" {
+		if _, err := regexp.Compile(cmd.Pattern); err != nil {
+			return protocol.CommandResult{CommandID: cmd.CommandID, Error: "invalid log pattern: " + err.Error()}
+		}
+	}
+	inspect, err := cli.Raw().ContainerInspect(ctx, cmd.ContainerID)
+	if err != nil {
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: "inspecting container logs target: " + err.Error()}
+	}
 	reader, err := cli.Raw().ContainerLogs(ctx, cmd.ContainerID, container.LogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 		Tail:       tail,
+		Since:      cmd.Since,
+		Until:      cmd.Until,
 		Timestamps: true,
 	})
 	if err != nil {
@@ -1107,31 +1134,68 @@ func GetContainerLogs(ctx context.Context, cmd protocol.GetContainerLogsCommand)
 	}
 	defer reader.Close()
 
-	const maxPayloadSize = 10 * 1024 * 1024
-	buf := new(strings.Builder)
-	header := make([]byte, 8)
-	for {
-		_, err := io.ReadFull(reader, header)
-		if err != nil {
-			break
-		}
-		size := int(header[4])<<24 | int(header[5])<<16 | int(header[6])<<8 | int(header[7])
-		if size == 0 {
-			continue
-		}
-		if size < 0 || size > maxPayloadSize {
-			log.Printf("[executor] invalid payload size %d", size)
-			break
-		}
-		payload := make([]byte, size)
-		_, err = io.ReadFull(reader, payload)
-		if err != nil {
-			break
-		}
-		buf.Write(payload)
+	const maxReadBytes = 1 << 20
+	raw, readErr := io.ReadAll(io.LimitReader(reader, maxReadBytes+1))
+	truncated := len(raw) > maxReadBytes
+	if truncated {
+		raw = raw[:maxReadBytes]
+	}
+	if readErr != nil {
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: "reading container logs: " + readErr.Error()}
 	}
 
-	return protocol.CommandResult{CommandID: cmd.CommandID, Output: buf.String()}
+	logs, truncated, err := formatContainerLogs(raw, inspect.Config != nil && inspect.Config.Tty, cmd.Pattern, truncated)
+	if err != nil {
+		return protocol.CommandResult{CommandID: cmd.CommandID, Error: "decoding container logs: " + err.Error()}
+	}
+	result := protocol.ContainerLogsResult{
+		Logs:         logs,
+		AppliedTail:  tail,
+		AppliedSince: cmd.Since,
+		AppliedUntil: cmd.Until,
+		Pattern:      cmd.Pattern,
+		Truncated:    truncated,
+	}
+	if truncated {
+		result.TruncationReason = "log output exceeded the 64 KiB response limit or 1 MiB read limit"
+	}
+	encoded, _ := json.Marshal(result)
+	return protocol.CommandResult{CommandID: cmd.CommandID, Output: string(encoded)}
+}
+
+func filterLogLines(logs string, re *regexp.Regexp) string {
+	lines := strings.Split(logs, "\n")
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if re.MatchString(line) {
+			kept = append(kept, line)
+		}
+	}
+	return strings.Join(kept, "\n")
+}
+
+// formatContainerLogs converts Docker's optional multiplexed log stream into
+// one bounded text response. Docker uses raw bytes for TTY containers and
+// stdcopy frames otherwise. Filtering deliberately happens after Docker has
+// selected the time window and tail in ContainerLogs above.
+func formatContainerLogs(raw []byte, tty bool, pattern string, sourceTruncated bool) (string, bool, error) {
+	const maxOutputBytes = 64 << 10
+	var combined bytes.Buffer
+	if tty {
+		_, _ = combined.Write(raw)
+	} else if _, err := stdcopy.StdCopy(&combined, &combined, bytes.NewReader(raw)); err != nil && !sourceTruncated {
+		return "", sourceTruncated, err
+	}
+	logs := combined.String()
+	if pattern != "" {
+		logs = filterLogLines(logs, regexp.MustCompile(pattern))
+	}
+	truncated := sourceTruncated
+	if len(logs) > maxOutputBytes {
+		logs = logs[:maxOutputBytes]
+		truncated = true
+	}
+	return logs, truncated, nil
 }
 
 func lookPathSecure(file string) (string, error) {

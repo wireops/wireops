@@ -64,6 +64,33 @@ describe('StackServicesCard', () => {
     },
   }
 
+  it('distinguishes confirmed-empty, partial, and failed resource inventory', async () => {
+    const mountCard = () => mount(StackServicesCard, {
+      props: { stackId: 'stack-1', services: [], containerStats: {}, integrationActions: {} },
+      global: { stubs },
+    })
+
+    getStackResources.mockResolvedValueOnce({ volumes: [], networks: [] })
+    const confirmed = mountCard()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(confirmed.text()).toContain('No volumes are attached to this stack.')
+    expect(confirmed.find('[data-testid="resource-inventory-state"]').exists()).toBe(false)
+
+    getStackResources.mockResolvedValueOnce({ volumes: [], networks: [], partial: true, warnings: ['worker needs upgrade'] })
+    const partial = mountCard()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(partial.get('[data-testid="resource-inventory-state"]').text()).toContain('Partial resource inventory')
+    expect(partial.text()).toContain('worker needs upgrade')
+
+    getStackResources.mockRejectedValueOnce(new Error('offline'))
+    const failed = mountCard()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(failed.get('[data-testid="resource-inventory-state"]').text()).toContain('Resource inventory unavailable')
+  })
+
   it('groups containers by service name and emits actions', async () => {
     getStackResources.mockResolvedValue({
       volumes: [{

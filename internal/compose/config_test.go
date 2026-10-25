@@ -201,6 +201,43 @@ services:
 	}
 }
 
+func TestExpectedServicesSkipsScaleZeroAndKeepsHealthMetadata(t *testing.T) {
+	services, err := ExpectedServices([]byte(`
+services:
+  web:
+    image: nginx
+    deploy:
+      replicas: 2
+  migrate:
+    image: migrate
+    labels:
+      customization.init: "true"
+  disabled:
+    image: nginx
+    deploy:
+      replicas: 0
+`))
+	if err != nil {
+		t.Fatalf("ExpectedServices: %v", err)
+	}
+	if len(services) != 2 {
+		t.Fatalf("got %d expected services, want 2: %#v", len(services), services)
+	}
+	if services[0].Name == "disabled" || services[1].Name == "disabled" {
+		t.Fatalf("scale-zero service should not be expected: %#v", services)
+	}
+	byName := map[string]ExpectedService{}
+	for _, service := range services {
+		byName[service.Name] = service
+	}
+	if got := byName["web"]; got.Replicas != 2 || got.IsInit {
+		t.Fatalf("web metadata = %#v", got)
+	}
+	if got := byName["migrate"]; !got.IsInit || got.Replicas != 1 {
+		t.Fatalf("migrate metadata = %#v", got)
+	}
+}
+
 func TestRewriteAutoNamedResources(t *testing.T) {
 	t.Run("RewritesNetworkAndVolumeNamesSharingOldPrefix", func(t *testing.T) {
 		// Mirrors the actual incident payload: `docker compose config` for

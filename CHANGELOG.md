@@ -79,11 +79,31 @@ changes in a minor release.
   with the command it ran.
 - MCP: `exec_in_container` uses that route, so it reports stdout, stderr and
   the exit code as distinct fields, and accepts the command as an `argv` array
-  for an image with no shell. Against a worker too old to support it the tool
-  falls back to the previous terminal-session method and says so in the
-  response, where stdout and stderr are necessarily interleaved.
+  for an image with no shell.
+- On-demand stack health (`GET /api/custom/stacks/{id}/health`) and a paged
+  fleet inventory (`GET /api/custom/inventory`, also `get_inventory` in MCP)
+  now report the deployed revision's live Docker health without starting a
+  sync or a background monitor. Inventory isolates worker failures and marks
+  incomplete data instead of discarding the rest of the fleet.
+- Resource inventory reports named volumes, bind mounts and external networks
+  with explicit `partial`/`warnings`; an empty inventory now means confirmed
+  empty. Workers advertise `resource_inventory_v1` to confirm the complete
+  collection contract.
+- Container logs accept server-validated `since`, `until` and `pattern`, bound
+  both inspected and returned bytes, and return applied filters plus
+  truncation metadata. `container_logs_filter_v1` protects time-window
+  filtering during mixed worker upgrades.
+- Stack diagnostics now carry `last_error_commit`, without guessing a commit
+  for historical failures; a successful deploy clears it with the other
+  `last_error_*` fields.
 
 ### Changed
+
+- MCP stack inputs also accept `stack`; container tools accept
+  `container_name`, and logs accept `lines`/`search`. Equal canonical and
+  alias values are accepted; conflicting values are rejected. `exec_in_container`
+  now returns the worker's `409` for a missing `exec_one_shot_v1` directly and
+  never opens, polls or marker-drives a terminal-session fallback.
 
 - Reading a worker's deploy security policy (`GET
   /api/custom/workers/{id}/policy` and `GET /api/custom/settings/worker-policy`)

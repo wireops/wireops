@@ -111,7 +111,7 @@ func deployStack(c *client.Client) mcp.ToolHandlerFor[models.DeployStackInput, a
 		if err != nil {
 			return nil, nil, err
 		}
-		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		stackID, err := resolveStackInput(ctx, c, apiKey, in.StackID, in.Stack)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -140,7 +140,7 @@ func forceRedeployStack(c *client.Client) mcp.ToolHandlerFor[models.ForceRedeplo
 		if err != nil {
 			return nil, nil, err
 		}
-		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		stackID, err := resolveStackInput(ctx, c, apiKey, in.StackID, in.Stack)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -188,7 +188,7 @@ func rollbackStack(c *client.Client) mcp.ToolHandlerFor[models.RollbackStackInpu
 		if err != nil {
 			return nil, nil, err
 		}
-		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		stackID, err := resolveStackInput(ctx, c, apiKey, in.StackID, in.Stack)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -220,7 +220,7 @@ func setStackPaused(c *client.Client) mcp.ToolHandlerFor[models.SetStackPausedIn
 		if err != nil {
 			return nil, nil, err
 		}
-		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		stackID, err := resolveStackInput(ctx, c, apiKey, in.StackID, in.Stack)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -259,7 +259,7 @@ func setStackRenderOverrides(c *client.Client) mcp.ToolHandlerFor[models.SetStac
 		if err != nil {
 			return nil, nil, err
 		}
-		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		stackID, err := resolveStackInput(ctx, c, apiKey, in.StackID, in.Stack)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -281,7 +281,7 @@ func clearStackRenderOverrides(c *client.Client) mcp.ToolHandlerFor[models.Clear
 		if err != nil {
 			return nil, nil, err
 		}
-		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		stackID, err := resolveStackInput(ctx, c, apiKey, in.StackID, in.Stack)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -300,11 +300,11 @@ func restartContainer(c *client.Client) mcp.ToolHandlerFor[models.ContainerActio
 		if err != nil {
 			return nil, nil, err
 		}
-		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		stackID, err := resolveStackInput(ctx, c, apiKey, in.StackID, in.Stack)
 		if err != nil {
 			return nil, nil, err
 		}
-		containerID, _, err := resolveContainerTarget(ctx, c, apiKey, stackID, in.ContainerID, in.ServiceName)
+		containerID, _, err := resolveContainerInput(ctx, c, apiKey, stackID, in.ContainerID, in.ContainerName, in.ServiceName)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -323,11 +323,11 @@ func stopContainer(c *client.Client) mcp.ToolHandlerFor[models.StopContainerInpu
 		if err != nil {
 			return nil, nil, err
 		}
-		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		stackID, err := resolveStackInput(ctx, c, apiKey, in.StackID, in.Stack)
 		if err != nil {
 			return nil, nil, err
 		}
-		containerID, serviceName, err := resolveContainerTarget(ctx, c, apiKey, stackID, in.ContainerID, in.ServiceName)
+		containerID, serviceName, err := resolveContainerInput(ctx, c, apiKey, stackID, in.ContainerID, in.ContainerName, in.ServiceName)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -349,7 +349,7 @@ func transferStack(c *client.Client) mcp.ToolHandlerFor[models.TransferStackInpu
 		if err != nil {
 			return nil, nil, err
 		}
-		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		stackID, err := resolveStackInput(ctx, c, apiKey, in.StackID, in.Stack)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -378,7 +378,7 @@ func deleteStack(c *client.Client) mcp.ToolHandlerFor[models.DeleteStackInput, a
 		if err != nil {
 			return nil, nil, err
 		}
-		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		stackID, err := resolveStackInput(ctx, c, apiKey, in.StackID, in.Stack)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -404,7 +404,7 @@ func setStackEnvVars(c *client.Client) mcp.ToolHandlerFor[models.SetStackEnvVars
 		if err != nil {
 			return nil, nil, err
 		}
-		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		stackID, err := resolveStackInput(ctx, c, apiKey, in.StackID, in.Stack)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -432,7 +432,7 @@ func copyStackEnvVars(c *client.Client) mcp.ToolHandlerFor[models.CopyStackEnvVa
 		if err != nil {
 			return nil, nil, err
 		}
-		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		stackID, err := resolveStackInput(ctx, c, apiKey, in.StackID, in.Stack)
 		if err != nil {
 			return nil, nil, err
 		}
