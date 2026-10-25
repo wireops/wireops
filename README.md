@@ -26,18 +26,29 @@ Pointing an agent at a host usually means giving it the Docker socket and hoping
 - **Every agent brings its own key.** The MCP server holds no credential of its own — each client supplies a `service_accounts` API key per connection, pass-through, never persisted. Revoke one agent without touching the others.
 - **Authorization is the server's, not the agent's.** Every call lands on the same REST route the UI calls, so `internal/rbac` decides it. A service account caps at `viewer`/`operator`, which is a hard ceiling: an agent cannot change settings, read the audit log, or escalate itself, no matter how it is prompted.
 - **The audit log keeps per-agent granularity.** Because the key isn't shared, every deploy, rollback and exec is attributable to the agent that made it.
-- **Irreversible tools demand the real name.** Destructive calls take a `confirm` field matched server-side against the record's actual name — a wrong guess fails before any write leaves the process.
-- **Tools are annotated, so your client can decide.** Each one carries `readOnly` / `additive` / `destructive` hints, which is what lets a client run reads unattended and hold the rest for a human.
-- **Deploys report their real outcome.** `deploy_stack`, `force_redeploy_stack` and `rollback_stack` can wait on the reconcile and return the terminal status with the deploy log, instead of leaving the agent to guess whether it worked.
+- **The tools that can't be undone make you type the name.** Deleting a stack, repository or job, revoking a worker, or stopping a container takes a `confirm` field that the server matches against the target's own name, resolved server-side — a wrong guess fails before any write leaves the process. Some tools gate only their destructive branch (`force_redeploy_stack` when it recreates volumes, the env var writes in `replace` mode), and `delete_job_run` takes the literal `delete`. The reversible writes don't pay that cost.
+- **Tools are annotated, so your client can decide.** Each one carries `readOnly` / `additive` / `destructive` hints, which is what lets a client run reads unattended and hold the rest for a human. The annotation is advice to the client, not a server-side gate — the `confirm` guard above is the enforced one, and it covers a deliberately narrower set.
+- **Deploys report an observed outcome instead of leaving the agent to guess.** `deploy_stack`, `force_redeploy_stack` and `rollback_stack` can wait on the reconcile and return its terminal status with the deploy log. The wait subscribes before triggering, so it can't miss the result — but it cannot *prove* the reconcile it observed is the one it triggered, since wireops skips a trigger for a stack that is already syncing. When the status belongs to a sync log that already existed, the tool says so in a `_notice` rather than passing it off as this call's result.
 
 Three tool groups (`MCP_TOOLS`), so you choose the blast radius: `read` for an agent that only answers questions, `write` to let it deploy, `exec` to let it into a container.
 
-```bash
-docker run -d --name wireops-mcp -p 8091:8091 \
-  -e SERVER_URL=http://wireops:8090 \
-  -e MCP_TOOLS=read \
-  ghcr.io/wireops/mcp:latest
+Add it as a service alongside the server, so `SERVER_URL` resolves over the Compose project's own network:
+
+```yaml
+  wireops-mcp:
+    image: ghcr.io/wireops/mcp:${WIREOPS_VERSION:-1.0.0}
+    restart: unless-stopped
+    depends_on:
+      wireops:
+        condition: service_healthy
+    environment:
+      - SERVER_URL=http://wireops:8090
+      - MCP_TOOLS=read
+    ports:
+      - "8091:8091"
 ```
+
+Running it standalone instead means giving it a route to the server yourself: Docker's default bridge does not resolve container names, so a bare `docker run` needs `--network <the server's compose network>` — or a `SERVER_URL` the container can actually reach.
 
 Streamable HTTP at `POST/GET /mcp`; point your client at it and send the API key as `X-Wireops-Api-Key` (or `Authorization: Bearer`). Full tool table, resources and prompts: [MCP Server](https://wireops.dev/docs/reference/mcp-server/).
 
