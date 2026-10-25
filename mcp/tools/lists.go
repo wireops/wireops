@@ -26,15 +26,15 @@ var stackListFields = []string{
 	"id", "name", "status", "group",
 	"repository", "worker",
 	"compose_path", "compose_file",
-	"current_version", "deployed_version", "deployed_commit",
+	"current_version", "deployed_version", "deployed_commit", "desired_commit",
 	"last_synced_at", "sync_interval_seconds", "render_overrides",
-	"last_error_category", "last_error_message", "last_error_at",
+	"last_error_category", "last_error_message", "last_error_at", "last_error_commit",
 	"updated",
 	// Expanded relations, so a listing names the repository and worker instead
 	// of handing back two more ids to look up.
 	"expand.repository.id", "expand.repository.name", "expand.repository.branch",
-	"expand.repository.sync_interval_seconds",
-	"expand.worker.id", "expand.worker.hostname", "expand.worker.status",
+	"expand.repository.sync_interval_seconds", "expand.repository.last_commit_sha",
+	"expand.worker.id", "expand.worker.hostname", "expand.worker.status", "expand.worker.version", "expand.worker.capabilities",
 }
 
 // repoListFields is the default projection for list_repos. Credentials live in

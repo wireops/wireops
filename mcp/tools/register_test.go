@@ -133,6 +133,35 @@ func TestRegisterMarksReadToolsReadOnly(t *testing.T) {
 	}
 }
 
+func TestRegisterAdvertisesObservationAndAliasInputs(t *testing.T) {
+	tools := listRegisteredTools(t)
+	byName := map[string]*mcp.Tool{}
+	for _, tool := range tools {
+		byName[tool.Name] = tool
+	}
+	for _, name := range []string{"get_stack_status", "get_stack_resources", "get_container_stats", "exec_in_container", "resync_stack_definition"} {
+		properties := schemaProperties(t, byName[name])
+		if _, ok := properties["stack_id"]; !ok {
+			t.Errorf("%s does not advertise stack_id", name)
+		}
+		if _, ok := properties["stack"]; !ok {
+			t.Errorf("%s does not advertise stack alias", name)
+		}
+	}
+	logs := schemaProperties(t, byName["get_container_logs"])
+	for _, property := range []string{"container_name", "lines", "search", "since", "until"} {
+		if _, ok := logs[property]; !ok {
+			t.Errorf("get_container_logs does not advertise %q", property)
+		}
+	}
+	inventory := schemaProperties(t, byName["get_inventory"])
+	for _, property := range []string{"worker", "group", "limit", "page"} {
+		if _, ok := inventory[property]; !ok {
+			t.Errorf("get_inventory does not advertise %q", property)
+		}
+	}
+}
+
 // TestRegisterDocumentsConfirmOnIrreversibleTools keeps the confirm field and
 // the description in sync: a caller only learns what to put in confirm from
 // the description, so a tool that requires one has to say so.

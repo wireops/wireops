@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/wireops/wireops/mcp/client"
+	"github.com/wireops/wireops/mcp/models"
 )
 
 // pocketBaseIDPattern matches a PocketBase record id: 15 lowercase
@@ -97,6 +98,20 @@ func singularCollection(collection string) string {
 // collection name.
 func resolveStackID(ctx context.Context, c *client.Client, apiKey, ref string) (string, error) {
 	return resolveRef(ctx, c, apiKey, confirmStacks, ref)
+}
+
+// resolveStackInput applies the documented stack -> stack_id alias before the
+// normal id/name lookup. Keeping it here makes every tool retain the same
+// ambiguity and RBAC-aware resolution behaviour.
+func resolveStackInput(ctx context.Context, c *client.Client, apiKey, stackID, stack string) (string, error) {
+	ref, err := models.CanonicalOrAlias(stackID, stack, "stack_id", "stack")
+	if err != nil {
+		return "", err
+	}
+	if ref == "" {
+		return "", fmt.Errorf("stack_id or stack is required")
+	}
+	return resolveStackID(ctx, c, apiKey, ref)
 }
 
 func resolveWorkerID(ctx context.Context, c *client.Client, apiKey, ref string) (string, error) {

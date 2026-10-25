@@ -10,6 +10,16 @@ const CapabilityProjectIdentityMigrationV1 = "project_identity_migration_v1"
 // driving a pty session, which can only return one interleaved stream.
 const CapabilityExecOneShotV1 = "exec_one_shot_v1"
 
+// CapabilityResourceInventoryV1 marks a worker whose resource response says
+// whether every resource family was collected. Older workers can still return
+// useful data, but cannot distinguish an empty project from an incomplete
+// inventory.
+const CapabilityResourceInventoryV1 = "resource_inventory_v1"
+
+// CapabilityContainerLogsFilterV1 marks a worker that applies time-window and
+// regex filtering before sending logs back to the server.
+const CapabilityContainerLogsFilterV1 = "container_logs_filter_v1"
+
 // MessageType identifies the type of a WebSocket message.
 type MessageType string
 
@@ -324,6 +334,11 @@ type PortInfo struct {
 type GetResourcesResult struct {
 	Volumes  []VolumeInfo  `json:"volumes"`
 	Networks []NetworkInfo `json:"networks"`
+	// Partial is true when any part of the inventory could not be collected.
+	// Empty lists with Partial false therefore mean the stack genuinely has no
+	// discovered volumes/networks.
+	Partial  bool     `json:"partial,omitempty"`
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // ContainerActionCommand asks the worker to stop or restart a specific
@@ -352,6 +367,22 @@ type GetContainerLogsCommand struct {
 	ProjectName string `json:"project_name"`
 	ContainerID string `json:"container_id"`
 	Tail        string `json:"tail"`
+	Since       string `json:"since,omitempty"`
+	Until       string `json:"until,omitempty"`
+	Pattern     string `json:"pattern,omitempty"`
+}
+
+// ContainerLogsResult is the structured response from workers that support
+// server-side filtering. The server remains compatible with older workers
+// whose CommandResult.Output is the raw log string.
+type ContainerLogsResult struct {
+	Logs             string `json:"logs"`
+	AppliedTail      string `json:"applied_tail"`
+	AppliedSince     string `json:"applied_since,omitempty"`
+	AppliedUntil     string `json:"applied_until,omitempty"`
+	Pattern          string `json:"pattern,omitempty"`
+	Truncated        bool   `json:"truncated,omitempty"`
+	TruncationReason string `json:"truncation_reason,omitempty"`
 }
 
 // ExecCommand asks the worker to run one non-interactive command inside a

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { h } from 'vue'
+import { h, nextTick } from 'vue'
 import StackServicesCard from '../StackServicesCard.vue'
 
 const getStackResources = vi.fn()
@@ -63,6 +63,58 @@ describe('StackServicesCard', () => {
       },
     },
   }
+
+  it('distinguishes confirmed-empty, partial, and failed resource inventory', async () => {
+    const mountCard = () => mount(StackServicesCard, {
+      props: { stackId: 'stack-1', services: [], containerStats: {}, integrationActions: {} },
+      global: { stubs },
+    })
+
+    getStackResources.mockResolvedValueOnce({ volumes: [], networks: [] })
+    const confirmed = mountCard()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(confirmed.text()).toContain('No volumes are attached to this stack.')
+    expect(confirmed.find('[data-testid="resource-inventory-state"]').exists()).toBe(false)
+
+    getStackResources.mockResolvedValueOnce({ volumes: [], networks: [], partial: true, warnings: ['worker needs upgrade'] })
+    const partial = mountCard()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(partial.get('[data-testid="resource-inventory-state"]').text()).toContain('Partial resource inventory')
+    expect(partial.text()).toContain('worker needs upgrade')
+
+    getStackResources.mockRejectedValueOnce(new Error('offline'))
+    const failed = mountCard()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(failed.get('[data-testid="resource-inventory-state"]').text()).toContain('Resource inventory unavailable')
+  })
+
+  it('ignores a superseded resource response after the stack changes', async () => {
+    let resolveFirst: (value: any) => void
+    let resolveSecond: (value: any) => void
+    getStackResources.mockReset()
+    getStackResources
+      .mockImplementationOnce(() => new Promise(resolve => { resolveFirst = resolve }))
+      .mockImplementationOnce(() => new Promise(resolve => { resolveSecond = resolve }))
+
+    const wrapper = mount(StackServicesCard, {
+      props: { stackId: 'stack-1', services: [], containerStats: {}, integrationActions: {} },
+      global: { stubs },
+    })
+    await wrapper.setProps({ stackId: 'stack-2' })
+
+    resolveSecond!({ volumes: [{ name: 'new-volume', docker_name: 'new', driver: 'local', mountpoint: '/new', scope: 'local' }], networks: [] })
+    await Promise.resolve()
+    await nextTick()
+    resolveFirst!({ volumes: [{ name: 'old-volume', docker_name: 'old', driver: 'local', mountpoint: '/old', scope: 'local' }], networks: [] })
+    await Promise.resolve()
+    await nextTick()
+
+    expect(wrapper.text()).toContain('new-volume')
+    expect(wrapper.text()).not.toContain('old-volume')
+  })
 
   it('groups containers by service name and emits actions', async () => {
     getStackResources.mockResolvedValue({

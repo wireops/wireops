@@ -119,9 +119,15 @@ func registerReadTools(server *mcp.Server, c *client.Client) {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_stack_status",
-		Description: "Get one wireops stack record, including its current sync/deploy status. A _notice in the response explains the status when it is one that is easy to misread (paused, degraded) and flags active render-time overrides.",
+		Description: "Get one wireops stack record plus a fresh, on-demand Docker health observation. status remains the persisted sync/deploy outcome; health is separate and can be unknown when the worker or deployed revision cannot be inspected. A _notice explains easy-to-misread status and active render-time overrides. stack is accepted as an alias for stack_id.",
 		Annotations: readOnly(),
 	}, getStackStatus(c))
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_inventory",
+		Description: "Return a compact, paged fleet inventory: each stack's identity, assigned worker version/capabilities, live services, on-demand health and resource inventory. A partial resource result means the worker could not confirm the complete inventory; networks are identified by (worker_id, network.id), so same-name networks on different workers are not shared.",
+		Annotations: readOnly(),
+	}, getInventory(c))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_sync_logs",
@@ -137,7 +143,7 @@ func registerReadTools(server *mcp.Server, c *client.Client) {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_stack_resources",
-		Description: "List the Docker volumes and networks associated with a wireops stack.",
+		Description: "List Docker volumes, bind mounts and networks actually attached to a wireops stack. partial=true means the result is not authoritative (for example an older worker or failed inspect); an empty inventory without partial confirms no resources were found. stack is accepted as an alias for stack_id.",
 		Annotations: readOnly(),
 	}, getStackResources(c))
 
@@ -155,7 +161,7 @@ func registerReadTools(server *mcp.Server, c *client.Client) {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_container_stats",
-		Description: "Get live CPU/memory/network/block-IO usage for a single container in a wireops stack. Requires the stack's worker to be online. Pairs with get_container_logs and get_stack_services (which lists the container ids to pass here).",
+		Description: "Get live CPU/memory/network/block-IO usage for one container. Accepts stack as an alias for stack_id and container_name as an alias for container_id; a real container name resolves only inside that stack.",
 		Annotations: readOnly(),
 	}, getContainerStats(c))
 
@@ -173,13 +179,13 @@ func registerReadTools(server *mcp.Server, c *client.Client) {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "list_secrets",
-		Description: "List which secret env vars are configured for a wireops stack — key names and provider only, never values, regardless of whether the secret is stored internally or via an external provider (Vault/Infisical/SOPS). Covers stack-level env vars marked secret, secret global env vars bound to the stack, and SOPS-managed keys from the repo's secrets file. Use this to check whether a secret exists/is configured, not to read it.",
+		Description: "List which secret env vars are configured for a wireops stack — key names and provider only, never values. Covers stack-level and bound global env vars plus SOPS-managed keys from the repo's secrets file. secret_count counts only stack_secrets + global_secrets; sops_secrets are listed separately and excluded because they are discovered from the repository, not stored env-var records. non_secret_keys lists only plain stack-level env-var record keys, not global bindings or SOPS keys. Use this to check configuration, not to read secrets.",
 		Annotations: readOnly(),
 	}, listSecrets(c))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_container_logs",
-		Description: "Fetch recent log lines from a specific container within a wireops stack. Identify the container with container_id or service_name (either works — service_name is resolved internally, saving a round trip through get_stack_services). Use pattern to filter to lines matching a regex, which cuts noise in crash-loop logs.",
+		Description: "Fetch bounded container logs. Use since/until as RFC3339 with timezone, Unix timestamps, or positive relative durations; pattern is applied after the selected window and tail. Aliases: stack for stack_id, container_name for container_id, lines for tail and search for pattern. A service with multiple replicas requires a specific container. The response records applied filters and truncation.",
 		Annotations: readOnly(),
 	}, getContainerLogs(c))
 
@@ -423,7 +429,7 @@ func getStackStatus(c *client.Client) mcp.ToolHandlerFor[models.StackIDInput, an
 		if err != nil {
 			return nil, nil, err
 		}
-		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		stackID, err := resolveStackInput(ctx, c, apiKey, in.StackID, in.Stack)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -432,11 +438,53 @@ func getStackStatus(c *client.Client) mcp.ToolHandlerFor[models.StackIDInput, an
 		if err := c.Get(ctx, apiKey, path, nil, &out); err != nil {
 			return nil, nil, err
 		}
+		var health any
+		healthPath := "/api/custom/stacks/" + url.PathEscape(stackID) + "/health"
+		if err := c.Get(ctx, apiKey, healthPath, nil, &health); err != nil {
+			health = map[string]any{"state": "unknown", "reason": "health query failed: " + err.Error()}
+		}
+		out["health"] = health
 		if hasRenderOverrides(out) {
 			appendNotice(out, renderOverridesNotice)
 		}
 		if status, ok := out["status"].(string); ok {
 			appendNotice(out, statusNotice(status))
+		}
+		return nil, out, nil
+	}
+}
+
+func getInventory(c *client.Client) mcp.ToolHandlerFor[models.InventoryInput, any] {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, in models.InventoryInput) (*mcp.CallToolResult, any, error) {
+		apiKey, err := apiKeyFrom(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		limit := in.Limit
+		if limit <= 0 {
+			limit = listDefaultPerPage
+		}
+		if limit > listMaxPerPage {
+			limit = listMaxPerPage
+		}
+		page := in.Page
+		if page <= 0 {
+			page = 1
+		}
+		q := url.Values{"per_page": {fmt.Sprint(limit)}, "page": {fmt.Sprint(page)}}
+		if in.Group != "" {
+			q.Set("group", in.Group)
+		}
+		if in.Worker != "" {
+			workerID, err := resolveWorkerID(ctx, c, apiKey, in.Worker)
+			if err != nil {
+				return nil, nil, err
+			}
+			q.Set("worker", workerID)
+		}
+		var out any
+		if err := c.Get(ctx, apiKey, "/api/custom/inventory", q, &out); err != nil {
+			return nil, nil, err
 		}
 		return nil, out, nil
 	}
@@ -448,7 +496,7 @@ func getSyncLogs(c *client.Client) mcp.ToolHandlerFor[models.SyncLogsInput, any]
 		if err != nil {
 			return nil, nil, err
 		}
-		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		stackID, err := resolveStackInput(ctx, c, apiKey, in.StackID, in.Stack)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -520,6 +568,7 @@ func resolveContainerIDByServiceName(ctx context.Context, c *client.Client, apiK
 	if err != nil {
 		return "", err
 	}
+	var matches []string
 	for _, svc := range services {
 		m, ok := svc.(map[string]interface{})
 		if !ok {
@@ -530,8 +579,14 @@ func resolveContainerIDByServiceName(ctx context.Context, c *client.Client, apiK
 			if containerID == "" {
 				return "", fmt.Errorf("service %q has no container_id yet (not running?)", serviceName)
 			}
-			return containerID, nil
+			matches = append(matches, containerID)
 		}
+	}
+	if len(matches) == 1 {
+		return matches[0], nil
+	}
+	if len(matches) > 1 {
+		return "", fmt.Errorf("service %q has %d replicas; specify container_id or container_name", serviceName, len(matches))
 	}
 	return "", fmt.Errorf("no service named %q found for stack %q", serviceName, stackID)
 }
@@ -555,7 +610,8 @@ func resolveContainerTarget(ctx context.Context, c *client.Client, apiKey, stack
 		}
 		name, _ := m["service_name"].(string)
 		id, _ := m["container_id"].(string)
-		if (serviceName != "" && name == serviceName) || (serviceName == "" && id == containerID) {
+		containerName, _ := m["container_name"].(string)
+		if (serviceName != "" && name == serviceName) || (serviceName == "" && (id == containerID || containerName == containerID)) {
 			if id == "" {
 				return "", "", fmt.Errorf("service %q has no container_id yet (not running?)", name)
 			}
@@ -566,6 +622,14 @@ func resolveContainerTarget(ctx context.Context, c *client.Client, apiKey, stack
 		return "", "", fmt.Errorf("no service named %q found for stack %q", serviceName, stackID)
 	}
 	return "", "", fmt.Errorf("no container %q found for stack %q — call get_stack_services for the current ids", containerID, stackID)
+}
+
+func resolveContainerInput(ctx context.Context, c *client.Client, apiKey, stackID, containerID, containerName, serviceName string) (string, string, error) {
+	ref, err := models.CanonicalOrAlias(containerID, containerName, "container_id", "container_name")
+	if err != nil {
+		return "", "", err
+	}
+	return resolveContainerTarget(ctx, c, apiKey, stackID, ref, serviceName)
 }
 
 // Modes accepted by the env-var bulk routes.
@@ -587,7 +651,7 @@ func getStackServices(c *client.Client) mcp.ToolHandlerFor[models.StackIDInput, 
 		if err != nil {
 			return nil, nil, err
 		}
-		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		stackID, err := resolveStackInput(ctx, c, apiKey, in.StackID, in.Stack)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -609,7 +673,7 @@ func getStackResources(c *client.Client) mcp.ToolHandlerFor[models.StackIDInput,
 		if err != nil {
 			return nil, nil, err
 		}
-		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		stackID, err := resolveStackInput(ctx, c, apiKey, in.StackID, in.Stack)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -649,7 +713,7 @@ func getStackCompose(c *client.Client) mcp.ToolHandlerFor[models.StackIDInput, a
 		if err != nil {
 			return nil, nil, err
 		}
-		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		stackID, err := resolveStackInput(ctx, c, apiKey, in.StackID, in.Stack)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -738,7 +802,7 @@ func getStackRevision(c *client.Client) mcp.ToolHandlerFor[models.StackRevisionI
 		if err != nil {
 			return nil, nil, err
 		}
-		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		stackID, err := resolveStackInput(ctx, c, apiKey, in.StackID, in.Stack)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -757,12 +821,26 @@ func getContainerStats(c *client.Client) mcp.ToolHandlerFor[models.ContainerStat
 		if err != nil {
 			return nil, nil, err
 		}
-		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		stackID, err := resolveStackInput(ctx, c, apiKey, in.StackID, in.Stack)
 		if err != nil {
 			return nil, nil, err
 		}
+		containerRef, err := models.CanonicalOrAlias(in.ContainerID, in.ContainerName, "container_id", "container_name")
+		if err != nil {
+			return nil, nil, err
+		}
+		if containerRef == "" {
+			return nil, nil, fmt.Errorf("container_id or container_name is required")
+		}
+		containerID := containerRef
+		if in.ContainerName != "" {
+			containerID, _, err = resolveContainerTarget(ctx, c, apiKey, stackID, containerRef, "")
+			if err != nil {
+				return nil, nil, err
+			}
+		}
 		var out any
-		path := "/api/custom/stacks/" + url.PathEscape(stackID) + "/container/" + url.PathEscape(in.ContainerID) + "/stats"
+		path := "/api/custom/stacks/" + url.PathEscape(stackID) + "/container/" + url.PathEscape(containerID) + "/stats"
 		if err := c.Get(ctx, apiKey, path, nil, &out); err != nil {
 			return nil, nil, err
 		}
@@ -776,7 +854,7 @@ func getStackRenderOverrides(c *client.Client) mcp.ToolHandlerFor[models.StackID
 		if err != nil {
 			return nil, nil, err
 		}
-		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		stackID, err := resolveStackInput(ctx, c, apiKey, in.StackID, in.Stack)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -795,7 +873,7 @@ func diffStackVersion(c *client.Client) mcp.ToolHandlerFor[models.DiffStackVersi
 		if err != nil {
 			return nil, nil, err
 		}
-		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		stackID, err := resolveStackInput(ctx, c, apiKey, in.StackID, in.Stack)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -920,7 +998,7 @@ func listSecrets(c *client.Client) mcp.ToolHandlerFor[models.StackIDInput, any] 
 		if err != nil {
 			return nil, nil, err
 		}
-		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		stackID, err := resolveStackInput(ctx, c, apiKey, in.StackID, in.Stack)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -944,12 +1022,14 @@ func listSecrets(c *client.Client) mcp.ToolHandlerFor[models.StackIDInput, any] 
 		}
 
 		result := map[string]any{
-			"stack_secrets":    stackSecrets,
-			"global_secrets":   globalSecrets,
-			"sops_secrets":     sopsSecrets,
-			"non_secret_keys":  nonSecretKeys,
-			"non_secret_count": len(nonSecretKeys),
-			"secret_count":     len(stackSecrets) + len(globalSecrets),
+			"stack_secrets":         stackSecrets,
+			"global_secrets":        globalSecrets,
+			"sops_secrets":          sopsSecrets,
+			"non_secret_keys":       nonSecretKeys,
+			"non_secret_count":      len(nonSecretKeys),
+			"secret_count":          len(stackSecrets) + len(globalSecrets),
+			"secret_count_scope":    "stack_secrets + global_secrets; excludes sops_secrets",
+			"non_secret_keys_scope": "plain stack-level env-var record keys only; excludes global bindings and SOPS keys",
 		}
 		if len(stackSecrets) == 0 && len(globalSecrets) == 0 && len(nonSecretKeys) > 0 {
 			result["_notice"] = "This stack has no secret env vars, but it does have the plain env vars listed in non_secret_keys. An empty secret list does not mean the stack is unconfigured."
@@ -964,50 +1044,78 @@ func getContainerLogs(c *client.Client) mcp.ToolHandlerFor[models.ContainerLogsI
 		if err != nil {
 			return nil, nil, err
 		}
-		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		stackID, err := resolveStackInput(ctx, c, apiKey, in.StackID, in.Stack)
 		if err != nil {
 			return nil, nil, err
 		}
-
+		pattern, err := models.CanonicalOrAliasLiteral(in.Pattern, in.Search, "pattern", "search")
+		if err != nil {
+			return nil, nil, err
+		}
 		var re *regexp.Regexp
-		if in.Pattern != "" {
-			re, err = regexp.Compile(in.Pattern)
+		if pattern != "" {
+			re, err = regexp.Compile(pattern)
 			if err != nil {
 				return nil, nil, fmt.Errorf("invalid pattern: %w", err)
 			}
 		}
-
-		containerID := in.ContainerID
+		tail, err := models.CanonicalOrAlias(in.Tail, in.Lines, "tail", "lines")
+		if err != nil {
+			return nil, nil, err
+		}
+		containerRef, err := models.CanonicalOrAlias(in.ContainerID, in.ContainerName, "container_id", "container_name")
+		if err != nil {
+			return nil, nil, err
+		}
+		containerID := containerRef
 		if containerID == "" {
 			if in.ServiceName == "" {
-				return nil, nil, fmt.Errorf("either container_id or service_name is required")
+				return nil, nil, fmt.Errorf("container_id, container_name, or service_name is required")
 			}
 			containerID, err = resolveContainerIDByServiceName(ctx, c, apiKey, stackID, in.ServiceName)
 			if err != nil {
 				return nil, nil, err
 			}
+		} else if in.ContainerName != "" {
+			containerID, _, err = resolveContainerTarget(ctx, c, apiKey, stackID, containerID, "")
+			if err != nil {
+				return nil, nil, err
+			}
 		}
 
-		var q url.Values
-		if in.Tail != "" {
-			q = url.Values{"tail": {in.Tail}}
+		q := url.Values{}
+		if tail != "" {
+			q.Set("tail", tail)
+		}
+		if pattern != "" {
+			q.Set("pattern", pattern)
+		}
+		if in.Since != "" {
+			q.Set("since", in.Since)
+		}
+		if in.Until != "" {
+			q.Set("until", in.Until)
 		}
 		var out map[string]interface{}
 		path := "/api/custom/stacks/" + url.PathEscape(stackID) + "/container/" + url.PathEscape(containerID) + "/logs"
 		if err := c.Get(ctx, apiKey, path, q, &out); err != nil {
 			return nil, nil, err
 		}
-
+		// A current server reports the applied pattern and does the filtering
+		// before the response reaches MCP. Retain this narrow fallback for an
+		// older server that only returned raw {logs}; it also keeps the pattern
+		// contract safe across a rolling server upgrade.
 		if re != nil {
-			if logs, ok := out["logs"].(string); ok {
-				out["logs"] = filterLines(logs, re)
+			if _, appliedByServer := out["pattern"]; !appliedByServer {
+				if logs, ok := out["logs"].(string); ok {
+					out["logs"] = filterLines(logs, re)
+				}
 			}
 		}
 		return nil, out, nil
 	}
 }
 
-// filterLines keeps only the lines of logs matching re, joined back with "\n".
 func filterLines(logs string, re *regexp.Regexp) string {
 	lines := strings.Split(logs, "\n")
 	kept := make([]string, 0, len(lines))
@@ -1268,7 +1376,7 @@ func getStackIntegrationActions(c *client.Client) mcp.ToolHandlerFor[models.Stac
 		if err != nil {
 			return nil, nil, err
 		}
-		stackID, err := resolveStackID(ctx, c, apiKey, in.StackID)
+		stackID, err := resolveStackInput(ctx, c, apiKey, in.StackID, in.Stack)
 		if err != nil {
 			return nil, nil, err
 		}

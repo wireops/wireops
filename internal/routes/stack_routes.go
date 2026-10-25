@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
@@ -375,20 +376,7 @@ func (rr routeRegistrar) registerStackInspectionRoutes() {
 		if dispatchErr == nil && res.Error == "" {
 			var statuses []compose.ServiceStatus
 			if err := json.Unmarshal([]byte(res.Output), &statuses); err == nil {
-				result := make([]map[string]interface{}, 0, len(statuses))
-				for _, s := range statuses {
-					result = append(result, map[string]interface{}{
-						"service_name":   s.ServiceName,
-						"status":         s.Status,
-						"container_id":   s.ContainerID,
-						"container_name": s.ContainerName,
-						"ports":          s.Ports,
-						"health":         s.Health,
-						"exit_code":      s.ExitCode,
-						"is_init":        s.Labels["customization.init"] == "true",
-					})
-				}
-				return e.JSON(http.StatusOK, result)
+				return e.JSON(http.StatusOK, serviceStatusResponse(statuses))
 			}
 		}
 
@@ -425,42 +413,12 @@ func (rr routeRegistrar) registerStackInspectionRoutes() {
 		if err != nil {
 			return e.JSON(http.StatusNotFound, map[string]string{"error": "stack not found"})
 		}
-
-		empty := protocol.GetResourcesResult{
-			Volumes:  []protocol.VolumeInfo{},
-			Networks: []protocol.NetworkInfo{},
-		}
-
-		workerID := stack.GetString("worker")
-		worker, err := rr.resolveWorker(workerID)
+		resources, err := rr.stackResources(e.Request.Context(), stack)
 		if err != nil {
-			return e.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
-		}
-		if rr.workerSvc == nil || !rr.workerSvc.IsConnected(workerID) {
-			return e.JSON(http.StatusServiceUnavailable, map[string]string{"error": fmt.Sprintf(OfflineWorkerMsg, worker.GetString("hostname"))})
-		}
-
-		projectName, projectErr := sync.DeployedProjectName(stack)
-		if projectErr != nil {
-			return e.JSON(http.StatusConflict, map[string]string{"error": projectErr.Error()})
-		}
-		result, dispatchErr := rr.workerSvc.Dispatch(e.Request.Context(), workerID, protocol.GetResourcesCommand{
-			CommandID:   fmt.Sprintf("resources-%s", stackID),
-			StackID:     stackID,
-			ProjectName: projectName,
-		})
-		if dispatchErr != nil {
-			log.Printf("[routes] get_resources dispatch error stack=%s: %v", stackID, dispatchErr)
-			return e.JSON(http.StatusOK, empty)
-		}
-		if result.Error != "" {
-			log.Printf("[routes] get_resources worker error stack=%s: %s", stackID, result.Error)
-			return e.JSON(http.StatusOK, empty)
-		}
-		var resources protocol.GetResourcesResult
-		if err := json.Unmarshal([]byte(result.Output), &resources); err != nil {
-			log.Printf("[routes] get_resources decode error stack=%s: %v", stackID, err)
-			return e.JSON(http.StatusOK, empty)
+			if resourceErr, ok := err.(*resourceError); ok {
+				return e.JSON(resourceErr.status, map[string]string{"error": resourceErr.Error()})
+			}
+			return e.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
 		return e.JSON(http.StatusOK, resources)
 	}).BindFunc(rbac.Require(rbac.CapViewStacks))
@@ -519,13 +477,37 @@ func (rr routeRegistrar) registerContainerReadRoutes() {
 		if tail == "" {
 			tail = "100"
 		}
+		pattern := e.Request.URL.Query().Get("pattern")
+		since, until, filterErr := normalizeContainerLogFilters(
+			e.Request.URL.Query().Get("since"),
+			e.Request.URL.Query().Get("until"),
+			pattern,
+			time.Now(),
+		)
+		if filterErr != nil {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": filterErr.Error()})
+		}
+		worker, workerErr := rr.resolveWorker(workerID)
+		if workerErr != nil {
+			return e.JSON(http.StatusBadRequest, map[string]string{"error": workerErr.Error()})
+		}
+		supportsFilters := recordHasCapability(worker, protocol.CapabilityContainerLogsFilterV1)
+		if (since != "" || until != "") && !supportsFilters {
+			return e.JSON(http.StatusConflict, map[string]string{
+				"error":               "the assigned worker must be upgraded to filter container logs by time",
+				"required_capability": protocol.CapabilityContainerLogsFilterV1,
+			})
+		}
 
 		res, dispatchErr := rr.workerSvc.Dispatch(e.Request.Context(), workerID, protocol.GetContainerLogsCommand{
-			CommandID:   fmt.Sprintf("logs-container-%s", containerID),
+			CommandID:   fmt.Sprintf("logs-container-%s-%s", containerID, core.GenerateDefaultRandomId()),
 			StackID:     stackID,
 			ProjectName: projectName,
 			ContainerID: containerID,
 			Tail:        tail,
+			Since:       since,
+			Until:       until,
+			Pattern:     pattern,
 		})
 		if dispatchErr != nil {
 			return e.JSON(http.StatusServiceUnavailable, map[string]string{"error": dispatchErr.Error()})
@@ -538,7 +520,35 @@ func (rr routeRegistrar) registerContainerReadRoutes() {
 			return e.JSON(status, map[string]string{"error": res.Error})
 		}
 
-		return e.JSON(http.StatusOK, map[string]string{"logs": res.Output})
+		response := protocol.ContainerLogsResult{
+			Logs:         res.Output,
+			AppliedTail:  tail,
+			AppliedSince: since,
+			AppliedUntil: until,
+			Pattern:      pattern,
+		}
+		if supportsFilters {
+			if err := json.Unmarshal([]byte(res.Output), &response); err != nil {
+				return e.JSON(http.StatusBadGateway, map[string]string{"error": "invalid worker log response"})
+			}
+		} else {
+			response.Logs = filterLogOutput(response.Logs, pattern)
+		}
+		// Echo the server-normalized filters rather than trusting a worker echo.
+		// That makes it impossible for a rolling upgrade to silently report a
+		// raw value while this request actually used a resolved duration.
+		response.AppliedTail = tail
+		response.AppliedSince = since
+		response.AppliedUntil = until
+		response.Pattern = pattern
+		if logs, truncated := capLogOutput(response.Logs); truncated {
+			response.Logs = logs
+			response.Truncated = true
+			if response.TruncationReason == "" {
+				response.TruncationReason = "log output exceeded the 64 KiB response limit"
+			}
+		}
+		return e.JSON(http.StatusOK, response)
 	}).BindFunc(rbac.Require(rbac.CapViewLogs))
 }
 

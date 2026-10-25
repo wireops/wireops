@@ -298,6 +298,69 @@ func ExpectedServiceNames(data []byte) ([]string, error) {
 	return names, nil
 }
 
+// ExpectedService describes one service that should participate in a live
+// health check. Scale zero services are intentionally excluded: Compose has
+// been told not to create a container for them, so treating them as missing
+// would make an otherwise healthy stack permanently unhealthy.
+type ExpectedService struct {
+	Name     string
+	IsInit   bool
+	Replicas int
+}
+
+// ExpectedServices extracts services that Compose is expected to run, along
+// with the run-to-completion marker used by health checks.
+func ExpectedServices(data []byte) ([]ExpectedService, error) {
+	var doc struct {
+		Services map[string]struct {
+			Labels any `yaml:"labels"`
+			Scale  any `yaml:"scale"`
+			Deploy struct {
+				Replicas any `yaml:"replicas"`
+			} `yaml:"deploy"`
+		} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, fmt.Errorf("failed to parse compose services: %w", err)
+	}
+	services := make([]ExpectedService, 0, len(doc.Services))
+	for name, svc := range doc.Services {
+		replicas := 1
+		if scale, ok := composeReplicaCount(svc.Scale); ok {
+			replicas = scale
+		} else if scale, ok := composeReplicaCount(svc.Deploy.Replicas); ok {
+			replicas = scale
+		}
+		if replicas == 0 {
+			continue
+		}
+		services = append(services, ExpectedService{
+			Name:     name,
+			IsInit:   isLabelTruthy(labelsToMap(svc.Labels), initLabel),
+			Replicas: replicas,
+		})
+	}
+	return services, nil
+}
+
+// composeReplicaCount matches the effective-scale coercion used for render
+// overrides. A non-numeric value is intentionally treated as unspecified: a
+// rendered revision keeps unresolved ${VAR} expressions, while Docker resolves
+// those values from the worker's .env file during deployment.
+func composeReplicaCount(raw any) (int, bool) {
+	switch value := raw.(type) {
+	case int:
+		return value, true
+	case int64:
+		return int(value), true
+	case float64:
+		if value == float64(int(value)) {
+			return int(value), true
+		}
+	}
+	return 0, false
+}
+
 // ExtractProjectName reads the top-level `name` field from a rendered
 // compose file. The renderer (see sync.Renderer.GenerateRevision) always
 // bakes this in as the wireops stack's own sanitized name, so callers that

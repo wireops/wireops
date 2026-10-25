@@ -98,7 +98,7 @@ export function useApi() {
     external?: boolean
   }
   const getStackResources = (stackId: string) =>
-    customGet<{ volumes: VolumeInfo[]; networks: NetworkInfo[] }>(`/api/custom/stacks/${stackId}/resources`)
+    customGet<{ volumes: VolumeInfo[]; networks: NetworkInfo[]; partial?: boolean; warnings?: string[] }>(`/api/custom/stacks/${stackId}/resources`)
   const stopContainer = (stackId: string, containerId: string) =>
     customPost(`/api/custom/stacks/${stackId}/container/stop`, { container_id: containerId })
   const restartContainer = (stackId: string, containerId: string) =>

@@ -251,6 +251,17 @@ func TestRollbackStackPostsCommitSHA(t *testing.T) {
 	}
 }
 
+func TestResyncStackDefinitionPostsToTheDefinitionRoute(t *testing.T) {
+	rec := newRecorder(nil)
+	defer rec.close()
+
+	_, _, err := resyncStackDefinition(rec.client())(ctxWithKey(), nil, models.ResyncStackDefinitionInput{Stack: "stack0000000001"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	rec.expectLast(t, http.MethodPost, "/api/custom/stacks/stack0000000001/resync-definition")
+}
+
 func TestSetStackPausedPatchesStatus(t *testing.T) {
 	for _, tc := range []struct {
 		name    string

@@ -13,9 +13,7 @@ import (
 )
 
 const (
-	postCheckAttempts    = 3
-	restartLoopThreshold = 3
-	restartLoopWindow    = 2 * time.Minute
+	postCheckAttempts = 3
 )
 
 // postCheckInterval is a var (not const) so tests can shrink it to keep the
@@ -119,48 +117,19 @@ func evaluatePostCheck(expected []string, initSet map[string]bool, statuses []co
 	for _, name := range expected {
 		instances := byService[name]
 
-		if initSet[name] {
-			if evaluateInitService(instances) {
-				ok = append(ok, name)
-			} else if anyRestartLooping(instances) {
-				restartLooping = append(restartLooping, name)
-			} else {
-				unhealthy = append(unhealthy, name)
-			}
-			continue
-		}
-
-		if len(instances) == 0 {
-			missing = append(missing, name)
-			continue
-		}
-
-		healthy := false
-		sawLooping := false
-		sawUnhealthy := false
-		for _, inst := range instances {
-			if isRestartLooping(inst) {
-				sawLooping = true
-				continue
-			}
-			if inst.Status != "running" {
-				continue
-			}
-			if inst.Health == "unhealthy" {
-				sawUnhealthy = true
-				continue
-			}
-			healthy = true
-			break
-		}
-
-		switch {
-		case healthy:
+		switch compose.ClassifyServiceInstances(instances, initSet[name], false) {
+		case compose.ServiceHealthy:
 			ok = append(ok, name)
-		case sawLooping:
+		case compose.ServiceRestartLooping:
 			restartLooping = append(restartLooping, name)
-		case sawUnhealthy:
+		case compose.ServiceUnhealthy:
 			unhealthy = append(unhealthy, name)
+		case compose.ServiceStarting:
+			if initSet[name] {
+				unhealthy = append(unhealthy, name)
+			} else {
+				missing = append(missing, name)
+			}
 		default:
 			missing = append(missing, name)
 		}
@@ -176,60 +145,6 @@ func evaluatePostCheck(expected []string, initSet map[string]bool, statuses []co
 	default:
 		return postCheckResult{Status: "degraded", Detail: detail}
 	}
-}
-
-// evaluateInitService reports whether a run-to-completion service is healthy:
-// absent (completed and removed), currently running, or exited cleanly
-// (code 0). A container still "created"/"paused", or non-looping
-// "restarting", hasn't finished starting yet — it is not yet healthy, which
-// lets the retry loop in postDeployCheck keep polling instead of reporting
-// success prematurely. It is unhealthy if every instance is stuck in a
-// restart loop or exited non-zero.
-func evaluateInitService(instances []compose.ServiceStatus) bool {
-	if len(instances) == 0 {
-		return true
-	}
-	for _, inst := range instances {
-		if isRestartLooping(inst) {
-			continue
-		}
-		switch inst.Status {
-		case "running":
-			return true
-		case "exited":
-			if inst.ExitCode == 0 {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// anyRestartLooping reports whether any instance is stuck in a restart loop.
-func anyRestartLooping(instances []compose.ServiceStatus) bool {
-	for _, inst := range instances {
-		if isRestartLooping(inst) {
-			return true
-		}
-	}
-	return false
-}
-
-// isRestartLooping reports whether a container has restarted suspiciously
-// often within a short window, which `docker compose up` alone cannot detect
-// since it only checks the exit code of the `up` command itself.
-func isRestartLooping(s compose.ServiceStatus) bool {
-	if s.RestartCount < restartLoopThreshold {
-		return false
-	}
-	if s.StartedAt == "" {
-		return true
-	}
-	startedAt, err := time.Parse(time.RFC3339Nano, s.StartedAt)
-	if err != nil {
-		return true
-	}
-	return time.Since(startedAt) < restartLoopWindow
 }
 
 func buildPostCheckDetail(total int, ok, missing, unhealthy, restartLooping []string) string {

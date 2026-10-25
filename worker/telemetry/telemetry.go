@@ -36,6 +36,8 @@ func InitWorkerInfo(heavyConcurrency int) {
 		Capabilities: []string{
 			protocol.CapabilityProjectIdentityMigrationV1,
 			protocol.CapabilityExecOneShotV1,
+			protocol.CapabilityResourceInventoryV1,
+			protocol.CapabilityContainerLogsFilterV1,
 		},
 		HeavyConcurrency: heavyConcurrency,
 	}

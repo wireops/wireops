@@ -8,6 +8,20 @@ changes in a minor release.
 
 ### Added
 
+- File-managed stacks can now refresh their committed definition explicitly
+  with `POST /api/custom/stacks/{id}/resync-definition` or the MCP
+  `resync_stack_definition` tool. This re-fetches and validates the stack's
+  `x-wireops` block or `wireops.yaml`, applies changed Git-managed settings
+  such as `timeout`, and returns a field-by-field diff without deploying.
+  Pass `?preview=true` (or `preview` in MCP) to get that diff without saving —
+  worth doing first, since `worker_tags` is one of the fields it applies and
+  changing that moves the stack to another node.
+- A git-driven sync now re-reads `timeout` and `sync.interval` from the
+  committed definition before it deploys, so editing either in git takes
+  effect on the next reconcile instead of only when the stack is recreated.
+  Only those two fields are refreshed automatically: they change how a deploy
+  is scheduled, while `worker_tags` and `compose_path` change *where* and
+  *what* is deployed and so stay with the explicit resync route.
 - The MCP server now exposes the `operator` actions, not only reads: deploy,
   force redeploy, rollback, pause/resume, render-time overrides, container
   restart/stop, transfer, delete, env var writes, stack import, stack creation
@@ -79,11 +93,37 @@ changes in a minor release.
   with the command it ran.
 - MCP: `exec_in_container` uses that route, so it reports stdout, stderr and
   the exit code as distinct fields, and accepts the command as an `argv` array
-  for an image with no shell. Against a worker too old to support it the tool
-  falls back to the previous terminal-session method and says so in the
-  response, where stdout and stderr are necessarily interleaved.
+  for an image with no shell.
+- On-demand stack health (`GET /api/custom/stacks/{id}/health`) and a paged
+  fleet inventory (`GET /api/custom/inventory`, also `get_inventory` in MCP)
+  now report the deployed revision's live Docker health without starting a
+  sync or a background monitor. Inventory isolates worker failures and marks
+  incomplete data instead of discarding the rest of the fleet.
+- Resource inventory reports named volumes, bind mounts and external networks
+  with explicit `partial`/`warnings`; an empty inventory now means confirmed
+  empty. Workers advertise `resource_inventory_v1` to confirm the complete
+  collection contract.
+- Container logs accept server-validated `since`, `until` and `pattern`, bound
+  both inspected and returned bytes, and return applied filters plus
+  truncation metadata. `container_logs_filter_v1` protects time-window
+  filtering during mixed worker upgrades.
+- Stack diagnostics now carry `last_error_commit`, without guessing a commit
+  for historical failures; a successful deploy clears it with the other
+  `last_error_*` fields.
 
 ### Changed
+
+- `POST /api/custom/stacks/{id}/resync-definition` now requires
+  `operate_stacks` rather than `manage_repositories`. It mutates one stack's
+  deploy behaviour, which is the same blast radius as a deploy, and takes its
+  input from the repository rather than from the caller; both capabilities sit
+  at the `operator` role, so this narrows the requirement without changing the
+  role tier.
+- MCP stack inputs also accept `stack`; container tools accept
+  `container_name`, and logs accept `lines`/`search`. Equal canonical and
+  alias values are accepted; conflicting values are rejected. `exec_in_container`
+  now returns the worker's `409` for a missing `exec_one_shot_v1` directly and
+  never opens, polls or marker-drives a terminal-session fallback.
 
 - Reading a worker's deploy security policy (`GET
   /api/custom/workers/{id}/policy` and `GET /api/custom/settings/worker-policy`)

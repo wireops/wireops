@@ -140,7 +140,8 @@ func TestGetStackBindMounts(t *testing.T) {
 				},
 			}), nil
 		case strings.Contains(req.URL.Path, "/containers/c3/json"):
-			// Inspect failure must be skipped rather than aborting the scan.
+			// A per-container inspection failure must leave already discovered
+			// binds intact but make the caller mark the collection partial.
 			return errorResponse(http.StatusInternalServerError, "boom"), nil
 		default:
 			t.Fatalf("unexpected request: %s", req.URL.Path)
@@ -149,8 +150,8 @@ func TestGetStackBindMounts(t *testing.T) {
 	})
 
 	got, err := getStackBindMounts(context.Background(), cli, "myproject")
-	if err != nil {
-		t.Fatalf("getStackBindMounts returned error: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "c3") {
+		t.Fatalf("getStackBindMounts error = %v, want partial inspection failure for c3", err)
 	}
 
 	want := []protocol.VolumeInfo{{
@@ -167,6 +168,35 @@ func TestGetStackBindMounts(t *testing.T) {
 	}
 }
 
+func TestResourceDiscoverySkipsObjectsRemovedDuringInspection(t *testing.T) {
+	cli := newFakeDockerClient(t, func(req *http.Request) (*http.Response, error) {
+		switch {
+		case strings.HasSuffix(req.URL.Path, "/containers/json"):
+			return jsonResponse(t, http.StatusOK, []container.Summary{{ID: "gone-bind"}, {ID: "networked"}}), nil
+		case strings.Contains(req.URL.Path, "/containers/gone-bind/json"):
+			return errorResponse(http.StatusNotFound, "No such container"), nil
+		case strings.Contains(req.URL.Path, "/containers/networked/json"):
+			return jsonResponse(t, http.StatusOK, container.InspectResponse{NetworkSettings: &container.NetworkSettings{
+				Networks: map[string]*dockernetwork.EndpointSettings{"gone-network": {NetworkID: "gone-network"}},
+			}}), nil
+		case strings.Contains(req.URL.Path, "/networks/gone-network"):
+			return errorResponse(http.StatusNotFound, "network not found"), nil
+		default:
+			t.Fatalf("unexpected request: %s", req.URL.Path)
+			return nil, nil
+		}
+	})
+
+	binds, err := getStackBindMounts(context.Background(), cli, "myproject")
+	if err != nil || len(binds) != 0 {
+		t.Fatalf("gone bind container = %#v, %v", binds, err)
+	}
+	networks, err := getExternalStackNetworks(context.Background(), cli, "myproject", map[string]bool{})
+	if err != nil || len(networks) != 0 {
+		t.Fatalf("gone external network = %#v, %v", networks, err)
+	}
+}
+
 func TestGetExternalStackNetworks(t *testing.T) {
 	cli := newFakeDockerClient(t, func(req *http.Request) (*http.Response, error) {
 		switch {
@@ -177,7 +207,7 @@ func TestGetExternalStackNetworks(t *testing.T) {
 				NetworkSettings: &container.NetworkSettings{
 					Networks: map[string]*dockernetwork.EndpointSettings{
 						"myproject_default": {NetworkID: "owned-id"},
-						"legacy_ext":         {NetworkID: "ext-id"},
+						"legacy_ext":        {NetworkID: "ext-id"},
 					},
 				},
 			}), nil

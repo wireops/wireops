@@ -32,6 +32,15 @@ func TestMatchCustomRoute(t *testing.T) {
 			ok:           true,
 		},
 		{
+			name:         "refresh stack definition",
+			method:       http.MethodPost,
+			path:         "/api/custom/stacks/stack123/resync-definition",
+			action:       "stack.resync_definition",
+			resourceType: "stack",
+			resourceID:   "stack123",
+			ok:           true,
+		},
+		{
 			name:         "force redeploy",
 			method:       http.MethodPost,
 			path:         "/api/custom/stacks/stack123/force-redeploy",
