@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/pocketbase/pocketbase/core"
+
+	"github.com/wireops/wireops/internal/protocol"
 )
 
 // timeoutConvergeTimeout bounds the two reads convergeAfterTimeout makes. The
@@ -42,15 +45,34 @@ type timeoutConvergence struct {
 // deploy_stack correctly reports noop against the already-matching render.
 //
 // The gate is the commit label the renderer injects, read back through
-// inspectStackCommit: if the containers are on commitSHA then the host really
-// has this change and the record should say so, even when only some services
-// came up — "degraded" already means exactly that. If they are still on the
-// old revision, nothing is converged.
+// inspectStack: if *every* container is on commitSHA then the host really has
+// this change and the record should say so, even when only some services came
+// up — "degraded" already means exactly that.
+//
+// Four things make it refuse, because the label is a weaker signal than it
+// looks:
+//
+//   - the containers straddle two revisions, which is precisely what a kill
+//     mid-sequence produces — some services recreated at the new commit, the
+//     rest never reached. Settling that by whichever container Docker listed
+//     first would record a revision the stack is only half running.
+//   - the worker is too old to report the set, so agreement cannot be checked.
+//   - commitSHA is what was already deployed (previousSHA). The containers
+//     carry that label whether or not this deploy ever recreated them, so it
+//     cannot show that this render reached the host. deployed_commit is
+//     already correct in that case, so nothing contradicts the host; only
+//     version and checksum are unverifiable, and those live in compose
+//     annotations rather than labels, so there is no finer signal to consult.
+//   - the post-check verified nothing.
+//
+// Leaving the record behind is the safe direction: a stale deployed_checksum
+// makes the next reconcile redeploy and converge properly, while a falsely
+// advanced one makes it *skip* and strands the stack claiming a revision it
+// may not be running.
 //
 // This only reads container state, which is why it is safe to run on a path
-// that has already failed. A post-check that could not verify anything
-// converges nothing, whatever status it nominally reports.
-func (r *Reconciler) convergeAfterTimeout(ctx context.Context, workerID, stackID, workDir string, composeContent []byte, commitSHA string) timeoutConvergence {
+// that has already failed.
+func (r *Reconciler) convergeAfterTimeout(ctx context.Context, workerID, stackID, workDir string, composeContent []byte, commitSHA, previousSHA string) timeoutConvergence {
 	if r.dispatcher == nil || commitSHA == "" {
 		return timeoutConvergence{}
 	}
@@ -69,30 +91,68 @@ func (r *Reconciler) convergeAfterTimeout(ctx context.Context, workerID, stackID
 		return timeoutConvergence{Detail: check.Detail}
 	}
 
-	containerSHA := r.inspectStackCommit(checkCtx, workerID, stackID)
-	if containerSHA != commitSHA {
-		log.Printf("[reconciler] stack %s: deploy timed out and the containers are still on %q (wanted %q), leaving the recorded revision alone",
-			stackID, containerSHA, commitSHA)
+	if commitSHA == previousSHA {
+		// Same commit as the last deploy, so every container already carried
+		// this label before the attempt. Nothing it reports can show whether
+		// this render was applied.
+		log.Printf("[reconciler] stack %s: deploy timed out on the already-deployed commit %s, so the container labels cannot confirm this revision; leaving the record alone",
+			stackID, commitSHA)
 		return timeoutConvergence{
 			Status: check.Status,
-			Detail: fmt.Sprintf("%s; containers still on %s, recorded revision left unchanged", check.Detail, describeCommit(containerSHA)),
-			// Not converged: whatever is running is not this revision.
+			Detail: check.Detail + "; commit unchanged from the last deploy, so the container labels cannot confirm this revision, record left unchanged",
 		}
 	}
 
-	log.Printf("[reconciler] stack %s: deploy timed out but the containers run %s, converging the record (status=%s)",
+	revision, disagreement := agreedRevision(r.inspectStack(checkCtx, workerID, stackID))
+	if revision != commitSHA {
+		if disagreement == "" {
+			disagreement = "containers still on " + describeCommit(revision)
+		}
+		log.Printf("[reconciler] stack %s: deploy timed out and the record was left alone (wanted %s): %s",
+			stackID, commitSHA, disagreement)
+		return timeoutConvergence{
+			Status: check.Status,
+			Detail: fmt.Sprintf("%s; %s, recorded revision left unchanged", check.Detail, disagreement),
+			// Not converged: the host is not provably on this revision.
+		}
+	}
+
+	log.Printf("[reconciler] stack %s: deploy timed out but every container runs %s, converging the record (status=%s)",
 		stackID, commitSHA, check.Status)
 	return timeoutConvergence{
 		Status:    check.Status,
-		Detail:    check.Detail + "; containers run the attempted revision, record converged",
+		Detail:    check.Detail + "; every container runs the attempted revision, record converged",
 		Converged: true,
+	}
+}
+
+// agreedRevision reports the single commit every one of the stack's containers
+// is running. When there is no such commit it returns "" plus an
+// operator-facing phrase naming why, so the sync log distinguishes "straddling
+// two revisions" and "this worker cannot say" from the plain "on a different
+// revision" the caller phrases itself.
+func agreedRevision(inspected protocol.InspectResult) (sha, disagreement string) {
+	switch {
+	case len(inspected.CommitSHAs) == 1:
+		return inspected.CommitSHAs[0], ""
+	case len(inspected.CommitSHAs) > 1:
+		return "", "containers straddle revisions " + strings.Join(inspected.CommitSHAs, " and ")
+	case inspected.CommitSHA != "":
+		// Labels came back but not the set: a worker predating
+		// protocol.InspectResult.CommitSHAs. It reported one container's label
+		// and cannot say whether the others match it.
+		return "", "worker reports only one container's revision, so agreement could not be checked"
+	default:
+		// No containers, no labels, or the inspect failed. The caller's own
+		// phrasing covers this via describeCommit.
+		return "", ""
 	}
 }
 
 // describeCommit renders a commit SHA for an operator-facing message,
 // distinguishing "the worker reported a different revision" from "the worker
-// could not tell us" — inspectStackCommit returns "" for both a missing label
-// and a failed inspect.
+// could not tell us" — agreedRevision returns "" for no containers, no labels
+// and a failed inspect alike.
 func describeCommit(sha string) string {
 	if sha == "" {
 		return "an unknown revision"

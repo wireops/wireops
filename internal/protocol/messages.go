@@ -261,7 +261,19 @@ type InspectCommand struct {
 
 // InspectResult is the JSON payload inside CommandResult.Output after an InspectCommand.
 type InspectResult struct {
+	// CommitSHA is the first commit label the worker found, which is what a
+	// caller that only needs "roughly which revision is this" reads.
 	CommitSHA string `json:"commit_sha"`
+	// CommitSHAs lists every distinct non-empty commit label found across the
+	// stack's containers, in the order Docker returned them. One entry means
+	// every container agrees; more than one means a deploy left the stack
+	// straddling two revisions, which is what a `docker compose up` killed
+	// mid-sequence does.
+	//
+	// Omitted by a worker older than this field. A caller must read that as
+	// "this worker cannot tell me" rather than as "they agree" — never as
+	// grounds to record a revision for the whole stack.
+	CommitSHAs []string `json:"commit_shas,omitempty"`
 }
 
 // GetResourcesCommand is sent from the server to a worker to query Docker volumes

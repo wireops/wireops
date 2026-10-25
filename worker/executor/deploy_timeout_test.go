@@ -159,3 +159,31 @@ func TestStepDeadlineFired(t *testing.T) {
 		})
 	}
 }
+
+// TestInspectResultForKeepsTheFirstEntryInCommitSHA pins the back-compatible
+// half of the inspect reply. CommitSHA is what this command returned before
+// the set existed, so an older server — and the reconciler's cron fast path,
+// which deliberately still reads only that field — must keep seeing it.
+func TestInspectResultForKeepsTheFirstEntryInCommitSHA(t *testing.T) {
+	cases := []struct {
+		name          string
+		commits       []string
+		wantCommitSHA string
+	}{
+		{name: "NoContainers", commits: nil, wantCommitSHA: ""},
+		{name: "SingleRevision", commits: []string{"commit-a"}, wantCommitSHA: "commit-a"},
+		{name: "StraddlingReportsTheFirst", commits: []string{"commit-a", "commit-b"}, wantCommitSHA: "commit-a"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := inspectResultFor(tc.commits)
+			if got.CommitSHA != tc.wantCommitSHA {
+				t.Fatalf("CommitSHA = %q, want %q", got.CommitSHA, tc.wantCommitSHA)
+			}
+			if len(got.CommitSHAs) != len(tc.commits) {
+				t.Fatalf("CommitSHAs = %v, want %v", got.CommitSHAs, tc.commits)
+			}
+		})
+	}
+}

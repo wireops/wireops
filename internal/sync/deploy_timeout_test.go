@@ -21,8 +21,14 @@ type convergeDispatcher struct {
 	statusRaw string
 	statusErr error
 
-	commitSHA  string
-	inspectErr error
+	// commitSHA is the single revision every container reports. commitSHAs
+	// overrides it when a test needs to model containers that disagree, and
+	// legacyCommitOnly models a worker predating InspectResult.CommitSHAs:
+	// CommitSHA set, the set absent.
+	commitSHA        string
+	commitSHAs       []string
+	legacyCommitOnly bool
+	inspectErr       error
 
 	statusCalls  int
 	inspectCalls int
@@ -45,13 +51,30 @@ func (d *convergeDispatcher) Dispatch(_ context.Context, _ string, cmd interface
 		if d.inspectErr != nil {
 			return protocol.CommandResult{}, d.inspectErr
 		}
-		encoded, _ := json.Marshal(protocol.InspectResult{CommitSHA: d.commitSHA})
+		encoded, _ := json.Marshal(d.inspectResult())
 		return protocol.CommandResult{Output: string(encoded)}, nil
 	}
 	return protocol.CommandResult{}, errors.New("unexpected command")
 }
 
 func (d *convergeDispatcher) IsConnected(string) bool { return true }
+
+// inspectResult builds the reply the way the worker does: the set, plus its
+// first entry in CommitSHA for an older server.
+func (d *convergeDispatcher) inspectResult() protocol.InspectResult {
+	if d.legacyCommitOnly {
+		return protocol.InspectResult{CommitSHA: d.commitSHA}
+	}
+	commits := d.commitSHAs
+	if commits == nil && d.commitSHA != "" {
+		commits = []string{d.commitSHA}
+	}
+	res := protocol.InspectResult{CommitSHAs: commits}
+	if len(commits) > 0 {
+		res.CommitSHA = commits[0]
+	}
+	return res
+}
 
 // shrinkPostCheckInterval keeps the post-check's retry loop fast for the
 // degraded/error cases, which do not short-circuit on the first reply.
@@ -72,6 +95,7 @@ func TestConvergeAfterTimeout(t *testing.T) {
 		name          string
 		dispatcher    *convergeDispatcher
 		commitSHA     string
+		previousSHA   string
 		wantConverged bool
 		wantStatus    string
 		wantDetail    string
@@ -144,6 +168,68 @@ func TestConvergeAfterTimeout(t *testing.T) {
 			wantDetail: "post-check skipped",
 		},
 		{
+			// A kill mid-sequence recreates some services and never reaches
+			// the rest, so the containers genuinely disagree. Settling that by
+			// whichever one Docker listed first would record a revision the
+			// stack is only half running — the whole bug this guards.
+			name: "ContainersStraddlingTwoRevisionsConvergesNothing",
+			dispatcher: &convergeDispatcher{
+				statuses: []compose.ServiceStatus{
+					{ServiceName: "web", Status: "running", Health: "healthy"},
+					{ServiceName: "db", Status: "running", Health: "healthy"},
+				},
+				commitSHAs: []string{target, "commit-old"},
+			},
+			commitSHA:  target,
+			wantDetail: "straddle revisions commit-new and commit-old",
+		},
+		{
+			// Same set, reported in the other order: the first entry is now
+			// the old revision. Neither order may decide the outcome.
+			name: "StraddlingIsOrderIndependent",
+			dispatcher: &convergeDispatcher{
+				statuses: []compose.ServiceStatus{
+					{ServiceName: "web", Status: "running", Health: "healthy"},
+					{ServiceName: "db", Status: "running", Health: "healthy"},
+				},
+				commitSHAs: []string{"commit-old", target},
+			},
+			commitSHA:  target,
+			wantDetail: "straddle revisions",
+		},
+		{
+			// A worker predating InspectResult.CommitSHAs reports one
+			// container's label and cannot say whether the others match, so
+			// agreement is unproven rather than established.
+			name: "AWorkerTooOldToReportTheSetConvergesNothing",
+			dispatcher: &convergeDispatcher{
+				statuses: []compose.ServiceStatus{
+					{ServiceName: "web", Status: "running", Health: "healthy"},
+					{ServiceName: "db", Status: "running", Health: "healthy"},
+				},
+				commitSHA:        target,
+				legacyCommitOnly: true,
+			},
+			commitSHA:  target,
+			wantDetail: "agreement could not be checked",
+		},
+		{
+			// An env-var or override change bumps the render checksum without
+			// moving the commit. The containers carried this label before the
+			// attempt, so it cannot show this render reached the host.
+			name: "AnUnchangedCommitConvergesNothing",
+			dispatcher: &convergeDispatcher{
+				statuses: []compose.ServiceStatus{
+					{ServiceName: "web", Status: "running", Health: "healthy"},
+					{ServiceName: "db", Status: "running", Health: "healthy"},
+				},
+				commitSHA: target,
+			},
+			commitSHA:   target,
+			previousSHA: target,
+			wantDetail:  "commit unchanged from the last deploy",
+		},
+		{
 			name:       "NoAttemptedCommitConvergesNothing",
 			dispatcher: &convergeDispatcher{commitSHA: target},
 			commitSHA:  "",
@@ -155,7 +241,7 @@ func TestConvergeAfterTimeout(t *testing.T) {
 			shrinkPostCheckInterval(t)
 			r := &Reconciler{dispatcher: tc.dispatcher}
 
-			got := r.convergeAfterTimeout(context.Background(), "worker-1", "stack-1", "/tmp/workdir", []byte(testCompose), tc.commitSHA)
+			got := r.convergeAfterTimeout(context.Background(), "worker-1", "stack-1", "/tmp/workdir", []byte(testCompose), tc.commitSHA, tc.previousSHA)
 
 			if got.Converged != tc.wantConverged {
 				t.Fatalf("Converged = %v, want %v (detail=%q)", got.Converged, tc.wantConverged, got.Detail)
@@ -177,7 +263,7 @@ func TestConvergeAfterTimeout(t *testing.T) {
 // construct a Reconciler with no worker dispatcher (local stacks, tests).
 func TestConvergeAfterTimeoutWithoutADispatcherIsANoop(t *testing.T) {
 	r := &Reconciler{}
-	got := r.convergeAfterTimeout(context.Background(), "worker-1", "stack-1", "/tmp/workdir", []byte(testCompose), "commit-new")
+	got := r.convergeAfterTimeout(context.Background(), "worker-1", "stack-1", "/tmp/workdir", []byte(testCompose), "commit-new", "commit-old")
 	if got.Converged || got.Detail != "" {
 		t.Fatalf("convergeAfterTimeout = %+v, want a zero result", got)
 	}

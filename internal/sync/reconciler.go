@@ -583,7 +583,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		// deployed_* fields untouched, as before.
 		deployStatus := "error"
 		if failureReason == reasonTimeout {
-			converged := r.convergeAfterTimeout(ctx, workerID, stackID, workDir, lastComposeContent, remoteSHA)
+			converged := r.convergeAfterTimeout(ctx, workerID, stackID, workDir, lastComposeContent, remoteSHA, lastSHA)
 			if converged.Detail != "" {
 				errOutput += "\n\n[post-timeout] " + converged.Detail
 			}
@@ -1823,27 +1823,40 @@ func (r *Reconciler) queuePendingReconcile(stackID, trigger, commitSHA string) e
 	return nil
 }
 
-func (r *Reconciler) inspectStackCommit(ctx context.Context, workerID, stackID string) string {
+// inspectStack asks the worker which revision(s) the stack's containers are
+// running. A zero result means the worker could not be reached, refused, or
+// had nothing to report — every caller reads that as "cannot tell" rather than
+// as an answer.
+func (r *Reconciler) inspectStack(ctx context.Context, workerID, stackID string) protocol.InspectResult {
 	result, err := r.dispatcher.Dispatch(ctx, workerID, protocol.InspectCommand{
 		CommandID: "inspect-" + stackID + "-" + fmt.Sprint(time.Now().UnixNano()),
 		StackID:   stackID,
 	})
 	if err != nil {
 		log.Printf("[reconciler] failed to dispatch inspect command for stack %s: %v", stackID, err)
-		return ""
+		return protocol.InspectResult{}
 	}
 	if result.Error != "" {
 		log.Printf("[reconciler] inspect command returned error for stack %s: %s", stackID, result.Error)
-		return ""
+		return protocol.InspectResult{}
 	}
 
 	var inspectRes protocol.InspectResult
 	if err := json.Unmarshal([]byte(result.Output), &inspectRes); err != nil {
 		log.Printf("[reconciler] failed to unmarshal inspect result for stack %s: %v", stackID, err)
-		return ""
+		return protocol.InspectResult{}
 	}
 
-	return inspectRes.CommitSHA
+	return inspectRes
+}
+
+// inspectStackCommit reports one container's commit label, which is all the
+// cron fast path below needs: it is a best-effort skip hint backed by the
+// renderer's checksum gate, not a decision about what the host is running. A
+// caller that acts on the revision itself wants inspectStack and the agreement
+// check in deploy_timeout.go.
+func (r *Reconciler) inspectStackCommit(ctx context.Context, workerID, stackID string) string {
+	return r.inspectStack(ctx, workerID, stackID).CommitSHA
 }
 
 func (r *Reconciler) reposWorkspace() string {

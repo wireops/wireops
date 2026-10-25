@@ -338,8 +338,14 @@ func Probe(ctx context.Context, cmd protocol.ProbeCommand) protocol.CommandResul
 	return protocol.CommandResult{CommandID: cmd.CommandID, Output: string(encoded)}
 }
 
-// Inspect runs `docker ps --filter label=dev.wireops.stack_id=<StackID> --format '{{.Label "dev.wireops.repository.commit_sha"}}'`
-// and extract the running commit SHA directly from the container label.
+// Inspect reads the commit labels off the stack's containers and reports which
+// revision(s) the host is running.
+//
+// It reports the whole distinct set, not just the first label: a deploy killed
+// mid-sequence can leave a stack straddling two revisions, and the server's
+// timeout convergence refuses to record a revision unless every container
+// agrees. CommitSHA keeps carrying the first entry, which is what an older
+// server reads and what the reconciler's cron fast path still uses.
 func Inspect(ctx context.Context, cmd protocol.InspectCommand) protocol.CommandResult {
 	// log.Printf("[executor] inspect start stack=%s command=%s", cmd.StackID, cmd.CommandID)
 	// start := time.Now()
@@ -351,22 +357,32 @@ func Inspect(ctx context.Context, cmd protocol.InspectCommand) protocol.CommandR
 	}
 	defer client.Close()
 
-	result, err := client.GetRunningStackCommit(ctx, cmd.StackID)
+	commits, err := client.GetRunningStackCommits(ctx, cmd.StackID)
 
 	if err != nil {
 		// log.Printf("[executor] inspect error reading container labels stack=%s: %v", cmd.StackID, err)
 		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
 	}
 
-	inspectResult := protocol.InspectResult{
-		CommitSHA: result,
-	}
+	inspectResult := inspectResultFor(commits)
 
 	encoded, _ := json.Marshal(inspectResult)
 
 	// log.Printf("[executor] inspect done stack=%s commit=%s elapsed=%dms", cmd.StackID, inspectResult.CommitSHA, time.Since(start).Milliseconds())
 
 	return protocol.CommandResult{CommandID: cmd.CommandID, Output: string(encoded)}
+}
+
+// inspectResultFor shapes the reply: the whole set, plus its first entry in
+// CommitSHA. That first entry is the value this command returned before the
+// set existed, so a server reading only CommitSHA — an older one, or the
+// reconciler's cron fast path — sees exactly what it saw before.
+func inspectResultFor(commits []string) protocol.InspectResult {
+	result := protocol.InspectResult{CommitSHAs: commits}
+	if len(commits) > 0 {
+		result.CommitSHA = commits[0]
+	}
+	return result
 }
 
 // GetResources queries Docker for volumes and networks belonging to the given

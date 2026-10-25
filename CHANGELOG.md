@@ -160,8 +160,12 @@ changes in a minor release.
   deploying, records that revision and takes its status from the post-check
   (`active`, or `degraded` when only some services came up). The deploy still
   counts as failed: `last_error_*` says so, and the sync log stays `error`.
-  Nothing is converged when the containers are still on the old revision or
-  the post-check could not verify anything.
+  Convergence needs *every* container to agree on that revision: nothing is
+  converged when they straddle two revisions, when they are still on the old
+  one, when the commit did not move in the first place (so the labels cannot
+  show this render was applied), or when the post-check could not verify
+  anything. A worker now reports the whole set of revisions it finds, and one
+  too old to do so is treated as unable to confirm rather than as agreeing.
 - Stacks now carry `last_error_reason` (`timeout`, `dispatch` or `compose`)
   alongside `last_error_category`, so a caller can tell a deploy that ran out
   of time from one that failed on its own terms without matching
