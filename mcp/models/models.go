@@ -226,6 +226,7 @@ type DeployStackInput struct {
 type ResyncStackDefinitionInput struct {
 	StackID string `json:"stack_id,omitempty" jsonschema:"The wireops stack id or exact name. Alias: stack."`
 	Stack   string `json:"stack,omitempty" jsonschema:"Alias for stack_id. May be supplied together only with the same value."`
+	Preview bool   `json:"preview,omitempty" jsonschema:"Report the diff without saving anything. Use this first when the committed definition may change worker_tags, since applying that moves the stack to another node."`
 }
 
 // ForceRedeployStackInput is the input for the force_redeploy_stack tool.

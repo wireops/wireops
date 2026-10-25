@@ -32,6 +32,7 @@ type definitionRefreshResponse struct {
 	CommitSHA       string                             `json:"commit_sha"`
 	ChangedFields   map[string]definitionRefreshChange `json:"changed_fields"`
 	DeployTriggered bool                               `json:"deploy_triggered"`
+	Preview         bool                               `json:"preview"`
 }
 
 type definitionRefreshError struct {
@@ -54,6 +55,11 @@ func (rr routeRegistrar) registerStackDefinitionRoutes() {
 		if stackID == "" {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "missing id"})
 		}
+		// preview=true reports the same diff and saves nothing. worker_tags is
+		// among the fields this route refreshes, and moving a running stack to
+		// another node is not something to discover from the response of the
+		// call that already did it.
+		preview := e.Request.URL.Query().Get("preview") == "true"
 		if rr.scheduler == nil {
 			return e.JSON(http.StatusServiceUnavailable, map[string]string{"error": "scheduler is unavailable"})
 		}
@@ -104,6 +110,19 @@ func (rr routeRegistrar) registerStackDefinitionRoutes() {
 		}
 
 		changes := applyWireopsDefinition(stack, def, source)
+		if preview {
+			// The record was mutated in memory only; it is discarded with the
+			// request, and the stack lock above kept any concurrent deploy from
+			// observing it.
+			return e.JSON(http.StatusOK, definitionRefreshResponse{
+				Status:          previewStatus(changes),
+				Source:          source,
+				CommitSHA:       commitSHA,
+				ChangedFields:   changes,
+				DeployTriggered: false,
+				Preview:         true,
+			})
+		}
 		if len(changes) > 0 {
 			// The hook deliberately rejects generic edits to these fields. This
 			// narrow bypass applies only after the source was fetched and parsed,
@@ -126,7 +145,12 @@ func (rr routeRegistrar) registerStackDefinitionRoutes() {
 			ChangedFields:   changes,
 			DeployTriggered: false,
 		})
-	}).BindFunc(rbac.Require(rbac.CapManageRepos))
+		// CapOperateStacks, not CapManageRepos: this mutates one stack's deploy
+		// behaviour, which is the same blast radius as deploy_stack, and reads
+		// its input from the repository rather than from the caller. Both sit at
+		// RoleOperator, so this narrows which capability is required without
+		// changing the role tier.
+	}).BindFunc(rbac.Require(rbac.CapOperateStacks))
 }
 
 func currentRepositoryCommit(repoDir string) (string, error) {
@@ -251,4 +275,12 @@ func applyWireopsDefinition(stack *core.Record, def *manifest.Definition, source
 	}
 
 	return changes
+}
+
+// previewStatus names what an apply would do, without doing it.
+func previewStatus(changes map[string]definitionRefreshChange) string {
+	if len(changes) == 0 {
+		return "unchanged"
+	}
+	return "would-update"
 }

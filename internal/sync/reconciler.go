@@ -356,6 +356,19 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		return err
 	}
 
+	// Re-read the committed schedule before anything consumes it. Both the
+	// deploy budget (withDeployTimeout, below) and the next poll interval come
+	// from the stack record, which is otherwise written only at create time —
+	// so without this a `timeout:` edited in git never takes effect, and the
+	// only remedy is recreating the stack. A definition that cannot be read is
+	// logged and the stored values are kept: GenerateRevision below validates
+	// the compose itself and fails with a better message than this would.
+	if changes, defErr := r.refreshScheduleFromDefinition(stack, repoID, workDir, composeFile); defErr != nil {
+		log.Printf("[reconciler] stack %s: keeping stored schedule, committed definition unreadable: %v", stackID, defErr)
+	} else if len(changes) > 0 {
+		log.Printf("[reconciler] stack %s: refreshed schedule from git (%s)", stackID, formatScheduleChanges(changes))
+	}
+
 	envVars, envErr := r.loadEnvVars(renderCtx, stackID)
 	if envErr != nil {
 		errMsg := fmt.Sprintf("failed to load env vars: %v", envErr)

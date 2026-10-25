@@ -227,3 +227,112 @@ func TestResyncDefinitionLeavesTheStackUntouchedWhenGitDefinitionIsInvalid(t *te
 		t.Fatalf("invalid definition must not change timeout, got %d", updated.GetInt("deploy_timeout_seconds"))
 	}
 }
+
+// TestResyncDefinitionPreview groups the preview scenarios behind one app
+// bootstrap: each PocketBase test app costs about a second and this package
+// already runs close to the per-package timeout in CI.
+func TestResyncDefinitionPreview(t *testing.T) {
+	app, mux, scheduler := setupDefinitionRefreshTest(t)
+
+	const divergentCompose = `x-wireops:
+  version: wireops.v1
+  name: api
+  timeout: 3m
+  compose:
+    remove_orphans: false
+    force_pull: true
+  worker:
+    tags: [prod, amd64]
+  sync:
+    interval: 45s
+services:
+  web:
+    image: nginx
+`
+
+	// One worker for both subtests: createMigrateTestWorker uses a fixed
+	// fingerprint, which is unique-constrained.
+	worker := createMigrateTestWorker(t, app)
+
+	newPausedStack := func(t *testing.T, name string, fields map[string]any) string {
+		t.Helper()
+		fixtureDir := t.TempDir()
+		localGitFixture(t, fixtureDir, map[string]string{"docker-compose.yml": divergentCompose})
+		repo := createMigrateTestRepo(t, app, name, fixtureDir)
+		base := map[string]any{
+			"worker":        worker.Id,
+			"status":        "paused",
+			"config_source": "compose_embedded",
+		}
+		for k, v := range fields {
+			base[k] = v
+		}
+		stack := createMigrateTestStack(t, app, repo.Id, base)
+		time.Sleep(100 * time.Millisecond)
+		waitUntilNotSyncing(t, scheduler, stack.Id)
+		return stack.Id
+	}
+
+	t.Run("ReportsTheDiffWithoutSavingAnything", func(t *testing.T) {
+		stackID := newPausedStack(t, "definition-preview-diff", map[string]any{
+			"deploy_timeout_seconds": 60,
+			"remove_orphans":         true,
+			"force_pull":             false,
+			"sync_interval_seconds":  10,
+			"worker_tags":            []string{"old"},
+		})
+
+		rec := doJSONRequest(t, mux, http.MethodPost, "/api/custom/stacks/"+stackID+"/resync-definition?preview=true", map[string]any{})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		out := decodeDefinitionRefresh(t, rec)
+		if !out.Preview || out.Status != "would-update" || out.DeployTriggered {
+			t.Fatalf("unexpected preview response: %+v", out)
+		}
+		if got, ok := out.ChangedFields["deploy_timeout_seconds"]; !ok || got.From != float64(60) || got.To != float64(180) {
+			t.Fatalf("expected previewed timeout change 60 -> 180, got %#v", got)
+		}
+		if _, ok := out.ChangedFields["worker_tags"]; !ok {
+			t.Fatal("expected worker_tags in the preview diff: applying it relocates the stack")
+		}
+
+		// The point of the flag: nothing was persisted.
+		unchanged, err := app.FindRecordById("stacks", stackID)
+		if err != nil {
+			t.Fatalf("reload stack: %v", err)
+		}
+		if got := unchanged.GetInt("deploy_timeout_seconds"); got != 60 {
+			t.Fatalf("preview must not save: deploy_timeout_seconds = %d, want 60", got)
+		}
+		if got := unchanged.GetStringSlice("worker_tags"); len(got) != 1 || got[0] != "old" {
+			t.Fatalf("preview must not save: worker_tags = %v, want [old]", got)
+		}
+		if got := unchanged.GetInt("sync_interval_seconds"); got != 10 {
+			t.Fatalf("preview must not save: sync_interval_seconds = %d, want 10", got)
+		}
+	})
+
+	t.Run("ReportsUnchangedWhenTheDefinitionAlreadyMatches", func(t *testing.T) {
+		stackID := newPausedStack(t, "definition-preview-match", map[string]any{
+			"deploy_timeout_seconds": 180,
+			"remove_orphans":         false,
+			"force_pull":             true,
+			"sync_interval_seconds":  45,
+			"wait_running_jobs":      "never",
+			"worker_tags":            []string{"prod", "amd64"},
+		})
+
+		rec := doJSONRequest(t, mux, http.MethodPost, "/api/custom/stacks/"+stackID+"/resync-definition?preview=true", map[string]any{})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		out := decodeDefinitionRefresh(t, rec)
+		if !out.Preview || out.Status != "unchanged" {
+			t.Fatalf("expected an unchanged preview, got %+v", out)
+		}
+		if len(out.ChangedFields) != 0 {
+			t.Fatalf("expected no changed fields, got %#v", out.ChangedFields)
+		}
+	})
+}

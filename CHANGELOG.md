@@ -13,6 +13,15 @@ changes in a minor release.
   `resync_stack_definition` tool. This re-fetches and validates the stack's
   `x-wireops` block or `wireops.yaml`, applies changed Git-managed settings
   such as `timeout`, and returns a field-by-field diff without deploying.
+  Pass `?preview=true` (or `preview` in MCP) to get that diff without saving —
+  worth doing first, since `worker_tags` is one of the fields it applies and
+  changing that moves the stack to another node.
+- A git-driven sync now re-reads `timeout` and `sync.interval` from the
+  committed definition before it deploys, so editing either in git takes
+  effect on the next reconcile instead of only when the stack is recreated.
+  Only those two fields are refreshed automatically: they change how a deploy
+  is scheduled, while `worker_tags` and `compose_path` change *where* and
+  *what* is deployed and so stay with the explicit resync route.
 - The MCP server now exposes the `operator` actions, not only reads: deploy,
   force redeploy, rollback, pause/resume, render-time overrides, container
   restart/stop, transfer, delete, env var writes, stack import, stack creation
@@ -104,6 +113,12 @@ changes in a minor release.
 
 ### Changed
 
+- `POST /api/custom/stacks/{id}/resync-definition` now requires
+  `operate_stacks` rather than `manage_repositories`. It mutates one stack's
+  deploy behaviour, which is the same blast radius as a deploy, and takes its
+  input from the repository rather than from the caller; both capabilities sit
+  at the `operator` role, so this narrows the requirement without changing the
+  role tier.
 - MCP stack inputs also accept `stack`; container tools accept
   `container_name`, and logs accept `lines`/`search`. Equal canonical and
   alias values are accepted; conflicting values are rejected. `exec_in_container`

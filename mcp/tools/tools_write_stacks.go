@@ -34,7 +34,7 @@ func registerStackWriteTools(server *mcp.Server, c *client.Client) {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "resync_stack_definition",
-		Description: "Fetch the tracked repository and re-read this stack's committed x-wireops block or wireops.yaml. It updates only Git-managed stack settings, including timeout, compose flags, sync interval, job wait mode and worker tags; it returns the before/after diff and does NOT deploy containers. Use deploy_stack afterwards when you are ready to apply the compose revision. This works only for stacks created from x-wireops or wireops.yaml.",
+		Description: "Fetch the tracked repository and re-read this stack's committed x-wireops block or wireops.yaml. It updates only Git-managed stack settings, including timeout, compose flags, sync interval, job wait mode and worker tags; it returns the before/after diff and does NOT deploy containers. Set preview true to get that diff without saving — worth doing first, because worker_tags is one of the fields it applies and changing that moves the stack to another node. Note that a git sync already re-reads timeout and sync interval on its own; this tool is for the rest. Use deploy_stack afterwards when you are ready to apply the compose revision. This works only for stacks created from x-wireops or wireops.yaml.",
 		Annotations: additive(true),
 	}, resyncStackDefinition(c))
 
@@ -152,6 +152,9 @@ func resyncStackDefinition(c *client.Client) mcp.ToolHandlerFor[models.ResyncSta
 		}
 		var out any
 		path := "/api/custom/stacks/" + url.PathEscape(stackID) + "/resync-definition"
+		if in.Preview {
+			path += "?preview=true"
+		}
 		if err := c.Post(ctx, apiKey, path, nil, struct{}{}, &out); err != nil {
 			return nil, nil, err
 		}
