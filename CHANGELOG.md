@@ -17,8 +17,10 @@ changes in a minor release.
   worth doing first, since `worker_tags` is one of the fields it applies and
   changing that moves the stack to another node.
 - A git-driven sync now re-reads `timeout` and `sync.interval` from the
-  committed definition before it deploys, so editing either in git takes
-  effect on the next reconcile instead of only when the stack is recreated.
+  committed definition on every reconcile — before the skip gates, since the
+  renderer strips `x-wireops` and editing only those keys leaves the rendered
+  compose unchanged — so editing either in git takes effect on the next poll
+  instead of only when the stack is recreated.
   Only those two fields are refreshed automatically: they change how a deploy
   is scheduled, while `worker_tags` and `compose_path` change *where* and
   *what* is deployed and so stay with the explicit resync route.
