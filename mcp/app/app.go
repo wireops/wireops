@@ -84,6 +84,10 @@ func Run() {
 		log.Fatalf("[mcp] MCP_TOOLS: %v", err)
 	}
 	tools.Register(mcpServer, wireopsClient, toolSet)
+	// Runs outside the SDK's own argument validation, which returns its
+	// failure instead of calling the tool handler — so this is the only place
+	// that can add the canonical parameter name to it (#178 item 3).
+	mcpServer.AddReceivingMiddleware(tools.ValidationHintMiddleware())
 	resources.Register(mcpServer, wireopsClient)
 	prompts.Register(mcpServer, wireopsClient)
 

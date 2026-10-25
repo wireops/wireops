@@ -206,6 +206,16 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		return fmt.Errorf("%s: %w", errMsg, err)
 	}
 
+	// Re-read the committed schedule straight after the fetch, before any of
+	// the skip gates below. It has to run even on a reconcile that deploys
+	// nothing: the renderer strips the x-wireops block, so editing only
+	// `timeout:` or `sync.interval` leaves the rendered compose byte-identical
+	// and every gate below would short-circuit — which is exactly the case
+	// this exists for. A definition that cannot be read is logged and the
+	// stored values are kept; the render phase validates the compose properly
+	// and fails with a better message than this would.
+	r.refreshScheduleUnderRepoLock(stack, repoID, stackID)
+
 	// lastSHA is this stack's own last deployed commit (not the repo's prior
 	// fetch state, since the repo fetch cadence is now decoupled from this
 	// stack's tick): a stack has "changes to pick up" when the repo's current
@@ -356,19 +366,6 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 		return err
 	}
 
-	// Re-read the committed schedule before anything consumes it. Both the
-	// deploy budget (withDeployTimeout, below) and the next poll interval come
-	// from the stack record, which is otherwise written only at create time —
-	// so without this a `timeout:` edited in git never takes effect, and the
-	// only remedy is recreating the stack. A definition that cannot be read is
-	// logged and the stored values are kept: GenerateRevision below validates
-	// the compose itself and fails with a better message than this would.
-	if changes, defErr := r.refreshScheduleFromDefinition(stack, repoID, workDir, composeFile); defErr != nil {
-		log.Printf("[reconciler] stack %s: keeping stored schedule, committed definition unreadable: %v", stackID, defErr)
-	} else if len(changes) > 0 {
-		log.Printf("[reconciler] stack %s: refreshed schedule from git (%s)", stackID, formatScheduleChanges(changes))
-	}
-
 	envVars, envErr := r.loadEnvVars(renderCtx, stackID)
 	if envErr != nil {
 		errMsg := fmt.Sprintf("failed to load env vars: %v", envErr)
@@ -502,6 +499,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 
 	var lastAttemptStart time.Time
 	var composeUpMs int64
+	var failureReason string
 
 	maxRetries := 3
 	for attempt := 1; attempt <= maxRetries; attempt++ {
@@ -544,6 +542,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 			}
 			cancelDispatch()
 			composeUpMs = result.ComposeUpMs
+			failureReason = deployFailureReason(result, dispatchErr)
 			output, runErr = extractDispatchResult(result, dispatchErr)
 		}
 
@@ -574,11 +573,34 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	if runErr != nil {
 		_ = pt.finish(constants.PhaseDispatch, constants.PhaseStatusError, runErr.Error())
 		errOutput := buildErrorOutput(output, runErr)
+
+		// A deploy killed by its own budget is the one failure that can leave
+		// the host *ahead* of the record: `docker compose up` is not atomic,
+		// so the containers it had already recreated are running the new
+		// revision while deployed_commit still names the old one. Ask the
+		// worker what is actually there before writing a record that
+		// contradicts it (issue #178 item 2). Every other failure leaves the
+		// deployed_* fields untouched, as before.
+		deployStatus := "error"
+		if failureReason == reasonTimeout {
+			converged := r.convergeAfterTimeout(ctx, workerID, stackID, workDir, lastComposeContent, remoteSHA, lastSHA)
+			if converged.Detail != "" {
+				errOutput += "\n\n[post-timeout] " + converged.Detail
+			}
+			if converged.Converged {
+				deployStatus = converged.Status
+				applyTimeoutConvergence(stack, renderRes, remoteSHA)
+			}
+		}
+
 		if err := r.updateSyncLog(syncLog.Id, "error", errOutput, duration); err != nil {
 			_ = r.markDeployError(stack, err.Error(), remoteSHA)
 			return err
 		}
-		if err := r.markDeployError(stack, errOutput, remoteSHA); err != nil {
+		// One save: markDeployFailure persists the convergence above along
+		// with the error bundle, so the record never exists in a state where
+		// the revision moved but the failure is unrecorded.
+		if err := r.markDeployFailure(stack, failureReason, deployStatus, errOutput, remoteSHA); err != nil {
 			return err
 		}
 		_ = pt.start(constants.PhaseNotify)
@@ -808,6 +830,7 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 		cmdID = syncLog.Id
 	}
 	var composeUpMs int64
+	var failureReason string
 	envFileB64, b64Err := buildEnvFileB64(envVars)
 	if b64Err != nil {
 		runErr = fmt.Errorf("failed to serialize env vars for remote rollback: %w", b64Err)
@@ -844,6 +867,7 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 			result, dispatchErr = r.dispatcher.Dispatch(dispatchCtx, workerID, command)
 		}
 		composeUpMs = result.ComposeUpMs
+		failureReason = deployFailureReason(result, dispatchErr)
 		output, runErr = extractDispatchResult(result, dispatchErr)
 	}
 
@@ -868,7 +892,7 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 			Error:      runErr.Error(),
 		})
 		_ = pt.finish(constants.PhaseNotify, constants.PhaseStatusSuccess, "")
-		if err := r.markDeployError(stack, errOutput, commitSHA); err != nil {
+		if err := r.markDeployFailure(stack, failureReason, "error", errOutput, commitSHA); err != nil {
 			return err
 		}
 		return runErr
@@ -1009,7 +1033,18 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 	_ = pt.recordSkipped(constants.PhasePolicyCheck, "n/a: force redeploy")
 	_ = pt.start(constants.PhaseRender)
 
+	// Declared ahead of failRedeploy, which reads it: the dispatch below
+	// assigns it, and the closure is called from both sides of that point.
+	var failureReason string
+
 	failRedeploy := func(errMsg string, duration int64, category string) error {
+		// A reason only ever accompanies a deploy-category failure: the
+		// "sync" calls below all happen before anything is dispatched, so
+		// failureReason is necessarily still empty for them.
+		reason := ""
+		if category == "deploy" {
+			reason = failureReason
+		}
 		pt.finishCurrentAsError(errMsg)
 		if err := r.updateSyncLog(syncLog.Id, "error", errMsg, duration); err != nil {
 			_ = r.markStackError(stack, category, err.Error(), lastSHA)
@@ -1027,7 +1062,7 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 				Error:      errMsg,
 			})
 		}
-		if err := r.markStackError(stack, category, errMsg, lastSHA); err != nil {
+		if err := r.markStackFailure(stack, category, reason, "error", errMsg, lastSHA); err != nil {
 			return err
 		}
 		return fmt.Errorf("%s", errMsg)
@@ -1126,6 +1161,7 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 			result, dispatchErr = r.dispatcher.Dispatch(dispatchCtx, workerID, command)
 		}
 		composeUpMs = result.ComposeUpMs
+		failureReason = deployFailureReason(result, dispatchErr)
 		output, runErr = extractDispatchResult(result, dispatchErr)
 	}
 
@@ -1614,6 +1650,7 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 	var output string
 	var runErr error
 	var composeUpMs int64
+	var failureReason string
 	start := time.Now()
 	_ = pt.start(constants.PhaseDispatch)
 
@@ -1654,6 +1691,7 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 			result, dispatchErr = r.dispatcher.Dispatch(dispatchCtx, workerID, command)
 		}
 		composeUpMs = result.ComposeUpMs
+		failureReason = deployFailureReason(result, dispatchErr)
 		output, runErr = extractDispatchResult(result, dispatchErr)
 	} else {
 		forcePull, removeOrphans := resolveComposeRuntimeFlags(stack)
@@ -1683,6 +1721,7 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 			result, dispatchErr = r.dispatcher.Dispatch(dispatchCtx, workerID, command)
 		}
 		composeUpMs = result.ComposeUpMs
+		failureReason = deployFailureReason(result, dispatchErr)
 		output, runErr = extractDispatchResult(result, dispatchErr)
 	}
 
@@ -1695,7 +1734,7 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 			_ = r.markDeployError(stack, err.Error())
 			return err
 		}
-		if err := r.markDeployError(stack, errOutput); err != nil {
+		if err := r.markDeployFailure(stack, failureReason, "error", errOutput, ""); err != nil {
 			return err
 		}
 		return runErr
@@ -1784,27 +1823,40 @@ func (r *Reconciler) queuePendingReconcile(stackID, trigger, commitSHA string) e
 	return nil
 }
 
-func (r *Reconciler) inspectStackCommit(ctx context.Context, workerID, stackID string) string {
+// inspectStack asks the worker which revision(s) the stack's containers are
+// running. A zero result means the worker could not be reached, refused, or
+// had nothing to report — every caller reads that as "cannot tell" rather than
+// as an answer.
+func (r *Reconciler) inspectStack(ctx context.Context, workerID, stackID string) protocol.InspectResult {
 	result, err := r.dispatcher.Dispatch(ctx, workerID, protocol.InspectCommand{
 		CommandID: "inspect-" + stackID + "-" + fmt.Sprint(time.Now().UnixNano()),
 		StackID:   stackID,
 	})
 	if err != nil {
 		log.Printf("[reconciler] failed to dispatch inspect command for stack %s: %v", stackID, err)
-		return ""
+		return protocol.InspectResult{}
 	}
 	if result.Error != "" {
 		log.Printf("[reconciler] inspect command returned error for stack %s: %s", stackID, result.Error)
-		return ""
+		return protocol.InspectResult{}
 	}
 
 	var inspectRes protocol.InspectResult
 	if err := json.Unmarshal([]byte(result.Output), &inspectRes); err != nil {
 		log.Printf("[reconciler] failed to unmarshal inspect result for stack %s: %v", stackID, err)
-		return ""
+		return protocol.InspectResult{}
 	}
 
-	return inspectRes.CommitSHA
+	return inspectRes
+}
+
+// inspectStackCommit reports one container's commit label, which is all the
+// cron fast path below needs: it is a best-effort skip hint backed by the
+// renderer's checksum gate, not a decision about what the host is running. A
+// caller that acts on the revision itself wants inspectStack and the agreement
+// check in deploy_timeout.go.
+func (r *Reconciler) inspectStackCommit(ctx context.Context, workerID, stackID string) string {
+	return r.inspectStack(ctx, workerID, stackID).CommitSHA
 }
 
 func (r *Reconciler) reposWorkspace() string {
@@ -2236,24 +2288,46 @@ func shouldMarkPendingOnQueue(stack *core.Record) bool {
 }
 
 func (r *Reconciler) markError(rec *core.Record, collection string) error {
-	rec.Set("status", "error")
+	return r.markErrorWithStatus(rec, collection, "error")
+}
+
+// markErrorWithStatus is markError for a failure that leaves the record in a
+// state other than "error" — a timeout whose containers did come up at the
+// new revision ends on the post-check's own verdict (see
+// convergeAfterTimeout), because "error" would describe a host that is in
+// fact running the change.
+func (r *Reconciler) markErrorWithStatus(rec *core.Record, collection, status string) error {
+	rec.Set("status", status)
 	if err := r.saveRecord(rec, collection, "mark error"); err != nil {
 		log.Printf("[reconciler] failed to mark error collection=%s record=%s: %v", collection, rec.Id, err)
 		return err
 	}
-	log.Printf("[reconciler] %s/%s status=error", collection, rec.Id)
+	log.Printf("[reconciler] %s/%s status=%s", collection, rec.Id, status)
 	return nil
 }
 
 // markStackError is markError for the "stacks" collection plus a denormalized
-// last_error_category/message/at/commit on the stack record, so the UI can show a
-// sync-status card without joining sync_logs/sync_log_phases. category is
-// either "sync" (everything before a compose command is dispatched to a
-// worker: git fetch, render, secrets/env resolve, policy check) or "deploy"
-// (dispatch, worker ack, compose up, post-check) — the two failure classes
-// the user wants told apart on the stack page.
+// last_error_category/reason/message/at/commit on the stack record, so the UI
+// can show a sync-status card without joining sync_logs/sync_log_phases.
+// category is either "sync" (everything before a compose command is dispatched
+// to a worker: git fetch, render, secrets/env resolve, policy check) or
+// "deploy" (dispatch, worker ack, compose up, post-check) — the two failure
+// classes the user wants told apart on the stack page. It leaves the reason
+// empty; see markStackFailure for the callers that know one.
 func (r *Reconciler) markStackError(stack *core.Record, category, errMsg string, attemptedCommit ...string) error {
+	return r.markStackFailure(stack, category, "", "error", errMsg, attemptedCommit...)
+}
+
+// markStackFailure is markStackError with the two things a timeout needs to
+// record that "a deploy error" alone cannot express: a reason, and a status
+// other than "error".
+//
+// reason goes to last_error_reason (migration 78) and is "" wherever the
+// server cannot tell — most failures. status is what the stack is left at;
+// every caller but the timeout path passes "error".
+func (r *Reconciler) markStackFailure(stack *core.Record, category, reason, status, errMsg string, attemptedCommit ...string) error {
 	stack.Set("last_error_category", category)
+	stack.Set("last_error_reason", reason)
 	stack.Set("last_error_message", truncateOutput(errMsg))
 	stack.Set("last_error_at", time.Now().UTC().Format(time.RFC3339))
 	commit := ""
@@ -2261,7 +2335,7 @@ func (r *Reconciler) markStackError(stack *core.Record, category, errMsg string,
 		commit = attemptedCommit[0]
 	}
 	stack.Set("last_error_commit", commit)
-	return r.markError(stack, "stacks")
+	return r.markErrorWithStatus(stack, "stacks", status)
 }
 
 func (r *Reconciler) markSyncError(stack *core.Record, errMsg string, attemptedCommit ...string) error {
@@ -2272,10 +2346,19 @@ func (r *Reconciler) markDeployError(stack *core.Record, errMsg string, attempte
 	return r.markStackError(stack, "deploy", errMsg, attemptedCommit...)
 }
 
+// markDeployFailure records a deploy failure whose reason the server does
+// know, leaving the stack at status. Used by the timeout path, where the
+// reason is "timeout" and the status comes from what the containers turned
+// out to be doing.
+func (r *Reconciler) markDeployFailure(stack *core.Record, reason, status, errMsg, attemptedCommit string) error {
+	return r.markStackFailure(stack, "deploy", reason, status, errMsg, attemptedCommit)
+}
+
 // clearLastError resets the denormalized last_error_* fields once a
 // reconcile makes it through to a successful deploy.
 func (r *Reconciler) clearLastError(stack *core.Record) {
 	stack.Set("last_error_category", "")
+	stack.Set("last_error_reason", "")
 	stack.Set("last_error_message", "")
 	stack.Set("last_error_at", "")
 	stack.Set("last_error_commit", "")
@@ -2444,6 +2527,53 @@ func buildErrorOutput(output string, runErr error) string {
 		fmt.Fprintf(&b, "\nerror: %v", runErr)
 	}
 	return b.String()
+}
+
+// last_error_reason values (pb_migrations/78_add_last_error_reason_to_stacks.go).
+// They say *why* a deploy failed, where last_error_category says *where*: all
+// three of these are category "deploy".
+const (
+	reasonTimeout  = "timeout"
+	reasonDispatch = "dispatch"
+	reasonCompose  = "compose"
+)
+
+// deployFailureReason classifies a deploy dispatch for last_error_reason, so
+// a caller can branch on a field instead of matching `signal: killed` out of
+// a compose progress log. Returns "" when the dispatch did not fail.
+func deployFailureReason(result protocol.CommandResult, dispatchErr error) string {
+	switch {
+	case dispatchTimedOut(result, dispatchErr):
+		return reasonTimeout
+	case dispatchErr != nil:
+		// The command never completed through the worker: it went offline,
+		// refused the command, or never answered.
+		return reasonDispatch
+	case result.Error != "":
+		return reasonCompose
+	default:
+		return ""
+	}
+}
+
+// dispatchTimedOut reports whether a failed deploy dispatch ran out of time
+// rather than failing on its own terms. Two deadlines can fire: the worker's
+// own per-step budget, which it reports as CommandResult.TimedOut
+// (DeployCommand.Pull/UpTimeoutSeconds), and the server's dispatchCtx from
+// withDeployTimeout, which surfaces as context.DeadlineExceeded. Either one
+// means the containers were killed mid-`compose up`, not that compose
+// rejected the change — and `docker compose up failed: signal: killed` is all
+// the error text says, which an OOM kill produces too.
+//
+// result is only consulted when dispatchErr is nil, mirroring the precedence
+// extractDispatchResult applies: a dispatch that failed outright (worker gone,
+// command refused) carries a zero-value result, and a non-deadline dispatch
+// error is not a timeout however that result reads.
+func dispatchTimedOut(result protocol.CommandResult, dispatchErr error) bool {
+	if dispatchErr != nil {
+		return errors.Is(dispatchErr, context.DeadlineExceeded)
+	}
+	return result.TimedOut
 }
 
 // extractDispatchResult unpacks a dispatcher response into (output, error).
@@ -2798,7 +2928,7 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 			DurationMs: time.Since(start).Milliseconds(),
 			Error:      deployErrMsg,
 		})
-		if err := r.markDeployError(stack, deployErrMsg, attemptedCommit); err != nil {
+		if err := r.markDeployFailure(stack, deployFailureReason(deployResult, dispatchErr), "error", deployErrMsg, attemptedCommit); err != nil {
 			return err
 		}
 		return fmt.Errorf("transfer failed: %s", deployErrMsg)

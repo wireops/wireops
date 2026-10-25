@@ -201,6 +201,18 @@ type CommandResult struct {
 	// or a command type that doesn't run compose up), in which case the
 	// server treats compose_up as "unknown" rather than showing a false 0ms.
 	ComposeUpMs int64 `json:"compose_up_ms,omitempty"`
+	// TimedOut reports that the worker killed the command because one of the
+	// budgets it was handed expired (DeployCommand.PullTimeoutSeconds /
+	// UpTimeoutSeconds), rather than because the command itself failed.
+	// Error still carries docker's own message, but that message is only
+	// `signal: killed` — indistinguishable from an OOM kill — so the reason
+	// has to travel as a flag rather than be matched out of the text.
+	// TimedOutStep names which budget ran out: "pull" or "up".
+	//
+	// Optional: an older worker omits both, which the server reads as "not a
+	// timeout" and handles exactly as it did before the fields existed.
+	TimedOut     bool   `json:"timed_out,omitempty"`
+	TimedOutStep string `json:"timed_out_step,omitempty"`
 }
 
 // ProbeCommand is sent from the server to a worker to check whether a compose
@@ -249,7 +261,19 @@ type InspectCommand struct {
 
 // InspectResult is the JSON payload inside CommandResult.Output after an InspectCommand.
 type InspectResult struct {
+	// CommitSHA is the first commit label the worker found, which is what a
+	// caller that only needs "roughly which revision is this" reads.
 	CommitSHA string `json:"commit_sha"`
+	// CommitSHAs lists every distinct non-empty commit label found across the
+	// stack's containers, in the order Docker returned them. One entry means
+	// every container agrees; more than one means a deploy left the stack
+	// straddling two revisions, which is what a `docker compose up` killed
+	// mid-sequence does.
+	//
+	// Omitted by a worker older than this field. A caller must read that as
+	// "this worker cannot tell me" rather than as "they agree" — never as
+	// grounds to record a revision for the whole stack.
+	CommitSHAs []string `json:"commit_shas,omitempty"`
 }
 
 // GetResourcesCommand is sent from the server to a worker to query Docker volumes

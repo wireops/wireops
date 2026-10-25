@@ -104,7 +104,7 @@ func resolveStackID(ctx context.Context, c *client.Client, apiKey, ref string) (
 // normal id/name lookup. Keeping it here makes every tool retain the same
 // ambiguity and RBAC-aware resolution behaviour.
 func resolveStackInput(ctx context.Context, c *client.Client, apiKey, stackID, stack string) (string, error) {
-	ref, err := models.CanonicalOrAlias(stackID, stack, "stack_id", "stack")
+	ref, err := models.CanonicalOrAlias(stackID, stack, paramStackID, paramStack)
 	if err != nil {
 		return "", err
 	}

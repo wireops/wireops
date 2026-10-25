@@ -314,6 +314,11 @@ export function stackVisibleDeployStatus(stack: any, workersById?: WorkerLookup)
 
 export type StackLastErrorInfo = {
   category: 'sync' | 'deploy'
+  // reason is last_error_reason: 'timeout' | 'dispatch' | 'compose', or ''
+  // when the backend could not tell (every sync-phase failure, and any
+  // result from a worker older than the field). See
+  // pb_migrations/78_add_last_error_reason_to_stacks.go.
+  reason: string
   message: string
   at: string
   label: string
@@ -322,24 +327,32 @@ export type StackLastErrorInfo = {
   iconClass: string
 }
 
-// stackLastError surfaces the denormalized last_error_category/message/at
+// stackLastError surfaces the denormalized last_error_category/reason/message/at
 // fields set by the backend reconciler (internal/sync/reconciler.go
-// markSyncError/markDeployError), so the stack page can show a dedicated
-// sync-status card distinct from the deploy-status card without joining
-// sync_logs/sync_log_phases.
+// markSyncError/markDeployError/markDeployFailure), so the stack page can show
+// a dedicated sync-status card distinct from the deploy-status card without
+// joining sync_logs/sync_log_phases.
+//
+// A deploy killed by deploy_timeout_seconds gets its own heading: the message
+// body for one is a compose progress log that just stops, so "Error Summary"
+// above it tells the reader nothing about why it stopped.
 export function stackLastError(stack: any): StackLastErrorInfo | null {
   const category = stack?.last_error_category
   if (category !== 'sync' && category !== 'deploy') return null
   const message = stack?.last_error_message || ''
   if (!message) return null
 
+  const reason = stack?.last_error_reason || ''
+  const timedOut = reason === 'timeout'
+
   return {
     category,
+    reason,
     message,
     at: stack?.last_error_at || '',
-    label: 'Error Summary',
+    label: timedOut ? 'Deploy Timed Out' : 'Error Summary',
     color: 'error',
-    icon: 'i-lucide-triangle-alert',
+    icon: timedOut ? 'i-lucide-clock' : 'i-lucide-triangle-alert',
     iconClass: 'text-rose-500',
   }
 }

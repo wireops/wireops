@@ -195,7 +195,7 @@ func lintCompose(c *client.Client) mcp.ToolHandlerFor[models.LintComposeInput, a
 		if err != nil {
 			return nil, nil, err
 		}
-		stackRef, err := models.CanonicalOrAlias(in.StackID, in.Stack, "stack_id", "stack")
+		stackRef, err := models.CanonicalOrAlias(in.StackID, in.Stack, paramStackID, paramStack)
 		if err != nil {
 			return nil, nil, err
 		}

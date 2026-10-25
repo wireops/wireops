@@ -83,13 +83,25 @@ const (
 	defaultUpTimeout   = 5 * time.Minute
 )
 
+// composeStep is one bounded compose command: `pull`, or one of the several
+// `up` variants Deploy/Redeploy pick between.
+type composeStep func(context.Context, compose.RunOptions) (string, error)
+
 // pullThenUp runs `docker compose pull` and the given up step as two
 // separate commands, each bounded by its own deadline derived from ctx —
 // a slow registry/large image download no longer eats into the budget
 // meant for actually starting containers, and vice versa. upElapsedMs
 // reports only the up step's own duration (0 if pull failed before it ran),
 // matching what protocol.CommandResult.ComposeUpMs documents.
-func pullThenUp(ctx context.Context, pullTimeoutSeconds, upTimeoutSeconds int, runOpts compose.RunOptions, up func(context.Context, compose.RunOptions) (string, error)) (output string, upElapsedMs int64, err error) {
+//
+// timedOutStep names the budget that ran out ("pull" or "up"), or is empty
+// when the step failed for any other reason. This is the only place that can
+// still tell: exec.CommandContext SIGKILLs the child, so all the error
+// carries from here on is `signal: killed`, and runInWorkDir rebuilds it as a
+// plain error for redaction a moment later. A cancelled *parent* ctx — the
+// server withdrawing the command via MsgCancelCommand — is deliberately not
+// a timeout, even though the child dies the same way.
+func pullThenUp(ctx context.Context, pullTimeoutSeconds, upTimeoutSeconds int, runOpts compose.RunOptions, pull, up composeStep) (output string, upElapsedMs int64, timedOutStep string, err error) {
 	pullTimeout := time.Duration(pullTimeoutSeconds) * time.Second
 	if pullTimeout <= 0 {
 		pullTimeout = defaultPullTimeout
@@ -101,9 +113,13 @@ func pullThenUp(ctx context.Context, pullTimeoutSeconds, upTimeoutSeconds int, r
 
 	pullCtx, cancelPull := context.WithTimeout(ctx, pullTimeout)
 	defer cancelPull()
-	pullOutput, err := compose.RunPull(pullCtx, runOpts)
+	pullOutput, err := pull(pullCtx, runOpts)
 	if err != nil {
-		return pullOutput, 0, err
+		step := ""
+		if stepDeadlineFired(ctx, pullCtx) {
+			step = "pull"
+		}
+		return pullOutput, 0, step, err
 	}
 
 	upCtx, cancelUp := context.WithTimeout(ctx, upTimeout)
@@ -111,7 +127,20 @@ func pullThenUp(ctx context.Context, pullTimeoutSeconds, upTimeoutSeconds int, r
 	upStart := time.Now()
 	upOutput, err := up(upCtx, runOpts)
 	upElapsedMs = time.Since(upStart).Milliseconds()
-	return pullOutput + upOutput, upElapsedMs, err
+	if err != nil && stepDeadlineFired(ctx, upCtx) {
+		timedOutStep = "up"
+	}
+	return pullOutput + upOutput, upElapsedMs, timedOutStep, err
+}
+
+// stepDeadlineFired reports whether step is the context whose own deadline
+// expired, rather than parent having been cancelled from above. The
+// distinction is the whole point: the server withdrawing a command
+// (MsgCancelCommand, which cancels the parent) kills the child process
+// exactly as a timeout does, and reporting that as a timeout would have the
+// server converge a stack record against a deploy nobody waited for.
+func stepDeadlineFired(parent, step context.Context) bool {
+	return parent.Err() == nil && errors.Is(step.Err(), context.DeadlineExceeded)
 }
 
 // Deploy decodes the base64 compose file, writes it to a temp file, and runs
@@ -147,6 +176,7 @@ func Deploy(ctx context.Context, cmd protocol.DeployCommand, onLine func(string)
 	defer cleanupAuth()
 
 	var upElapsedMs int64
+	var timedOutStep string
 	output, runErr := runInWorkDir(cmd.StackID, cmd.CommandID, cmd.ComposeFileB64, cmd.EnvFileB64, "deploy", onLine, func(workDir, composeFile string, wrappedOnLine func(string)) (string, error) {
 		runOpts := compose.RunOptions{
 			WorkDir:         workDir,
@@ -156,8 +186,9 @@ func Deploy(ctx context.Context, cmd protocol.DeployCommand, onLine func(string)
 			DockerConfigDir: dockerConfigDir,
 			OnLine:          wrappedOnLine,
 		}
-		out, ms, err := pullThenUp(ctx, cmd.PullTimeoutSeconds, cmd.UpTimeoutSeconds, runOpts, compose.RunUp)
+		out, ms, step, err := pullThenUp(ctx, cmd.PullTimeoutSeconds, cmd.UpTimeoutSeconds, runOpts, compose.RunPull, compose.RunUp)
 		upElapsedMs = ms
+		timedOutStep = step
 		return out, err
 	})
 
@@ -165,7 +196,9 @@ func Deploy(ctx context.Context, cmd protocol.DeployCommand, onLine func(string)
 	result := protocol.CommandResult{CommandID: cmd.CommandID, Output: output, ComposeUpMs: upElapsedMs}
 	if runErr != nil {
 		result.Error = runErr.Error()
-		log.Printf("[executor] deploy error stack=%s trigger=%s elapsed=%dms: %v", cmd.StackID, trigger, elapsed, runErr)
+		result.TimedOut = timedOutStep != ""
+		result.TimedOutStep = timedOutStep
+		log.Printf("[executor] deploy error stack=%s trigger=%s elapsed=%dms timed_out_step=%q: %v", cmd.StackID, trigger, elapsed, timedOutStep, runErr)
 	} else {
 		log.Printf("[executor] deploy done stack=%s trigger=%s elapsed=%dms", cmd.StackID, trigger, elapsed)
 	}
@@ -203,6 +236,7 @@ func Redeploy(ctx context.Context, cmd protocol.RedeployCommand, onLine func(str
 	defer cleanupAuth()
 
 	var upElapsedMs int64
+	var timedOutStep string
 	output, runErr := runInWorkDir(cmd.StackID, cmd.CommandID, cmd.ComposeFileB64, cmd.EnvFileB64, "redeploy", onLine, func(workDir, composeFile string, wrappedOnLine func(string)) (string, error) {
 		runOpts := compose.RunOptions{
 			WorkDir:         workDir,
@@ -224,8 +258,9 @@ func Redeploy(ctx context.Context, cmd protocol.RedeployCommand, onLine func(str
 			}
 			return compose.RunForceUp(upCtx, forceOpts)
 		}
-		out, ms, err := pullThenUp(ctx, cmd.PullTimeoutSeconds, cmd.UpTimeoutSeconds, runOpts, up)
+		out, ms, step, err := pullThenUp(ctx, cmd.PullTimeoutSeconds, cmd.UpTimeoutSeconds, runOpts, compose.RunPull, up)
 		upElapsedMs = ms
+		timedOutStep = step
 		return out, err
 	})
 
@@ -233,7 +268,9 @@ func Redeploy(ctx context.Context, cmd protocol.RedeployCommand, onLine func(str
 	result := protocol.CommandResult{CommandID: cmd.CommandID, Output: output, ComposeUpMs: upElapsedMs}
 	if runErr != nil {
 		result.Error = runErr.Error()
-		log.Printf("[executor] redeploy error stack=%s trigger=%s elapsed=%dms: %v", cmd.StackID, trigger, elapsed, runErr)
+		result.TimedOut = timedOutStep != ""
+		result.TimedOutStep = timedOutStep
+		log.Printf("[executor] redeploy error stack=%s trigger=%s elapsed=%dms timed_out_step=%q: %v", cmd.StackID, trigger, elapsed, timedOutStep, runErr)
 	} else {
 		log.Printf("[executor] redeploy done stack=%s trigger=%s elapsed=%dms", cmd.StackID, trigger, elapsed)
 	}
@@ -301,8 +338,14 @@ func Probe(ctx context.Context, cmd protocol.ProbeCommand) protocol.CommandResul
 	return protocol.CommandResult{CommandID: cmd.CommandID, Output: string(encoded)}
 }
 
-// Inspect runs `docker ps --filter label=dev.wireops.stack_id=<StackID> --format '{{.Label "dev.wireops.repository.commit_sha"}}'`
-// and extract the running commit SHA directly from the container label.
+// Inspect reads the commit labels off the stack's containers and reports which
+// revision(s) the host is running.
+//
+// It reports the whole distinct set, not just the first label: a deploy killed
+// mid-sequence can leave a stack straddling two revisions, and the server's
+// timeout convergence refuses to record a revision unless every container
+// agrees. CommitSHA keeps carrying the first entry, which is what an older
+// server reads and what the reconciler's cron fast path still uses.
 func Inspect(ctx context.Context, cmd protocol.InspectCommand) protocol.CommandResult {
 	// log.Printf("[executor] inspect start stack=%s command=%s", cmd.StackID, cmd.CommandID)
 	// start := time.Now()
@@ -314,22 +357,32 @@ func Inspect(ctx context.Context, cmd protocol.InspectCommand) protocol.CommandR
 	}
 	defer client.Close()
 
-	result, err := client.GetRunningStackCommit(ctx, cmd.StackID)
+	commits, err := client.GetRunningStackCommits(ctx, cmd.StackID)
 
 	if err != nil {
 		// log.Printf("[executor] inspect error reading container labels stack=%s: %v", cmd.StackID, err)
 		return protocol.CommandResult{CommandID: cmd.CommandID, Error: err.Error()}
 	}
 
-	inspectResult := protocol.InspectResult{
-		CommitSHA: result,
-	}
+	inspectResult := inspectResultFor(commits)
 
 	encoded, _ := json.Marshal(inspectResult)
 
 	// log.Printf("[executor] inspect done stack=%s commit=%s elapsed=%dms", cmd.StackID, inspectResult.CommitSHA, time.Since(start).Milliseconds())
 
 	return protocol.CommandResult{CommandID: cmd.CommandID, Output: string(encoded)}
+}
+
+// inspectResultFor shapes the reply: the whole set, plus its first entry in
+// CommitSHA. That first entry is the value this command returned before the
+// set existed, so a server reading only CommitSHA — an older one, or the
+// reconciler's cron fast path — sees exactly what it saw before.
+func inspectResultFor(commits []string) protocol.InspectResult {
+	result := protocol.InspectResult{CommitSHAs: commits}
+	if len(commits) > 0 {
+		result.CommitSHA = commits[0]
+	}
+	return result
 }
 
 // GetResources queries Docker for volumes and networks belonging to the given

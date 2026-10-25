@@ -2,6 +2,7 @@ package sync
 
 import (
 	"fmt"
+	"log"
 	"path/filepath"
 	"strings"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/wireops/wireops/internal/compose"
 	"github.com/wireops/wireops/internal/config"
 	"github.com/wireops/wireops/internal/manifest"
+	"github.com/wireops/wireops/internal/safepath"
 	"github.com/wireops/wireops/internal/stackdef"
 )
 
@@ -22,6 +24,28 @@ type scheduleChange struct {
 
 func (c scheduleChange) String() string {
 	return fmt.Sprintf("%s %d -> %d", c.Field, c.From, c.To)
+}
+
+// refreshScheduleUnderRepoLock runs refreshScheduleFromDefinition with the
+// repository's read lock held, and logs whichever of the three outcomes
+// happened. The lock is the point of the wrapper: the definition is read out
+// of the shared checkout (workspace/<repoID>), which every git fetch rewrites,
+// and this runs ahead of the render phase's own read lock rather than under
+// it. It is released again here instead of being held until the render — an
+// RWMutex gives writers priority, so re-entering it while a queued fetch waits
+// would deadlock.
+func (r *Reconciler) refreshScheduleUnderRepoLock(stack *core.Record, repoID, stackID string) {
+	repoRead := r.repoMutex(repoID)
+	repoRead.RLock()
+	defer repoRead.RUnlock()
+
+	changes, err := r.refreshScheduleFromDefinition(stack, repoID)
+	switch {
+	case err != nil:
+		log.Printf("[reconciler] stack %s: keeping stored schedule, committed definition unreadable: %v", stackID, err)
+	case len(changes) > 0:
+		log.Printf("[reconciler] stack %s: refreshed schedule from git (%s)", stackID, formatScheduleChanges(changes))
+	}
 }
 
 // refreshScheduleFromDefinition re-reads the stack's committed wireops
@@ -38,13 +62,13 @@ func (c scheduleChange) String() string {
 // The caller must hold the stack lock: the save has to be ordered against the
 // deploy that reads these values. Returns the applied changes, which is empty
 // when the definition already matches.
-func (r *Reconciler) refreshScheduleFromDefinition(stack *core.Record, repoID, workDir, composeFile string) ([]scheduleChange, error) {
+func (r *Reconciler) refreshScheduleFromDefinition(stack *core.Record, repoID string) ([]scheduleChange, error) {
 	source := stack.GetString("config_source")
 	if !scheduleRefreshApplies(source) {
 		return nil, nil
 	}
 
-	def, err := r.parseStackDefinition(stack, source, repoID, workDir, composeFile)
+	def, err := r.parseStackDefinition(stack, source, repoID)
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +123,7 @@ func scheduleChangesFor(stack *core.Record, def *manifest.Definition) []schedule
 // parseStackDefinition reads the definition from the already-fetched
 // workspace, using the stack's persisted source identity rather than anything
 // derived at call time.
-func (r *Reconciler) parseStackDefinition(stack *core.Record, source, repoID, workDir, composeFile string) (*manifest.Definition, error) {
+func (r *Reconciler) parseStackDefinition(stack *core.Record, source, repoID string) (*manifest.Definition, error) {
 	if source == "wireops_file" {
 		wireopsFile := stack.GetString("wireops_file_path")
 		if wireopsFile == "" {
@@ -112,6 +136,20 @@ func (r *Reconciler) parseStackDefinition(stack *core.Record, source, repoID, wo
 		return def, nil
 	}
 
+	// Resolved here rather than taken from the caller: this runs before the
+	// render phase computes them, and it must not reuse resolveComposeFile,
+	// whose failure path marks the stack as errored.
+	workDir, err := r.stackWorkDir(stack, repoID)
+	if err != nil {
+		return nil, err
+	}
+	composeFile := stack.GetString("compose_file")
+	if composeFile == "" {
+		composeFile = "docker-compose.yml"
+	}
+	if err := safepath.ValidateComposeFile(composeFile); err != nil {
+		return nil, err
+	}
 	repoRoot := filepath.Join(r.reposWorkspace(), repoID)
 	data, _, err := compose.ReadFile(repoRoot, workDir, composeFile, config.GetComposeMaxBytes())
 	if err != nil {
