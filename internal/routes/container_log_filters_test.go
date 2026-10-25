@@ -30,7 +30,49 @@ func TestNormalizeContainerLogFilters(t *testing.T) {
 		}
 	})
 
-	for _, raw := range []string{"2026-10-24T12:00:00", "0s", "bad"} {
+	t.Run("rewrites pre-epoch instants as RFC3339 for Docker's client-side parser", func(t *testing.T) {
+		// A negative seconds.nanos string is rejected before the request is
+		// sent: Docker reads the "-" as RFC3339-like and never reaches its own
+		// Unix-timestamp branch.
+		cases := map[string]string{
+			"-1.5":                   "1969-12-31T23:59:58.5Z",
+			"-1":                     "1969-12-31T23:59:59Z",
+			"1969-12-31T23:59:58.5Z": "1969-12-31T23:59:58.5Z",
+		}
+		for raw, want := range cases {
+			got, _, err := normalizeLogTime(raw, reference)
+			if err != nil {
+				t.Fatalf("normalizeLogTime(%q): %v", raw, err)
+			}
+			if got != want {
+				t.Fatalf("normalizeLogTime(%q) = %q, want %q", raw, got, want)
+			}
+		}
+	})
+
+	t.Run("still emits numeric timestamps at or after the epoch", func(t *testing.T) {
+		// "0" is deliberately absent: ParseDuration accepts it, so the
+		// relative-duration branch claims it and rejects it as non-positive.
+		for raw, want := range map[string]string{
+			"0.5":        "0.5",
+			"1.500":      "1.5",
+			"1792842300": "1792842300",
+		} {
+			got, _, err := normalizeLogTime(raw, reference)
+			if err != nil {
+				t.Fatalf("normalizeLogTime(%q): %v", raw, err)
+			}
+			if got != want {
+				t.Fatalf("normalizeLogTime(%q) = %q, want %q", raw, got, want)
+			}
+		}
+	})
+
+	// strconv.ParseInt accepts a sign inside either component, so these parsed
+	// as valid before the digit check. "-1.-5" was the worst of them: it
+	// resolved to a different instant here than the daemon reads from the same
+	// string.
+	for _, raw := range []string{"2026-10-24T12:00:00", "0s", "bad", "1.+5", "+1.5", "-1.-5", "1.-5", "1.5e2"} {
 		t.Run("rejects invalid time "+raw, func(t *testing.T) {
 			_, _, err := normalizeContainerLogFilters(raw, "", "", reference)
 			if err == nil {

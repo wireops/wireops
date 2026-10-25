@@ -28,15 +28,31 @@ func normalizeLogTime(raw string, reference time.Time) (string, time.Time, error
 		return formatDockerLogTime(parsed), parsed, nil
 	}
 	if seconds, err := strconv.ParseInt(raw, 10, 64); err == nil {
-		return strconv.FormatInt(seconds, 10), time.Unix(seconds, 0), nil
+		resolved := time.Unix(seconds, 0)
+		return formatDockerLogTime(resolved), resolved, nil
 	}
 	if parsed, ok := parseUnixTimestamp(raw); ok {
-		return raw, parsed, nil
+		// Not raw: a pre-epoch value needs rewriting, and formatDockerLogTime
+		// also canonicalises trailing zeros.
+		return formatDockerLogTime(parsed), parsed, nil
 	}
 	return "", time.Time{}, fmt.Errorf("must be RFC3339 with timezone, a Unix timestamp, or a positive relative duration such as 30m")
 }
 
+// formatDockerLogTime renders an instant in a form Docker will accept.
+//
+// Pre-epoch instants have to go out as RFC3339: the client-side parser Docker
+// runs before sending the request (timetypes.GetTimestamp, called from
+// ContainerLogs) treats any value containing "-" as RFC3339-like, and returns
+// that parse error instead of falling back to its Unix-timestamp branch. So a
+// negative seconds.nanos string never reaches the daemon, even though the
+// daemon's own parser would have accepted it. RFC3339 is parsed by the same
+// client-side code, which then converts it to the numeric form the daemon
+// wants.
 func formatDockerLogTime(value time.Time) string {
+	if value.Unix() < 0 {
+		return value.UTC().Format(time.RFC3339Nano)
+	}
 	if value.Nanosecond() == 0 {
 		return strconv.FormatInt(value.Unix(), 10)
 	}
@@ -47,7 +63,12 @@ func parseUnixTimestamp(raw string) (time.Time, bool) {
 	negative := strings.HasPrefix(raw, "-")
 	digits := strings.TrimPrefix(raw, "-")
 	parts := strings.Split(digits, ".")
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" || len(parts[1]) > 9 {
+	// Both components must be bare ASCII digits. strconv.ParseInt would
+	// otherwise accept a sign inside either one, so "1.+5" and "-1.-5" parsed
+	// as valid — and "-1.-5" resolved to a different instant here than the
+	// daemon reads from the same string, which quietly breaks the
+	// since-before-until check. The fractional length limit still applies.
+	if len(parts) != 2 || !isASCIIDigits(parts[0]) || !isASCIIDigits(parts[1]) || len(parts[1]) > 9 {
 		return time.Time{}, false
 	}
 	whole, err := strconv.ParseInt(parts[0], 10, 64)
@@ -63,6 +84,19 @@ func parseUnixTimestamp(raw string) (time.Time, bool) {
 		fraction = -fraction
 	}
 	return time.Unix(whole, fraction), true
+}
+
+// isASCIIDigits reports whether s is non-empty and contains only 0-9.
+func isASCIIDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func normalizeContainerLogFilters(since, until, pattern string, reference time.Time) (string, string, error) {
