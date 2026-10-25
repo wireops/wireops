@@ -206,6 +206,7 @@ func TestExpectedServicesSkipsScaleZeroAndKeepsHealthMetadata(t *testing.T) {
 services:
   web:
     image: nginx
+    scale: 3
     deploy:
       replicas: 2
   migrate:
@@ -214,14 +215,18 @@ services:
       customization.init: "true"
   disabled:
     image: nginx
+    scale: 0
     deploy:
-      replicas: 0
+      replicas: 2
+  interpolated:
+    image: nginx
+    scale: ${REPLICAS}
 `))
 	if err != nil {
 		t.Fatalf("ExpectedServices: %v", err)
 	}
-	if len(services) != 2 {
-		t.Fatalf("got %d expected services, want 2: %#v", len(services), services)
+	if len(services) != 3 {
+		t.Fatalf("got %d expected services, want 3: %#v", len(services), services)
 	}
 	if services[0].Name == "disabled" || services[1].Name == "disabled" {
 		t.Fatalf("scale-zero service should not be expected: %#v", services)
@@ -230,11 +235,14 @@ services:
 	for _, service := range services {
 		byName[service.Name] = service
 	}
-	if got := byName["web"]; got.Replicas != 2 || got.IsInit {
+	if got := byName["web"]; got.Replicas != 3 || got.IsInit {
 		t.Fatalf("web metadata = %#v", got)
 	}
 	if got := byName["migrate"]; !got.IsInit || got.Replicas != 1 {
 		t.Fatalf("migrate metadata = %#v", got)
+	}
+	if got := byName["interpolated"]; got.Replicas != 1 {
+		t.Fatalf("interpolated metadata = %#v", got)
 	}
 }
 

@@ -1048,7 +1048,7 @@ func getContainerLogs(c *client.Client) mcp.ToolHandlerFor[models.ContainerLogsI
 		if err != nil {
 			return nil, nil, err
 		}
-		pattern, err := models.CanonicalOrAlias(in.Pattern, in.Search, "pattern", "search")
+		pattern, err := models.CanonicalOrAliasLiteral(in.Pattern, in.Search, "pattern", "search")
 		if err != nil {
 			return nil, nil, err
 		}

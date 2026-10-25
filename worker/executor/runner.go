@@ -1192,10 +1192,21 @@ func formatContainerLogs(raw []byte, tty bool, pattern string, sourceTruncated b
 	}
 	truncated := sourceTruncated
 	if len(logs) > maxOutputBytes {
-		logs = logs[:maxOutputBytes]
+		logs = tailLogOutput(logs, maxOutputBytes)
 		truncated = true
 	}
 	return logs, truncated, nil
+}
+
+func tailLogOutput(logs string, maxBytes int) string {
+	if len(logs) <= maxBytes {
+		return logs
+	}
+	tail := logs[len(logs)-maxBytes:]
+	for len(tail) > 0 && tail[0]&0xc0 == 0x80 {
+		tail = tail[1:]
+	}
+	return strings.ToValidUTF8(tail, "")
 }
 
 func lookPathSecure(file string) (string, error) {

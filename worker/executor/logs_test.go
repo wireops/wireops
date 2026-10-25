@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func dockerLogFrame(stream byte, payload string) []byte {
@@ -34,12 +35,16 @@ func TestFormatContainerLogsHandlesDockerFramesAndTTY(t *testing.T) {
 }
 
 func TestFormatContainerLogsCapsResponseAndRetainsSourceTruncation(t *testing.T) {
-	logs, truncated, err := formatContainerLogs([]byte(strings.Repeat("x", 70<<10)), true, "", false)
+	input := "old-" + strings.Repeat("x", 6<<10) + strings.Repeat("é", 33<<10) + "newest!"
+	logs, truncated, err := formatContainerLogs([]byte(input), true, "", false)
 	if err != nil {
 		t.Fatalf("format capped logs: %v", err)
 	}
-	if len(logs) != 64<<10 || !truncated {
+	if len(logs) > 64<<10 || !truncated {
 		t.Fatalf("got len=%d truncated=%t", len(logs), truncated)
+	}
+	if !strings.HasSuffix(logs, "newest!") || !utf8.ValidString(logs) {
+		t.Fatalf("capped logs must retain a valid newest tail: %q", logs[len(logs)-16:])
 	}
 
 	logs, truncated, err = formatContainerLogs([]byte("partial"), true, "", true)

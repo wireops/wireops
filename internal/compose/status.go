@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/containerd/errdefs"
 	dockertypes "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
@@ -301,6 +302,9 @@ func getStackBindMounts(ctx context.Context, cli *dockerclient.Client, projectNa
 	for _, c := range containers {
 		inspect, ierr := cli.ContainerInspect(ctx, c.ID)
 		if ierr != nil {
+			if errdefs.IsNotFound(ierr) {
+				continue
+			}
 			return infos, fmt.Errorf("inspect container %s for bind mounts: %w", c.ID, ierr)
 		}
 		for _, m := range inspect.Mounts {
@@ -419,6 +423,9 @@ func getExternalStackNetworks(ctx context.Context, cli *dockerclient.Client, pro
 	for _, c := range containers {
 		inspect, ierr := cli.ContainerInspect(ctx, c.ID)
 		if ierr != nil {
+			if errdefs.IsNotFound(ierr) {
+				continue
+			}
 			return infos, fmt.Errorf("inspect container %s for networks: %w", c.ID, ierr)
 		}
 		if inspect.NetworkSettings == nil {
@@ -439,6 +446,9 @@ func getExternalStackNetworks(ctx context.Context, cli *dockerclient.Client, pro
 
 			netInspect, nerr := cli.NetworkInspect(ctx, networkID, dockernetwork.InspectOptions{})
 			if nerr != nil {
+				if errdefs.IsNotFound(nerr) {
+					continue
+				}
 				return infos, fmt.Errorf("inspect external network %s: %w", netName, nerr)
 			}
 			if seenNetworkIDs[netInspect.ID] {

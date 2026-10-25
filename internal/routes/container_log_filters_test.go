@@ -4,17 +4,28 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func TestNormalizeContainerLogFilters(t *testing.T) {
-	reference := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
+	reference := time.Date(2026, 10, 24, 12, 0, 0, 123456789, time.UTC)
 
 	t.Run("normalizes relative and RFC3339 values from one reference", func(t *testing.T) {
 		since, until, err := normalizeContainerLogFilters("30m", "2026-10-24T11:45:00Z", "ERROR", reference)
 		if err != nil {
 			t.Fatalf("normalizeContainerLogFilters: %v", err)
 		}
-		if since != "1792841400" || until != "1792842300" {
+		if since != "1792841400.123456789" || until != "1792842300" {
+			t.Fatalf("got since=%s until=%s", since, until)
+		}
+	})
+
+	t.Run("preserves fractional RFC3339 and Unix timestamps", func(t *testing.T) {
+		since, until, err := normalizeContainerLogFilters("2026-10-24T11:30:00.25Z", "1792842300.125", "", reference)
+		if err != nil {
+			t.Fatalf("normalizeContainerLogFilters: %v", err)
+		}
+		if since != "1792841400.25" || until != "1792842300.125" {
 			t.Fatalf("got since=%s until=%s", since, until)
 		}
 	})
@@ -40,9 +51,12 @@ func TestFilterAndCapLogOutput(t *testing.T) {
 	if got := filterLogOutput("INFO one\nERROR two\n", "ERROR"); got != "ERROR two" {
 		t.Fatalf("filtered logs = %q", got)
 	}
-	large := strings.Repeat("x", 70<<10)
+	large := "old-" + strings.Repeat("x", 6<<10) + strings.Repeat("é", 33<<10) + "newest!"
 	got, truncated := capLogOutput(large)
-	if !truncated || len(got) != 64<<10 {
+	if !truncated || len(got) > 64<<10 {
 		t.Fatalf("capLogOutput length=%d truncated=%t", len(got), truncated)
+	}
+	if !strings.HasSuffix(got, "newest!") || !utf8.ValidString(got) {
+		t.Fatalf("capLogOutput did not preserve a valid newest tail: %q", got[len(got)-16:])
 	}
 }

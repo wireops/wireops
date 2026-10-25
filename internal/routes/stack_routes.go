@@ -376,20 +376,7 @@ func (rr routeRegistrar) registerStackInspectionRoutes() {
 		if dispatchErr == nil && res.Error == "" {
 			var statuses []compose.ServiceStatus
 			if err := json.Unmarshal([]byte(res.Output), &statuses); err == nil {
-				result := make([]map[string]interface{}, 0, len(statuses))
-				for _, s := range statuses {
-					result = append(result, map[string]interface{}{
-						"service_name":   s.ServiceName,
-						"status":         s.Status,
-						"container_id":   s.ContainerID,
-						"container_name": s.ContainerName,
-						"ports":          s.Ports,
-						"health":         s.Health,
-						"exit_code":      s.ExitCode,
-						"is_init":        s.Labels["customization.init"] == "true",
-					})
-				}
-				return e.JSON(http.StatusOK, result)
+				return e.JSON(http.StatusOK, serviceStatusResponse(statuses))
 			}
 		}
 

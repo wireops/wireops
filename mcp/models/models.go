@@ -25,6 +25,19 @@ func CanonicalOrAlias(canonical, alias, canonicalName, aliasName string) (string
 	return "", nil
 }
 
+// CanonicalOrAliasLiteral applies the same conflict rule without normalizing
+// the values. It is for arguments such as regular expressions, where leading
+// and trailing whitespace are part of the value rather than presentation.
+func CanonicalOrAliasLiteral(canonical, alias, canonicalName, aliasName string) (string, error) {
+	if canonical != "" && alias != "" && canonical != alias {
+		return "", fmt.Errorf("%s and %s identify different values; provide one or use the same value for both", canonicalName, aliasName)
+	}
+	if canonical != "" {
+		return canonical, nil
+	}
+	return alias, nil
+}
+
 // WhoamiInput is the input for the whoami tool. It takes nothing: the API
 // key on the session is the subject.
 type WhoamiInput struct{}

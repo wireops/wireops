@@ -87,6 +87,26 @@ func healthUnknown(reason string) map[string]any {
 	}
 }
 
+// serviceStatusResponse is the public service representation shared by the
+// live-services and observability routes. Keep labels internal: they can be
+// numerous and are not part of either endpoint's response contract.
+func serviceStatusResponse(statuses []compose.ServiceStatus) []map[string]any {
+	result := make([]map[string]any, 0, len(statuses))
+	for _, status := range statuses {
+		result = append(result, map[string]any{
+			"service_name":   status.ServiceName,
+			"status":         status.Status,
+			"container_id":   status.ContainerID,
+			"container_name": status.ContainerName,
+			"ports":          status.Ports,
+			"health":         status.Health,
+			"exit_code":      status.ExitCode,
+			"is_init":        status.Labels["customization.init"] == "true",
+		})
+	}
+	return result
+}
+
 // stackHealth is deliberately a read-only observation. It uses the deployed
 // revision as its source of truth, so an unrendered change in Git does not make
 // a currently-running stack look unhealthy.
@@ -169,7 +189,7 @@ func (rr routeRegistrar) stackHealth(ctx context.Context, stack *core.Record) ma
 	return map[string]any{
 		"state":              state,
 		"observed_at":        time.Now().UTC().Format(time.RFC3339),
-		"services":           statuses,
+		"services":           serviceStatusResponse(statuses),
 		"expected_services":  len(expected),
 		"healthy_services":   healthy,
 		"unhealthy_services": unhealthy,

@@ -314,8 +314,9 @@ func ExpectedServices(data []byte) ([]ExpectedService, error) {
 	var doc struct {
 		Services map[string]struct {
 			Labels any `yaml:"labels"`
+			Scale  any `yaml:"scale"`
 			Deploy struct {
-				Replicas *int `yaml:"replicas"`
+				Replicas any `yaml:"replicas"`
 			} `yaml:"deploy"`
 		} `yaml:"services"`
 	}
@@ -324,12 +325,14 @@ func ExpectedServices(data []byte) ([]ExpectedService, error) {
 	}
 	services := make([]ExpectedService, 0, len(doc.Services))
 	for name, svc := range doc.Services {
-		if svc.Deploy.Replicas != nil && *svc.Deploy.Replicas == 0 {
-			continue
-		}
 		replicas := 1
-		if svc.Deploy.Replicas != nil {
-			replicas = *svc.Deploy.Replicas
+		if scale, ok := composeReplicaCount(svc.Scale); ok {
+			replicas = scale
+		} else if scale, ok := composeReplicaCount(svc.Deploy.Replicas); ok {
+			replicas = scale
+		}
+		if replicas == 0 {
+			continue
 		}
 		services = append(services, ExpectedService{
 			Name:     name,
@@ -338,6 +341,24 @@ func ExpectedServices(data []byte) ([]ExpectedService, error) {
 		})
 	}
 	return services, nil
+}
+
+// composeReplicaCount matches the effective-scale coercion used for render
+// overrides. A non-numeric value is intentionally treated as unspecified: a
+// rendered revision keeps unresolved ${VAR} expressions, while Docker resolves
+// those values from the worker's .env file during deployment.
+func composeReplicaCount(raw any) (int, bool) {
+	switch value := raw.(type) {
+	case int:
+		return value, true
+	case int64:
+		return int(value), true
+	case float64:
+		if value == float64(int(value)) {
+			return int(value), true
+		}
+	}
+	return 0, false
 }
 
 // ExtractProjectName reads the top-level `name` field from a rendered

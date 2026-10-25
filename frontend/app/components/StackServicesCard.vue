@@ -242,6 +242,7 @@ const volumes = ref<VolumeInfo[]>([])
 const networks = ref<NetworkInfo[]>([])
 const resourcesState = ref<'loading' | 'confirmed' | 'partial' | 'failed'>('loading')
 const resourceWarnings = ref<string[]>([])
+const latestResourceRequest = ref(0)
 const openVolumeDetails = ref<Record<string, boolean>>({})
 const openNetworkDetails = ref<Record<string, boolean>>({})
 
@@ -254,15 +255,19 @@ function toggleNetworkDetails(name: string) {
 }
 
 async function refreshResources() {
+	const request = ++latestResourceRequest.value
+	const stackId = props.stackId
   resourcesState.value = 'loading'
   resourceWarnings.value = []
   try {
-    const res = await getStackResources(props.stackId)
+		const res = await getStackResources(stackId)
+		if (request !== latestResourceRequest.value || stackId !== props.stackId) return
     volumes.value = res.volumes ?? []
     networks.value = res.networks ?? []
     resourceWarnings.value = res.warnings ?? []
     resourcesState.value = res.partial ? 'partial' : 'confirmed'
   } catch {
+		if (request !== latestResourceRequest.value || stackId !== props.stackId) return
     volumes.value = []
     networks.value = []
     resourcesState.value = 'failed'

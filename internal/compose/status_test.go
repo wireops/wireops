@@ -168,6 +168,35 @@ func TestGetStackBindMounts(t *testing.T) {
 	}
 }
 
+func TestResourceDiscoverySkipsObjectsRemovedDuringInspection(t *testing.T) {
+	cli := newFakeDockerClient(t, func(req *http.Request) (*http.Response, error) {
+		switch {
+		case strings.HasSuffix(req.URL.Path, "/containers/json"):
+			return jsonResponse(t, http.StatusOK, []container.Summary{{ID: "gone-bind"}, {ID: "networked"}}), nil
+		case strings.Contains(req.URL.Path, "/containers/gone-bind/json"):
+			return errorResponse(http.StatusNotFound, "No such container"), nil
+		case strings.Contains(req.URL.Path, "/containers/networked/json"):
+			return jsonResponse(t, http.StatusOK, container.InspectResponse{NetworkSettings: &container.NetworkSettings{
+				Networks: map[string]*dockernetwork.EndpointSettings{"gone-network": {NetworkID: "gone-network"}},
+			}}), nil
+		case strings.Contains(req.URL.Path, "/networks/gone-network"):
+			return errorResponse(http.StatusNotFound, "network not found"), nil
+		default:
+			t.Fatalf("unexpected request: %s", req.URL.Path)
+			return nil, nil
+		}
+	})
+
+	binds, err := getStackBindMounts(context.Background(), cli, "myproject")
+	if err != nil || len(binds) != 0 {
+		t.Fatalf("gone bind container = %#v, %v", binds, err)
+	}
+	networks, err := getExternalStackNetworks(context.Background(), cli, "myproject", map[string]bool{})
+	if err != nil || len(networks) != 0 {
+		t.Fatalf("gone external network = %#v, %v", networks, err)
+	}
+}
+
 func TestGetExternalStackNetworks(t *testing.T) {
 	cli := newFakeDockerClient(t, func(req *http.Request) (*http.Response, error) {
 		switch {
