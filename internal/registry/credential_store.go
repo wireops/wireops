@@ -5,8 +5,10 @@
 package registry
 
 import (
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -209,6 +211,17 @@ func BuildDockerAuthForHosts(app core.App, hosts []string) (authB64 string, inse
 	}
 	if len(wanted) == 0 {
 		return "", nil, nil
+	}
+	// Small, focused unit-test applications and a restored pre-registry
+	// database may not have the optional collection yet. Production startup
+	// applies the migrations before reconciliation, but in either of these
+	// cases there cannot be a matching credential, so preserve anonymous pulls.
+	// Do not swallow a real storage failure once the collection exists.
+	if _, err := app.FindCollectionByNameOrId("registry_credentials"); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil, nil
+		}
+		return "", nil, fmt.Errorf("find registry credentials collection: %w", err)
 	}
 
 	records, err := app.FindAllRecords("registry_credentials")

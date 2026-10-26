@@ -8,6 +8,11 @@ changes in a minor release.
 
 ### Added
 
+- Registry credentials are now selected automatically from the exact registry
+  hosts referenced by a stack's final Compose images, including image tags,
+  digests, render-time overrides, explicit ports, and Docker Hub's implicit
+  host. A registry with no matching credential continues anonymously; changing
+  a credential applies on the next deploy and does not restart stacks.
 - File-managed stacks can now refresh their committed definition explicitly
   with `POST /api/custom/stacks/{id}/resync-definition` or the MCP
   `resync_stack_definition` tool. This re-fetches and validates the stack's

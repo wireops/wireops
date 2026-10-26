@@ -219,6 +219,22 @@ func TestBuildDockerAuthEmptyCredentialID(t *testing.T) {
 	}
 }
 
+func TestBuildDockerAuthForHostsAllowsMissingOptionalCollection(t *testing.T) {
+	app, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatalf("new test app: %v", err)
+	}
+	t.Cleanup(func() { app.Cleanup() })
+
+	authB64, insecureHosts, err := BuildDockerAuthForHosts(app, []string{"docker.io"})
+	if err != nil {
+		t.Fatalf("BuildDockerAuthForHosts without registry collection: %v", err)
+	}
+	if authB64 != "" || insecureHosts != nil {
+		t.Fatalf("expected anonymous result, got authB64=%q insecureHosts=%v", authB64, insecureHosts)
+	}
+}
+
 func TestBuildDockerAuthForHostsMatchesOnlyExactRegistries(t *testing.T) {
 	app, col := newRegistryCredentialTestApp(t)
 	secret := "0123456789abcdef0123456789abcdef"
