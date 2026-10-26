@@ -15,11 +15,56 @@
 [![Codacy Grade](https://app.codacy.com/project/badge/Grade/cdc7bea4ca1e44f780110e784d34938a)](https://app.codacy.com/gh/wireops/wireops/dashboard)
 [![Codacy Coverage](https://app.codacy.com/project/badge/Coverage/cdc7bea4ca1e44f780110e784d34938a)](https://app.codacy.com/gh/wireops/wireops/dashboard)
 
-**Push to Git. wireops ships it.** A self-hosted GitOps controller that watches your repos and rolls out `docker compose` changes across every host you own — no Kubernetes, no manifest sprawl, no SSH-and-pray deploys. Think Flux/ArgoCD, but for plain Compose stacks.
+**Container management for AI.** wireops is a self-hosted control plane that lets an AI agent run containers across every host you own — inspect, deploy, roll back, run jobs, exec into a container — through 66 MCP tools, under the same RBAC, policy engine and audit log a human operator gets. Git stays the source of truth underneath: the agent proposes, the repo records, the controller reconciles. No Kubernetes, no manifest sprawl, no handing an agent your Docker socket.
 
 📚 **Documentation**: [wireops.dev](https://wireops.dev/docs/) · [Português (Brasil)](https://wireops.dev/pt-BR/docs/) — install, architecture, API reference, operations, security, integrations, troubleshooting. Security reports go to [SECURITY.md](SECURITY.md).
 
+## Why an agent can be trusted with this
+
+Pointing an agent at a host usually means giving it the Docker socket and hoping. wireops puts the same guardrails between an agent and your containers that it puts between a junior operator and production:
+
+- **Every agent brings its own key.** The MCP server holds no credential of its own — each client supplies a `service_accounts` API key per connection, pass-through, never persisted. Revoke one agent without touching the others.
+- **Authorization is the server's, not the agent's.** Every call lands on the same REST route the UI calls, so `internal/rbac` decides it. A service account caps at `viewer`/`operator`, which is a hard ceiling: an agent cannot change settings, read the audit log, or escalate itself, no matter how it is prompted.
+- **The audit log keeps per-agent granularity.** Because the key isn't shared, every deploy, rollback and exec is attributable to the agent that made it.
+- **The tools that can't be undone make you type the name.** Deleting a stack, repository or job, revoking a worker, or stopping a container takes a `confirm` field that the server matches against the target's own name, resolved server-side — a wrong guess fails before any write leaves the process. Some tools gate only their destructive branch (`force_redeploy_stack` when it recreates volumes, the env var writes in `replace` mode), and `delete_job_run` takes the literal `delete`. The reversible writes don't pay that cost.
+- **Tools are annotated, so your client can decide.** Each one carries `readOnly` / `additive` / `destructive` hints, which is what lets a client run reads unattended and hold the rest for a human. The annotation is advice to the client, not a server-side gate — the `confirm` guard above is the enforced one, and it covers a deliberately narrower set.
+- **Deploys report an observed outcome instead of leaving the agent to guess.** `deploy_stack`, `force_redeploy_stack` and `rollback_stack` can wait on the reconcile and return its terminal status with the deploy log. The wait subscribes before triggering, so it can't miss the result — but it cannot *prove* the reconcile it observed is the one it triggered, since wireops skips a trigger for a stack that is already syncing. When the status belongs to a sync log that already existed, the tool says so in a `_notice` rather than passing it off as this call's result.
+
+Three tool groups (`MCP_TOOLS`), so you choose the blast radius: `read` for an agent that only answers questions, `write` to let it deploy, `exec` to let it into a container.
+
+Add it as a service alongside the server, so `SERVER_URL` resolves over the Compose project's own network:
+
+```yaml
+  wireops-mcp:
+    image: ghcr.io/wireops/mcp:${WIREOPS_VERSION:-1.0.0}
+    restart: unless-stopped
+    depends_on:
+      wireops:
+        condition: service_healthy
+    environment:
+      - SERVER_URL=http://wireops:8090
+      - MCP_TOOLS=read
+    ports:
+      - "8091:8091"
+```
+
+Running it standalone instead means giving it a route to the server yourself: Docker's default bridge does not resolve container names, so a bare `docker run` needs `--network <the server's compose network>` — or a `SERVER_URL` the container can actually reach.
+
+Streamable HTTP at `POST/GET /mcp`; point your client at it and send the API key as `X-Wireops-Api-Key` (or `Authorization: Bearer`). Full tool table, resources and prompts: [MCP Server](https://wireops.dev/docs/reference/mcp-server/).
+
 ## Features
+
+**For agents**
+
+- 🤖 66 MCP tools over the full lifecycle — read stacks, scaffold new ones, deploy, roll back, pause, run jobs, exec into containers
+- 🔑 Per-agent scoped API keys, pass-through auth, revocable individually, capped at `operator`
+- 🧾 Every agent action through the same RBAC, worker policy and audit log as a human's
+- 📡 Subscribable live-log resource (`wireops://stacks/{id}/logs/live`), plus compose and job-file resources
+- 📐 A conventions resource so a scaffolded stack comes out matching your house style
+- 🧠 Names accepted wherever an id is — ambiguity is an error naming the candidates, never a guess
+- 🔍 `lint_compose` and `preview_stack_migration` are read-only, so an agent can check its own work before deploying
+
+**For the humans who own the hosts**
 
 - 🐳 Docker Compose stack management
 - 🔄 Automatic synchronization from Git repositories
@@ -41,7 +86,6 @@
 - 📦 Private registry credentials, selected automatically by each image's exact registry host and port
 - 💾 Backups with schedule, retention and restore — optionally mirrored to S3, encrypted client-side
 - 📥 Import Compose projects already running on a host, or migrate a stack to another repository
-- 🤖 MCP server, so an AI agent can inspect stacks, scaffold new ones and — with an operator-scoped API key — deploy, roll back, run jobs and exec into containers, under the same RBAC and audit log as a human
 - 💻 Audited web terminal, RBAC-gated
 - 🎛️ Optional render-time stack overrides (image/ports/networks/scale) for one-off validation testing, without a git commit
 
@@ -70,7 +114,9 @@
 
 ## How it works
 
-The **server** (Go + PocketBase, with the Nuxt SPA embedded) handles reconciliation, scheduling and state — it never touches Docker. The **workers** connect *out* to it over a token-authenticated WebSocket and are the only thing running `docker compose` on a host. Adding a host means starting a worker with a token; nothing reaches into it. See the [architecture guide](https://wireops.dev/docs/reference/architecture/).
+Three deployables. The **server** (Go + PocketBase, with the Nuxt SPA embedded) handles reconciliation, scheduling and state — it never touches Docker. The **workers** connect *out* to it over a token-authenticated WebSocket and are the only thing running `docker compose` on a host. Adding a host means starting a worker with a token; nothing reaches into it. The **MCP server** is a separate process in front of the same REST API — it is how agents get in, and it holds no privilege the API key doesn't carry.
+
+That shape is what makes an agent safe to connect: the agent talks to an API, the API decides, and a worker — not the agent — is the only thing with Docker access. See the [architecture guide](https://wireops.dev/docs/reference/architecture/).
 
 ## Requirements
 
@@ -195,9 +241,11 @@ make all                  # production build: SPA into pb_public/, then the bina
 
 ## Project Scope
 
-For developers, homelabs and self-hosters running plain `docker compose` across one or many hosts and repos: GitOps sync and deploy, without manifest sprawl or control-plane complexity.
+For developers, homelabs and self-hosters who want an AI agent — or a person, or both — managing plain `docker compose` across one or many hosts and repos, with an audit trail and a revocable key per agent. Git stays the record of what is deployed, so an agent's work is reviewable the same way a colleague's is.
 
 **Not** a Kubernetes/Swarm alternative, and not a competitor to Flux/ArgoCD. For multi-node autoscaling, HA or compliance-grade orchestration, prefer Kubernetes. No OCI-artifact source, Swarm/multi-node, or canary/preview deploys yet — strategic backlog, no ETA.
+
+The agent layer is a control plane, not an autonomous operator: wireops gives an agent scoped tools, confirmation gates and an audit log, and it has no opinion about which model you point at it or how much you let it do unattended. That ceiling is yours to set, per key and per tool group.
 
 ## License
 

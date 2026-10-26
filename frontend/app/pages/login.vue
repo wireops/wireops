@@ -86,7 +86,7 @@ async function handleSSOLogin(providerName: string) {
         <h1 class="text-3xl font-black tracking-[0.06em] bg-linear-to-r from-yellow-400 via-[#d5cc83] to-wire-400 bg-clip-text text-transparent drop-shadow-[0_0_12px_rgba(255,198,0,0.28)]">
           wireops
         </h1>
-        <p class="text-sm text-wire-400 mt-1 tracking-wide">GitOps Orchestrator</p>
+        <p class="text-sm text-wire-400 mt-1 tracking-wide">Container Management for AI</p>
       </div>
 
       <!-- Login card -->

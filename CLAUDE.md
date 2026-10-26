@@ -6,9 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-wireops is a self-hosted GitOps controller for Docker Compose stacks (Flux/ArgoCD-style, but for `docker compose` instead of Kubernetes). It watches Git repos for changes and deploys updates on remote hosts through token-authenticated WebSocket workers. It also runs cron-scheduled one-shot Docker jobs (`job.yaml` in a repo).
+wireops is self-hosted container management for AI agents and the humans who own the hosts: a GitOps controller for Docker Compose stacks (Flux/ArgoCD-style, but for `docker compose` instead of Kubernetes) whose primary agent-facing surface is an MCP server. It watches Git repos for changes and deploys updates on remote hosts through token-authenticated WebSocket workers, and runs cron-scheduled one-shot Docker jobs (`job.yaml` in a repo).
 
-Two deployables from one Go module: the **server** (`main.go` → `cmd/serve.go`, embeds PocketBase + a Nuxt SPA) and the **worker** (`worker/main.go`, a lightweight agent that connects out to the server over WebSocket and runs `docker compose` / `docker run` on its host).
+Three deployables from one Go module: the **server** (`main.go` → `cmd/serve.go`, embeds PocketBase + a Nuxt SPA), the **worker** (`worker/main.go`, a lightweight agent that connects out to the server over WebSocket and runs `docker compose` / `docker run` on its host), and the **MCP server** (`mcp/main.go`, a standalone process exposing the REST API as MCP tools with pass-through per-agent auth).
+
+The AI positioning is load-bearing but narrow: wireops supplies the tools, RBAC, confirm gates and audit trail — it embeds no model and performs no inference. Don't write docs or code comments implying otherwise.
 
 ## Git Workflow
 
