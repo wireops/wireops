@@ -105,7 +105,8 @@ func validateRegistryAuth(authB64 string, insecureHosts []string) error {
 
 	for host, entry := range cfg.Auths {
 		registryHost := registryHostForAuthConfigKey(host)
-		if err := checkRegistryAuth(registryHost, entry.Auth, insecure[registryHost]); err != nil {
+		probeHost := registryProbeHost(registryHost)
+		if err := checkRegistryAuth(probeHost, entry.Auth, insecure[registryHost]); err != nil {
 			return fmt.Errorf("registry auth check failed for %s: %w", registryHost, err)
 		}
 	}
@@ -120,6 +121,16 @@ func registryHostForAuthConfigKey(key string) string {
 		return "docker.io"
 	}
 	return key
+}
+
+// registryProbeHost returns the real Docker Hub registry endpoint. docker.io
+// redirects to the Docker website, where a 200 response would otherwise make
+// a credential probe look successful without reaching the registry API.
+func registryProbeHost(host string) string {
+	if host == "docker.io" {
+		return "registry-1.docker.io"
+	}
+	return host
 }
 
 func checkRegistryAuth(host, authHeader string, insecure bool) error {

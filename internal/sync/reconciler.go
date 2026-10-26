@@ -558,7 +558,10 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 			break // Success
 		}
 
-		if shouldRetryDeploy(attempt, maxRetries, registryErr) {
+		if registryErr != nil {
+			break
+		}
+		if shouldRetryDeploy(attempt, maxRetries) {
 			log.Printf("[reconciler] deploy attempt %d of %d failed for stack %s: %v, retrying in 3s...", attempt, maxRetries, stackID, runErr)
 			if syncLog != nil {
 				if err := r.updateSyncLog(syncLog.Id, "running", fmt.Sprintf("%s\n\n[Attempt %d failed: %v. Retrying in 3s...]\n", output, attempt, runErr), duration); err != nil {
@@ -677,11 +680,11 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	return nil
 }
 
-// shouldRetryDeploy keeps credential-preparation failures local. Retrying a
-// failed decrypt/read cannot make it succeed and would only repeat secret work
-// before returning the same error to the user.
-func shouldRetryDeploy(attempt, maxRetries int, registryErr error) bool {
-	return registryErr == nil && attempt < maxRetries
+// shouldRetryDeploy reports whether an ordinary failed deploy should make
+// another worker attempt. Credential preparation errors exit the retry loop
+// before this helper is reached.
+func shouldRetryDeploy(attempt, maxRetries int) bool {
+	return attempt < maxRetries
 }
 
 // RollbackStack resets the repo to a given commit and redeploys the stack.

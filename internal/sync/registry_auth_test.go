@@ -3,7 +3,6 @@ package sync
 import (
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"testing"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -35,14 +34,11 @@ func newResolveRegistryAuthTestApp(t *testing.T) (*tests.TestApp, *core.Collecti
 	return app, credentials
 }
 
-func TestShouldRetryDeployStopsForRegistryCredentialFailures(t *testing.T) {
-	if shouldRetryDeploy(1, 3, errors.New("credential cannot be decrypted")) {
-		t.Fatal("registry credential failures must not be retried")
-	}
-	if !shouldRetryDeploy(1, 3, nil) {
+func TestShouldRetryDeployHonorsAttemptLimit(t *testing.T) {
+	if !shouldRetryDeploy(1, 3) {
 		t.Fatal("ordinary first-attempt failures should be retried")
 	}
-	if shouldRetryDeploy(3, 3, nil) {
+	if shouldRetryDeploy(3, 3) {
 		t.Fatal("the final attempt must not be retried")
 	}
 }
