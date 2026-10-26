@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/compose-spec/compose-go/v2/interpolation"
 	"github.com/distribution/reference"
 	"github.com/pocketbase/pocketbase/core"
 	"gopkg.in/yaml.v3"
@@ -35,6 +36,11 @@ const (
 	AuthTypeBasic             AuthType = "basic"
 	AuthTypeToken             AuthType = "token"
 	AuthTypeGCPServiceAccount AuthType = "gcp_service_account"
+)
+
+const (
+	dockerHubRegistryHost  = "docker.io"
+	dockerHubAuthConfigKey = "https://index.docker.io/v1/"
 )
 
 // Credential is a decrypted registry_credentials record.
@@ -95,6 +101,11 @@ func NormalizeRegistryHost(registryURL string) string {
 	}
 	if u, err := url.Parse(parseable); err == nil && u.Hostname() != "" {
 		host := strings.ToLower(u.Hostname())
+		// Docker accepts both names for Docker Hub, but credentials must use
+		// one canonical match key. Docker image references use docker.io.
+		if host == "index.docker.io" {
+			host = dockerHubRegistryHost
+		}
 		if strings.Contains(host, ":") {
 			host = "[" + host + "]"
 		}
@@ -104,6 +115,16 @@ func NormalizeRegistryHost(registryURL string) string {
 		return host
 	}
 	return ""
+}
+
+// dockerAuthConfigKey is the config.json key Docker itself requires for a
+// Docker Hub credential. Matching always uses NormalizeRegistryHost; this is
+// only the wire representation sent to Docker.
+func dockerAuthConfigKey(host string) string {
+	if NormalizeRegistryHost(host) == dockerHubRegistryHost {
+		return dockerHubAuthConfigKey
+	}
+	return NormalizeRegistryHost(host)
 }
 
 // dockerConfig mirrors the subset of ~/.docker/config.json wireops renders
@@ -146,7 +167,7 @@ func BuildDockerAuth(app core.App, credentialID string) (authB64 string, insecur
 		return "", nil, err
 	}
 
-	cfg := dockerConfig{Auths: map[string]dockerConfigAuth{host: {Auth: auth}}}
+	cfg := dockerConfig{Auths: map[string]dockerConfigAuth{dockerAuthConfigKey(host): {Auth: auth}}}
 	encoded, err := json.Marshal(cfg)
 	if err != nil {
 		return "", nil, fmt.Errorf("marshal docker config: %w", err)
@@ -159,22 +180,68 @@ func BuildDockerAuth(app core.App, credentialID string) (authB64 string, insecur
 }
 
 // RegistryHostsFromComposeYAML returns the normalized registry hostname for
-// every image in a rendered Compose file. docker compose config has already
-// interpolated environment variables and the renderer has already applied
-// per-service overrides, so this is the exact image set the worker will pull.
+// every image in a rendered Compose file. It is kept for callers whose Compose
+// file has no external environment. Deploy paths should use
+// RegistryHostsFromComposeYAMLWithEnv so image interpolation matches the .env
+// file sent to the worker.
 func RegistryHostsFromComposeYAML(content []byte) ([]string, error) {
-	var compose struct {
-		Services map[string]struct {
-			Image string `yaml:"image"`
-		} `yaml:"services"`
+	return registryHostsFromComposeYAML(content, nil)
+}
+
+// RegistryHostsFromComposeYAMLWithEnv returns registry hosts after applying
+// the Docker Compose interpolation rules to the exact .env values dispatched
+// with a command. This matters because rendered revisions deliberately retain
+// placeholders (for example ${REGISTRY}/api) until the worker runs Compose.
+func RegistryHostsFromComposeYAMLWithEnv(content []byte, envVars []string) ([]string, error) {
+	values := make(map[string]string, len(envVars))
+	for _, entry := range envVars {
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok || key == "" {
+			return nil, fmt.Errorf("invalid compose environment entry %q", entry)
+		}
+		// The generated .env file preserves order, and Docker Compose uses the
+		// last definition when a key appears more than once.
+		values[key] = value
 	}
+	return registryHostsFromComposeYAML(content, func(key string) (string, bool) {
+		value, ok := values[key]
+		return value, ok
+	})
+}
+
+func registryHostsFromComposeYAML(content []byte, lookup interpolation.LookupValue) ([]string, error) {
+	var compose map[string]interface{}
 	if err := yaml.Unmarshal(content, &compose); err != nil {
 		return nil, fmt.Errorf("parse rendered compose: %w", err)
 	}
+	if lookup != nil {
+		var err error
+		compose, err = interpolation.Interpolate(compose, interpolation.Options{LookupValue: lookup})
+		if err != nil {
+			return nil, fmt.Errorf("interpolate rendered compose: %w", err)
+		}
+	}
+
+	services, ok := compose["services"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("parse rendered compose: services must be a mapping")
+	}
 
 	hosts := make(map[string]struct{})
-	for service, definition := range compose.Services {
-		image := strings.TrimSpace(definition.Image)
+	for service, rawDefinition := range services {
+		definition, ok := rawDefinition.(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("parse rendered compose: service %q must be a mapping", service)
+		}
+		rawImage, exists := definition["image"]
+		if !exists || rawImage == nil {
+			continue
+		}
+		imageValue, ok := rawImage.(string)
+		if !ok {
+			return nil, fmt.Errorf("parse image for service %q: image must be a string", service)
+		}
+		image := strings.TrimSpace(imageValue)
 		if image == "" {
 			continue
 		}
@@ -230,6 +297,7 @@ func BuildDockerAuthForHosts(app core.App, hosts []string) (authB64 string, inse
 	}
 
 	entries := make(map[string]dockerConfigAuth)
+	matched := make(map[string]struct{})
 	insecure := make(map[string]struct{})
 	for _, record := range records {
 		host := NormalizeRegistryHost(record.GetString("registry_host"))
@@ -242,7 +310,7 @@ func BuildDockerAuthForHosts(app core.App, hosts []string) (authB64 string, inse
 		if _, matches := wanted[host]; !matches {
 			continue
 		}
-		if _, duplicate := entries[host]; duplicate {
+		if _, duplicate := matched[host]; duplicate {
 			return "", nil, fmt.Errorf("multiple credentials match registry %q", host)
 		}
 
@@ -250,11 +318,15 @@ func BuildDockerAuthForHosts(app core.App, hosts []string) (authB64 string, inse
 		if err != nil {
 			return "", nil, fmt.Errorf("load credential for registry %q: %w", host, err)
 		}
-		_, auth, err := BuildAuthEntry(credential)
+		credentialHost, auth, err := BuildAuthEntry(credential)
 		if err != nil {
 			return "", nil, fmt.Errorf("build credential for registry %q: %w", host, err)
 		}
-		entries[host] = dockerConfigAuth{Auth: auth}
+		if credentialHost != host {
+			return "", nil, fmt.Errorf("credential for registry %q has mismatched registry_url host %q", host, credentialHost)
+		}
+		entries[dockerAuthConfigKey(host)] = dockerConfigAuth{Auth: auth}
+		matched[host] = struct{}{}
 		if credential.Insecure {
 			insecure[host] = struct{}{}
 		}

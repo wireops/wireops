@@ -104,11 +104,22 @@ func validateRegistryAuth(authB64 string, insecureHosts []string) error {
 	}
 
 	for host, entry := range cfg.Auths {
-		if err := checkRegistryAuth(host, entry.Auth, insecure[host]); err != nil {
-			return fmt.Errorf("registry auth check failed for %s: %w", host, err)
+		registryHost := registryHostForAuthConfigKey(host)
+		if err := checkRegistryAuth(registryHost, entry.Auth, insecure[registryHost]); err != nil {
+			return fmt.Errorf("registry auth check failed for %s: %w", registryHost, err)
 		}
 	}
 	return nil
+}
+
+// registryHostForAuthConfigKey maps Docker's special Docker Hub config.json
+// key back to the registry host used for the HTTP probe and insecure-registry
+// lookup. The server emits all other auth keys as plain normalized hosts.
+func registryHostForAuthConfigKey(key string) string {
+	if key == "https://index.docker.io/v1/" {
+		return "docker.io"
+	}
+	return key
 }
 
 func checkRegistryAuth(host, authHeader string, insecure bool) error {

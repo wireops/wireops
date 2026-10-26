@@ -3,6 +3,7 @@ package sync
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -34,6 +35,18 @@ func newResolveRegistryAuthTestApp(t *testing.T) (*tests.TestApp, *core.Collecti
 	return app, credentials
 }
 
+func TestShouldRetryDeployStopsForRegistryCredentialFailures(t *testing.T) {
+	if shouldRetryDeploy(1, 3, errors.New("credential cannot be decrypted")) {
+		t.Fatal("registry credential failures must not be retried")
+	}
+	if !shouldRetryDeploy(1, 3, nil) {
+		t.Fatal("ordinary first-attempt failures should be retried")
+	}
+	if shouldRetryDeploy(3, 3, nil) {
+		t.Fatal("the final attempt must not be retried")
+	}
+}
+
 func renderedCompose(images ...string) []byte {
 	content := "services:\n"
 	for i, image := range images {
@@ -46,7 +59,7 @@ func TestResolveRegistryAuthWithoutMatchingCredential(t *testing.T) {
 	app, _ := newResolveRegistryAuthTestApp(t)
 	r := &Reconciler{app: app}
 
-	authB64, insecureHosts, err := r.resolveRegistryAuth(renderedCompose("registry.example.com/team/api:v1"))
+	authB64, insecureHosts, err := r.resolveRegistryAuth(renderedCompose("registry.example.com/team/api:v1"), nil)
 	if err != nil {
 		t.Fatalf("resolveRegistryAuth: %v", err)
 	}
@@ -89,7 +102,7 @@ func TestResolveRegistryAuthUsesRenderedImageHosts(t *testing.T) {
 	authB64, insecureHosts, err := r.resolveRegistryAuth(renderedCompose(
 		"registry.example.com:5000/team/api:v1",
 		"ghcr.io/example/worker@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-	))
+	), nil)
 	if err != nil {
 		t.Fatalf("resolveRegistryAuth: %v", err)
 	}
@@ -117,6 +130,51 @@ func TestResolveRegistryAuthUsesRenderedImageHosts(t *testing.T) {
 	}
 }
 
+func TestResolveRegistryAuthInterpolatesWorkerEnvBeforeMatching(t *testing.T) {
+	app, credentials := newResolveRegistryAuthTestApp(t)
+	r := &Reconciler{app: app}
+	secret := "0123456789abcdef0123456789abcdef"
+	t.Setenv(constants.EnvSecretKey, secret)
+
+	encrypted, err := crypto.Encrypt([]byte("hunter2"), []byte(secret))
+	if err != nil {
+		t.Fatalf("encrypt password: %v", err)
+	}
+	credential := core.NewRecord(credentials)
+	credential.Set("name", "Grom")
+	credential.Set("registry_url", "https://registry.minilab.cloud")
+	credential.Set("registry_host", "registry.minilab.cloud")
+	credential.Set("auth_type", "basic")
+	credential.Set("username", "wireops")
+	credential.Set("password", encrypted)
+	if err := app.Save(credential); err != nil {
+		t.Fatalf("save credential: %v", err)
+	}
+
+	authB64, _, err := r.resolveRegistryAuth([]byte("services:\n  indexer:\n    image: ${REGISTRY}/docker/ai/indexer:${TAG:-latest}\n"), []string{
+		"REGISTRY=registry.minilab.cloud",
+		"TAG=v0.1.1",
+	})
+	if err != nil {
+		t.Fatalf("resolveRegistryAuth: %v", err)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(authB64)
+	if err != nil {
+		t.Fatalf("decode auth config: %v", err)
+	}
+	var cfg struct {
+		Auths map[string]struct {
+			Auth string `json:"auth"`
+		} `json:"auths"`
+	}
+	if err := json.Unmarshal(decoded, &cfg); err != nil {
+		t.Fatalf("decode auth config JSON: %v", err)
+	}
+	if len(cfg.Auths) != 1 || cfg.Auths["registry.minilab.cloud"].Auth == "" {
+		t.Fatalf("auth config = %#v, want Grom registry credential", cfg.Auths)
+	}
+}
+
 func TestResolveRegistryAuthFailsForUnreadableMatchingCredential(t *testing.T) {
 	app, credentials := newResolveRegistryAuthTestApp(t)
 	r := &Reconciler{app: app}
@@ -132,7 +190,7 @@ func TestResolveRegistryAuthFailsForUnreadableMatchingCredential(t *testing.T) {
 	}
 	t.Setenv(constants.EnvSecretKey, "0123456789abcdef0123456789abcdef")
 
-	_, _, err := r.resolveRegistryAuth(renderedCompose("registry.example.com/team/api:v1"))
+	_, _, err := r.resolveRegistryAuth(renderedCompose("registry.example.com/team/api:v1"), nil)
 	if err == nil {
 		t.Fatal("expected matching unreadable credential to fail deployment preparation")
 	}

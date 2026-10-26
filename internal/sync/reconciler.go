@@ -97,13 +97,14 @@ func resolveComposeRuntimeFlags(stack *core.Record) (forcePull, removeOrphans bo
 }
 
 // resolveRegistryAuth builds the per-command Docker config from the registry
-// hosts referenced by the final rendered Compose YAML. The renderer has
-// already resolved interpolation and applied overrides by this point, so the
-// worker receives credentials for exactly the images it will pull. Missing
-// credentials remain anonymous; a matching credential that cannot be loaded
-// fails the deploy rather than producing an opaque unauthorized pull later.
-func (r *Reconciler) resolveRegistryAuth(composeContent []byte) (authB64 string, insecureHosts []string, err error) {
-	hosts, err := registry.RegistryHostsFromComposeYAML(composeContent)
+// hosts referenced by the final rendered Compose YAML. Rendered revisions
+// deliberately retain Compose placeholders, so interpolate against the same
+// .env values sent to the worker before selecting credentials. Overrides have
+// already been applied at this point. Missing credentials remain anonymous; a
+// matching credential that cannot be loaded fails the deploy rather than
+// producing an opaque unauthorized pull later.
+func (r *Reconciler) resolveRegistryAuth(composeContent []byte, envVars []string) (authB64 string, insecureHosts []string, err error) {
+	hosts, err := registry.RegistryHostsFromComposeYAMLWithEnv(composeContent, envVars)
 	if err != nil {
 		return "", nil, err
 	}
@@ -509,7 +510,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 			return err
 		}
 		lastComposeContent = composeContent
-		registryAuthB64, insecureRegistries, registryErr := r.resolveRegistryAuth(composeContent)
+		registryAuthB64, insecureRegistries, registryErr := r.resolveRegistryAuth(composeContent, envVars)
 		if registryErr != nil {
 			// A matching credential must be decryptable before the worker can
 			// receive a command. Never fall back to anonymous authentication.
@@ -557,7 +558,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 			break // Success
 		}
 
-		if attempt < maxRetries && registryErr == nil {
+		if shouldRetryDeploy(attempt, maxRetries, registryErr) {
 			log.Printf("[reconciler] deploy attempt %d of %d failed for stack %s: %v, retrying in 3s...", attempt, maxRetries, stackID, runErr)
 			if syncLog != nil {
 				if err := r.updateSyncLog(syncLog.Id, "running", fmt.Sprintf("%s\n\n[Attempt %d failed: %v. Retrying in 3s...]\n", output, attempt, runErr), duration); err != nil {
@@ -674,6 +675,13 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 	_ = pt.finish(constants.PhaseNotify, constants.PhaseStatusSuccess, "")
 
 	return nil
+}
+
+// shouldRetryDeploy keeps credential-preparation failures local. Retrying a
+// failed decrypt/read cannot make it succeed and would only repeat secret work
+// before returning the same error to the user.
+func shouldRetryDeploy(attempt, maxRetries int, registryErr error) bool {
+	return registryErr == nil && attempt < maxRetries
 }
 
 // RollbackStack resets the repo to a given commit and redeploys the stack.
@@ -836,7 +844,7 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 	}
 	var composeUpMs int64
 	var failureReason string
-	registryAuthB64, insecureRegistries, registryErr := r.resolveRegistryAuth(composeContent)
+	registryAuthB64, insecureRegistries, registryErr := r.resolveRegistryAuth(composeContent, envVars)
 	if registryErr != nil {
 		// A matching but unreadable credential must stop the rollback before
 		// the worker attempts an anonymous pull.
@@ -1137,7 +1145,7 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 	if syncLog != nil {
 		cmdID = syncLog.Id
 	}
-	registryAuthB64, insecureRegistries, registryErr := r.resolveRegistryAuth(composeContent)
+	registryAuthB64, insecureRegistries, registryErr := r.resolveRegistryAuth(composeContent, envVars)
 	if registryErr != nil {
 		// A matching credential could not be prepared. Keep this operation
 		// local instead of sending a command that would pull anonymously.
@@ -1677,7 +1685,7 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 	}
 	b64 := base64.StdEncoding.EncodeToString(composeBytes)
 
-	registryAuthB64, insecureRegistries, registryErr := r.resolveRegistryAuth(composeBytes)
+	registryAuthB64, insecureRegistries, registryErr := r.resolveRegistryAuth(composeBytes, envVars)
 	if registryErr != nil {
 		// Do not continue to either imported-stack deploy path with missing
 		// authentication when a matching credential is unreadable.
@@ -2734,7 +2742,7 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 		envVars = overlaySopsEnv(envVars, sopsValues)
 	}
 
-	transferRegistryAuthB64, transferInsecureRegistries, registryErr := r.resolveRegistryAuth(composeContent)
+	transferRegistryAuthB64, transferInsecureRegistries, registryErr := r.resolveRegistryAuth(composeContent, envVars)
 	if registryErr != nil {
 		return fmt.Errorf("failed to resolve registry credentials for transfer: %w", registryErr)
 	}

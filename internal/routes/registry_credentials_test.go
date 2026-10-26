@@ -262,7 +262,7 @@ func TestRegistryCredentialTestConnectionBlocksPrivateHost(t *testing.T) {
 		t.Fatalf("expected the private-host request to be rejected, got %#v", resp)
 	}
 	errMessage, _ := resp["error"].(string)
-	if !strings.Contains(errMessage, "private or loopback address") || !strings.Contains(errMessage, "ALLOWED_PRIVATE_IP_RANGES") || !strings.Contains(errMessage, "restart") {
+	if !strings.Contains(errMessage, "restricted address") || !strings.Contains(errMessage, "ALLOWED_PRIVATE_IP_RANGES") || !strings.Contains(errMessage, "restart") {
 		t.Fatalf("expected private-registry configuration guidance, got %#v", resp)
 	}
 	registryURL, err := url.Parse(registryServer.URL)
