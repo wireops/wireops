@@ -241,6 +241,38 @@ describe('RegistryCredentialModal', () => {
     expect(wrapper.emitted('update:open')?.at(-1)).toEqual([false])
   })
 
+  it('shows a normalized duplicate-host error on Registry URL', async () => {
+    const duplicateError = {
+      response: {
+        data: {
+          data: {
+            registry_url: { message: 'A registry credential already exists for registry.example.com.' },
+          },
+        },
+      },
+    }
+    const { create, addToast } = setupGlobals({ create: vi.fn().mockRejectedValue(duplicateError) })
+    const wrapper = mount(RegistryCredentialModal, {
+      props: { open: true },
+      shallow: true,
+    })
+    await flushPromises()
+
+    Object.assign((wrapper.vm as any).form, {
+      name: 'Duplicate',
+      registry_url: 'HTTPS://REGISTRY.EXAMPLE.COM/v2/',
+      auth_type: 'basic',
+      username: 'deploy',
+      password: 'hunter2',
+    })
+    await (wrapper.vm as any).submit()
+    await flushPromises()
+
+    expect(create).toHaveBeenCalled()
+    expect((wrapper.vm as any).registryUrlError).toContain('already exists')
+    expect(addToast).toHaveBeenCalledWith(expect.objectContaining({ title: 'Failed to create credential', color: 'error' }))
+  })
+
   it('updates an existing credential without resending an untouched password', async () => {
     const { update } = setupGlobals()
     const wrapper = mount(RegistryCredentialModal, {

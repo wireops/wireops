@@ -117,11 +117,11 @@ type DeployCommand struct {
 
 	// RegistryAuthB64 is a base64-encoded docker config.json
 	// ({"auths":{"<host>":{"auth":"base64(user:pass)"}}}) built server-side
-	// from the stack's registry_credential. The worker writes it to a
+	// from registered credentials whose normalized registry host exactly
+	// matches images in the final rendered Compose file. The worker writes it to a
 	// per-command DOCKER_CONFIG dir so `docker compose pull`/`up` can
 	// authenticate against a private registry without touching the host's
-	// global docker credential store. Empty when the stack has no registry
-	// credential assigned.
+	// global docker credential store. Empty when every image pulls anonymously.
 	RegistryAuthB64 string `json:"registry_auth_b64,omitempty"`
 
 	// InsecureRegistries lists the registry hosts (from RegistryAuthB64)

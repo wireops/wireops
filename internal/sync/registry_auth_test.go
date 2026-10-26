@@ -1,9 +1,10 @@
 package sync
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"testing"
 
-	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
 
@@ -11,7 +12,7 @@ import (
 	"github.com/wireops/wireops/internal/crypto"
 )
 
-func newResolveRegistryAuthTestApp(t *testing.T) (*tests.TestApp, *core.Collection, *core.Collection) {
+func newResolveRegistryAuthTestApp(t *testing.T) (*tests.TestApp, *core.Collection) {
 	t.Helper()
 	app, err := tests.NewTestApp()
 	if err != nil {
@@ -22,6 +23,7 @@ func newResolveRegistryAuthTestApp(t *testing.T) (*tests.TestApp, *core.Collecti
 	credentials := core.NewBaseCollection("registry_credentials")
 	credentials.Fields.Add(&core.TextField{Name: "name"})
 	credentials.Fields.Add(&core.TextField{Name: "registry_url"})
+	credentials.Fields.Add(&core.TextField{Name: "registry_host"})
 	credentials.Fields.Add(&core.TextField{Name: "auth_type"})
 	credentials.Fields.Add(&core.TextField{Name: "username"})
 	credentials.Fields.Add(&core.TextField{Name: "password"})
@@ -29,92 +31,109 @@ func newResolveRegistryAuthTestApp(t *testing.T) (*tests.TestApp, *core.Collecti
 	if err := app.Save(credentials); err != nil {
 		t.Fatalf("save registry_credentials collection: %v", err)
 	}
-
-	stacks := core.NewBaseCollection("stacks")
-	stacks.Fields.Add(&core.TextField{Name: "name"})
-	stacks.Fields.Add(&core.RelationField{Name: "registry_credential", CollectionId: credentials.Id, MaxSelect: 1})
-	if err := app.Save(stacks); err != nil {
-		t.Fatalf("save stacks collection: %v", err)
-	}
-
-	return app, stacks, credentials
+	return app, credentials
 }
 
-func TestResolveRegistryAuthWithoutCredential(t *testing.T) {
-	app, stacks, _ := newResolveRegistryAuthTestApp(t)
+func renderedCompose(images ...string) []byte {
+	content := "services:\n"
+	for i, image := range images {
+		content += "  service-" + string(rune('a'+i)) + ":\n    image: " + image + "\n"
+	}
+	return []byte(content)
+}
+
+func TestResolveRegistryAuthWithoutMatchingCredential(t *testing.T) {
+	app, _ := newResolveRegistryAuthTestApp(t)
 	r := &Reconciler{app: app}
 
-	stack := core.NewRecord(stacks)
-	stack.Set("name", "no-credential")
-	if err := app.Save(stack); err != nil {
-		t.Fatalf("save stack: %v", err)
+	authB64, insecureHosts, err := r.resolveRegistryAuth(renderedCompose("registry.example.com/team/api:v1"))
+	if err != nil {
+		t.Fatalf("resolveRegistryAuth: %v", err)
 	}
-
-	authB64, insecureHosts := r.resolveRegistryAuth(stack)
 	if authB64 != "" || insecureHosts != nil {
-		t.Fatalf("expected empty result for stack without a registry_credential, got authB64=%q insecureHosts=%v", authB64, insecureHosts)
+		t.Fatalf("expected no auth for a registry without a credential, got authB64=%q insecureHosts=%v", authB64, insecureHosts)
 	}
 }
 
-func TestResolveRegistryAuthWithCredential(t *testing.T) {
-	app, stacks, credentials := newResolveRegistryAuthTestApp(t)
+func TestResolveRegistryAuthUsesRenderedImageHosts(t *testing.T) {
+	app, credentials := newResolveRegistryAuthTestApp(t)
 	r := &Reconciler{app: app}
 	secret := "0123456789abcdef0123456789abcdef"
 	t.Setenv(constants.EnvSecretKey, secret)
 
-	encrypted, err := crypto.Encrypt([]byte("hunter2"), []byte(secret))
+	addCredential := func(name, url string, insecure bool) {
+		t.Helper()
+		encrypted, err := crypto.Encrypt([]byte("hunter2"), []byte(secret))
+		if err != nil {
+			t.Fatalf("encrypt password: %v", err)
+		}
+		credential := core.NewRecord(credentials)
+		credential.Set("name", name)
+		credential.Set("registry_url", url)
+		credential.Set("registry_host", url)
+		credential.Set("auth_type", "basic")
+		credential.Set("username", name)
+		credential.Set("password", encrypted)
+		credential.Set("insecure", insecure)
+		if err := app.Save(credential); err != nil {
+			t.Fatalf("save credential: %v", err)
+		}
+	}
+
+	addCredential("private", "registry.example.com:5000", true)
+	addCredential("wrong-port", "registry.example.com:5001", false)
+	addCredential("ghcr", "ghcr.io", false)
+
+	// This models a final rendered compose after an image override changed
+	// service-b from Docker Hub to a private registry.
+	authB64, insecureHosts, err := r.resolveRegistryAuth(renderedCompose(
+		"registry.example.com:5000/team/api:v1",
+		"ghcr.io/example/worker@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	))
 	if err != nil {
-		t.Fatalf("encrypt password: %v", err)
+		t.Fatalf("resolveRegistryAuth: %v", err)
 	}
-	cred := core.NewRecord(credentials)
-	cred.Set("name", "GHCR")
-	cred.Set("registry_url", "https://ghcr.io")
-	cred.Set("auth_type", "basic")
-	cred.Set("username", "deploy")
-	cred.Set("password", encrypted)
-	cred.Set("insecure", true)
-	if err := app.Save(cred); err != nil {
-		t.Fatalf("save credential: %v", err)
-	}
-
-	stack := core.NewRecord(stacks)
-	stack.Set("name", "with-credential")
-	stack.Set("registry_credential", cred.Id)
-	if err := app.Save(stack); err != nil {
-		t.Fatalf("save stack: %v", err)
-	}
-
-	authB64, insecureHosts := r.resolveRegistryAuth(stack)
-	if authB64 == "" {
-		t.Fatal("expected non-empty authB64 for stack with a registry_credential")
-	}
-	if len(insecureHosts) != 1 || insecureHosts[0] != "ghcr.io" {
+	if len(insecureHosts) != 1 || insecureHosts[0] != "registry.example.com:5000" {
 		t.Fatalf("unexpected insecure hosts: %v", insecureHosts)
+	}
+
+	decoded, err := base64.StdEncoding.DecodeString(authB64)
+	if err != nil {
+		t.Fatalf("decode auth config: %v", err)
+	}
+	var config struct {
+		Auths map[string]struct {
+			Auth string `json:"auth"`
+		} `json:"auths"`
+	}
+	if err := json.Unmarshal(decoded, &config); err != nil {
+		t.Fatalf("decode auth config JSON: %v", err)
+	}
+	if len(config.Auths) != 2 || config.Auths["registry.example.com:5000"].Auth == "" || config.Auths["ghcr.io"].Auth == "" {
+		t.Fatalf("auth config = %#v, want exact credentials for rendered registries", config.Auths)
+	}
+	if _, found := config.Auths["registry.example.com:5001"]; found {
+		t.Fatalf("auth config unexpectedly includes the different registry port: %#v", config.Auths)
 	}
 }
 
-func TestResolveRegistryAuthDegradesOnMissingCredential(t *testing.T) {
-	app, stacks, _ := newResolveRegistryAuthTestApp(t)
+func TestResolveRegistryAuthFailsForUnreadableMatchingCredential(t *testing.T) {
+	app, credentials := newResolveRegistryAuthTestApp(t)
 	r := &Reconciler{app: app}
+	credential := core.NewRecord(credentials)
+	credential.Set("name", "broken")
+	credential.Set("registry_url", "registry.example.com")
+	credential.Set("registry_host", "registry.example.com")
+	credential.Set("auth_type", "basic")
+	credential.Set("username", "deploy")
+	credential.Set("password", "not-a-valid-ciphertext")
+	if err := app.Save(credential); err != nil {
+		t.Fatalf("save credential: %v", err)
+	}
+	t.Setenv(constants.EnvSecretKey, "0123456789abcdef0123456789abcdef")
 
-	stack := core.NewRecord(stacks)
-	stack.Set("name", "dangling-credential")
-	if err := app.Save(stack); err != nil {
-		t.Fatalf("save stack: %v", err)
-	}
-	// Bypass relation-target validation (raw SQL) to simulate a credential
-	// deleted out from under a stack that still references it — resolution
-	// should degrade to "no auth" rather than fail the deploy.
-	if _, err := app.DB().Update("stacks", dbx.Params{"registry_credential": "does-not-exist"}, dbx.HashExp{"id": stack.Id}).Execute(); err != nil {
-		t.Fatalf("force dangling registry_credential: %v", err)
-	}
-	stack, err := app.FindRecordById("stacks", stack.Id)
-	if err != nil {
-		t.Fatalf("reload stack: %v", err)
-	}
-
-	authB64, insecureHosts := r.resolveRegistryAuth(stack)
-	if authB64 != "" || insecureHosts != nil {
-		t.Fatalf("expected resolution failure to degrade to empty result, got authB64=%q insecureHosts=%v", authB64, insecureHosts)
+	_, _, err := r.resolveRegistryAuth(renderedCompose("registry.example.com/team/api:v1"))
+	if err == nil {
+		t.Fatal("expected matching unreadable credential to fail deployment preparation")
 	}
 }

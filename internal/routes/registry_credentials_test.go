@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -259,8 +261,16 @@ func TestRegistryCredentialTestConnectionBlocksPrivateHost(t *testing.T) {
 	if resp["success"] != false {
 		t.Fatalf("expected the private-host request to be rejected, got %#v", resp)
 	}
-	if resp["error"] != "connecting to private or loopback addresses is not allowed" {
-		t.Fatalf("unexpected error message: %#v", resp)
+	errMessage, _ := resp["error"].(string)
+	if !strings.Contains(errMessage, "private or loopback address") || !strings.Contains(errMessage, "ALLOWED_PRIVATE_IP_RANGES") || !strings.Contains(errMessage, "restart") {
+		t.Fatalf("expected private-registry configuration guidance, got %#v", resp)
+	}
+	registryURL, err := url.Parse(registryServer.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(errMessage, registryURL.Hostname()) {
+		t.Fatalf("expected blocked address %q in error, got %#v", registryURL.Hostname(), resp)
 	}
 }
 

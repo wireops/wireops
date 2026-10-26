@@ -3,6 +3,7 @@ package registry
 import (
 	"encoding/base64"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -24,6 +25,7 @@ func newRegistryCredentialTestApp(t *testing.T) (*tests.TestApp, *core.Collectio
 	col := core.NewBaseCollection("registry_credentials")
 	col.Fields.Add(&core.TextField{Name: "name"})
 	col.Fields.Add(&core.TextField{Name: "registry_url"})
+	col.Fields.Add(&core.TextField{Name: "registry_host"})
 	col.Fields.Add(&core.TextField{Name: "auth_type"})
 	col.Fields.Add(&core.TextField{Name: "username"})
 	col.Fields.Add(&core.TextField{Name: "password"})
@@ -112,16 +114,47 @@ func TestLoadCredentialByIDDecryptsMultilineJSONKey(t *testing.T) {
 
 func TestNormalizeRegistryHost(t *testing.T) {
 	cases := map[string]string{
-		"https://ghcr.io/":                  "ghcr.io",
-		"https://registry.example.com:5000": "registry.example.com:5000",
-		"docker.io":                         "docker.io",
-		"registry.example.com/":             "registry.example.com",
-		"registry.example.com/v2":           "registry.example.com",
+		"https://ghcr.io/":                      "ghcr.io",
+		"https://registry.example.com:5000":     "registry.example.com:5000",
+		"HTTPS://REGISTRY.EXAMPLE.COM:5000/v2/": "registry.example.com:5000",
+		"docker.io":                             "docker.io",
+		"registry.example.com/":                 "registry.example.com",
+		"registry.example.com/v2":               "registry.example.com",
 	}
 	for input, want := range cases {
 		if got := NormalizeRegistryHost(input); got != want {
 			t.Errorf("NormalizeRegistryHost(%q) = %q, want %q", input, got, want)
 		}
+	}
+}
+
+func TestRegistryHostsFromComposeYAML(t *testing.T) {
+	content := []byte(`
+services:
+  api:
+    image: registry.example.com:5000/team/api:v1
+  worker:
+    image: ghcr.io/example/worker@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  frontend:
+    image: nginx:1.27
+  helper:
+    build: .
+`)
+
+	hosts, err := RegistryHostsFromComposeYAML(content)
+	if err != nil {
+		t.Fatalf("RegistryHostsFromComposeYAML: %v", err)
+	}
+	want := []string{"docker.io", "ghcr.io", "registry.example.com:5000"}
+	if !slices.Equal(hosts, want) {
+		t.Fatalf("hosts = %v, want %v", hosts, want)
+	}
+}
+
+func TestRegistryHostsFromComposeYAMLRejectsInvalidImage(t *testing.T) {
+	_, err := RegistryHostsFromComposeYAML([]byte("services:\n  api:\n    image: not valid\n"))
+	if err == nil || !strings.Contains(err.Error(), `service "api"`) {
+		t.Fatalf("expected service-specific image parsing error, got %v", err)
 	}
 }
 
@@ -183,5 +216,54 @@ func TestBuildDockerAuthEmptyCredentialID(t *testing.T) {
 	}
 	if authB64 != "" || insecureHosts != nil {
 		t.Fatalf("expected empty result, got authB64=%q insecureHosts=%v", authB64, insecureHosts)
+	}
+}
+
+func TestBuildDockerAuthForHostsMatchesOnlyExactRegistries(t *testing.T) {
+	app, col := newRegistryCredentialTestApp(t)
+	secret := "0123456789abcdef0123456789abcdef"
+	t.Setenv(constants.EnvSecretKey, secret)
+
+	add := func(name, url, password string, insecure bool) {
+		t.Helper()
+		encrypted, err := crypto.Encrypt([]byte(password), []byte(secret))
+		if err != nil {
+			t.Fatalf("encrypt password: %v", err)
+		}
+		record := core.NewRecord(col)
+		record.Set("name", name)
+		record.Set("registry_url", url)
+		record.Set("registry_host", NormalizeRegistryHost(url))
+		record.Set("auth_type", "basic")
+		record.Set("username", name)
+		record.Set("password", encrypted)
+		record.Set("insecure", insecure)
+		if err := app.Save(record); err != nil {
+			t.Fatalf("save credential: %v", err)
+		}
+	}
+
+	add("primary", "https://registry.example.com:5000", "one", true)
+	add("other-port", "registry.example.com:5001", "two", false)
+	add("unrelated", "ghcr.io", "three", false)
+
+	authB64, insecureHosts, err := BuildDockerAuthForHosts(app, []string{"registry.example.com:5000", "docker.io"})
+	if err != nil {
+		t.Fatalf("BuildDockerAuthForHosts: %v", err)
+	}
+	if !slices.Equal(insecureHosts, []string{"registry.example.com:5000"}) {
+		t.Fatalf("insecure hosts = %v", insecureHosts)
+	}
+
+	decoded, err := base64.StdEncoding.DecodeString(authB64)
+	if err != nil {
+		t.Fatalf("decode config json: %v", err)
+	}
+	var cfg dockerConfig
+	if err := json.Unmarshal(decoded, &cfg); err != nil {
+		t.Fatalf("unmarshal config json: %v", err)
+	}
+	if len(cfg.Auths) != 1 || cfg.Auths["registry.example.com:5000"].Auth == "" {
+		t.Fatalf("unexpected auths: %#v", cfg.Auths)
 	}
 }

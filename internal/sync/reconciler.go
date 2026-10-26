@@ -96,23 +96,18 @@ func resolveComposeRuntimeFlags(stack *core.Record) (forcePull, removeOrphans bo
 	return forcePull, removeOrphans
 }
 
-// resolveRegistryAuth resolves the stack's assigned registry_credential (if
-// any) into the base64 docker config.json payload and insecure-host list
-// dispatched alongside the compose file — see protocol.DeployCommand.
-// Resolution failures (e.g. a deleted credential) are logged and degrade to
-// "no registry auth" rather than failing the whole deploy, matching the
-// non-fatal posture of resolveComposeRuntimeFlags.
-func (r *Reconciler) resolveRegistryAuth(stack *core.Record) (authB64 string, insecureHosts []string) {
-	credentialID := stack.GetString("registry_credential")
-	if credentialID == "" {
-		return "", nil
-	}
-	authB64, insecureHosts, err := registry.BuildDockerAuth(r.app, credentialID)
+// resolveRegistryAuth builds the per-command Docker config from the registry
+// hosts referenced by the final rendered Compose YAML. The renderer has
+// already resolved interpolation and applied overrides by this point, so the
+// worker receives credentials for exactly the images it will pull. Missing
+// credentials remain anonymous; a matching credential that cannot be loaded
+// fails the deploy rather than producing an opaque unauthorized pull later.
+func (r *Reconciler) resolveRegistryAuth(composeContent []byte) (authB64 string, insecureHosts []string, err error) {
+	hosts, err := registry.RegistryHostsFromComposeYAML(composeContent)
 	if err != nil {
-		log.Printf("[reconciler] failed to resolve registry credential %s for stack %s: %v", credentialID, stack.Id, err)
-		return "", nil
+		return "", nil, err
 	}
-	return authB64, insecureHosts
+	return registry.BuildDockerAuthForHosts(r.app, hosts)
 }
 
 // deployUpTimeoutSeconds returns the stack's own deploy_timeout_seconds
@@ -503,6 +498,10 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 
 	maxRetries := 3
 	for attempt := 1; attempt <= maxRetries; attempt++ {
+		// Every retry starts a fresh dispatch attempt. In particular, a
+		// previous worker error must not suppress the next dispatch.
+		runErr = nil
+		failureReason = ""
 		start := time.Now()
 		lastAttemptStart = start
 		composeContent, err := r.readRenderedCompose(stack, stackID, trigger, remoteSHA, renderedFilePath)
@@ -510,12 +509,18 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 			return err
 		}
 		lastComposeContent = composeContent
+		registryAuthB64, insecureRegistries, registryErr := r.resolveRegistryAuth(composeContent)
+		if registryErr != nil {
+			// A matching credential must be decryptable before the worker can
+			// receive a command. Never fall back to anonymous authentication.
+			runErr = fmt.Errorf("failed to resolve registry credentials: %w", registryErr)
+		}
 		envFileB64, b64Err := buildEnvFileB64(envVars)
-		if b64Err != nil {
+		if runErr == nil && b64Err != nil {
 			runErr = fmt.Errorf("failed to serialize env vars for remote deploy: %w", b64Err)
-		} else {
+		}
+		if runErr == nil {
 			forcePull, removeOrphans := resolveComposeRuntimeFlags(stack)
-			registryAuthB64, insecureRegistries := r.resolveRegistryAuth(stack)
 			dispatchCtx, cancelDispatch := withDeployTimeout(ctx, stack)
 			baseCommand := protocol.DeployCommand{
 				CommandID:          syncLog.Id,
@@ -552,7 +557,7 @@ func (r *Reconciler) ReconcileStack(ctx context.Context, stackID string, trigger
 			break // Success
 		}
 
-		if attempt < maxRetries {
+		if attempt < maxRetries && registryErr == nil {
 			log.Printf("[reconciler] deploy attempt %d of %d failed for stack %s: %v, retrying in 3s...", attempt, maxRetries, stackID, runErr)
 			if syncLog != nil {
 				if err := r.updateSyncLog(syncLog.Id, "running", fmt.Sprintf("%s\n\n[Attempt %d failed: %v. Retrying in 3s...]\n", output, attempt, runErr), duration); err != nil {
@@ -831,17 +836,23 @@ func (r *Reconciler) RollbackStack(ctx context.Context, stackID string, commitSH
 	}
 	var composeUpMs int64
 	var failureReason string
+	registryAuthB64, insecureRegistries, registryErr := r.resolveRegistryAuth(composeContent)
+	if registryErr != nil {
+		// A matching but unreadable credential must stop the rollback before
+		// the worker attempts an anonymous pull.
+		runErr = fmt.Errorf("failed to resolve registry credentials: %w", registryErr)
+	}
 	envFileB64, b64Err := buildEnvFileB64(envVars)
-	if b64Err != nil {
+	if runErr == nil && b64Err != nil {
 		runErr = fmt.Errorf("failed to serialize env vars for remote rollback: %w", b64Err)
-	} else {
+	}
+	if runErr == nil {
 		// Same project guard as ReconcileStack: a rollback can carry a
 		// project-identity migration too. Released when the function
 		// returns, like the cancelDispatch below it.
 		defer r.lockDeployProject(workerID, renderRes)()
 
 		forcePull, removeOrphans := resolveComposeRuntimeFlags(stack)
-		registryAuthB64, insecureRegistries := r.resolveRegistryAuth(stack)
 		dispatchCtx, cancelDispatch := withDeployTimeout(ctx, stack)
 		defer cancelDispatch()
 		baseCommand := protocol.DeployCommand{
@@ -1126,16 +1137,22 @@ func (r *Reconciler) ForceRedeployStack(ctx context.Context, stackID string, rec
 	if syncLog != nil {
 		cmdID = syncLog.Id
 	}
+	registryAuthB64, insecureRegistries, registryErr := r.resolveRegistryAuth(composeContent)
+	if registryErr != nil {
+		// A matching credential could not be prepared. Keep this operation
+		// local instead of sending a command that would pull anonymously.
+		runErr = fmt.Errorf("failed to resolve registry credentials: %w", registryErr)
+	}
 	envFileB64, b64Err := buildEnvFileB64(envVars)
-	if b64Err != nil {
+	if runErr == nil && b64Err != nil {
 		runErr = fmt.Errorf("failed to serialize env vars for remote redeploy: %w", b64Err)
-	} else {
+	}
+	if runErr == nil {
 		// Same project guard as ReconcileStack. Released when the function
 		// returns, like the cancelDispatch below it.
 		defer r.lockDeployProject(workerID, renderRes)()
 
 		forcePull, removeOrphans := resolveComposeRuntimeFlags(stack)
-		registryAuthB64, insecureRegistries := r.resolveRegistryAuth(stack)
 		dispatchCtx, cancelDispatch := withDeployTimeout(ctx, stack)
 		defer cancelDispatch()
 		baseCommand := protocol.DeployCommand{
@@ -1660,12 +1677,18 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 	}
 	b64 := base64.StdEncoding.EncodeToString(composeBytes)
 
+	registryAuthB64, insecureRegistries, registryErr := r.resolveRegistryAuth(composeBytes)
+	if registryErr != nil {
+		// Do not continue to either imported-stack deploy path with missing
+		// authentication when a matching credential is unreadable.
+		runErr = fmt.Errorf("failed to resolve registry credentials: %w", registryErr)
+	}
 	envFileB64, b64Err := buildEnvFileB64(envVars)
-	if b64Err != nil {
+	if runErr == nil && b64Err != nil {
 		runErr = fmt.Errorf("failed to serialize env vars for remote local-sync: %w", b64Err)
-	} else if recreateContainers {
+	}
+	if runErr == nil && recreateContainers {
 		forcePull, removeOrphans := resolveComposeRuntimeFlags(stack)
-		registryAuthB64, insecureRegistries := r.resolveRegistryAuth(stack)
 		dispatchCtx, cancelDispatch := withDeployTimeout(ctx, stack)
 		defer cancelDispatch()
 		baseCommand := protocol.DeployCommand{
@@ -1693,9 +1716,8 @@ func (r *Reconciler) reconcileLocalStack(ctx context.Context, stackID string, st
 		composeUpMs = result.ComposeUpMs
 		failureReason = deployFailureReason(result, dispatchErr)
 		output, runErr = extractDispatchResult(result, dispatchErr)
-	} else {
+	} else if runErr == nil {
 		forcePull, removeOrphans := resolveComposeRuntimeFlags(stack)
-		registryAuthB64, insecureRegistries := r.resolveRegistryAuth(stack)
 		dispatchCtx, cancelDispatch := withDeployTimeout(ctx, stack)
 		defer cancelDispatch()
 		baseCommand := protocol.DeployCommand{
@@ -2712,6 +2734,10 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 		envVars = overlaySopsEnv(envVars, sopsValues)
 	}
 
+	transferRegistryAuthB64, transferInsecureRegistries, registryErr := r.resolveRegistryAuth(composeContent)
+	if registryErr != nil {
+		return fmt.Errorf("failed to resolve registry credentials for transfer: %w", registryErr)
+	}
 	composeB64 := base64.StdEncoding.EncodeToString(composeContent)
 
 	envFileB64, b64Err := buildEnvFileB64(envVars)
@@ -2862,7 +2888,6 @@ func (r *Reconciler) TransferStack(ctx context.Context, stackID, targetWorkerID 
 
 	log.Printf("[transfer] step 1/2: deploy dispatching to target_agent=%s (%s) stack=%s", targetWorkerID, targetHostname, stackID)
 	transferForcePull, transferRemoveOrphans := resolveComposeRuntimeFlags(stack)
-	transferRegistryAuthB64, transferInsecureRegistries := r.resolveRegistryAuth(stack)
 	transferDispatchCtx, cancelTransferDispatch := withDeployTimeout(ctx, stack)
 	defer cancelTransferDispatch()
 	deployDispatchStart := time.Now()

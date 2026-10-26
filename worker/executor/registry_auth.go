@@ -31,12 +31,13 @@ func isSafePathSegment(s string) bool {
 }
 
 // prepareRegistryAuth decodes a dispatched command's RegistryAuthB64 (a
-// docker config.json built server-side from the stack's registry_credential,
-// see internal/registry) into a per-command temp directory. The caller
+// docker config.json built server-side from credentials matching the command's
+// Compose image registries, see internal/registry) into a per-command temp
+// directory. The caller
 // points DOCKER_CONFIG at this directory (compose.RunOptions.DockerConfigDir)
 // so the credential authenticates only this one pull, never touching the
 // worker host's global ~/.docker/config.json. Returns a no-op cleanup and no
-// error when authB64 is empty — most deploys have no registry credential.
+// error when authB64 is empty — most deploys use only anonymous registries.
 func prepareRegistryAuth(stackID, commandID, authB64 string) (dir string, cleanup func(), err error) {
 	noop := func() {}
 	if authB64 == "" {

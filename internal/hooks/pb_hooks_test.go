@@ -850,6 +850,7 @@ func TestRegistryCredentialPasswordEncryptedOnCreateAndUpdate(t *testing.T) {
 	credentials := core.NewBaseCollection("registry_credentials")
 	credentials.Fields.Add(&core.TextField{Name: "name"})
 	credentials.Fields.Add(&core.TextField{Name: "registry_url"})
+	credentials.Fields.Add(&core.TextField{Name: "registry_host"})
 	credentials.Fields.Add(&core.TextField{Name: "auth_type"})
 	credentials.Fields.Add(&core.TextField{Name: "username"})
 	credentials.Fields.Add(&core.TextField{Name: "password"})
@@ -881,6 +882,9 @@ func TestRegistryCredentialPasswordEncryptedOnCreateAndUpdate(t *testing.T) {
 	if string(plain) != "hunter2" {
 		t.Fatalf("decrypted password = %q, want %q", plain, "hunter2")
 	}
+	if got := cred.GetString("registry_host"); got != "ghcr.io" {
+		t.Fatalf("registry_host = %q, want ghcr.io", got)
+	}
 
 	cred.Set("password", "rotated-secret")
 	if err := app.Save(cred); err != nil {
@@ -896,5 +900,60 @@ func TestRegistryCredentialPasswordEncryptedOnCreateAndUpdate(t *testing.T) {
 	}
 	if string(updatedPlain) != "rotated-secret" {
 		t.Fatalf("decrypted updated password = %q, want %q", updatedPlain, "rotated-secret")
+	}
+}
+
+func TestRegistryCredentialNormalizesHostAndRejectsDuplicate(t *testing.T) {
+	secret := "12345678901234567890123456789012"
+	t.Setenv(constants.EnvSecretKey, secret)
+
+	app, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatalf("new test app: %v", err)
+	}
+	t.Cleanup(func() { app.Cleanup() })
+
+	credentials := core.NewBaseCollection("registry_credentials")
+	credentials.Fields.Add(&core.TextField{Name: "name"})
+	credentials.Fields.Add(&core.TextField{Name: "registry_url"})
+	credentials.Fields.Add(&core.TextField{Name: "registry_host"})
+	credentials.Fields.Add(&core.TextField{Name: "auth_type"})
+	credentials.Fields.Add(&core.TextField{Name: "username"})
+	credentials.Fields.Add(&core.TextField{Name: "password"})
+	credentials.Fields.Add(&core.BoolField{Name: "insecure"})
+	if err := app.Save(credentials); err != nil {
+		t.Fatalf("save registry_credentials collection: %v", err)
+	}
+	Register(app, nil, nil, logstream.New())
+
+	first := core.NewRecord(credentials)
+	first.Set("name", "First")
+	first.Set("registry_url", "HTTPS://REGISTRY.EXAMPLE.COM:5000/v2/")
+	first.Set("auth_type", "basic")
+	first.Set("username", "deploy")
+	first.Set("password", "hunter2")
+	if err := app.Save(first); err != nil {
+		t.Fatalf("save first credential: %v", err)
+	}
+	if got := first.GetString("registry_host"); got != "registry.example.com:5000" {
+		t.Fatalf("registry_host = %q, want registry.example.com:5000", got)
+	}
+	first.Set("name", "Renamed")
+	if err := app.Save(first); err != nil {
+		t.Fatalf("updating the credential itself should not conflict: %v", err)
+	}
+	if got := first.GetString("registry_host"); got != "registry.example.com:5000" {
+		t.Fatalf("registry_host after self update = %q, want registry.example.com:5000", got)
+	}
+
+	duplicate := core.NewRecord(credentials)
+	duplicate.Set("name", "Duplicate")
+	duplicate.Set("registry_url", "registry.example.com:5000")
+	duplicate.Set("auth_type", "basic")
+	duplicate.Set("username", "deploy")
+	duplicate.Set("password", "hunter2")
+	err = app.Save(duplicate)
+	if err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("duplicate registry credential error = %v, want field validation", err)
 	}
 }
