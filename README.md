@@ -38,7 +38,7 @@
 - 🚀 Force redeploy with recreate options
 - 🗓️ Cron-scheduled one-shot Docker jobs
 - 🔄 Rollback to previous commits, with every deploy kept as a readable revision
-- 📦 Private registry credentials, scoped to a stack's deploy
+- 📦 Private registry credentials, selected automatically by each image's exact registry host and port
 - 💾 Backups with schedule, retention and restore — optionally mirrored to S3, encrypted client-side
 - 📥 Import Compose projects already running on a host, or migrate a stack to another repository
 - 🤖 MCP server, so an AI agent can inspect stacks, scaffold new ones and — with an operator-scoped API key — deploy, roll back, run jobs and exec into containers, under the same RBAC and audit log as a human

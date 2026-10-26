@@ -26,6 +26,7 @@ const saving = ref(false)
 const testing = ref(false)
 const inFlight = computed(() => saving.value || testing.value)
 const jsonHint = ref('')
+const registryUrlError = ref('')
 const form = ref({
   name: '',
   registry_url: '',
@@ -48,6 +49,7 @@ watch(isOpen, (open) => {
     insecure: isGCP ? false : (cred?.insecure || false),
   }
   jsonHint.value = ''
+  registryUrlError.value = ''
 })
 
 watch(() => form.value.auth_type, (type) => {
@@ -83,6 +85,14 @@ function errorMessage(error: any): string {
     }
   }
   return error?.response?.message || error?.message || 'Unknown error'
+}
+
+function fieldError(error: any, field: string): string {
+  const data = error?.response?.data?.data || error?.response?.data
+  const value = data?.[field]
+  if (typeof value === 'string') return value
+  if (value && typeof value.message === 'string') return value.message
+  return ''
 }
 
 function validationError(): string {
@@ -134,6 +144,7 @@ async function testConnection() {
 }
 
 async function submit() {
+  registryUrlError.value = ''
   const error = validationError()
   if (error) {
     toast.add({ title: 'Invalid credential', description: error, color: 'error' })
@@ -150,6 +161,7 @@ async function submit() {
     emit('saved', credential)
     isOpen.value = false
   } catch (error: any) {
+    registryUrlError.value = fieldError(error, 'registry_url')
     toast.add({
       title: isEditMode.value ? 'Failed to update credential' : 'Failed to create credential',
       description: errorMessage(error),
@@ -177,7 +189,7 @@ async function submit() {
             <AppTextInput v-model="form.name" placeholder="GHCR production" class="w-full" />
           </UFormField>
 
-          <UFormField label="Registry URL" required>
+          <UFormField label="Registry URL" required :error="registryUrlError || undefined">
             <AppTextInput v-model="form.registry_url" placeholder="ghcr.io" class="w-full" />
           </UFormField>
 

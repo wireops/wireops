@@ -129,6 +129,24 @@ func TestValidateRegistryAuthRejectsBadCredential(t *testing.T) {
 	}
 }
 
+func TestRegistryHostForAuthConfigKeyMapsDockerHub(t *testing.T) {
+	if got := registryHostForAuthConfigKey("https://index.docker.io/v1/"); got != "docker.io" {
+		t.Fatalf("registryHostForAuthConfigKey(Docker Hub key) = %q, want docker.io", got)
+	}
+	if got := registryHostForAuthConfigKey("registry.example.com:5000"); got != "registry.example.com:5000" {
+		t.Fatalf("registryHostForAuthConfigKey(registry) = %q", got)
+	}
+}
+
+func TestRegistryProbeHostUsesDockerHubRegistryEndpoint(t *testing.T) {
+	if got := registryProbeHost("docker.io"); got != "registry-1.docker.io" {
+		t.Fatalf("registryProbeHost(docker.io) = %q, want registry-1.docker.io", got)
+	}
+	if got := registryProbeHost("registry.example.com:5000"); got != "registry.example.com:5000" {
+		t.Fatalf("registryProbeHost(registry) = %q", got)
+	}
+}
+
 func TestPreflightInsecureRegistriesEmptyHostsIsNoop(t *testing.T) {
 	// Zero hosts must short-circuit before shelling out to `docker info`, so
 	// this passes even on a machine without Docker installed/running.

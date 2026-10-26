@@ -62,12 +62,12 @@ const stubs = {
   },
 }
 
-function setupGlobals(overrides: { credentials?: any[], stacks?: any[] } = {}) {
+function setupGlobals(overrides: { credentials?: any[] } = {}) {
   const deleteFn = vi.fn().mockResolvedValue({})
   ;(globalThis as any).useNuxtApp = () => ({
     $pb: {
       collection: (name: string) => ({
-        getFullList: vi.fn().mockResolvedValue(name === 'registry_credentials' ? (overrides.credentials ?? [credentialFixture]) : (overrides.stacks ?? [])),
+        getFullList: vi.fn().mockResolvedValue(name === 'registry_credentials' ? (overrides.credentials ?? [credentialFixture]) : []),
         delete: deleteFn,
       }),
     },
@@ -77,7 +77,7 @@ function setupGlobals(overrides: { credentials?: any[], stacks?: any[] } = {}) {
   const addToast = vi.fn()
   ;(globalThis as any).useToast = () => ({ add: addToast })
   ;(globalThis as any).useAsyncData = () => ({
-    data: ref({ credentials: overrides.credentials ?? [credentialFixture], stacks: overrides.stacks ?? [] }),
+    data: ref(overrides.credentials ?? [credentialFixture]),
     refresh: vi.fn(),
   })
 
@@ -136,20 +136,16 @@ describe('RegistryCredentialsPanel', () => {
     expect(wrapper.find('.registry-modal-stub').exists()).toBe(true)
   })
 
-  it('disables delete and shows a link icon for a credential still assigned to a stack', async () => {
-    setupGlobals({
-      credentials: [credentialFixture],
-      stacks: [{ id: 'stack-1', registry_credential: 'cred-1' }],
-    })
+  it('explains that credentials are selected from matching image registries', async () => {
+    setupGlobals({ credentials: [credentialFixture] })
     const wrapper = mount(RegistryCredentialsPanel, { global: { stubs } })
     await flushPromises()
 
-    const deleteButton = wrapper.find('button[aria-label="Delete credential"]')
-    expect(deleteButton.attributes('disabled')).toBeDefined()
+    expect(wrapper.text()).toContain('Applied automatically to matching image registries')
   })
 
-  it('deletes an unused credential after confirmation', async () => {
-    const { deleteFn, addToast } = setupGlobals({ credentials: [credentialFixture], stacks: [] })
+  it('deletes a credential after warning that future matching pulls become anonymous', async () => {
+    const { deleteFn, addToast } = setupGlobals({ credentials: [credentialFixture] })
     const wrapper = mount(RegistryCredentialsPanel, { global: { stubs } })
     await flushPromises()
 
@@ -160,6 +156,7 @@ describe('RegistryCredentialsPanel', () => {
 
     const confirmButton = wrapper.find('.confirm-delete')
     expect(confirmButton.exists()).toBe(true)
+    expect(wrapper.text()).toContain('Matching images will use anonymous pulls on future deployments')
     await confirmButton.trigger('click')
     await flushPromises()
 
@@ -168,7 +165,7 @@ describe('RegistryCredentialsPanel', () => {
   })
 
   it('shows the empty state when there are no credentials', async () => {
-    setupGlobals({ credentials: [], stacks: [] })
+    setupGlobals({ credentials: [] })
     const wrapper = mount(RegistryCredentialsPanel, { global: { stubs } })
     await flushPromises()
 

@@ -31,12 +31,13 @@ func isSafePathSegment(s string) bool {
 }
 
 // prepareRegistryAuth decodes a dispatched command's RegistryAuthB64 (a
-// docker config.json built server-side from the stack's registry_credential,
-// see internal/registry) into a per-command temp directory. The caller
+// docker config.json built server-side from credentials matching the command's
+// Compose image registries, see internal/registry) into a per-command temp
+// directory. The caller
 // points DOCKER_CONFIG at this directory (compose.RunOptions.DockerConfigDir)
 // so the credential authenticates only this one pull, never touching the
 // worker host's global ~/.docker/config.json. Returns a no-op cleanup and no
-// error when authB64 is empty — most deploys have no registry credential.
+// error when authB64 is empty — most deploys use only anonymous registries.
 func prepareRegistryAuth(stackID, commandID, authB64 string) (dir string, cleanup func(), err error) {
 	noop := func() {}
 	if authB64 == "" {
@@ -103,11 +104,33 @@ func validateRegistryAuth(authB64 string, insecureHosts []string) error {
 	}
 
 	for host, entry := range cfg.Auths {
-		if err := checkRegistryAuth(host, entry.Auth, insecure[host]); err != nil {
-			return fmt.Errorf("registry auth check failed for %s: %w", host, err)
+		registryHost := registryHostForAuthConfigKey(host)
+		probeHost := registryProbeHost(registryHost)
+		if err := checkRegistryAuth(probeHost, entry.Auth, insecure[registryHost]); err != nil {
+			return fmt.Errorf("registry auth check failed for %s: %w", registryHost, err)
 		}
 	}
 	return nil
+}
+
+// registryHostForAuthConfigKey maps Docker's special Docker Hub config.json
+// key back to the registry host used for the HTTP probe and insecure-registry
+// lookup. The server emits all other auth keys as plain normalized hosts.
+func registryHostForAuthConfigKey(key string) string {
+	if key == "https://index.docker.io/v1/" {
+		return "docker.io"
+	}
+	return key
+}
+
+// registryProbeHost returns the real Docker Hub registry endpoint. docker.io
+// redirects to the Docker website, where a 200 response would otherwise make
+// a credential probe look successful without reaching the registry API.
+func registryProbeHost(host string) string {
+	if host == "docker.io" {
+		return "registry-1.docker.io"
+	}
+	return host
 }
 
 func checkRegistryAuth(host, authHeader string, insecure bool) error {

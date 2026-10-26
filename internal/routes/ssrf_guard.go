@@ -81,7 +81,7 @@ func resolveValidatedIP(ctx context.Context, host string) (net.IP, error) {
 			continue
 		}
 		if ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() || ip.IsLinkLocalMulticast() || ip.IsLinkLocalUnicast() {
-			return nil, fmt.Errorf("connecting to private or loopback addresses is not allowed")
+			return nil, fmt.Errorf("connecting to restricted address %s for %s is not allowed; add the IP or its CIDR to ALLOWED_PRIVATE_IP_RANGES on the WireOps server and restart it", ip, hostOnly)
 		}
 	}
 	return ips[0], nil

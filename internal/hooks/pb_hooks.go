@@ -35,6 +35,7 @@ import (
 	"github.com/wireops/wireops/internal/oidc"
 	"github.com/wireops/wireops/internal/policy"
 	"github.com/wireops/wireops/internal/rbac"
+	"github.com/wireops/wireops/internal/registry"
 	"github.com/wireops/wireops/internal/safepath"
 	"github.com/wireops/wireops/internal/secrets"
 	"github.com/wireops/wireops/internal/sync"
@@ -139,6 +140,33 @@ func validateRepositoryKeyTypeImmutable(app core.App, record *core.Record) error
 	return validation.Errors{
 		"auth_type": validation.NewError("validation_repository_key_type_immutable", "Repository key type cannot be changed after creation."),
 	}
+}
+
+// prepareRegistryCredential derives the server-managed registry_host key used
+// for both the unique index and exact image-registry matching at deploy time.
+// Checking before encryption means a rejected duplicate never touches the
+// submitted secret value.
+func prepareRegistryCredential(app core.App, record *core.Record) error {
+	host := registry.NormalizeRegistryHost(record.GetString("registry_url"))
+	if host == "" {
+		return validation.Errors{
+			"registry_url": validation.NewError("validation_registry_url", "Registry URL must include a valid host."),
+		}
+	}
+	record.Set("registry_host", host)
+
+	existing, err := app.FindAllRecords("registry_credentials", dbx.HashExp{"registry_host": host})
+	if err != nil {
+		return fmt.Errorf("find registry credential for %s: %w", host, err)
+	}
+	for _, candidate := range existing {
+		if candidate.Id != record.Id {
+			return validation.Errors{
+				"registry_url": validation.NewError("validation_registry_url_duplicate", fmt.Sprintf("A registry credential already exists for %s.", host)),
+			}
+		}
+	}
+	return nil
 }
 
 // wireopsManagedStackFields are the fields sourced from a stack's
@@ -350,6 +378,9 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 	// Encrypt registry credential password on create/update, mirroring
 	// repository_keys above.
 	app.OnRecordCreate("registry_credentials").BindFunc(func(e *core.RecordEvent) error {
+		if err := prepareRegistryCredential(e.App, e.Record); err != nil {
+			return err
+		}
 		if err := encryptField(e.Record, "password", secretKey); err != nil {
 			log.Printf("[hooks] failed to encrypt registry credential %s: %v", e.Record.Id, err)
 			return err
@@ -358,6 +389,9 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 	})
 
 	app.OnRecordUpdate("registry_credentials").BindFunc(func(e *core.RecordEvent) error {
+		if err := prepareRegistryCredential(e.App, e.Record); err != nil {
+			return err
+		}
 		if err := encryptField(e.Record, "password", secretKey); err != nil {
 			log.Printf("[hooks] failed to encrypt registry credential %s: %v", e.Record.Id, err)
 			return err
