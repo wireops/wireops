@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -58,6 +59,9 @@ func TestRegistryCredentialHTTPSecretPersistence(t *testing.T) {
 	hooks.Register(app, nil, nil, logstream.New())
 	router, err := apis.NewRouter(app)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.OnServe().Trigger(&core.ServeEvent{App: app, Router: router}); err != nil {
 		t.Fatal(err)
 	}
 	mux, err := router.BuildMux()
@@ -146,9 +150,71 @@ func TestRegistryCredentialHTTPSecretPersistence(t *testing.T) {
 		}
 		checkStored(t, rotated)
 	})
+	t.Run("ViewerCannotQuerySecret", func(t *testing.T) {
+		for _, query := range []string{"filter=" + url.QueryEscape("password ~ 'fragment'"), "sort=password"} {
+			response := request(http.MethodGet, base+"?"+query, "viewer", nil)
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("secret query status=%d, want 400", response.Code)
+			}
+		}
+	})
+	t.Run("InvalidSecretTypeDoesNotChangeStoredValue", func(t *testing.T) {
+		response := request(http.MethodPatch, base+"/"+id, "operator", map[string]any{"password": 123})
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("invalid type status=%d", response.Code)
+		}
+		checkStored(t, rotated)
+	})
+	t.Run("CollectionIDAliasCreatesSecret", func(t *testing.T) {
+		collection, err := app.FindCollectionByNameOrId("registry_credentials")
+		if err != nil {
+			t.Fatal(err)
+		}
+		response := request(http.MethodPost, "/api/collections/"+collection.Id+"/records", "operator", map[string]any{
+			"name": "Another", "registry_url": "https://another-registry.example", "auth_type": "token", "username": "deployer", "password": rotated,
+		})
+		if response.Code != http.StatusOK {
+			t.Fatalf("alias create status=%d", response.Code)
+		}
+		checkResponse(t, response)
+		var body struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		credential, err := registry.LoadCredentialByID(app, body.ID)
+		if err != nil || credential.Password != rotated {
+			t.Fatal("collection ID alias did not persist the secret")
+		}
+	})
+	collection, err := app.FindCollectionByNameOrId("registry_credentials")
+	if err != nil || !collection.Fields.GetByName("password").GetHidden() {
+		t.Fatal("password must retain its schema-level query protections")
+	}
+	links := core.NewBaseCollection("registry_links")
+	links.Fields.Add(&core.RelationField{Name: "credential", CollectionId: collection.Id, MaxSelect: 1})
+	links.ListRule = strPtr(rbacReadRule)
+	links.ViewRule = strPtr(rbacReadRule)
+	if err := app.Save(links); err != nil {
+		t.Fatal(err)
+	}
+	link := core.NewRecord(links)
+	link.Set("credential", id)
+	if err := app.Save(link); err != nil {
+		t.Fatal(err)
+	}
+	t.Run("ViewerCannotQuerySecretThroughRelation", func(t *testing.T) {
+		for _, query := range []string{"filter=" + url.QueryEscape("credential.password ~ 'fragment'"), "sort=credential.password"} {
+			response := request(http.MethodGet, "/api/collections/registry_links/records?"+query, "viewer", nil)
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("related secret query status=%d, want 400", response.Code)
+			}
+		}
+	})
 	for _, role := range []string{"operator", "admin", "viewer", "superuser"} {
 		t.Run("ReadsHideSecretFor"+role, func(t *testing.T) {
-			for _, path := range []string{base, base + "/" + id, base + "/" + id + "?fields=id,password"} {
+			for _, path := range []string{base, base + "/" + id, base + "/" + id + "?fields=id,password", "/api/collections/registry_links/records/" + link.Id + "?expand=credential"} {
 				response := request(http.MethodGet, path, role, nil)
 				if response.Code != http.StatusOK {
 					t.Fatalf("read status=%d", response.Code)
