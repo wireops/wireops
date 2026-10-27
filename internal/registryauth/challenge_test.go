@@ -160,3 +160,30 @@ func TestBearerChallengeParsing(t *testing.T) {
 		}
 	}
 }
+
+func TestBearerInvalidRealmQuery(t *testing.T) {
+	var endpoint string
+	tokenRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/auth" {
+			tokenRequests++
+			w.WriteHeader(200)
+			return
+		}
+		w.Header().Set("WWW-Authenticate", `Bearer realm="`+endpoint+`/auth?invalid=%ZZ"`)
+		w.WriteHeader(401)
+	}))
+	defer server.Close()
+	endpoint = server.URL
+	response, err := server.Client().Get(endpoint + "/v2/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if err = CheckResponse(context.Background(), server.Client(), response, "sensitive-auth"); err == nil {
+		t.Fatal("invalid realm query accepted")
+	}
+	if tokenRequests != 0 {
+		t.Fatal("invalid query reached token issuer")
+	}
+}

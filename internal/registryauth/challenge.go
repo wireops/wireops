@@ -37,7 +37,10 @@ func CheckResponse(ctx context.Context, client *http.Client, response *http.Resp
 	if err != nil || !trustedRealm(probe, realm) {
 		return fmt.Errorf("registry Bearer token realm is not trusted")
 	}
-	query := realm.Query()
+	query, err := url.ParseQuery(realm.RawQuery)
+	if err != nil {
+		return fmt.Errorf("invalid registry Bearer token realm query")
+	}
 	for _, key := range []string{"service", "scope"} {
 		if value := params[key]; value != "" {
 			query.Set(key, value)
