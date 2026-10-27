@@ -3,8 +3,8 @@ package routes
 import (
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"net"
 	"net/http"
 	"time"
@@ -13,6 +13,7 @@ import (
 
 	"github.com/wireops/wireops/internal/rbac"
 	"github.com/wireops/wireops/internal/registry"
+	"github.com/wireops/wireops/internal/registryauth"
 )
 
 // maxRegistryCredentialTestBodyBytes bounds the request body for the test
@@ -137,14 +138,8 @@ func testRegistryConnection(ctx context.Context, host, username, password string
 	}
 	defer resp.Body.Close()
 
-	switch resp.StatusCode {
-	case http.StatusOK, http.StatusNotFound:
-		return nil
-	case http.StatusUnauthorized, http.StatusForbidden:
-		return fmt.Errorf("authentication rejected (HTTP %d)", resp.StatusCode)
-	default:
-		return fmt.Errorf("unexpected response (HTTP %d)", resp.StatusCode)
-	}
+	auth := base64.StdEncoding.EncodeToString([]byte(username + ":" + password))
+	return registryauth.CheckResponse(ctx, client, resp, auth)
 }
 
 func doRegistryTestRequest(ctx context.Context, client *http.Client, url, username, password string) (*http.Response, error) {
