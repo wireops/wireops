@@ -3,7 +3,9 @@ package registryauth
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -13,17 +15,16 @@ import (
 
 func TestBearerFlow(t *testing.T) {
 	for _, tc := range []struct {
-		name, payload               string
+		name                        string
+		payload                     map[string]string
 		tokenStatus, verifiedStatus int
 		wantError                   bool
 	}{
-		{"token", `{"token":"valid-token"}`, 200, 200, false},
-		{"access-token", `{"access_token":"valid-token"}`, 200, 200, false},
-		{"rejected-credentials", `{"error":"secret-value-never-echoed"}`, 401, 200, true},
-		{"invalid-json", `not-json`, 200, 200, true},
-		{"missing-token", `{}`, 200, 200, true},
-		{"rejected-token", `{"token":"valid-token"}`, 200, 401, true},
-		{"oversize", strings.Repeat("x", maxTokenResponse+1), 200, 200, true},
+		{"token", map[string]string{"token": "valid-token"}, 200, 200, false},
+		{"access-token", map[string]string{"access_token": "valid-token"}, 200, 200, false},
+		{"rejected-credentials", map[string]string{"error": "secret-value-never-echoed"}, 401, 200, true},
+		{"missing-token", map[string]string{}, 200, 200, true},
+		{"rejected-token", map[string]string{"token": "valid-token"}, 200, 401, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var endpoint string
@@ -49,7 +50,9 @@ func TestBearerFlow(t *testing.T) {
 					}
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(tc.tokenStatus)
-					w.Write([]byte(tc.payload))
+					if err := json.NewEncoder(w).Encode(tc.payload); err != nil {
+						t.Error(err)
+					}
 				}
 			}))
 			defer server.Close()
@@ -75,6 +78,51 @@ func TestBearerFlow(t *testing.T) {
 		})
 	}
 }
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestBearerTokenResponseValidation(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{"invalid-json", "not-json"},
+		{"oversize", strings.Repeat("x", maxTokenResponse+1)},
+		{"invalid-token-type", `{"token":123}`},
+		{"token-with-newline", `{"token":"unsafe\r\ntoken"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			probe, err := http.NewRequest(http.MethodGet, "https://registry.example/v2/", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			response := &http.Response{
+				StatusCode: http.StatusUnauthorized,
+				Header:     http.Header{"Www-Authenticate": []string{`Bearer realm="https://registry.example/auth"`}},
+				Body:       io.NopCloser(strings.NewReader("")), Request: probe,
+			}
+			defer response.Body.Close()
+			requests := 0
+			client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				requests++
+				if r.URL.Path != "/auth" {
+					t.Error("invalid token reached registry verification")
+				}
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(strings.NewReader(tc.body)), Request: r,
+				}, nil
+			})}
+			if err := CheckResponse(context.Background(), client, response, "sensitive-auth"); err == nil {
+				t.Fatal("invalid token response accepted")
+			}
+			if requests != 1 {
+				t.Fatalf("token request count = %d, want 1", requests)
+			}
+		})
+	}
+}
+
 func TestBearerRealmPolicy(t *testing.T) {
 	for _, tc := range []struct {
 		probe, realm string
