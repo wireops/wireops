@@ -2,6 +2,7 @@ package routes
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -346,5 +347,42 @@ func TestRegistryCredentialTestConnectionExplicitFalseOverridesSavedInsecure(t *
 	}
 	if resp["success"] != false {
 		t.Fatalf("expected the explicit insecure=false to be honored (self-signed cert rejected), got %#v", resp)
+	}
+}
+
+func TestRegistryConnectionBearerChallenge(t *testing.T) {
+	t.Setenv("ALLOWED_PRIVATE_IP_RANGES", "127.0.0.1/32")
+	var endpoint string
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/auth/token" {
+			u, p, ok := r.BasicAuth()
+			if !ok || u != "wireops" || p != "valid-key" {
+				w.WriteHeader(401)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"token":"valid-token"}`))
+			return
+		}
+		if r.Header.Get("Authorization") == "Bearer valid-token" {
+			w.WriteHeader(200)
+			return
+		}
+		w.Header().Set("WWW-Authenticate", `Bearer realm="`+endpoint+`/auth/token",service="grom-registry"`)
+		w.WriteHeader(401)
+	}))
+	defer server.Close()
+	endpoint = server.URL
+	host := strings.TrimPrefix(endpoint, "https://")
+	for _, tc := range []struct {
+		name, password string
+		success        bool
+	}{{"valid", "valid-key", true}, {"wrong", "wrong-key", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := testRegistryConnection(context.Background(), host, "wireops", tc.password, true)
+			if (err == nil) != tc.success {
+				t.Fatalf("error=%v", err)
+			}
+		})
 	}
 }
