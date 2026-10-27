@@ -400,16 +400,12 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 	})
 
 	app.OnRecordEnrich("registry_credentials").BindFunc(func(e *core.RecordEnrichEvent) error {
-		isSuperuser := false
-		if e.RequestInfo != nil && e.RequestInfo.Auth != nil {
-			authCol := e.RequestInfo.Auth.Collection()
-			if authCol != nil && authCol.Name == core.CollectionNameSuperusers {
-				isSuperuser = true
-			}
-		}
-		if !isSuperuser {
-			e.Record.Hide("password")
-		}
+		// Schema-level Hidden also discards non-superuser writes in PocketBase.
+		// Keep the field writable, but never export its encrypted value, even
+		// to superusers or requests that explicitly select it with ?fields=.
+		// Run after PocketBase's default enrichment, which unhides every field
+		// for superusers. Capture this record before enriching other list rows.
+		defer e.Record.Hide("password")
 		return e.Next()
 	})
 
