@@ -47,8 +47,9 @@ func TestBearerFlow(t *testing.T) {
 					if r.URL.Query().Get("service") != "grom-registry" || r.URL.Query().Get("scope") != "repository:team/app:pull,push" {
 						t.Error("challenge parameters lost")
 					}
+					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(tc.tokenStatus)
-					fmt.Fprint(w, tc.payload)
+					w.Write([]byte(tc.payload))
 				}
 			}))
 			defer server.Close()
