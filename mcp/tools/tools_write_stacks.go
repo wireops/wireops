@@ -99,6 +99,12 @@ func registerStackWriteTools(server *mcp.Server, c *client.Client) {
 	}, setStackEnvVars(c))
 
 	mcp.AddTool(server, &mcp.Tool{
+		Name:        "set_stack_secret",
+		Description: "Store a single stack environment variable as an encrypted internal secret — the safe way to put a secret value into wireops through MCP. Omit value to be prompted through a protected elicitation form (when the MCP client supports it), keeping the value out of the conversation transcript; if you must pass value explicitly, understand it then travels in the tool arguments. The response is metadata only (key, provider, elicited) — the value never appears in results, notices or audit records, and it can never be read back. Requires the operate_stacks capability. Changing secrets does not redeploy by itself; call deploy_stack to apply.",
+		Annotations: destructive(false),
+	}, setStackSecret(c))
+
+	mcp.AddTool(server, &mcp.Tool{
 		Name:        "copy_stack_env_vars",
 		Description: "Copy named environment variables from another wireops stack into this one, server-side — secret values are never exposed to the caller in the process. keys is required; an empty list copies nothing. Existing keys on the destination are skipped unless overwrite is true. Cross-repository copies are refused when the source stack has SOPS-managed secrets.",
 		Annotations: additive(false),

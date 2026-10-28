@@ -38,9 +38,25 @@ func CanonicalOrAliasLiteral(canonical, alias, canonicalName, aliasName string) 
 	return alias, nil
 }
 
-// WhoamiInput is the input for the whoami tool. It takes nothing: the API
-// key on the session is the subject.
-type WhoamiInput struct{}
+// WhoamiInput is the input for the whoami tool. The API key travels in the
+// MCP request context, not in the tool arguments; refresh only controls
+// cache freshness.
+type WhoamiInput struct {
+	Refresh bool `json:"refresh,omitempty" jsonschema:"Bypass the 5-minute identity cache and fetch fresh data from the server. Use after a server upgrade to confirm the version/commit actually answering — cached identity data must not be presented as a fresh installation check. Ordinary (cached) responses report their own freshness via the cache, cache_age_seconds and fetched_at fields. Optional."`
+}
+
+// TestRegistryCredentialInput is the input for test_registry_credential.
+type TestRegistryCredentialInput struct {
+	Credential string `json:"credential" jsonschema:"The saved registry credential's record id or exact name. Only the persisted value is ever tested — a password must never be passed here."`
+}
+
+// SetStackSecretInput is the input for set_stack_secret.
+type SetStackSecretInput struct {
+	StackID string `json:"stack_id,omitempty" jsonschema:"The wireops stack id or exact name. Alias: stack."`
+	Stack   string `json:"stack,omitempty" jsonschema:"Alias for stack_id. May be supplied together only with the same value."`
+	Key     string `json:"key" jsonschema:"Env var name to store as an encrypted secret. Must match ^[A-Za-z_][A-Za-z0-9_]*$."`
+	Value   string `json:"value,omitempty" jsonschema:"The secret value. Omit it to be prompted through a protected elicitation form (when the MCP client supports elicitation), keeping the value out of the conversation transcript. Optional."`
+}
 
 // ListStacksInput is the input for the list_stacks tool.
 type ListStacksInput struct {

@@ -3,10 +3,13 @@ package routes
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -30,10 +33,7 @@ func (rr routeRegistrar) registerRegistryCredentialRoutes() {
 			Username     string `json:"username"`
 			Password     string `json:"password"`
 			// Insecure is a pointer so omission can be distinguished from an
-			// explicit `false` — otherwise merging with a saved credential
-			// below would treat "explicitly disabling insecure" the same as
-			// "field not provided" and silently re-enable it from the saved
-			// value.
+			// explicit `false` in draft mode.
 			Insecure *bool `json:"insecure"`
 		}
 		e.Request.Body = http.MaxBytesReader(e.Response, e.Request.Body, maxRegistryCredentialTestBodyBytes)
@@ -41,26 +41,25 @@ func (rr routeRegistrar) registerRegistryCredentialRoutes() {
 			return e.JSON(http.StatusBadRequest, map[string]string{"error": "invalid body"})
 		}
 
+		savedName := ""
 		if body.CredentialID != "" {
+			// Persisted mode: probe exactly what is stored, so "the values I
+			// typed work" can never mask "what was saved is broken" (the #186
+			// failure mode). Any draft field alongside credential_id would
+			// silently re-introduce the merge this check exists to prevent.
+			if body.RegistryURL != "" || body.AuthType != "" || body.Username != "" || body.Password != "" || body.Insecure != nil {
+				return e.JSON(http.StatusBadRequest, map[string]string{"error": "when credential_id is set, registry_url, auth_type, username, password and insecure must be omitted — the saved credential is verified exactly as persisted; drop credential_id to test entered values"})
+			}
 			saved, err := registry.LoadCredentialByID(rr.app, body.CredentialID)
 			if err != nil {
-				return e.JSON(http.StatusOK, map[string]any{"success": false, "error": err.Error()})
+				return e.JSON(http.StatusOK, map[string]any{"success": false, "source": "persisted", "error": err.Error()})
 			}
-			if body.AuthType == "" {
-				body.AuthType = string(saved.AuthType)
-			}
-			if body.Username == "" {
-				body.Username = saved.Username
-			}
-			if body.Password == "" {
-				body.Password = saved.Password
-			}
-			if body.RegistryURL == "" {
-				body.RegistryURL = saved.RegistryURL
-			}
-			if body.Insecure == nil {
-				body.Insecure = &saved.Insecure
-			}
+			savedName = saved.Name
+			body.AuthType = string(saved.AuthType)
+			body.Username = saved.Username
+			body.Password = saved.Password
+			body.RegistryURL = saved.RegistryURL
+			body.Insecure = &saved.Insecure
 		}
 		insecure := body.Insecure != nil && *body.Insecure
 
@@ -76,6 +75,14 @@ func (rr routeRegistrar) registerRegistryCredentialRoutes() {
 		}
 
 		result := map[string]any{}
+		if body.CredentialID != "" {
+			result["source"] = "persisted"
+			result["credential_id"] = body.CredentialID
+			result["credential_name"] = savedName
+		} else {
+			result["source"] = "draft"
+		}
+
 		if body.AuthType == "gcp_service_account" && !json.Valid([]byte(body.Password)) {
 			result["warning"] = "Service account key is not valid JSON"
 		}
@@ -83,6 +90,10 @@ func (rr routeRegistrar) registerRegistryCredentialRoutes() {
 		if err := testRegistryConnection(e.Request.Context(), host, body.Username, body.Password, insecure); err != nil {
 			result["success"] = false
 			result["error"] = err.Error()
+			var probeErr *registryauth.ProbeError
+			if errors.As(err, &probeErr) {
+				result["diagnostic"] = probeErr.Fields()
+			}
 			return e.JSON(http.StatusOK, result)
 		}
 		result["success"] = true
@@ -93,7 +104,9 @@ func (rr routeRegistrar) registerRegistryCredentialRoutes() {
 // testRegistryConnection does a lightweight `GET <host>/v2/` handshake with
 // HTTP Basic auth — the same check the worker itself runs before a pull
 // (worker/executor/registry_auth.go: checkRegistryAuth) — so a bad
-// credential is caught at save time, not at the next deploy.
+// credential is caught at save time, not at the next deploy. Failures are
+// classified *registryauth.ProbeError by stage: DNS/dial inside the dial
+// hook, TLS from the handshake, the rest from the response handling.
 func testRegistryConnection(ctx context.Context, host, username, password string, insecure bool) error {
 	transport := &http.Transport{
 		// host was already SSRF-validated by the caller (validatePublicHost),
@@ -106,13 +119,17 @@ func testRegistryConnection(ctx context.Context, host, username, password string
 		DialContext: func(dialCtx context.Context, network, addr string) (net.Conn, error) {
 			dialHost, port, err := net.SplitHostPort(addr)
 			if err != nil {
-				return nil, err
+				return nil, &registryauth.ProbeError{Stage: registryauth.StageResolve, Category: registryauth.CategoryNetwork, Message: "invalid registry address"}
 			}
 			ip, err := resolveValidatedIP(dialCtx, dialHost)
 			if err != nil {
-				return nil, err
+				return nil, &registryauth.ProbeError{Stage: registryauth.StageResolve, Category: registryauth.CategoryNetwork, Message: "failed to resolve registry host"}
 			}
-			return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(dialCtx, network, net.JoinHostPort(ip.String(), port))
+			conn, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(dialCtx, network, net.JoinHostPort(ip.String(), port))
+			if err != nil {
+				return nil, &registryauth.ProbeError{Stage: registryauth.StageConnect, Category: registryauth.CategoryNetwork, Message: "could not connect to the registry host"}
+			}
+			return conn, nil
 		},
 	}
 	if insecure {
@@ -134,12 +151,35 @@ func testRegistryConnection(ctx context.Context, host, username, password string
 		resp, err = doRegistryTestRequest(ctx, client, "http://"+host+"/v2/", username, password)
 	}
 	if err != nil {
-		return err
+		return classifyRegistryTransportError(err)
 	}
 	defer resp.Body.Close()
 
 	auth := base64.StdEncoding.EncodeToString([]byte(username + ":" + password))
 	return registryauth.CheckResponse(ctx, client, resp, auth)
+}
+
+// classifyRegistryTransportError maps the error surface of client.Do (DNS and
+// dial failures already come back as *registryauth.ProbeError from the dial
+// hook; TLS handshake failures, timeouts and dead connections arrive here
+// wrapped in *url.Error) onto a staged ProbeError. Messages carry no variable
+// parts: certificate details, resolved IPs and dial targets stay out of the
+// diagnostic, and credentials were never in the error path to begin with.
+func classifyRegistryTransportError(err error) error {
+	var probeErr *registryauth.ProbeError
+	if errors.As(err, &probeErr) {
+		return probeErr
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return &registryauth.ProbeError{Stage: registryauth.StageConnect, Category: registryauth.CategoryNetwork, Message: "registry check timed out"}
+	}
+	var hostErr x509.HostnameError
+	var certErr x509.CertificateInvalidError
+	var authErr x509.UnknownAuthorityError
+	if errors.As(err, &hostErr) || errors.As(err, &certErr) || errors.As(err, &authErr) || strings.Contains(err.Error(), "tls:") {
+		return &registryauth.ProbeError{Stage: registryauth.StageTLS, Category: registryauth.CategoryTLS, Message: "TLS handshake with the registry failed (untrusted certificate or hostname mismatch)"}
+	}
+	return &registryauth.ProbeError{Stage: registryauth.StageConnect, Category: registryauth.CategoryNetwork, Message: "could not reach the registry host"}
 }
 
 func doRegistryTestRequest(ctx context.Context, client *http.Client, url, username, password string) (*http.Response, error) {

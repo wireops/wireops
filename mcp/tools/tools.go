@@ -90,6 +90,7 @@ func Register(server *mcp.Server, c *client.Client, set ToolSet) {
 		registerStackReadTools(server, c)
 		registerRepoReadTools(server, c)
 		registerJobReadTools(server, c)
+		registerRegistryReadTools(server, c)
 	}
 	if set.Write {
 		registerStackWriteTools(server, c)
@@ -107,7 +108,7 @@ func Register(server *mcp.Server, c *client.Client, set ToolSet) {
 func registerReadTools(server *mcp.Server, c *client.Client) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "whoami",
-		Description: "Report what the caller's own wireops API key is: its role (viewer or operator), the capabilities that role grants, the service account it belongs to, and the server's version plus its default git poll interval (scan_period_seconds, which is what a stack's sync_interval_seconds=0 resolves to). Call this before concluding that something is broken when a tool returns a permission error — a viewer-scoped key cannot deploy, and no API key can hold an admin capability at all.",
+		Description: "Report what the caller's own wireops API key is: its role (viewer or operator), the capabilities that role grants, the service account it belongs to, and the server's version plus its default git poll interval (scan_period_seconds, which is what a stack's sync_interval_seconds=0 resolves to). Call this before concluding that something is broken when a tool returns a permission error — a viewer-scoped key cannot deploy, and no API key can hold an admin capability at all. Responses are cached per API key for five minutes and say so: cache is 'cache' or 'fresh', with cache_age_seconds and fetched_at. Set refresh true to bypass the cache and observe the server's current version/commit — the check an upgrade verification needs; a failure there is reported, never silently answered from the cache.",
 		Annotations: readOnly(),
 	}, whoami(c))
 
@@ -342,30 +343,64 @@ func hasRenderOverrides(rec map[string]interface{}) bool {
 // that would be one extra request per list_stacks call.
 var whoamiCache = newTTLCache(5 * time.Minute)
 
+// whoamiCacheInfo describes how a whoami answer was obtained: a cache hit
+// (with age) or a fresh server round-trip.
+type whoamiCacheInfo struct {
+	hit bool
+	age time.Duration
+}
+
 // fetchWhoami returns the caller's own identity/capability record, cached.
+// Internal callers (stack listings) use this: they need the cheap path.
 func fetchWhoami(ctx context.Context, c *client.Client, apiKey string) (map[string]interface{}, error) {
-	if cached, ok := whoamiCache.get(apiKey); ok {
-		return cached, nil
+	out, _, err := fetchWhoamiWithCache(ctx, c, apiKey, false)
+	return out, err
+}
+
+// fetchWhoamiWithCache is fetchWhoami with an explicit bypass: refresh skips
+// a live entry and re-fetches from the server, which is what makes a changed
+// server revision observable without waiting out the TTL. A refresh failure
+// surfaces as an error rather than falling back to the cache — silently
+// answering a freshness check with stale data would defeat its purpose.
+func fetchWhoamiWithCache(ctx context.Context, c *client.Client, apiKey string, refresh bool) (map[string]interface{}, whoamiCacheInfo, error) {
+	if !refresh {
+		if cached, age, ok := whoamiCache.getWithAge(apiKey); ok {
+			return cached, whoamiCacheInfo{hit: true, age: age}, nil
+		}
 	}
 	var out map[string]interface{}
 	if err := c.Get(ctx, apiKey, "/api/custom/me", nil, &out); err != nil {
-		return nil, err
+		return nil, whoamiCacheInfo{}, err
 	}
 	whoamiCache.put(apiKey, out)
-	return out, nil
+	return out, whoamiCacheInfo{hit: false}, nil
 }
 
 func whoami(c *client.Client) mcp.ToolHandlerFor[models.WhoamiInput, any] {
-	return func(ctx context.Context, _ *mcp.CallToolRequest, _ models.WhoamiInput) (*mcp.CallToolResult, any, error) {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, in models.WhoamiInput) (*mcp.CallToolResult, any, error) {
 		apiKey, err := apiKeyFrom(ctx)
 		if err != nil {
 			return nil, nil, err
 		}
-		out, err := fetchWhoami(ctx, c, apiKey)
+		out, info, err := fetchWhoamiWithCache(ctx, c, apiKey, in.Refresh)
 		if err != nil {
 			return nil, nil, err
 		}
-		return nil, out, nil
+		// Clone before decorating: the cached map is shared with every other
+		// caller of this key, and freshness fields describe this call, not
+		// the entry.
+		decorated := make(map[string]interface{}, len(out)+3)
+		for k, v := range out {
+			decorated[k] = v
+		}
+		source := "fresh"
+		if info.hit {
+			source = "cache"
+		}
+		decorated["cache"] = source
+		decorated["cache_age_seconds"] = int(info.age.Round(time.Second).Seconds())
+		decorated["fetched_at"] = time.Now().Add(-info.age).UTC().Format(time.RFC3339)
+		return nil, decorated, nil
 	}
 }
 
