@@ -130,6 +130,14 @@ async function testConnection() {
     toast.add({ title: 'Invalid credential', description: error, color: 'error' })
     return
   }
+  if (isEditMode.value && !form.value.password) {
+    toast.add({
+      title: 'Password not entered',
+      description: 'Enter the password or token to test entered values, or use "Verify Saved Credential" to test the stored one.',
+      color: 'warning',
+    })
+    return
+  }
   testing.value = true
   try {
     const result = await testRegistryCredential(buildPayload())
@@ -139,7 +147,7 @@ async function testConnection() {
       toast.add({ title: 'Entered values failed', description: failureDescription(result), color: 'error' })
     }
   } catch (error: any) {
-    toast.add({ title: 'Connection failed', description: errorMessage(error), color: 'error' })
+    toast.add({ title: 'Connection failed', description: error?.data?.diagnostic ? failureDescription(error.data) : errorMessage(error), color: 'error' })
   } finally {
     testing.value = false
   }
@@ -159,7 +167,7 @@ async function verifySaved() {
       toast.add({ title: 'Saved credential failed', description: failureDescription(result), color: 'error' })
     }
   } catch (error: any) {
-    toast.add({ title: 'Verification failed', description: errorMessage(error), color: 'error' })
+    toast.add({ title: 'Verification failed', description: error?.data?.diagnostic ? failureDescription(error.data) : errorMessage(error), color: 'error' })
   } finally {
     verifying.value = false
   }

@@ -245,7 +245,7 @@ func TestBearerInvalidRealmQuery(t *testing.T) {
 func TestProbeErrorClassification(t *testing.T) {
 	challengeResponse := func(t *testing.T, header string) *http.Response {
 		t.Helper()
-		probe, err := http.NewRequest(http.MethodGet, "https://registry.example/v2/", nil)
+		probe, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://registry.example/v2/", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
