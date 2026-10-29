@@ -21,8 +21,9 @@ type ttlCache struct {
 }
 
 type ttlEntry struct {
-	value   map[string]interface{}
-	expires time.Time
+	value    map[string]interface{}
+	storedAt time.Time
+	expires  time.Time
 }
 
 func newTTLCache(ttl time.Duration) *ttlCache {
@@ -30,13 +31,20 @@ func newTTLCache(ttl time.Duration) *ttlCache {
 }
 
 func (c *ttlCache) get(key string) (map[string]interface{}, bool) {
+	value, _, ok := c.getWithAge(key)
+	return value, ok
+}
+
+// getWithAge also reports how long ago the entry was stored, so callers that
+// surface freshness (whoami) can say exactly how stale a cache hit is.
+func (c *ttlCache) getWithAge(key string) (map[string]interface{}, time.Duration, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	entry, ok := c.entries[key]
 	if !ok || time.Now().After(entry.expires) {
-		return nil, false
+		return nil, 0, false
 	}
-	return entry.value, true
+	return entry.value, time.Since(entry.storedAt), true
 }
 
 func (c *ttlCache) put(key string, value map[string]interface{}) {
@@ -51,5 +59,5 @@ func (c *ttlCache) put(key string, value map[string]interface{}) {
 			delete(c.entries, k)
 		}
 	}
-	c.entries[key] = ttlEntry{value: value, expires: now.Add(c.ttl)}
+	c.entries[key] = ttlEntry{value: value, storedAt: now, expires: now.Add(c.ttl)}
 }

@@ -152,7 +152,16 @@ export function useApi() {
     customPost<{ id: string; name: string; status: string }>('/api/custom/stacks/from-compose', body)
   const testCredentials = (body: any) => customPost('/api/custom/credentials/test', body)
   const keyscan = (host: string, port = 22) => customPost('/api/custom/credentials/keyscan', { host, port })
-  const testRegistryCredential = (body: any) => customPost<{ success: boolean, error?: string, warning?: string }>('/api/custom/registry-credentials/test', body)
+  type RegistryCredentialTestResult = {
+    success: boolean
+    error?: string
+    warning?: string
+    source?: 'draft' | 'persisted'
+    credential_id?: string
+    credential_name?: string
+    diagnostic?: { stage?: string, category?: string, http_status?: number, message?: string, hint?: string }
+  }
+  const testRegistryCredential = (body: any) => customPost<RegistryCredentialTestResult>('/api/custom/registry-credentials/test', body)
   const listGitProviders = () =>
     customGet<{ slug: string; name: string; configured: boolean; connected: boolean; account_login?: string; key_id?: string }[]>('/api/custom/git-providers')
   const getGitProviderAuthorizeUrl = (slug: string) =>

@@ -156,7 +156,7 @@ func TestRegistryCredentialTestConnectionFailure(t *testing.T) {
 	}
 }
 
-func TestRegistryCredentialTestConnectionMergesSavedCredential(t *testing.T) {
+func TestRegistryCredentialTestConnectionVerifiesSavedCredential(t *testing.T) {
 	registryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, pass, ok := r.BasicAuth()
 		if !ok || user != "deploy" || pass != "saved-secret" {
@@ -187,6 +187,9 @@ func TestRegistryCredentialTestConnectionMergesSavedCredential(t *testing.T) {
 	}
 	if resp["success"] != true {
 		t.Fatalf("expected success=true using saved credential, got %#v", resp)
+	}
+	if resp["source"] != "persisted" || resp["credential_id"] != cred.Id || resp["credential_name"] != "Saved" {
+		t.Fatalf("expected persisted-source metadata, got %#v", resp)
 	}
 }
 
@@ -315,16 +318,42 @@ func TestRegistryCredentialTestConnectionUnknownCredentialID(t *testing.T) {
 	}
 }
 
-// TestRegistryCredentialTestConnectionExplicitFalseOverridesSavedInsecure
-// pins the *bool merge semantics: an explicit `"insecure": false` in the
-// request body must NOT be overwritten by a saved credential's
-// `insecure: true` — only omitting the field entirely should inherit the
-// saved value. Before this was a plain bool, false (the zero value) was
-// indistinguishable from "not provided" and got silently overridden.
-func TestRegistryCredentialTestConnectionExplicitFalseOverridesSavedInsecure(t *testing.T) {
-	// TLS server so InsecureSkipVerify is required — if the explicit
-	// `insecure: false` were (bugged) overridden back to true by the saved
-	// credential, the request would still incorrectly succeed.
+// TestRegistryCredentialTestConnectionRejectsMixedDraftAndPersisted pins the
+// strict persisted contract: credential_id probes exactly what is stored, so
+// any draft field alongside it is refused rather than silently merged — the
+// merge was the mechanism behind "the form test passed but the saved
+// credential failed" (#186).
+func TestRegistryCredentialTestConnectionRejectsMixedDraftAndPersisted(t *testing.T) {
+	app, operator := registryCredentialTestApp(t)
+	cred := createRegistryCredentialRow(t, app, "Saved", "registry.example.com", "basic", "deploy", "saved-secret", true)
+	mux := registryCredentialRoutesMux(t, app, operator)
+
+	for name, body := range map[string]map[string]any{
+		"registry_url": {"credential_id": cred.Id, "registry_url": "registry.example.com"},
+		"auth_type":    {"credential_id": cred.Id, "auth_type": "basic"},
+		"username":     {"credential_id": cred.Id, "username": "deploy"},
+		"password":     {"credential_id": cred.Id, "password": "draft-secret"},
+		"insecure":     {"credential_id": cred.Id, "insecure": false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			b, _ := json.Marshal(body)
+			req := httptest.NewRequest(http.MethodPost, "/api/custom/registry-credentials/test", bytes.NewReader(b))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+// TestRegistryCredentialTestConnectionPersistedUsesSavedInsecure pins the
+// other side of the old *bool merge semantics: in persisted mode the saved
+// insecure flag drives the probe, so a saved insecure=true credential
+// succeeds against a self-signed TLS registry.
+func TestRegistryCredentialTestConnectionPersistedUsesSavedInsecure(t *testing.T) {
 	registryServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -334,7 +363,7 @@ func TestRegistryCredentialTestConnectionExplicitFalseOverridesSavedInsecure(t *
 	cred := createRegistryCredentialRow(t, app, "Saved", registryServer.URL, "basic", "deploy", "saved-secret", true)
 	mux := registryCredentialRoutesMux(t, app, operator)
 
-	body := map[string]any{"credential_id": cred.Id, "insecure": false}
+	body := map[string]any{"credential_id": cred.Id}
 	b, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPost, "/api/custom/registry-credentials/test", bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/json")
@@ -345,8 +374,70 @@ func TestRegistryCredentialTestConnectionExplicitFalseOverridesSavedInsecure(t *
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if resp["success"] != false {
-		t.Fatalf("expected the explicit insecure=false to be honored (self-signed cert rejected), got %#v", resp)
+	if resp["success"] != true || resp["source"] != "persisted" {
+		t.Fatalf("expected the saved insecure=true credential to succeed against the TLS registry, got %#v", resp)
+	}
+}
+
+// TestRegistryCredentialTestConnectionDraftOkThenPersistedFails is the #188
+// acceptance pair: the entered values pass the draft probe while the stored
+// value (as deployed) fails the persisted probe — the two can only be told
+// apart because credential_id no longer merges draft fields over the saved
+// record.
+func TestRegistryCredentialTestConnectionDraftOkThenPersistedFails(t *testing.T) {
+	registryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, pass, ok := r.BasicAuth()
+		if !ok || pass != "draft-key" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer registryServer.Close()
+
+	app, operator := registryCredentialTestApp(t)
+	cred := createRegistryCredentialRow(t, app, "Saved", registryServer.URL, "basic", "deploy", "saved-key", true)
+	mux := registryCredentialRoutesMux(t, app, operator)
+
+	post := func(t *testing.T, body map[string]any) map[string]any {
+		t.Helper()
+		b, _ := json.Marshal(body)
+		req := httptest.NewRequest(http.MethodPost, "/api/custom/registry-credentials/test", bytes.NewReader(b))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		var resp map[string]any
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		return resp
+	}
+
+	draft := post(t, map[string]any{
+		"registry_url": registryServer.URL,
+		"auth_type":    "basic",
+		"username":     "deploy",
+		"password":     "draft-key",
+		"insecure":     true,
+	})
+	if draft["success"] != true || draft["source"] != "draft" {
+		t.Fatalf("expected the entered values to pass the draft probe, got %#v", draft)
+	}
+
+	persisted := post(t, map[string]any{"credential_id": cred.Id})
+	if persisted["success"] != false || persisted["source"] != "persisted" {
+		t.Fatalf("expected the persisted probe to fail against the stored value, got %#v", persisted)
+	}
+	diagnostic, ok := persisted["diagnostic"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected structured diagnostics on the persisted failure, got %#v", persisted)
+	}
+	if diagnostic["stage"] != "challenge" || diagnostic["category"] != "auth_rejected" || diagnostic["http_status"] != float64(401) {
+		t.Fatalf("expected challenge/auth_rejected/401 diagnostics, got %#v", diagnostic)
+	}
+	encoded, _ := json.Marshal(persisted)
+	if strings.Contains(string(encoded), "draft-key") || strings.Contains(string(encoded), "saved-key") {
+		t.Fatalf("diagnostic leaks a credential value: %s", encoded)
 	}
 }
 

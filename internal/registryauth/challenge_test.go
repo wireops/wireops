@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -235,4 +236,108 @@ func TestBearerInvalidRealmQuery(t *testing.T) {
 	if tokenRequests != 0 {
 		t.Fatal("invalid query reached token issuer")
 	}
+}
+
+// TestProbeErrorClassification pins the stage/category/http_status the API
+// and MCP surfaces rely on to tell a challenge problem, a credential
+// rejection and a permission failure apart — and that none of the structured
+// fields can carry a token or token-service response body.
+func TestProbeErrorClassification(t *testing.T) {
+	challengeResponse := func(t *testing.T, header string) *http.Response {
+		t.Helper()
+		probe, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://registry.example/v2/", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &http.Response{
+			StatusCode: http.StatusUnauthorized,
+			Header:     http.Header{"Www-Authenticate": []string{header}},
+			Body:       io.NopCloser(strings.NewReader("")), Request: probe,
+		}
+	}
+
+	t.Run("challenge-parse-failure", func(t *testing.T) {
+		response := challengeResponse(t, `Bearer realm="unterminated`)
+		defer response.Body.Close()
+		err := CheckResponse(context.Background(), &http.Client{}, response, "sensitive-auth")
+		var probeErr *ProbeError
+		if !errors.As(err, &probeErr) {
+			t.Fatalf("expected *ProbeError, got %T", err)
+		}
+		if probeErr.Stage != StageChallenge || probeErr.Category != CategoryAuthChallenge {
+			t.Fatalf("unexpected classification: %+v", probeErr)
+		}
+	})
+
+	t.Run("token-rejected", func(t *testing.T) {
+		response := challengeResponse(t, `Bearer realm="https://registry.example/auth"`)
+		defer response.Body.Close()
+		client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusUnauthorized,
+				Header:     http.Header{},
+				Body:       io.NopCloser(strings.NewReader(`{"error":"secret-body-never-echoed"}`)), Request: r,
+			}, nil
+		})}
+		err := CheckResponse(context.Background(), client, response, "sensitive-auth")
+		var probeErr *ProbeError
+		if !errors.As(err, &probeErr) {
+			t.Fatalf("expected *ProbeError, got %T", err)
+		}
+		if probeErr.Stage != StageToken || probeErr.Category != CategoryAuthRejected || probeErr.HTTPStatus != http.StatusUnauthorized {
+			t.Fatalf("unexpected classification: %+v", probeErr)
+		}
+		fields, _ := json.Marshal(probeErr.Fields())
+		if strings.Contains(string(fields), "secret-body") {
+			t.Fatalf("diagnostic leaks token-service response body: %s", fields)
+		}
+	})
+
+	t.Run("verify-permission-denied", func(t *testing.T) {
+		response := challengeResponse(t, `Bearer realm="https://registry.example/auth"`)
+		defer response.Body.Close()
+		calls := 0
+		client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			calls++
+			status := http.StatusOK
+			if calls == 2 {
+				status = http.StatusForbidden
+			}
+			return &http.Response{
+				StatusCode: status,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"token":"valid-token"}`)), Request: r,
+			}, nil
+		})}
+		err := CheckResponse(context.Background(), client, response, "sensitive-auth")
+		var probeErr *ProbeError
+		if !errors.As(err, &probeErr) {
+			t.Fatalf("expected *ProbeError, got %T", err)
+		}
+		if probeErr.Stage != StageVerify || probeErr.Category != CategoryPermission || probeErr.HTTPStatus != http.StatusForbidden {
+			t.Fatalf("unexpected classification: %+v", probeErr)
+		}
+		if probeErr.Hint() == "" {
+			t.Fatal("expected a next-check hint")
+		}
+	})
+
+	t.Run("token-request-network-error", func(t *testing.T) {
+		response := challengeResponse(t, `Bearer realm="https://registry.example/auth"`)
+		defer response.Body.Close()
+		client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			return nil, fmt.Errorf("connection refused")
+		})}
+		err := CheckResponse(context.Background(), client, response, "sensitive-auth")
+		var probeErr *ProbeError
+		if !errors.As(err, &probeErr) {
+			t.Fatalf("expected *ProbeError, got %T", err)
+		}
+		if probeErr.Stage != StageToken || probeErr.Category != CategoryNetwork || probeErr.HTTPStatus != 0 {
+			t.Fatalf("unexpected classification: %+v", probeErr)
+		}
+		if fields := probeErr.Fields(); fields["http_status"] != nil {
+			t.Fatalf("http_status must be omitted when there is no response: %#v", fields)
+		}
+	})
 }
