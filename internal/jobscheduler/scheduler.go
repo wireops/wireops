@@ -198,9 +198,15 @@ func (s *Scheduler) SyncJobsForRepo(repoID string) {
 	}
 }
 
-// TriggerManual fires an immediate execution of the job outside its cron schedule.
-func (s *Scheduler) TriggerManual(jobID string, userID string) {
-	go s.executeJob(jobID, "manual", userID)
+// TriggerManual fires an immediate execution of the job outside its cron
+// schedule and returns the ids of the job_runs it created. The records are
+// created before it returns, so the caller can poll them; the dispatch to the
+// workers and the runs themselves stay asynchronous. A run that failed before
+// it could be dispatched (bad definition, unavailable secret backend, no
+// matching worker) is returned too, already carrying its error or stalled
+// status.
+func (s *Scheduler) TriggerManual(jobID string, userID string) []string {
+	return s.executeJob(jobID, "manual", userID)
 }
 
 // CancelRun stops a running job container on the assigned remote worker.
@@ -234,16 +240,20 @@ func (s *Scheduler) CancelRun(runID string) error {
 	return nil
 }
 
-func (s *Scheduler) executeJob(jobID, trigger string, userID string) {
+// executeJob prepares a run of the job and returns the ids of the job_runs it
+// created: one per dispatched worker, or the single error/stalled run when the
+// job could not be dispatched. The workers are dispatched asynchronously. It
+// returns no ids when no run record could be created at all.
+func (s *Scheduler) executeJob(jobID, trigger string, userID string) []string {
 	ctx := contextutil.WithUserID(s.rootCtx, userID)
 	if ctx.Err() != nil {
-		return
+		return nil
 	}
 
 	rec, err := s.app.FindRecordById("scheduled_jobs", jobID)
 	if err != nil {
 		log.Printf("[jobscheduler] executeJob: job %s not found: %v", jobID, err)
-		return
+		return nil
 	}
 
 	// Fast pre-flight gate: reject immediately if a referenced vault/infisical
@@ -252,13 +262,14 @@ func (s *Scheduler) executeJob(jobID, trigger string, userID string) {
 	if err := envvars.CheckJobSecretBackends(s.app, jobID); err != nil {
 		msg := fmt.Sprintf("secret backend unavailable for job %s: %v", jobID, err)
 		log.Printf("[jobscheduler] executeJob: %s", msg)
-		if _, saveErr := s.createJobRun(jobID, "", trigger, "error", msg); saveErr != nil {
+		runID, saveErr := s.createJobRun(jobID, "", trigger, "error", msg)
+		if saveErr != nil {
 			log.Printf("[jobscheduler] executeJob: failed to persist secret backend error job=%s: %v", jobID, saveErr)
 		}
 		if saveErr := s.setScheduledJobStatus(jobID, "error"); saveErr != nil {
 			log.Printf("[jobscheduler] executeJob: failed to mark job error job=%s: %v", jobID, saveErr)
 		}
-		return
+		return runIDs(runID)
 	}
 
 	repoID := rec.GetString("repository")
@@ -268,23 +279,25 @@ func (s *Scheduler) executeJob(jobID, trigger string, userID string) {
 	if err != nil {
 		msg := fmt.Sprintf("cannot parse job.yaml %s for job %s: %v", jobFile, jobID, err)
 		log.Printf("[jobscheduler] executeJob: %s", msg)
-		if _, saveErr := s.createJobRun(jobID, "", trigger, "error", msg); saveErr != nil {
+		runID, saveErr := s.createJobRun(jobID, "", trigger, "error", msg)
+		if saveErr != nil {
 			log.Printf("[jobscheduler] executeJob: failed to persist definition error job=%s: %v", jobID, saveErr)
 		}
 		if saveErr := s.setScheduledJobStatus(jobID, "error"); saveErr != nil {
 			log.Printf("[jobscheduler] executeJob: failed to mark job error job=%s: %v", jobID, saveErr)
 		}
-		return
+		return runIDs(runID)
 	}
 
 	s.ensureScheduledJobDisplayFields(rec, def)
 
 	workers := s.dispatcher.GetWorkersByTags(def.Tags)
 	if len(workers) == 0 {
-		if err := s.createStalledRun(jobID, trigger, def.Tags, def); err != nil {
+		runID, err := s.createStalledRun(jobID, trigger, def.Tags, def)
+		if err != nil {
 			log.Printf("[jobscheduler] executeJob: failed to persist stalled job=%s: %v", jobID, err)
 		}
-		return
+		return runIDs(runID)
 	}
 
 	envMap, err := s.loadEnvVars(ctx, jobID)
@@ -294,26 +307,28 @@ func (s *Scheduler) executeJob(jobID, trigger string, userID string) {
 		// persist it only to the job_run record, which is access-controlled.
 		log.Printf("[jobscheduler] executeJob: cannot load env vars for job %s", jobID)
 		msg := fmt.Sprintf("cannot load env vars for job %s: %v", jobID, err)
-		if _, saveErr := s.createJobRun(jobID, "", trigger, "error", msg); saveErr != nil {
+		runID, saveErr := s.createJobRun(jobID, "", trigger, "error", msg)
+		if saveErr != nil {
 			log.Printf("[jobscheduler] executeJob: failed to persist env error job=%s: %v", jobID, saveErr)
 		}
 		if saveErr := s.setScheduledJobStatus(jobID, "error"); saveErr != nil {
 			log.Printf("[jobscheduler] executeJob: failed to mark job error job=%s: %v", jobID, saveErr)
 		}
-		return
+		return runIDs(runID)
 	}
 
 	configFileSpecs, err := s.resolveJobConfigFiles(jobID, repoID, def.Configs)
 	if err != nil {
 		msg := fmt.Sprintf("cannot resolve config files for job %s: %v", jobID, err)
 		log.Printf("[jobscheduler] executeJob: %s", msg)
-		if _, saveErr := s.createJobRun(jobID, "", trigger, "error", msg); saveErr != nil {
+		runID, saveErr := s.createJobRun(jobID, "", trigger, "error", msg)
+		if saveErr != nil {
 			log.Printf("[jobscheduler] executeJob: failed to persist config error job=%s: %v", jobID, saveErr)
 		}
 		if saveErr := s.setScheduledJobStatus(jobID, "error"); saveErr != nil {
 			log.Printf("[jobscheduler] executeJob: failed to mark job error job=%s: %v", jobID, saveErr)
 		}
-		return
+		return runIDs(runID)
 	}
 
 	repoBranch := func() string {
@@ -335,15 +350,21 @@ func (s *Scheduler) executeJob(jobID, trigger string, userID string) {
 		configFiles: configFileSpecs,
 	}
 
-	switch def.Mode {
-	case job.ModeOnceAll:
-		for _, workerID := range workers {
-			workerID := workerID
-			go s.dispatchToWorker(ctx, jobID, trigger, workerID, params)
+	targets := workers
+	if def.Mode != job.ModeOnceAll { // ModeOnce
+		targets = []string{s.pickWorker(jobID, workers)}
+	}
+	// Create the run records here, not inside the dispatch goroutines, so the
+	// caller can hand their ids back before any worker has answered.
+	var createdRuns []string
+	for _, workerID := range targets {
+		runID, err := s.createJobRun(jobID, workerID, trigger, "pending")
+		if err != nil {
+			log.Printf("[jobscheduler] executeJob: failed to create job_run job=%s worker=%s: %v", jobID, workerID, err)
+			continue
 		}
-	default: // ModeOnce
-		workerID := s.pickWorker(jobID, workers)
-		go s.dispatchToWorker(ctx, jobID, trigger, workerID, params)
+		createdRuns = append(createdRuns, runID)
+		go s.dispatchToWorker(ctx, runID, jobID, trigger, workerID, params)
 	}
 
 	// Update last_run_at and status immediately; run completion is async.
@@ -354,18 +375,22 @@ func (s *Scheduler) executeJob(jobID, trigger string, userID string) {
 	if err := s.app.Save(rec); err != nil {
 		log.Printf("[jobscheduler] executeJob: failed to persist last_run_at job=%s: %v", jobID, err)
 	}
+	return createdRuns
 }
 
-// dispatchToWorker creates a job_run record and sends RunJobCommand to the worker.
-// It only waits for the start ack (≤30s), not job completion.
-// Completion is delivered via HandleJobCompleted when the worker pushes MsgJobCompleted.
-func (s *Scheduler) dispatchToWorker(ctx context.Context, jobID, trigger, workerID string, p jobRunParams) {
-	runID, err := s.createJobRun(jobID, workerID, trigger, "pending")
-	if err != nil {
-		log.Printf("[jobscheduler] dispatchToWorker: failed to create job_run job=%s worker=%s: %v", jobID, workerID, err)
-		return
+// runIDs wraps the id of a run that failed before dispatch, dropping it when
+// the record could not be created.
+func runIDs(runID string) []string {
+	if runID == "" {
+		return nil
 	}
+	return []string{runID}
+}
 
+// dispatchToWorker sends RunJobCommand for the already created pending job_run
+// to the worker. It only waits for the start ack (≤30s), not job completion.
+// Completion is delivered via HandleJobCompleted when the worker pushes MsgJobCompleted.
+func (s *Scheduler) dispatchToWorker(ctx context.Context, runID, jobID, trigger, workerID string, p jobRunParams) {
 	containerName := "wireops-job-" + runID
 	if err := s.patchJobRunMeta(runID, containerName, p.commitSHA); err != nil {
 		log.Printf("[jobscheduler] dispatchToWorker: failed to persist metadata job=%s run=%s: %v", jobID, runID, err)
@@ -682,29 +707,29 @@ func (s *Scheduler) ReconcileActiveJobs(workerID string, activeIDs []string) err
 
 // createStalledRun writes a job_run with status=stalled when no workers are available.
 // It also updates the scheduled_jobs record's status to "stalled".
-func (s *Scheduler) createStalledRun(jobID, trigger string, tags []string, def *job.Definition) error {
+func (s *Scheduler) createStalledRun(jobID, trigger string, tags []string, def *job.Definition) (string, error) {
 	reason := "no matching workers available for the specified tags"
 	if len(tags) > 0 {
 		reason = fmt.Sprintf("no matching workers available for the required tags: %v", tags)
 	}
 	runID, err := s.createJobRun(jobID, "", trigger, "stalled", reason)
 	if err != nil {
-		return fmt.Errorf("create stalled run job=%s: %w", jobID, err)
+		return "", fmt.Errorf("create stalled run job=%s: %w", jobID, err)
 	}
 	log.Printf("[jobscheduler] job job=%s run=%s stalled (no matching workers)", jobID, runID)
 
 	rec, err := s.app.FindRecordById("scheduled_jobs", jobID)
 	if err != nil {
-		return fmt.Errorf("create stalled run load job=%s: %w", jobID, err)
+		return runID, fmt.Errorf("create stalled run load job=%s: %w", jobID, err)
 	}
 	if rec.GetString("status") != "paused" {
 		s.ensureScheduledJobDisplayFields(rec, def)
 		rec.Set("status", "stalled")
 		if err := s.app.Save(rec); err != nil {
-			return fmt.Errorf("create stalled run update job=%s status=stalled: %w", jobID, err)
+			return runID, fmt.Errorf("create stalled run update job=%s status=stalled: %w", jobID, err)
 		}
 	}
-	return nil
+	return runID, nil
 }
 
 // createJobRun inserts a job_run record and returns its ID.

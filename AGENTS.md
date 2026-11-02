@@ -341,7 +341,7 @@ list comes from `rbac.CapabilitiesFor`, derived from the same
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/jobs` | List jobs with definitions |
-| `POST` | `/jobs/{id}/run` | Trigger manual run |
+| `POST` | `/jobs/{id}/run` | Trigger manual run; returns `{status, run_ids, run_id?}` (`run_id` only when exactly one run was created — `once_all` makes one per worker) |
 | `POST` | `/job-runs/{runId}/cancel` | Kill running container |
 | `DELETE` | `/job-runs/{runId}` | Delete stalled run |
 

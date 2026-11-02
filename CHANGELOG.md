@@ -22,6 +22,13 @@ changes in a minor release.
   name), newest first and paged, with each run's status, trigger, duration,
   commit and output tail, so an agent can read the outcome of a run it
   triggered with `run_job`.
+- `POST /api/custom/jobs/{id}/run` and the MCP `run_job` tool now return the
+  created runs: `run_ids` always, plus `run_id` when there is exactly one (a
+  `once_all` job creates one run per worker). A run that failed before it
+  could be dispatched — bad definition, unavailable secret backend, no
+  matching worker — is returned too, already in its `error` or `stalled`
+  state. The run records are now created before the response, so the request
+  also waits for the job's env vars and config files to resolve.
 - Registry credentials are now selected automatically from the exact registry
   hosts referenced by a stack's final Compose images, including image tags,
   digests, render-time overrides, explicit ports, and Docker Hub's implicit

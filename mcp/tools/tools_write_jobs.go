@@ -29,7 +29,7 @@ func registerJobReadTools(server *mcp.Server, c *client.Client) {
 func registerJobWriteTools(server *mcp.Server, c *client.Client) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "run_job",
-		Description: "Trigger a wireops scheduled job to run immediately, outside its cron schedule. The job.yaml is re-parsed and validated first, so a broken definition fails here instead of silently not running. Returns once the run is queued — poll list_job_runs for the run's outcome.",
+		Description: "Trigger a wireops scheduled job to run immediately, outside its cron schedule. The job.yaml is re-parsed and validated first, so a broken definition fails here instead of silently not running. Returns once the run is queued, with its run_id (run_ids for a once_all job, which runs on every matching worker) — poll list_job_runs for that run's outcome.",
 		Annotations: additive(false),
 	}, runJob(c))
 
