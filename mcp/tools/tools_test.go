@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -1535,8 +1536,8 @@ func TestListJobRunsFiltersByJob(t *testing.T) {
 			t.Errorf("query %s = %q, want %q", key, got, want)
 		}
 	}
-	if !strings.Contains(gotQuery.Get("fields"), "output") {
-		t.Errorf("expected output in the projection, got %q", gotQuery.Get("fields"))
+	if fields := gotQuery.Get("fields"); strings.Contains(fields, "output") || !strings.Contains(fields, "status") {
+		t.Errorf("expected a status-only projection without output, got %q", fields)
 	}
 	items := out.(map[string]interface{})["items"].([]interface{})
 	if len(items) != 1 {
@@ -1588,36 +1589,6 @@ func TestListJobRunsResolvesName(t *testing.T) {
 	}
 }
 
-func TestListJobRunsTruncatesOutput(t *testing.T) {
-	long := strings.Repeat("a", 6000) + "TAIL"
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeFixture(w, `{"items":[{"id":"run000000000001","output":"`+long+`"},{"id":"run000000000002","output":"short"}]}`)
-	}))
-	defer srv.Close()
-
-	handler := listJobRuns(client.New(srv.URL))
-	_, out, err := handler(ctxWithKey(), nil, models.ListJobRunsInput{JobID: "job000000000001"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	items := out.(map[string]interface{})["items"].([]interface{})
-	first := items[0].(map[string]interface{})
-	got := first["output"].(string)
-	if len([]rune(got)) != jobRunOutputLimit || !strings.HasSuffix(got, "TAIL") {
-		t.Errorf("expected the last %d characters kept, got %d ending %q", jobRunOutputLimit, len(got), got[len(got)-4:])
-	}
-	if first["output_truncated"] != true {
-		t.Errorf("expected output_truncated on the cut run, got %#v", first)
-	}
-	second := items[1].(map[string]interface{})
-	if second["output"] != "short" {
-		t.Errorf("short output must be untouched, got %#v", second["output"])
-	}
-	if _, present := second["output_truncated"]; present {
-		t.Errorf("an uncut run must not be flagged, got %#v", second)
-	}
-}
-
 func TestListJobRunsRequiresJobID(t *testing.T) {
 	handler := listJobRuns(client.New("http://unused"))
 	if _, _, err := handler(ctxWithKey(), nil, models.ListJobRunsInput{JobID: "  "}); err == nil {
@@ -1646,8 +1617,8 @@ func TestListJobRunsClampsLimit(t *testing.T) {
 		perPage string
 		page    string
 	}{
-		{models.ListJobRunsInput{JobID: "job000000000001"}, "10", "1"},
-		{models.ListJobRunsInput{JobID: "job000000000001", Limit: 1000, Page: 4}, "25", "4"},
+		{models.ListJobRunsInput{JobID: "job000000000001"}, "50", "1"},
+		{models.ListJobRunsInput{JobID: "job000000000001", Limit: 1000, Page: 4}, "200", "4"},
 	} {
 		if _, _, err := handler(ctxWithKey(), nil, tc.in); err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -1655,5 +1626,124 @@ func TestListJobRunsClampsLimit(t *testing.T) {
 		if gotPerPage != tc.perPage || gotPage != tc.page {
 			t.Errorf("input %+v: perPage=%q page=%q, want %s/%s", tc.in, gotPerPage, gotPage, tc.perPage, tc.page)
 		}
+	}
+}
+
+func getJobRunServer(t *testing.T, output string, gotPath *string, gotQuery *url.Values) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*gotPath = r.URL.Path
+		*gotQuery = r.URL.Query()
+		b, _ := json.Marshal(map[string]any{"id": "run000000000001", "status": "error", "output": output})
+		writeFixture(w, string(b))
+	}))
+}
+
+func TestGetJobRunReadsOneRunWithOutput(t *testing.T) {
+	var gotPath string
+	var gotQuery url.Values
+	srv := getJobRunServer(t, "line one\nline two", &gotPath, &gotQuery)
+	defer srv.Close()
+
+	handler := getJobRun(client.New(srv.URL))
+	_, out, err := handler(ctxWithKey(), nil, models.GetJobRunInput{RunID: "run000000000001"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotPath != "/api/collections/job_runs/records/run000000000001" {
+		t.Fatalf("unexpected path: %s", gotPath)
+	}
+	if !strings.Contains(gotQuery.Get("fields"), "output") {
+		t.Errorf("expected output in the projection, got %q", gotQuery.Get("fields"))
+	}
+	rec := out.(map[string]interface{})
+	if rec["output"] != "line one\nline two" {
+		t.Errorf("short output must be untouched, got %#v", rec["output"])
+	}
+	if _, present := rec["output_truncated"]; present {
+		t.Errorf("an uncut run must not be flagged, got %#v", rec)
+	}
+}
+
+func TestGetJobRunKeepsTheTailOfLongOutput(t *testing.T) {
+	var gotPath string
+	var gotQuery url.Values
+	srv := getJobRunServer(t, strings.Repeat("a", 6000)+"TAIL", &gotPath, &gotQuery)
+	defer srv.Close()
+
+	handler := getJobRun(client.New(srv.URL))
+	for _, tc := range []struct {
+		tail int
+		want int
+	}{
+		{0, jobRunOutputDefaultChars},
+		{100, 100},
+		{1_000_000, 6004}, // clamped to the 20000 max, which holds the whole output
+	} {
+		_, out, err := handler(ctxWithKey(), nil, models.GetJobRunInput{RunID: "run000000000001", TailChars: tc.tail})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		rec := out.(map[string]interface{})
+		got := rec["output"].(string)
+		if len([]rune(got)) != tc.want || !strings.HasSuffix(got, "TAIL") {
+			t.Errorf("tail_chars=%d: got %d chars ending %q, want %d ending TAIL", tc.tail, len(got), got[len(got)-4:], tc.want)
+		}
+		if truncated := rec["output_truncated"] == true; truncated != (tc.want < 6004) {
+			t.Errorf("tail_chars=%d: output_truncated=%v", tc.tail, truncated)
+		}
+	}
+}
+
+func TestGetJobRunMaxTailIsCapped(t *testing.T) {
+	var gotPath string
+	var gotQuery url.Values
+	srv := getJobRunServer(t, strings.Repeat("b", jobRunOutputMaxChars+500), &gotPath, &gotQuery)
+	defer srv.Close()
+
+	handler := getJobRun(client.New(srv.URL))
+	_, out, err := handler(ctxWithKey(), nil, models.GetJobRunInput{RunID: "run000000000001", TailChars: 1_000_000})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	rec := out.(map[string]interface{})
+	if got := len([]rune(rec["output"].(string))); got != jobRunOutputMaxChars {
+		t.Errorf("output = %d chars, want the %d cap", got, jobRunOutputMaxChars)
+	}
+	if rec["output_truncated"] != true {
+		t.Errorf("expected output_truncated, got %#v", rec)
+	}
+}
+
+func TestGetJobRunPatternFiltersLinesBeforeTheCut(t *testing.T) {
+	var gotPath string
+	var gotQuery url.Values
+	srv := getJobRunServer(t, "ok 1\nERROR disk full\nok 2\nERROR retry failed", &gotPath, &gotQuery)
+	defer srv.Close()
+
+	handler := getJobRun(client.New(srv.URL))
+	_, out, err := handler(ctxWithKey(), nil, models.GetJobRunInput{RunID: "run000000000001", Pattern: "ERROR"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	rec := out.(map[string]interface{})
+	if rec["output"] != "ERROR disk full\nERROR retry failed" {
+		t.Errorf("unexpected filtered output: %#v", rec["output"])
+	}
+	if rec["pattern"] != "ERROR" {
+		t.Errorf("expected the applied pattern echoed, got %#v", rec["pattern"])
+	}
+}
+
+func TestGetJobRunRejectsBadInput(t *testing.T) {
+	handler := getJobRun(client.New("http://unused"))
+	if _, _, err := handler(ctxWithKey(), nil, models.GetJobRunInput{RunID: " "}); err == nil {
+		t.Error("expected error when run_id is blank")
+	}
+	if _, _, err := handler(ctxWithKey(), nil, models.GetJobRunInput{RunID: "run000000000001", Pattern: "("}); err == nil {
+		t.Error("expected error for an invalid pattern")
+	}
+	if _, _, err := handler(context.Background(), nil, models.GetJobRunInput{RunID: "run000000000001"}); err == nil {
+		t.Error("expected error when API key missing from context")
 	}
 }

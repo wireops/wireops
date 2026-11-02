@@ -119,8 +119,15 @@ type ListJobsInput struct {
 type ListJobRunsInput struct {
 	JobID  string `json:"job_id" jsonschema:"The wireops scheduled job: its record id, or its exact name."`
 	Status string `json:"status,omitempty" jsonschema:"Only runs with this exact status. Optional."`
-	Limit  int    `json:"limit,omitempty" jsonschema:"Maximum number of runs per page, newest first (default 10, max 25: each run carries up to 4000 characters of output)."`
+	Limit  int    `json:"limit,omitempty" jsonschema:"Maximum number of runs per page, newest first (default 50, max 200)."`
 	Page   int    `json:"page,omitempty" jsonschema:"Page number, 1-indexed (default 1)."`
+}
+
+// GetJobRunInput is the input for the get_job_run tool.
+type GetJobRunInput struct {
+	RunID     string `json:"run_id" jsonschema:"The job_runs record id, as returned by run_job or list_job_runs."`
+	TailChars int    `json:"tail_chars,omitempty" jsonschema:"Keep only the last this many characters of the output (default 4000, max 20000)."`
+	Pattern   string `json:"pattern,omitempty" jsonschema:"Regex; only matching output lines are returned, applied before tail_chars. Optional."`
 }
 
 // JobIDInput is the input for tools that operate on a single scheduled job.

@@ -198,9 +198,15 @@ func registerReadTools(server *mcp.Server, c *client.Client) {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "list_job_runs",
-		Description: "List runs of a wireops scheduled job (its id or exact name), newest first: status, trigger, duration_ms, commit_sha and output. Each run's output is cut to its last 4000 characters (output_truncated says so); pages are 10 runs by default, 25 at most. Use it after run_job to read the run's outcome.",
+		Description: "List runs of a wireops scheduled job (its id or exact name), newest first, paged: id, status, trigger, duration_ms, commit_sha, created. Output is not included, so it is cheap to poll after run_job until the status is final; read a run's log with get_job_run.",
 		Annotations: readOnly(),
 	}, listJobRuns(c))
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_job_run",
+		Description: "Get one wireops job run by its run id (from run_job or list_job_runs) with its output. The output is cut to its last tail_chars characters (default 4000, max 20000; output_truncated says so). pattern is a regex applied per line before the cut, to pull only the relevant lines out of a long log.",
+		Annotations: readOnly(),
+	}, getJobRun(c))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_job_definition",
@@ -1210,26 +1216,23 @@ func listJobs(c *client.Client) mcp.ToolHandlerFor[models.ListJobsInput, any] {
 	}
 }
 
-// jobRunFields is the projection for list_job_runs: the outcome of a run
-// without the worker-side bookkeeping.
-var jobRunFields = []string{
+// jobRunListFields is the projection for list_job_runs: what a status poll
+// needs, without the output. The output is the heavy field, so leaving it out
+// of the request (not just of the response) is what keeps polling cheap.
+var jobRunListFields = []string{
 	"id", "job", "status", "trigger", "worker",
-	"duration_ms", "commit_sha", "container_name", "output",
+	"duration_ms", "commit_sha", "container_name",
 	"created", "updated",
 }
 
-// jobRunOutputLimit caps each run's output in list_job_runs; the tail is kept
-// because that is where a failure is reported. It is applied after the client
-// has decoded the whole response, so it bounds what reaches the model, not what
-// crosses the wire — jobRunsMaxPerPage is what bounds that.
-const jobRunOutputLimit = 4000
+// jobRunDetailFields is jobRunListFields plus the output, for get_job_run.
+var jobRunDetailFields = append(append([]string{}, jobRunListFields...), "output")
 
-// Paging bounds for list_job_runs. Each run can carry jobRunOutputLimit
-// characters of output, so the shared 50/200 would put up to 800k characters in
-// a model's context on a routine outcome lookup; 10/25 keeps a page under 100k.
+// Bounds for the output get_job_run returns, in characters of the tail: the end
+// of a log is where a failure is reported.
 const (
-	jobRunsDefaultPerPage = 10
-	jobRunsMaxPerPage     = 25
+	jobRunOutputDefaultChars = 4000
+	jobRunOutputMaxChars     = 20000
 )
 
 func listJobRuns(c *client.Client) mcp.ToolHandlerFor[models.ListJobRunsInput, any] {
@@ -1246,9 +1249,9 @@ func listJobRuns(c *client.Client) mcp.ToolHandlerFor[models.ListJobRunsInput, a
 			return nil, nil, err
 		}
 
-		q := pagingWithin(in.Limit, in.Page, jobRunsDefaultPerPage, jobRunsMaxPerPage)
+		q := paging(in.Limit, in.Page)
 		q.Set("sort", "-created")
-		q.Set("fields", strings.Join(jobRunFields, ","))
+		q.Set("fields", strings.Join(jobRunListFields, ","))
 		q.Set("filter", buildFilter([]filterClause{
 			{field: "job", op: "=", value: jobID},
 			{field: "status", op: "=", value: in.Status},
@@ -1258,30 +1261,54 @@ func listJobRuns(c *client.Client) mcp.ToolHandlerFor[models.ListJobRunsInput, a
 		if err := c.Get(ctx, apiKey, "/api/collections/job_runs/records", q, &out); err != nil {
 			return nil, nil, err
 		}
-		if items, ok := out["items"].([]interface{}); ok {
-			for _, item := range items {
-				if rec, ok := item.(map[string]interface{}); ok {
-					truncateRunOutput(rec)
-				}
-			}
-		}
 		return nil, out, nil
 	}
 }
 
-// truncateRunOutput keeps the last jobRunOutputLimit characters of a run's
-// output and flags the cut.
-func truncateRunOutput(rec map[string]interface{}) {
-	output, ok := rec["output"].(string)
-	if !ok {
-		return
+func getJobRun(c *client.Client) mcp.ToolHandlerFor[models.GetJobRunInput, any] {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, in models.GetJobRunInput) (*mcp.CallToolResult, any, error) {
+		apiKey, err := apiKeyFrom(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		runID := strings.TrimSpace(in.RunID)
+		if runID == "" {
+			return nil, nil, fmt.Errorf("run_id is required: the job_runs record id from run_job or list_job_runs")
+		}
+		var re *regexp.Regexp
+		if in.Pattern != "" {
+			re, err = regexp.Compile(in.Pattern)
+			if err != nil {
+				return nil, nil, fmt.Errorf("invalid pattern: %w", err)
+			}
+		}
+		tailChars := in.TailChars
+		if tailChars <= 0 {
+			tailChars = jobRunOutputDefaultChars
+		}
+		if tailChars > jobRunOutputMaxChars {
+			tailChars = jobRunOutputMaxChars
+		}
+
+		q := url.Values{"fields": {strings.Join(jobRunDetailFields, ",")}}
+		var out map[string]interface{}
+		path := "/api/collections/job_runs/records/" + url.PathEscape(runID)
+		if err := c.Get(ctx, apiKey, path, q, &out); err != nil {
+			return nil, nil, err
+		}
+		if output, ok := out["output"].(string); ok {
+			if re != nil {
+				output = filterLines(output, re)
+				out["pattern"] = in.Pattern
+			}
+			if runes := []rune(output); len(runes) > tailChars {
+				output = string(runes[len(runes)-tailChars:])
+				out["output_truncated"] = true
+			}
+			out["output"] = output
+		}
+		return nil, out, nil
 	}
-	runes := []rune(output)
-	if len(runes) <= jobRunOutputLimit {
-		return
-	}
-	rec["output"] = string(runes[len(runes)-jobRunOutputLimit:])
-	rec["output_truncated"] = true
 }
 
 func getJobDefinition(c *client.Client) mcp.ToolHandlerFor[models.JobIDInput, any] {
