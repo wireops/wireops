@@ -32,6 +32,7 @@ import (
 	"github.com/wireops/wireops/internal/job"
 	"github.com/wireops/wireops/internal/policy"
 	"github.com/wireops/wireops/internal/protocol"
+	"github.com/wireops/wireops/internal/registry"
 	"github.com/wireops/wireops/internal/secrets"
 )
 
@@ -436,6 +437,18 @@ func (s *Scheduler) dispatchToWorker(ctx context.Context, runID, jobID, trigger,
 		return
 	}
 
+	// Resolved after the policy checks so credentials are never loaded for an
+	// image the worker policy rejects.
+	registryAuth, insecureRegistries, err := resolveJobRegistryAuth(s.app, p.def.Image)
+	if err != nil {
+		msg := fmt.Sprintf("registry auth error: %v", err)
+		log.Printf("[jobscheduler] dispatchToWorker: %s job=%s run=%s worker=%s", msg, jobID, runID, workerID)
+		if updateErr := s.updateJobRun(runID, "error", msg, 0, 0, 0); updateErr != nil {
+			log.Printf("[jobscheduler] dispatchToWorker: failed to persist registry auth error run=%s: %v", runID, updateErr)
+		}
+		return
+	}
+
 	var timeoutSecs int
 	if p.def.Resources.Timeout != "" {
 		d, err := time.ParseDuration(p.def.Resources.Timeout)
@@ -447,23 +460,25 @@ func (s *Scheduler) dispatchToWorker(ctx context.Context, runID, jobID, trigger,
 	dispatchStart := time.Now()
 
 	cmd := protocol.RunJobCommand{
-		CommandID:        fmt.Sprintf("job-%s", runID),
-		JobRunID:         runID,
-		JobName:          p.def.Name,
-		Image:            p.def.Image,
-		Command:          []string(p.def.Command),
-		Env:              p.envMap,
-		RepositoryID:     p.repoID,
-		RepositoryBranch: p.repoBranch,
-		RepositoryFile:   p.jobFile,
-		CommitSHA:        p.commitSHA,
-		Volumes:          p.def.Volumes,
-		Network:          p.def.Network,
-		CPUs:             p.def.Resources.CPU,
-		MemoryLimit:      p.def.Resources.Memory,
-		TimeoutSeconds:   timeoutSecs,
-		ConfigFiles:      p.configFiles,
-		DispatchedAt:     dispatchStart.UnixMilli(),
+		CommandID:          fmt.Sprintf("job-%s", runID),
+		JobRunID:           runID,
+		JobName:            p.def.Name,
+		Image:              p.def.Image,
+		Command:            []string(p.def.Command),
+		Env:                p.envMap,
+		RepositoryID:       p.repoID,
+		RepositoryBranch:   p.repoBranch,
+		RepositoryFile:     p.jobFile,
+		CommitSHA:          p.commitSHA,
+		Volumes:            p.def.Volumes,
+		Network:            p.def.Network,
+		CPUs:               p.def.Resources.CPU,
+		MemoryLimit:        p.def.Resources.Memory,
+		TimeoutSeconds:     timeoutSecs,
+		ConfigFiles:        p.configFiles,
+		DispatchedAt:       dispatchStart.UnixMilli(),
+		RegistryAuthB64:    registryAuth,
+		InsecureRegistries: insecureRegistries,
 	}
 
 	// Remote worker: wait only for the start ack (worker immediately returns "started").
@@ -502,6 +517,19 @@ func (s *Scheduler) dispatchToWorker(ctx context.Context, runID, jobID, trigger,
 		return
 	}
 	log.Printf("[jobscheduler] job run=%s worker=%s job=%s started", runID, workerID, jobID)
+}
+
+// resolveJobRegistryAuth builds the per-run Docker config for the registry
+// hosting a job's image, mirroring the stack reconciler's resolveRegistryAuth.
+// A missing credential leaves the pull anonymous; a matching credential that
+// cannot be loaded fails the run rather than producing an opaque unauthorized
+// pull on the worker.
+func resolveJobRegistryAuth(app core.App, image string) (authB64 string, insecureHosts []string, err error) {
+	host, err := registry.RegistryHostFromImage(image)
+	if err != nil {
+		return "", nil, err
+	}
+	return registry.BuildDockerAuthForHosts(app, []string{host})
 }
 
 // HandleJobCompleted is called by the MTLSServer when a remote worker pushes

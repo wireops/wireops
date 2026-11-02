@@ -241,17 +241,12 @@ func registryHostsFromComposeYAML(content []byte, lookup interpolation.LookupVal
 		if !ok {
 			return nil, fmt.Errorf("parse image for service %q: image must be a string", service)
 		}
-		image := strings.TrimSpace(imageValue)
-		if image == "" {
+		if strings.TrimSpace(imageValue) == "" {
 			continue
 		}
-		named, err := reference.ParseNormalizedNamed(image)
+		host, err := RegistryHostFromImage(imageValue)
 		if err != nil {
-			return nil, fmt.Errorf("parse image for service %q: %w", service, err)
-		}
-		host := NormalizeRegistryHost(reference.Domain(named))
-		if host == "" {
-			return nil, fmt.Errorf("image for service %q has no registry host", service)
+			return nil, fmt.Errorf("image for service %q: %w", service, err)
 		}
 		hosts[host] = struct{}{}
 	}
@@ -262,6 +257,25 @@ func registryHostsFromComposeYAML(content []byte, lookup interpolation.LookupVal
 	}
 	sort.Strings(result)
 	return result, nil
+}
+
+// RegistryHostFromImage returns the normalized registry hostname for a single
+// image reference, using the same normalization as the Compose path: a bare
+// name such as alpine:3.22 resolves to docker.io.
+func RegistryHostFromImage(image string) (string, error) {
+	image = strings.TrimSpace(image)
+	if image == "" {
+		return "", fmt.Errorf("image reference is empty")
+	}
+	named, err := reference.ParseNormalizedNamed(image)
+	if err != nil {
+		return "", fmt.Errorf("parse image %q: %w", image, err)
+	}
+	host := NormalizeRegistryHost(reference.Domain(named))
+	if host == "" {
+		return "", fmt.Errorf("image %q has no registry host", image)
+	}
+	return host, nil
 }
 
 // BuildDockerAuthForHosts renders a per-command docker config.json containing
