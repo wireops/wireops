@@ -19,7 +19,8 @@ changes in a minor release.
 ### Added
 
 - MCP `list_job_runs` tool lists the runs of a scheduled job (by id or exact
-  name), newest first and paged, with each run's status, trigger, duration,
+  name), newest first and paged (10 per page, at most 25, since each run
+  carries up to 4000 characters of output), with each run's status, trigger, duration,
   commit and output tail, so an agent can read the outcome of a run it
   triggered with `run_job`.
 - `POST /api/custom/jobs/{id}/run` and the MCP `run_job` tool now return the

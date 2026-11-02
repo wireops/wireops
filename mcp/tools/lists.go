@@ -49,11 +49,17 @@ var repoListFields = []string{
 
 // paging converts a tool's limit/page into PocketBase query params.
 func paging(limit, page int) url.Values {
+	return pagingWithin(limit, page, listDefaultPerPage, listMaxPerPage)
+}
+
+// pagingWithin is paging with tool-specific bounds, for a list whose items are
+// heavy enough that the shared 50/200 would flood a model's context.
+func pagingWithin(limit, page, defaultPerPage, maxPerPage int) url.Values {
 	if limit <= 0 {
-		limit = listDefaultPerPage
+		limit = defaultPerPage
 	}
-	if limit > listMaxPerPage {
-		limit = listMaxPerPage
+	if limit > maxPerPage {
+		limit = maxPerPage
 	}
 	if page <= 0 {
 		page = 1

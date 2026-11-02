@@ -1631,3 +1631,29 @@ func TestListJobRunsMissingAPIKey(t *testing.T) {
 		t.Fatal("expected error when API key missing from context")
 	}
 }
+
+func TestListJobRunsClampsLimit(t *testing.T) {
+	var gotPerPage, gotPage string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPerPage, gotPage = r.URL.Query().Get("perPage"), r.URL.Query().Get("page")
+		writeFixture(w, `{"items":[]}`)
+	}))
+	defer srv.Close()
+
+	handler := listJobRuns(client.New(srv.URL))
+	for _, tc := range []struct {
+		in      models.ListJobRunsInput
+		perPage string
+		page    string
+	}{
+		{models.ListJobRunsInput{JobID: "job000000000001"}, "10", "1"},
+		{models.ListJobRunsInput{JobID: "job000000000001", Limit: 1000, Page: 4}, "25", "4"},
+	} {
+		if _, _, err := handler(ctxWithKey(), nil, tc.in); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if gotPerPage != tc.perPage || gotPage != tc.page {
+			t.Errorf("input %+v: perPage=%q page=%q, want %s/%s", tc.in, gotPerPage, gotPage, tc.perPage, tc.page)
+		}
+	}
+}

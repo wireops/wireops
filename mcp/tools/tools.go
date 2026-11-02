@@ -198,7 +198,7 @@ func registerReadTools(server *mcp.Server, c *client.Client) {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "list_job_runs",
-		Description: "List runs of a wireops scheduled job (its id or exact name), newest first: status, trigger, duration_ms, commit_sha and output. Each run's output is cut to its last 4000 characters (output_truncated says so). Use it after run_job to read the run's outcome.",
+		Description: "List runs of a wireops scheduled job (its id or exact name), newest first: status, trigger, duration_ms, commit_sha and output. Each run's output is cut to its last 4000 characters (output_truncated says so); pages are 10 runs by default, 25 at most. Use it after run_job to read the run's outcome.",
 		Annotations: readOnly(),
 	}, listJobRuns(c))
 
@@ -1218,10 +1218,19 @@ var jobRunFields = []string{
 	"created", "updated",
 }
 
-// jobRunOutputLimit caps each run's output in list_job_runs. A page of 50 runs
-// at full length would be a model's whole context; the tail is kept because
-// that is where a failure is reported.
+// jobRunOutputLimit caps each run's output in list_job_runs; the tail is kept
+// because that is where a failure is reported. It is applied after the client
+// has decoded the whole response, so it bounds what reaches the model, not what
+// crosses the wire — jobRunsMaxPerPage is what bounds that.
 const jobRunOutputLimit = 4000
+
+// Paging bounds for list_job_runs. Each run can carry jobRunOutputLimit
+// characters of output, so the shared 50/200 would put up to 800k characters in
+// a model's context on a routine outcome lookup; 10/25 keeps a page under 100k.
+const (
+	jobRunsDefaultPerPage = 10
+	jobRunsMaxPerPage     = 25
+)
 
 func listJobRuns(c *client.Client) mcp.ToolHandlerFor[models.ListJobRunsInput, any] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, in models.ListJobRunsInput) (*mcp.CallToolResult, any, error) {
@@ -1237,7 +1246,7 @@ func listJobRuns(c *client.Client) mcp.ToolHandlerFor[models.ListJobRunsInput, a
 			return nil, nil, err
 		}
 
-		q := paging(in.Limit, in.Page)
+		q := pagingWithin(in.Limit, in.Page, jobRunsDefaultPerPage, jobRunsMaxPerPage)
 		q.Set("sort", "-created")
 		q.Set("fields", strings.Join(jobRunFields, ","))
 		q.Set("filter", buildFilter([]filterClause{

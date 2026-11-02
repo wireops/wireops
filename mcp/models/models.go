@@ -119,7 +119,7 @@ type ListJobsInput struct {
 type ListJobRunsInput struct {
 	JobID  string `json:"job_id" jsonschema:"The wireops scheduled job: its record id, or its exact name."`
 	Status string `json:"status,omitempty" jsonschema:"Only runs with this exact status. Optional."`
-	Limit  int    `json:"limit,omitempty" jsonschema:"Maximum number of runs per page, newest first (default 50, max 200)."`
+	Limit  int    `json:"limit,omitempty" jsonschema:"Maximum number of runs per page, newest first (default 10, max 25: each run carries up to 4000 characters of output)."`
 	Page   int    `json:"page,omitempty" jsonschema:"Page number, 1-indexed (default 1)."`
 }
 
