@@ -18,6 +18,19 @@ changes in a minor release.
 
 ### Added
 
+- MCP `list_job_runs` lists the runs of a scheduled job (by id or exact name),
+  newest first and paged, with status, trigger, duration and commit but no
+  output, so an agent can poll a run it started with `run_job` cheaply. The new
+  `get_job_run` reads one run's log by run id, cut to its last `tail_chars`
+  characters (default 4000, at most 20000) and optionally filtered by a
+  per-line `pattern`.
+- `POST /api/custom/jobs/{id}/run` and the MCP `run_job` tool now return the
+  created runs: `run_ids` always, plus `run_id` when there is exactly one (a
+  `once_all` job creates one run per worker). A run that failed before it
+  could be dispatched — bad definition, unavailable secret backend, no
+  matching worker — is returned too, already in its `error` or `stalled`
+  state. The run records are now created before the response, so the request
+  also waits for the job's env vars and config files to resolve.
 - Registry credentials are now selected automatically from the exact registry
   hosts referenced by a stack's final Compose images, including image tags,
   digests, render-time overrides, explicit ports, and Docker Hub's implicit
@@ -164,6 +177,10 @@ changes in a minor release.
 
 ### Fixed
 
+- MCP `list_jobs` failed on every call with `json: cannot unmarshal object into
+  Go value of type []interface {}` since the jobs route became paged. It now
+  decodes the paged response and passes `name_contains`, `status`, `limit` and
+  the new `page` to the server (#187).
 - A deploy killed by `deploy_timeout_seconds` no longer leaves the stack record
   describing a host that does not exist. `docker compose up` is not atomic, so
   the containers it had already recreated keep running the new revision while

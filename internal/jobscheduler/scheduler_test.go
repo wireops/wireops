@@ -64,7 +64,7 @@ func TestExecuteJobPersistsDefinitionError(t *testing.T) {
 	jobRec := createScheduledJobRecord(t, app, repo.Id, "missing.yml")
 	s := NewScheduler(app, fakeJobDispatcher{workers: []string{"worker-1"}}, config.GetReposWorkspace())
 
-	s.executeJob(jobRec.Id, "manual", "test-user")
+	ids := s.executeJob(jobRec.Id, "manual", "test-user")
 
 	refreshed, err := app.FindRecordById("scheduled_jobs", jobRec.Id)
 	if err != nil {
@@ -87,6 +87,9 @@ func TestExecuteJobPersistsDefinitionError(t *testing.T) {
 	if runs[0].GetString("output") == "" {
 		t.Fatal("expected persisted definition error output")
 	}
+	if len(ids) != 1 || ids[0] != runs[0].Id {
+		t.Fatalf("returned run ids = %v, want [%s]", ids, runs[0].Id)
+	}
 }
 
 func TestExecuteJobWithoutWorkersPersistsStalledRun(t *testing.T) {
@@ -96,7 +99,7 @@ func TestExecuteJobWithoutWorkersPersistsStalledRun(t *testing.T) {
 	jobRec := createScheduledJobRecord(t, app, repo.Id, "job.yaml")
 	s := NewScheduler(app, fakeJobDispatcher{}, config.GetReposWorkspace())
 
-	s.executeJob(jobRec.Id, "cron", "system")
+	ids := s.executeJob(jobRec.Id, "cron", "system")
 
 	refreshed, err := app.FindRecordById("scheduled_jobs", jobRec.Id)
 	if err != nil {
@@ -115,6 +118,9 @@ func TestExecuteJobWithoutWorkersPersistsStalledRun(t *testing.T) {
 	}
 	if got := runs[0].GetString("status"); got != "stalled" {
 		t.Fatalf("job run status = %q, want stalled", got)
+	}
+	if len(ids) != 1 || ids[0] != runs[0].Id {
+		t.Fatalf("returned run ids = %v, want [%s]", ids, runs[0].Id)
 	}
 }
 
@@ -484,13 +490,17 @@ func TestExecuteJobConvertsResources(t *testing.T) {
 	}
 
 	s := NewScheduler(app, dispatcher, config.GetReposWorkspace())
-	s.executeJob(jobRec.Id, "manual", "test-user")
+	ids := s.executeJob(jobRec.Id, "manual", "test-user")
 
 	var capturedCmd protocol.RunJobCommand
 	select {
 	case capturedCmd = <-capturedCmdChan:
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for job to be dispatched")
+	}
+
+	if len(ids) != 1 || ids[0] != capturedCmd.JobRunID {
+		t.Errorf("returned run ids = %v, want the dispatched run [%s]", ids, capturedCmd.JobRunID)
 	}
 
 	if capturedCmd.CPUs != "0.5" {
@@ -586,5 +596,75 @@ func TestUpdateJobRunTruncatesOutput(t *testing.T) {
 	tailIdx := strings.LastIndex(truncatedOutput, tailStr)
 	if headIdx < 0 || markerIdx < 0 || tailIdx < 0 || !(headIdx < markerIdx && markerIdx < tailIdx) {
 		t.Error("expected marker to be present between preserved head and tail")
+	}
+}
+
+func TestExecuteJobOnceAllReturnsARunPerWorker(t *testing.T) {
+	app := newJobSchedulerTestApp(t)
+	repo := createJobRepoRecord(t, app)
+	dir := filepath.Join(config.GetReposWorkspace(), repo.Id)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("failed to create repo dir: %v", err)
+	}
+	content := []byte("name: Test Job\ndescription: Test job\nimage: alpine\ncron: \"* * * * *\"\ncommand: echo ok\nmode: once_all\nresources:\n  cpu: \"0.5\"\n  memory: \"512m\"\n  timeout: \"10m\"\n")
+	if err := os.WriteFile(filepath.Join(dir, "job.yaml"), content, 0644); err != nil {
+		t.Fatalf("failed to write job file: %v", err)
+	}
+	jobRec := createScheduledJobRecord(t, app, repo.Id, "job.yaml")
+
+	workers := make([]string, 0, 2)
+	for _, host := range []string{"worker-1", "worker-2"} {
+		w := mustCreateRecord(t, app, "workers", map[string]any{
+			"hostname":    host,
+			"fingerprint": "fp-" + host,
+			"status":      "ACTIVE",
+		})
+		workers = append(workers, w.Id)
+	}
+
+	dispatched := make(chan protocol.RunJobCommand, len(workers))
+	dispatcher := capturingJobDispatcher{
+		workers: workers,
+		onDispatch: func(cmd interface{}) {
+			if runJobCmd, ok := cmd.(protocol.RunJobCommand); ok {
+				dispatched <- runJobCmd
+			}
+		},
+	}
+
+	s := NewScheduler(app, dispatcher, config.GetReposWorkspace())
+	ids := s.executeJob(jobRec.Id, "manual", "test-user")
+
+	if len(ids) != len(workers) {
+		t.Fatalf("returned run ids = %v, want one per worker (%d)", ids, len(workers))
+	}
+	for range workers {
+		select {
+		case cmd := <-dispatched:
+			found := false
+			for _, id := range ids {
+				found = found || id == cmd.JobRunID
+			}
+			if !found {
+				t.Errorf("dispatched run %s is not among the returned ids %v", cmd.JobRunID, ids)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for the jobs to be dispatched")
+		}
+	}
+
+	// Let the dispatch goroutines finish writing "running" before cleanup.
+	pollStart := time.Now()
+	for _, id := range ids {
+		for {
+			run, err := app.FindRecordById("job_runs", id)
+			if err == nil && run.GetString("status") == "running" {
+				break
+			}
+			if time.Since(pollStart) > 2*time.Second {
+				t.Fatalf("timed out waiting for run %s to become running", id)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
 	}
 }

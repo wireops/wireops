@@ -2,9 +2,11 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -774,7 +776,7 @@ func TestListJobsPath(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		gotHeader = r.Header.Get(auth.APIKeyHeader)
-		writeFixture(w, `[{"id":"job000000000001"}]`)
+		writeFixture(w, `{"items":[{"id":"job000000000001","status":"success","recent_runs":[{"id":"run000000000001","status":"success"}]}],"total_items":1}`)
 	}))
 	defer srv.Close()
 
@@ -796,6 +798,68 @@ func TestListJobsPath(t *testing.T) {
 	jobs, ok := obj["jobs"].([]interface{})
 	if !ok || len(jobs) != 1 {
 		t.Fatalf("expected jobs array to be preserved, got %#v", obj["jobs"])
+	}
+	if obj["total_items"] != 1 {
+		t.Fatalf("expected total_items 1, got %#v", obj["total_items"])
+	}
+	if _, present := obj["_notice"]; present {
+		t.Fatalf("a single complete page must carry no notice, got %#v", obj["_notice"])
+	}
+}
+
+func TestListJobsForwardsFiltersAndPaging(t *testing.T) {
+	var gotQuery url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query()
+		writeFixture(w, `{"items":[{"id":"job000000000001"}],"total_items":12}`)
+	}))
+	defer srv.Close()
+
+	handler := listJobs(client.New(srv.URL))
+	_, out, err := handler(ctxWithKey(), nil, models.ListJobsInput{NameContains: "pay", Status: "error", Limit: 5, Page: 2})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for key, want := range map[string]string{"search": "pay", "status": "error", "per_page": "5", "page": "2"} {
+		if got := gotQuery.Get(key); got != want {
+			t.Errorf("query %s = %q, want %q", key, got, want)
+		}
+	}
+	obj := out.(map[string]interface{})
+	if obj["page"] != 2 || obj["per_page"] != 5 || obj["total_items"] != 12 {
+		t.Fatalf("unexpected paging fields: %#v", obj)
+	}
+	if _, present := obj["_notice"]; !present {
+		t.Fatal("expected a notice when 12 jobs match but page 2 of 5 ends at 10")
+	}
+}
+
+func TestListJobsClampsLimit(t *testing.T) {
+	var gotQuery url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query()
+		writeFixture(w, `{"items":[],"total_items":0}`)
+	}))
+	defer srv.Close()
+
+	handler := listJobs(client.New(srv.URL))
+	for _, tc := range []struct {
+		in      models.ListJobsInput
+		perPage string
+		page    string
+	}{
+		{models.ListJobsInput{}, "50", "1"},
+		{models.ListJobsInput{Limit: 1000}, "200", "1"},
+	} {
+		if _, _, err := handler(ctxWithKey(), nil, tc.in); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if gotQuery.Get("per_page") != tc.perPage || gotQuery.Get("page") != tc.page {
+			t.Errorf("input %+v: per_page=%q page=%q, want %s/%s", tc.in, gotQuery.Get("per_page"), gotQuery.Get("page"), tc.perPage, tc.page)
+		}
+		if gotQuery.Has("search") || gotQuery.Has("status") {
+			t.Errorf("unset filters must not be sent, got %v", gotQuery)
+		}
 	}
 }
 
@@ -1444,4 +1508,242 @@ func TestGetStackServicesHasNoNoticeForAPlainStack(t *testing.T) {
 // than argue with the scanner (see CLAUDE.md on HTML-string test stubs).
 func writeFixture(w io.Writer, body string) {
 	_, _ = io.WriteString(w, body)
+}
+
+func TestListJobRunsFiltersByJob(t *testing.T) {
+	var gotPath string
+	var gotQuery url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotQuery = r.URL.Query()
+		writeFixture(w, `{"items":[{"id":"run000000000001","status":"error","output":"boom"}],"totalItems":1}`)
+	}))
+	defer srv.Close()
+
+	handler := listJobRuns(client.New(srv.URL))
+	_, out, err := handler(ctxWithKey(), nil, models.ListJobRunsInput{JobID: "job000000000001", Status: "error", Limit: 10, Page: 3})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotPath != "/api/collections/job_runs/records" {
+		t.Fatalf("unexpected path: %s", gotPath)
+	}
+	if got := gotQuery.Get("filter"); got != "job='job000000000001' && status='error'" {
+		t.Errorf("unexpected filter: %q", got)
+	}
+	for key, want := range map[string]string{"sort": "-created", "perPage": "10", "page": "3"} {
+		if got := gotQuery.Get(key); got != want {
+			t.Errorf("query %s = %q, want %q", key, got, want)
+		}
+	}
+	if fields := gotQuery.Get("fields"); strings.Contains(fields, "output") || !strings.Contains(fields, "status") {
+		t.Errorf("expected a status-only projection without output, got %q", fields)
+	}
+	items := out.(map[string]interface{})["items"].([]interface{})
+	if len(items) != 1 {
+		t.Fatalf("expected the run back, got %#v", out)
+	}
+}
+
+func TestListJobRunsOmitsStatusFilterWhenUnset(t *testing.T) {
+	var gotFilter string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotFilter = r.URL.Query().Get("filter")
+		writeFixture(w, `{"items":[]}`)
+	}))
+	defer srv.Close()
+
+	handler := listJobRuns(client.New(srv.URL))
+	if _, _, err := handler(ctxWithKey(), nil, models.ListJobRunsInput{JobID: "job000000000001"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotFilter != "job='job000000000001'" {
+		t.Fatalf("unexpected filter: %q", gotFilter)
+	}
+}
+
+func TestListJobRunsResolvesName(t *testing.T) {
+	var runsFilter string
+	var lookedUp bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/collections/scheduled_jobs/records":
+			lookedUp = strings.Contains(r.URL.Query().Get("filter"), "name='nightly-backup'")
+			writeFixture(w, `{"items":[{"id":"job000000000001","name":"nightly-backup"}]}`)
+		case "/api/collections/job_runs/records":
+			runsFilter = r.URL.Query().Get("filter")
+			writeFixture(w, `{"items":[]}`)
+		}
+	}))
+	defer srv.Close()
+
+	handler := listJobRuns(client.New(srv.URL))
+	if _, _, err := handler(ctxWithKey(), nil, models.ListJobRunsInput{JobID: "nightly-backup"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !lookedUp {
+		t.Fatal("expected the job name to be resolved through scheduled_jobs")
+	}
+	if runsFilter != "job='job000000000001'" {
+		t.Fatalf("expected the resolved id in the runs filter, got %q", runsFilter)
+	}
+}
+
+func TestListJobRunsRequiresJobID(t *testing.T) {
+	handler := listJobRuns(client.New("http://unused"))
+	if _, _, err := handler(ctxWithKey(), nil, models.ListJobRunsInput{JobID: "  "}); err == nil {
+		t.Fatal("expected error when job_id is blank")
+	}
+}
+
+func TestListJobRunsMissingAPIKey(t *testing.T) {
+	handler := listJobRuns(client.New("http://unused"))
+	if _, _, err := handler(context.Background(), nil, models.ListJobRunsInput{JobID: "job000000000001"}); err == nil {
+		t.Fatal("expected error when API key missing from context")
+	}
+}
+
+func TestListJobRunsClampsLimit(t *testing.T) {
+	var gotPerPage, gotPage string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPerPage, gotPage = r.URL.Query().Get("perPage"), r.URL.Query().Get("page")
+		writeFixture(w, `{"items":[]}`)
+	}))
+	defer srv.Close()
+
+	handler := listJobRuns(client.New(srv.URL))
+	for _, tc := range []struct {
+		in      models.ListJobRunsInput
+		perPage string
+		page    string
+	}{
+		{models.ListJobRunsInput{JobID: "job000000000001"}, "50", "1"},
+		{models.ListJobRunsInput{JobID: "job000000000001", Limit: 1000, Page: 4}, "200", "4"},
+	} {
+		if _, _, err := handler(ctxWithKey(), nil, tc.in); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if gotPerPage != tc.perPage || gotPage != tc.page {
+			t.Errorf("input %+v: perPage=%q page=%q, want %s/%s", tc.in, gotPerPage, gotPage, tc.perPage, tc.page)
+		}
+	}
+}
+
+func getJobRunServer(t *testing.T, output string, gotPath *string, gotQuery *url.Values) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*gotPath = r.URL.Path
+		*gotQuery = r.URL.Query()
+		b, _ := json.Marshal(map[string]any{"id": "run000000000001", "status": "error", "output": output})
+		writeFixture(w, string(b))
+	}))
+}
+
+func TestGetJobRunReadsOneRunWithOutput(t *testing.T) {
+	var gotPath string
+	var gotQuery url.Values
+	srv := getJobRunServer(t, "line one\nline two", &gotPath, &gotQuery)
+	defer srv.Close()
+
+	handler := getJobRun(client.New(srv.URL))
+	_, out, err := handler(ctxWithKey(), nil, models.GetJobRunInput{RunID: "run000000000001"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotPath != "/api/collections/job_runs/records/run000000000001" {
+		t.Fatalf("unexpected path: %s", gotPath)
+	}
+	if !strings.Contains(gotQuery.Get("fields"), "output") {
+		t.Errorf("expected output in the projection, got %q", gotQuery.Get("fields"))
+	}
+	rec := out.(map[string]interface{})
+	if rec["output"] != "line one\nline two" {
+		t.Errorf("short output must be untouched, got %#v", rec["output"])
+	}
+	if _, present := rec["output_truncated"]; present {
+		t.Errorf("an uncut run must not be flagged, got %#v", rec)
+	}
+}
+
+func TestGetJobRunKeepsTheTailOfLongOutput(t *testing.T) {
+	var gotPath string
+	var gotQuery url.Values
+	srv := getJobRunServer(t, strings.Repeat("a", 6000)+"TAIL", &gotPath, &gotQuery)
+	defer srv.Close()
+
+	handler := getJobRun(client.New(srv.URL))
+	for _, tc := range []struct {
+		tail int
+		want int
+	}{
+		{0, jobRunOutputDefaultChars},
+		{100, 100},
+		{1_000_000, 6004}, // clamped to the 20000 max, which holds the whole output
+	} {
+		_, out, err := handler(ctxWithKey(), nil, models.GetJobRunInput{RunID: "run000000000001", TailChars: tc.tail})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		rec := out.(map[string]interface{})
+		got := rec["output"].(string)
+		if len([]rune(got)) != tc.want || !strings.HasSuffix(got, "TAIL") {
+			t.Errorf("tail_chars=%d: got %d chars ending %q, want %d ending TAIL", tc.tail, len(got), got[len(got)-4:], tc.want)
+		}
+		if truncated := rec["output_truncated"] == true; truncated != (tc.want < 6004) {
+			t.Errorf("tail_chars=%d: output_truncated=%v", tc.tail, truncated)
+		}
+	}
+}
+
+func TestGetJobRunMaxTailIsCapped(t *testing.T) {
+	var gotPath string
+	var gotQuery url.Values
+	srv := getJobRunServer(t, strings.Repeat("b", jobRunOutputMaxChars+500), &gotPath, &gotQuery)
+	defer srv.Close()
+
+	handler := getJobRun(client.New(srv.URL))
+	_, out, err := handler(ctxWithKey(), nil, models.GetJobRunInput{RunID: "run000000000001", TailChars: 1_000_000})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	rec := out.(map[string]interface{})
+	if got := len([]rune(rec["output"].(string))); got != jobRunOutputMaxChars {
+		t.Errorf("output = %d chars, want the %d cap", got, jobRunOutputMaxChars)
+	}
+	if rec["output_truncated"] != true {
+		t.Errorf("expected output_truncated, got %#v", rec)
+	}
+}
+
+func TestGetJobRunPatternFiltersLinesBeforeTheCut(t *testing.T) {
+	var gotPath string
+	var gotQuery url.Values
+	srv := getJobRunServer(t, "ok 1\nERROR disk full\nok 2\nERROR retry failed", &gotPath, &gotQuery)
+	defer srv.Close()
+
+	handler := getJobRun(client.New(srv.URL))
+	_, out, err := handler(ctxWithKey(), nil, models.GetJobRunInput{RunID: "run000000000001", Pattern: "ERROR"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	rec := out.(map[string]interface{})
+	if rec["output"] != "ERROR disk full\nERROR retry failed" {
+		t.Errorf("unexpected filtered output: %#v", rec["output"])
+	}
+	if rec["pattern"] != "ERROR" {
+		t.Errorf("expected the applied pattern echoed, got %#v", rec["pattern"])
+	}
+}
+
+func TestGetJobRunRejectsBadInput(t *testing.T) {
+	handler := getJobRun(client.New("http://unused"))
+	if _, _, err := handler(ctxWithKey(), nil, models.GetJobRunInput{RunID: " "}); err == nil {
+		t.Error("expected error when run_id is blank")
+	}
+	if _, _, err := handler(ctxWithKey(), nil, models.GetJobRunInput{RunID: "run000000000001", Pattern: "("}); err == nil {
+		t.Error("expected error for an invalid pattern")
+	}
+	if _, _, err := handler(context.Background(), nil, models.GetJobRunInput{RunID: "run000000000001"}); err == nil {
+		t.Error("expected error when API key missing from context")
+	}
 }
