@@ -192,7 +192,7 @@ func registerReadTools(server *mcp.Server, c *client.Client) {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "list_jobs",
-		Description: "List wireops scheduled (cron) jobs, paged, with their status and their 5 most recent runs (id, status, created). name_contains, status, limit and page are applied by the server. For a run's outcome (output, duration, trigger) use list_job_runs.",
+		Description: "List wireops scheduled (cron) jobs, paged, with their status and their 5 most recent runs (id, status, created). name_contains, status, limit and page are applied by the server. For a job's full run history use list_job_runs, and for a run's log get_job_run.",
 		Annotations: readOnly(),
 	}, listJobs(c))
 
