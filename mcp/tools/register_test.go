@@ -262,7 +262,7 @@ func TestRegisterReadOnlySetOmitsWriteTools(t *testing.T) {
 	for _, name := range []string{
 		"whoami", "list_stacks", "get_stack_status", "get_container_logs",
 		"lint_compose", "preview_stack_migration", "browse_repo_files",
-		"discover_importable_stacks", "list_job_groups",
+		"discover_importable_stacks", "list_job_groups", "list_jobs", "list_job_runs",
 	} {
 		if _, ok := byName[name]; !ok {
 			t.Errorf("expected %q in the read set", name)

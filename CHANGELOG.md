@@ -18,6 +18,10 @@ changes in a minor release.
 
 ### Added
 
+- MCP `list_job_runs` tool lists the runs of a scheduled job (by id or exact
+  name), newest first and paged, with each run's status, trigger, duration,
+  commit and output tail, so an agent can read the outcome of a run it
+  triggered with `run_job`.
 - Registry credentials are now selected automatically from the exact registry
   hosts referenced by a stack's final Compose images, including image tags,
   digests, render-time overrides, explicit ports, and Docker Hub's implicit
@@ -164,6 +168,10 @@ changes in a minor release.
 
 ### Fixed
 
+- MCP `list_jobs` failed on every call with `json: cannot unmarshal object into
+  Go value of type []interface {}` since the jobs route became paged. It now
+  decodes the paged response and passes `name_contains`, `status`, `limit` and
+  the new `page` to the server (#187).
 - A deploy killed by `deploy_timeout_seconds` no longer leaves the stack record
   describing a host that does not exist. `docker compose up` is not atomic, so
   the containers it had already recreated keep running the new revision while

@@ -192,9 +192,15 @@ func registerReadTools(server *mcp.Server, c *client.Client) {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "list_jobs",
-		Description: "List wireops scheduled (cron) jobs, with their status and recent runs.",
+		Description: "List wireops scheduled (cron) jobs, paged, with their status and their 5 most recent runs (id, status, created). name_contains, status, limit and page are applied by the server. For a run's outcome (output, duration, trigger) use list_job_runs.",
 		Annotations: readOnly(),
 	}, listJobs(c))
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "list_job_runs",
+		Description: "List runs of a wireops scheduled job (its id or exact name), newest first: status, trigger, duration_ms, commit_sha and output. Each run's output is cut to its last 4000 characters (output_truncated says so). Use it after run_job to read the run's outcome.",
+		Annotations: readOnly(),
+	}, listJobRuns(c))
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_job_definition",
@@ -1168,21 +1174,105 @@ func listJobs(c *client.Client) mcp.ToolHandlerFor[models.ListJobsInput, any] {
 		if err != nil {
 			return nil, nil, err
 		}
-		var out []interface{}
-		if err := c.Get(ctx, apiKey, "/api/custom/jobs", nil, &out); err != nil {
+		// The jobs route is paged by its own per_page/page params, not
+		// PocketBase's perPage; paging() supplies the shared default and cap.
+		pq := paging(in.Limit, in.Page)
+		perPage, page := pq.Get("perPage"), pq.Get("page")
+		q := url.Values{"per_page": {perPage}, "page": {page}}
+		if in.NameContains != "" {
+			q.Set("search", in.NameContains)
+		}
+		if in.Status != "" {
+			q.Set("status", in.Status)
+		}
+
+		var out struct {
+			Items      []interface{} `json:"items"`
+			TotalItems int           `json:"total_items"`
+		}
+		if err := c.Get(ctx, apiKey, "/api/custom/jobs", q, &out); err != nil {
 			return nil, nil, err
 		}
-		total := len(out)
-		filtered := filterRecords(out, in.Limit, func(rec map[string]interface{}) bool {
-			return matchesSubstring(recordString(rec, "name"), in.NameContains) &&
-				(in.Status == "" || recordString(rec, "status") == in.Status)
-		})
-		result := map[string]interface{}{"jobs": filtered, "total_before_filter": total}
-		if len(filtered) < total {
-			result["_notice"] = "The server returns every scheduled job in one response; name_contains/status/limit were applied by the MCP server after fetching, so total_before_filter is the real total."
+		jobs := out.Items
+		if jobs == nil {
+			jobs = []interface{}{}
+		}
+		result := map[string]interface{}{
+			"jobs":        jobs,
+			"total_items": out.TotalItems,
+			"page":        atoiOr(page, 1),
+			"per_page":    atoiOr(perPage, listDefaultPerPage),
+		}
+		if atoiOr(page, 1)*atoiOr(perPage, listDefaultPerPage) < out.TotalItems {
+			result["_notice"] = "More jobs match than this page holds; pass page to read the rest."
 		}
 		return nil, result, nil
 	}
+}
+
+// jobRunFields is the projection for list_job_runs: the outcome of a run
+// without the worker-side bookkeeping.
+var jobRunFields = []string{
+	"id", "job", "status", "trigger", "worker",
+	"duration_ms", "commit_sha", "container_name", "output",
+	"created", "updated",
+}
+
+// jobRunOutputLimit caps each run's output in list_job_runs. A page of 50 runs
+// at full length would be a model's whole context; the tail is kept because
+// that is where a failure is reported.
+const jobRunOutputLimit = 4000
+
+func listJobRuns(c *client.Client) mcp.ToolHandlerFor[models.ListJobRunsInput, any] {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, in models.ListJobRunsInput) (*mcp.CallToolResult, any, error) {
+		apiKey, err := apiKeyFrom(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		if strings.TrimSpace(in.JobID) == "" {
+			return nil, nil, fmt.Errorf("job_id is required: the job's id or exact name")
+		}
+		jobID, err := resolveJobID(ctx, c, apiKey, in.JobID)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		q := paging(in.Limit, in.Page)
+		q.Set("sort", "-created")
+		q.Set("fields", strings.Join(jobRunFields, ","))
+		q.Set("filter", buildFilter([]filterClause{
+			{field: "job", op: "=", value: jobID},
+			{field: "status", op: "=", value: in.Status},
+		}))
+
+		var out map[string]interface{}
+		if err := c.Get(ctx, apiKey, "/api/collections/job_runs/records", q, &out); err != nil {
+			return nil, nil, err
+		}
+		if items, ok := out["items"].([]interface{}); ok {
+			for _, item := range items {
+				if rec, ok := item.(map[string]interface{}); ok {
+					truncateRunOutput(rec)
+				}
+			}
+		}
+		return nil, out, nil
+	}
+}
+
+// truncateRunOutput keeps the last jobRunOutputLimit characters of a run's
+// output and flags the cut.
+func truncateRunOutput(rec map[string]interface{}) {
+	output, ok := rec["output"].(string)
+	if !ok {
+		return
+	}
+	runes := []rune(output)
+	if len(runes) <= jobRunOutputLimit {
+		return
+	}
+	rec["output"] = string(runes[len(runes)-jobRunOutputLimit:])
+	rec["output_truncated"] = true
 }
 
 func getJobDefinition(c *client.Client) mcp.ToolHandlerFor[models.JobIDInput, any] {
