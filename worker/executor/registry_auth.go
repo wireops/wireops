@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"time"
+
+	"github.com/wireops/wireops/internal/registryauth"
 )
 
 // dockerInfoTimeout bounds the `docker info` subprocess run by
@@ -134,7 +136,7 @@ func registryProbeHost(host string) string {
 }
 
 func checkRegistryAuth(host, authHeader string, insecure bool) error {
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := &http.Client{Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	if insecure {
 		// InsecureSkipVerify is only reached when the admin has explicitly
 		// marked this specific registry host as insecure (self-signed cert /
@@ -153,16 +155,7 @@ func checkRegistryAuth(host, authHeader string, insecure bool) error {
 	}
 	defer resp.Body.Close()
 
-	switch resp.StatusCode {
-	case http.StatusOK, http.StatusNotFound:
-		// 404 happens on some registries when /v2/ itself isn't a routed
-		// path but auth still succeeded (no 401/403); treat as reachable.
-		return nil
-	case http.StatusUnauthorized, http.StatusForbidden:
-		return fmt.Errorf("authentication rejected (HTTP %d)", resp.StatusCode)
-	default:
-		return fmt.Errorf("unexpected response (HTTP %d)", resp.StatusCode)
-	}
+	return registryauth.CheckResponse(context.Background(), client, resp, authHeader)
 }
 
 func doRegistryCheck(client *http.Client, url, authHeader string) (*http.Response, error) {

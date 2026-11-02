@@ -10,17 +10,19 @@ import (
 
 // Collections and their human-meaningful name field, for requireConfirm.
 const (
-	confirmStacks    = "stacks"
-	confirmWorkers   = "workers"
-	confirmRepos     = "repositories"
-	confirmSchedJobs = "scheduled_jobs"
+	confirmStacks              = "stacks"
+	confirmWorkers             = "workers"
+	confirmRepos               = "repositories"
+	confirmSchedJobs           = "scheduled_jobs"
+	confirmRegistryCredentials = "registry_credentials"
 )
 
 var confirmNameField = map[string]string{
-	confirmStacks:    "name",
-	confirmWorkers:   "hostname",
-	confirmRepos:     "name",
-	confirmSchedJobs: "name",
+	confirmStacks:              "name",
+	confirmWorkers:             "hostname",
+	confirmRepos:               "name",
+	confirmSchedJobs:           "name",
+	confirmRegistryCredentials: "name",
 }
 
 // requireConfirm implements the "type the name to confirm" guard used by the

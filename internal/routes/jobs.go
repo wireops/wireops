@@ -320,8 +320,17 @@ func RegisterJobRoutes(r *router.Router[*core.RequestEvent], app core.App, sched
 		if e.Auth != nil {
 			userID = e.Auth.Id
 		}
-		sched.TriggerManual(rec.Id, userID)
-		return e.JSON(http.StatusOK, map[string]string{"status": "triggered"})
+		runIDs := sched.TriggerManual(rec.Id, userID)
+		if runIDs == nil {
+			runIDs = []string{}
+		}
+		resp := map[string]any{"status": "triggered", "run_ids": runIDs}
+		// A job in `once_all` mode runs on every matching worker, one run each;
+		// run_id is only unambiguous when there is exactly one.
+		if len(runIDs) == 1 {
+			resp["run_id"] = runIDs[0]
+		}
+		return e.JSON(http.StatusOK, resp)
 	}).BindFunc(rbac.Require(rbac.CapManageJobs))
 
 	// Return the parsed job.yaml definition for a single scheduled job.

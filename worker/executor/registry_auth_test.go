@@ -171,3 +171,36 @@ func TestCheckInsecureRegistriesConfigured(t *testing.T) {
 		t.Fatal("expected error for host missing from daemon's registry config")
 	}
 }
+
+func TestValidateRegistryAuthBearerChallenge(t *testing.T) {
+	var endpoint string
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v2/":
+			if r.Header.Get("Authorization") == "Bearer registry-token" {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			w.Header().Set("WWW-Authenticate", `Bearer realm="`+endpoint+`/auth/token",service="grom-registry"`)
+			w.WriteHeader(http.StatusUnauthorized)
+		case "/auth/token":
+			user, pass, ok := r.BasicAuth()
+			if !ok || user != "deploy" || pass != "valid-key" || r.URL.Query().Get("service") != "grom-registry" {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"token":"registry-token"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	endpoint = server.URL
+	host := strings.TrimPrefix(endpoint, "https://")
+	auth := base64.StdEncoding.EncodeToString([]byte("deploy:valid-key"))
+	content := `{"auths":{"` + host + `":{"auth":"` + auth + `"}}}`
+	if err := validateRegistryAuth(base64.StdEncoding.EncodeToString([]byte(content)), []string{host}); err != nil {
+		t.Fatalf("valid Bearer registry credential rejected: %v", err)
+	}
+}

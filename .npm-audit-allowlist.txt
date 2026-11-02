@@ -11,15 +11,6 @@
 # grepping .output/public after `npm run generate` -- zero matches for any of
 # the packages below.
 #
-# GHSA-86w9-cpqp-85rv:
-# node-forge RSA PKCS#1 v1.5 signature verification accepts extra nested
-# DigestAlgorithm elements. Reached only via listhen -> nitropack/@nuxt/cli,
-# where node-forge generates the Nitro dev server's self-signed HTTPS cert.
-# No fixed release exists upstream: 1.4.0 is the latest published version and
-# the advisory covers <=1.4.0, and listhen 1.10.1 (latest) still requires
-# ^1.4.0. Revisit when node-forge ships a patched release.
-GHSA-86w9-cpqp-85rv
-
 # GHSA-vfj7-8cjw-p6xm:
 # braces stack-exhaustion DoS through deeply nested patterns. Reached only via
 # micromatch -> fast-glob -> globby -> nitropack, i.e. build-time file globbing

@@ -113,7 +113,7 @@ describe('RegistryCredentialModal', () => {
       username: 'deploy',
       password: 'hunter2',
     }))
-    expect(addToast).toHaveBeenCalledWith(expect.objectContaining({ title: 'Connection successful', color: 'success' }))
+    expect(addToast).toHaveBeenCalledWith(expect.objectContaining({ title: 'Entered values work', color: 'success' }))
   })
 
   it('shows a failure toast when the connection test reports an error', async () => {
@@ -164,8 +164,8 @@ describe('RegistryCredentialModal', () => {
     await flushPromises()
 
     expect(addToast).toHaveBeenCalledWith(expect.objectContaining({
-      title: 'Connection failed',
-      description: 'registry unreachable',
+      title: 'Entered values failed',
+      description: 'registry unreachable.',
       color: 'error',
     }))
   })
@@ -292,5 +292,174 @@ describe('RegistryCredentialModal', () => {
     await flushPromises()
 
     expect(update).toHaveBeenCalledWith('cred-1', expect.not.objectContaining({ password: expect.anything() }))
+  })
+
+  it('never mixes the saved record into the draft connection test', async () => {
+    const { testRegistryCredential } = setupGlobals()
+    const wrapper = mount(RegistryCredentialModal, {
+      props: {
+        open: false,
+        credential: { id: 'cred-1', name: 'GHCR', registry_url: 'ghcr.io', auth_type: 'basic', username: 'deploy', insecure: false },
+      },
+      shallow: true,
+    })
+    await wrapper.setProps({ open: true })
+    ;(wrapper.vm as any).form.password = 'hunter2'
+    await flushPromises()
+
+    await (wrapper.vm as any).testConnection()
+    await flushPromises()
+
+    const body = testRegistryCredential.mock.calls[0][0]
+    expect(body).not.toHaveProperty('credential_id')
+    expect(body.registry_url).toBe('ghcr.io')
+  })
+
+  it('requires a password for a draft test in edit mode', async () => {
+    const { addToast, testRegistryCredential } = setupGlobals()
+    const wrapper = mount(RegistryCredentialModal, {
+      props: {
+        open: false,
+        credential: { id: 'cred-1', name: 'GHCR', registry_url: 'ghcr.io', auth_type: 'basic', username: 'deploy', insecure: false },
+      },
+      shallow: true,
+    })
+    await wrapper.setProps({ open: true })
+    await flushPromises()
+
+    await (wrapper.vm as any).testConnection()
+    await flushPromises()
+
+    expect(testRegistryCredential).not.toHaveBeenCalled()
+    expect(addToast).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Password not entered',
+      description: expect.stringContaining('Verify Saved Credential'),
+      color: 'warning',
+    }))
+  })
+
+  it('verifies the persisted credential by id alone', async () => {
+    const { addToast, testRegistryCredential } = setupGlobals({
+      testRegistryCredential: vi.fn().mockResolvedValue({ success: true, source: 'persisted' }),
+    })
+    const wrapper = mount(RegistryCredentialModal, {
+      props: {
+        open: false,
+        credential: { id: 'cred-1', name: 'GHCR', registry_url: 'ghcr.io', auth_type: 'basic', username: 'deploy', insecure: false },
+      },
+      shallow: true,
+    })
+    await wrapper.setProps({ open: true })
+    await flushPromises()
+
+    await (wrapper.vm as any).verifySaved()
+    await flushPromises()
+
+    expect(testRegistryCredential).toHaveBeenCalledWith({ credential_id: 'cred-1' })
+    expect(addToast).toHaveBeenCalledWith(expect.objectContaining({ title: 'Saved credential verified', color: 'success' }))
+  })
+
+  it('surfaces the diagnostic stage and hint when the saved credential fails', async () => {
+    const { addToast, testRegistryCredential } = setupGlobals({
+      testRegistryCredential: vi.fn().mockResolvedValue({
+        success: false,
+        source: 'persisted',
+        error: 'authentication rejected (HTTP 401)',
+        diagnostic: { stage: 'challenge', category: 'auth_rejected', http_status: 401, message: 'authentication rejected (HTTP 401)', hint: 'verify the saved username/password or token' },
+      }),
+    })
+    const wrapper = mount(RegistryCredentialModal, {
+      props: {
+        open: false,
+        credential: { id: 'cred-1', name: 'GHCR', registry_url: 'ghcr.io', auth_type: 'basic', username: 'deploy', insecure: false },
+      },
+      shallow: true,
+    })
+    await wrapper.setProps({ open: true })
+    await flushPromises()
+
+    await (wrapper.vm as any).verifySaved()
+    await flushPromises()
+
+    expect(testRegistryCredential).toHaveBeenCalledWith({ credential_id: 'cred-1' })
+    expect(addToast).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Saved credential failed',
+      color: 'error',
+      description: expect.stringContaining('stage: challenge'),
+    }))
+    expect(addToast.mock.calls.at(-1)![0].description).toContain('verify the saved username/password or token')
+  })
+
+  it('surfaces diagnostics from a rejected draft probe response', async () => {
+    const probeError = Object.assign(new Error('authentication rejected (HTTP 401)'), {
+      data: {
+        error: 'authentication rejected (HTTP 401)',
+        diagnostic: { stage: 'challenge', hint: 'verify the entered username/password or token' },
+      },
+    })
+    const { addToast } = setupGlobals({ testRegistryCredential: vi.fn().mockRejectedValue(probeError) })
+    const wrapper = mount(RegistryCredentialModal, {
+      props: { open: true },
+      shallow: true,
+    })
+    await flushPromises()
+
+    Object.assign((wrapper.vm as any).form, {
+      name: 'GHCR',
+      registry_url: 'ghcr.io',
+      auth_type: 'basic',
+      username: 'deploy',
+      password: 'wrong',
+    })
+    await (wrapper.vm as any).testConnection()
+    await flushPromises()
+
+    expect(addToast).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Connection failed',
+      description: 'authentication rejected (HTTP 401) (stage: challenge). verify the entered username/password or token',
+      color: 'error',
+    }))
+  })
+
+  it('surfaces diagnostics from a rejected saved-credential probe response', async () => {
+    const probeError = Object.assign(new Error('authentication rejected (HTTP 401)'), {
+      data: {
+        error: 'authentication rejected (HTTP 401)',
+        diagnostic: { stage: 'challenge', hint: 'verify the saved username/password or token' },
+      },
+    })
+    const { addToast } = setupGlobals({ testRegistryCredential: vi.fn().mockRejectedValue(probeError) })
+    const wrapper = mount(RegistryCredentialModal, {
+      props: {
+        open: false,
+        credential: { id: 'cred-1', name: 'GHCR', registry_url: 'ghcr.io', auth_type: 'basic', username: 'deploy', insecure: false },
+      },
+      shallow: true,
+    })
+    await wrapper.setProps({ open: true })
+    await flushPromises()
+
+    await (wrapper.vm as any).verifySaved()
+    await flushPromises()
+
+    expect(addToast).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Verification failed',
+      description: 'authentication rejected (HTTP 401) (stage: challenge). verify the saved username/password or token',
+      color: 'error',
+    }))
+  })
+
+  it('does not verify without a saved credential', async () => {
+    const { testRegistryCredential } = setupGlobals()
+    const wrapper = mount(RegistryCredentialModal, {
+      props: { open: true },
+      shallow: true,
+    })
+    await flushPromises()
+
+    await (wrapper.vm as any).verifySaved()
+    await flushPromises()
+
+    expect(testRegistryCredential).not.toHaveBeenCalled()
   })
 })

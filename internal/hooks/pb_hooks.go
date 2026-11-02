@@ -274,6 +274,7 @@ func triggerRepositoryBackgroundClone(app core.App, repoID, gitURL, branch strin
 func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Scheduler, logBroker *logstream.Broker) *notify.Notifier {
 	secretKey := crypto.NormalizeSecretKey(os.Getenv("SECRET_KEY"))
 	notifier := registerAuditHooks(app)
+	registerRegistryCredentialPasswordInput(app)
 
 	// Fan out sync_logs writes to the live tail broker (GET /api/custom/stacks/{id}/stream).
 	publishSyncLogEvent := func(e *core.RecordEvent) error {
@@ -400,16 +401,11 @@ func Register(app core.App, scheduler *sync.Scheduler, jobSched *jobscheduler.Sc
 	})
 
 	app.OnRecordEnrich("registry_credentials").BindFunc(func(e *core.RecordEnrichEvent) error {
-		isSuperuser := false
-		if e.RequestInfo != nil && e.RequestInfo.Auth != nil {
-			authCol := e.RequestInfo.Auth.Collection()
-			if authCol != nil && authCol.Name == core.CollectionNameSuperusers {
-				isSuperuser = true
-			}
-		}
-		if !isSuperuser {
-			e.Record.Hide("password")
-		}
+		// Never export even the encrypted value, including for superusers or
+		// requests that explicitly select it with ?fields=.
+		// Run after PocketBase's default enrichment, which unhides every field
+		// for superusers. Capture this record before enriching other list rows.
+		defer e.Record.Hide("password")
 		return e.Next()
 	})
 

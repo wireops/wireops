@@ -38,9 +38,25 @@ func CanonicalOrAliasLiteral(canonical, alias, canonicalName, aliasName string) 
 	return alias, nil
 }
 
-// WhoamiInput is the input for the whoami tool. It takes nothing: the API
-// key on the session is the subject.
-type WhoamiInput struct{}
+// WhoamiInput is the input for the whoami tool. The API key travels in the
+// MCP request context, not in the tool arguments; refresh only controls
+// cache freshness.
+type WhoamiInput struct {
+	Refresh bool `json:"refresh,omitempty" jsonschema:"Bypass the 5-minute identity cache and fetch fresh data from the server. Use after a server upgrade to confirm the version/commit actually answering — cached identity data must not be presented as a fresh installation check. Ordinary (cached) responses report their own freshness via the cache, cache_age_seconds and fetched_at fields. Optional."`
+}
+
+// TestRegistryCredentialInput is the input for test_registry_credential.
+type TestRegistryCredentialInput struct {
+	Credential string `json:"credential" jsonschema:"The saved registry credential's record id or exact name. Only the persisted value is ever tested — a password must never be passed here."`
+}
+
+// SetStackSecretInput is the input for set_stack_secret.
+type SetStackSecretInput struct {
+	StackID string `json:"stack_id,omitempty" jsonschema:"The wireops stack id or exact name. Alias: stack."`
+	Stack   string `json:"stack,omitempty" jsonschema:"Alias for stack_id. May be supplied together only with the same value."`
+	Key     string `json:"key" jsonschema:"Env var name to store as an encrypted secret. Must match ^[A-Za-z_][A-Za-z0-9_]*$."`
+	Value   string `json:"value,omitempty" jsonschema:"The secret value. Omit it to be prompted through a protected elicitation form (when the MCP client supports elicitation), keeping the value out of the conversation transcript. Optional."`
+}
 
 // ListStacksInput is the input for the list_stacks tool.
 type ListStacksInput struct {
@@ -90,12 +106,28 @@ type InventoryInput struct {
 	Page   int    `json:"page,omitempty" jsonschema:"Page number, 1-indexed."`
 }
 
-// ListJobsInput is the input for the list_jobs tool. The route returns every
-// job in one array, so these narrow the response rather than the query.
+// ListJobsInput is the input for the list_jobs tool. The route pages and
+// filters server-side.
 type ListJobsInput struct {
 	NameContains string `json:"name_contains,omitempty" jsonschema:"Only jobs whose name contains this substring, case-insensitive. Optional."`
 	Status       string `json:"status,omitempty" jsonschema:"Only jobs with this exact status. Optional."`
-	Limit        int    `json:"limit,omitempty" jsonschema:"Return at most this many jobs. Optional — unset returns all of them."`
+	Limit        int    `json:"limit,omitempty" jsonschema:"Maximum number of jobs per page (default 50, max 200)."`
+	Page         int    `json:"page,omitempty" jsonschema:"Page number, 1-indexed (default 1)."`
+}
+
+// ListJobRunsInput is the input for the list_job_runs tool.
+type ListJobRunsInput struct {
+	JobID  string `json:"job_id" jsonschema:"The wireops scheduled job: its record id, or its exact name."`
+	Status string `json:"status,omitempty" jsonschema:"Only runs with this exact status. Optional."`
+	Limit  int    `json:"limit,omitempty" jsonschema:"Maximum number of runs per page, newest first (default 50, max 200)."`
+	Page   int    `json:"page,omitempty" jsonschema:"Page number, 1-indexed (default 1)."`
+}
+
+// GetJobRunInput is the input for the get_job_run tool.
+type GetJobRunInput struct {
+	RunID     string `json:"run_id" jsonschema:"The job_runs record id, as returned by run_job or list_job_runs."`
+	TailChars int    `json:"tail_chars,omitempty" jsonschema:"Keep only the last this many characters of the output (default 4000, max 20000)."`
+	Pattern   string `json:"pattern,omitempty" jsonschema:"Regex; only matching output lines are returned, applied before tail_chars. Optional."`
 }
 
 // JobIDInput is the input for tools that operate on a single scheduled job.

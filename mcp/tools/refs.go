@@ -89,6 +89,8 @@ func singularCollection(collection string) string {
 		return "repository"
 	case confirmSchedJobs:
 		return "scheduled job"
+	case confirmRegistryCredentials:
+		return "registry credential"
 	default:
 		return collection
 	}
@@ -124,4 +126,8 @@ func resolveRepositoryID(ctx context.Context, c *client.Client, apiKey, ref stri
 
 func resolveJobID(ctx context.Context, c *client.Client, apiKey, ref string) (string, error) {
 	return resolveRef(ctx, c, apiKey, confirmSchedJobs, ref)
+}
+
+func resolveRegistryCredentialID(ctx context.Context, c *client.Client, apiKey, ref string) (string, error) {
+	return resolveRef(ctx, c, apiKey, confirmRegistryCredentials, ref)
 }

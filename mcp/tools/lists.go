@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/wireops/wireops/mcp/client"
@@ -143,8 +144,17 @@ func matchesSubstring(value, needle string) bool {
 	return strings.Contains(strings.ToLower(value), strings.ToLower(needle))
 }
 
+// atoiOr parses a positive int, falling back to def.
+func atoiOr(v string, def int) int {
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 {
+		return def
+	}
+	return n
+}
+
 // filterRecords narrows an array-returning custom route's response in-process.
-// jobs/workers/job-groups routes answer with every record and take no query
+// The workers route answers with every record and takes no query
 // params, so the alternative is handing the whole fleet to the model on every
 // call.
 func filterRecords(items []interface{}, limit int, keep func(map[string]interface{}) bool) []interface{} {

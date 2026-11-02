@@ -24,7 +24,8 @@ const emit = defineEmits<{
 const isEditMode = computed(() => !!props.credential)
 const saving = ref(false)
 const testing = ref(false)
-const inFlight = computed(() => saving.value || testing.value)
+const verifying = ref(false)
+const inFlight = computed(() => saving.value || testing.value || verifying.value)
 const jsonHint = ref('')
 const registryUrlError = ref('')
 const form = ref({
@@ -119,28 +120,63 @@ function buildPayload() {
   return payload
 }
 
+// Draft probe: tests exactly what is in the form, nothing else. It cannot
+// touch the saved record — verifying the persisted value is verifySaved's
+// job — so "entered values pass" can never again mask "saved value broken"
+// (the #186/#188 lesson).
 async function testConnection() {
   const error = validationError()
   if (error) {
     toast.add({ title: 'Invalid credential', description: error, color: 'error' })
     return
   }
+  if (isEditMode.value && !form.value.password) {
+    toast.add({
+      title: 'Password not entered',
+      description: 'Enter the password or token to test entered values, or use "Verify Saved Credential" to test the stored one.',
+      color: 'warning',
+    })
+    return
+  }
   testing.value = true
   try {
-    const result = await testRegistryCredential({
-      ...(props.credential?.id ? { credential_id: props.credential.id } : {}),
-      ...buildPayload(),
-    })
+    const result = await testRegistryCredential(buildPayload())
     if (result.success) {
-      toast.add({ title: 'Connection successful', description: result.warning, color: result.warning ? 'warning' : 'success' })
+      toast.add({ title: 'Entered values work', description: result.warning, color: result.warning ? 'warning' : 'success' })
     } else {
-      toast.add({ title: 'Connection failed', description: result.error, color: 'error' })
+      toast.add({ title: 'Entered values failed', description: failureDescription(result), color: 'error' })
     }
   } catch (error: any) {
-    toast.add({ title: 'Connection failed', description: errorMessage(error), color: 'error' })
+    toast.add({ title: 'Connection failed', description: error?.data?.diagnostic ? failureDescription(error.data) : errorMessage(error), color: 'error' })
   } finally {
     testing.value = false
   }
+}
+
+// Persisted probe: asks the server to load the stored (encrypted) value and
+// handshake with it. The only way to catch a credential that tests fine in
+// the form but fails in deployment because saving mangled it.
+async function verifySaved() {
+  if (!props.credential?.id) return
+  verifying.value = true
+  try {
+    const result = await testRegistryCredential({ credential_id: props.credential.id })
+    if (result.success) {
+      toast.add({ title: 'Saved credential verified', description: 'The persisted value authenticates against the registry. This does not prove a worker can pull a private image — pulls also exercise worker-side auth and repository scope.', color: 'success' })
+    } else {
+      toast.add({ title: 'Saved credential failed', description: failureDescription(result), color: 'error' })
+    }
+  } catch (error: any) {
+    toast.add({ title: 'Verification failed', description: error?.data?.diagnostic ? failureDescription(error.data) : errorMessage(error), color: 'error' })
+  } finally {
+    verifying.value = false
+  }
+}
+
+function failureDescription(result: { error?: string, diagnostic?: { stage?: string, hint?: string } }): string {
+  const stage = result.diagnostic?.stage ? ` (stage: ${result.diagnostic.stage})` : ''
+  const hint = result.diagnostic?.hint ? ` ${result.diagnostic.hint}` : ''
+  return `${result.error || 'Unknown error'}${stage}.${hint}`
 }
 
 async function submit() {
@@ -236,15 +272,27 @@ async function submit() {
           </UFormField>
 
           <div class="flex justify-between items-center pt-4 border-t border-gray-100 dark:border-gray-800">
-            <UButton
-              label="Test Connection"
-              icon="i-lucide-plug"
-              variant="outline"
-              color="neutral"
-              :loading="testing"
-              :disabled="inFlight"
-              @click="testConnection"
-            />
+            <div class="flex gap-2">
+              <UButton
+                label="Test Entered Values"
+                icon="i-lucide-plug"
+                variant="outline"
+                color="neutral"
+                :loading="testing"
+                :disabled="inFlight"
+                @click="testConnection"
+              />
+              <UButton
+                v-if="isEditMode"
+                label="Verify Saved Credential"
+                icon="i-lucide-shield-check"
+                variant="outline"
+                color="neutral"
+                :loading="verifying"
+                :disabled="inFlight"
+                @click="verifySaved"
+              />
+            </div>
             <div class="flex gap-2">
               <CancelButton :disabled="inFlight" @click="isOpen = false" />
               <UButton type="submit" :label="isEditMode ? 'Save' : 'Create Credential'" :loading="saving" :disabled="inFlight" />
