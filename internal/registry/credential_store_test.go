@@ -152,6 +152,33 @@ services:
 	}
 }
 
+func TestRegistryHostFromImage(t *testing.T) {
+	cases := map[string]string{
+		"alpine:3.22":                            "docker.io",
+		"library/alpine":                         "docker.io",
+		"docker.io/library/alpine:3.22":          "docker.io",
+		"ghcr.io/example/worker:v1":              "ghcr.io",
+		" registry.example.com:5000/team/api:v1": "registry.example.com:5000",
+	}
+	for image, want := range cases {
+		got, err := RegistryHostFromImage(image)
+		if err != nil {
+			t.Fatalf("RegistryHostFromImage(%q): %v", image, err)
+		}
+		if got != want {
+			t.Errorf("RegistryHostFromImage(%q) = %q, want %q", image, got, want)
+		}
+	}
+}
+
+func TestRegistryHostFromImageRejectsInvalidImage(t *testing.T) {
+	for _, image := range []string{"", "   ", "not valid"} {
+		if _, err := RegistryHostFromImage(image); err == nil {
+			t.Errorf("RegistryHostFromImage(%q): expected error", image)
+		}
+	}
+}
+
 func TestRegistryHostsFromComposeYAMLRejectsInvalidImage(t *testing.T) {
 	_, err := RegistryHostsFromComposeYAML([]byte("services:\n  api:\n    image: not valid\n"))
 	if err == nil || !strings.Contains(err.Error(), `service "api"`) {

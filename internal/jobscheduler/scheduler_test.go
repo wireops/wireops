@@ -319,11 +319,16 @@ func createScheduledJobRecord(t *testing.T, app core.App, repoID, jobFile string
 
 func writeJobFile(t *testing.T, repoID, name string) {
 	t.Helper()
+	writeJobFileWithImage(t, repoID, name, "alpine")
+}
+
+func writeJobFileWithImage(t *testing.T, repoID, name, image string) {
+	t.Helper()
 	dir := filepath.Join(config.GetReposWorkspace(), repoID)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		t.Fatalf("failed to create repo dir: %v", err)
 	}
-	content := []byte("name: Test Job\ndescription: Test job\nimage: alpine\ncron: \"* * * * *\"\ncommand: echo ok\nresources:\n  cpu: \"0.5\"\n  memory: \"512m\"\n  timeout: \"10m\"\n")
+	content := []byte("name: Test Job\ndescription: Test job\nimage: " + image + "\ncron: \"* * * * *\"\ncommand: echo ok\nresources:\n  cpu: \"0.5\"\n  memory: \"512m\"\n  timeout: \"10m\"\n")
 	if err := os.WriteFile(filepath.Join(dir, name), content, 0644); err != nil {
 		t.Fatalf("failed to write job file: %v", err)
 	}

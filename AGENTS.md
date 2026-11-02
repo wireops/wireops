@@ -220,6 +220,7 @@ A stack is normally driven by a compose file alone, not a compose file plus a se
 2. `job.yaml` specifies: `title`, `cron`, `image`, `command`, `tags`, `mode` (once / once_all), `volumes`, `network`, and a mandatory `resources` block containing `cpu`, `memory`, and `timeout`.
 3. `jobscheduler/scheduler.go` registers a cron entry for each enabled job.
 4. On tick: resolves matching workers by tags, creates a `job_runs` record, dispatches `RunJobCommand` via WebSocket.
+   - Before dispatch (after worker-policy checks), the image's registry host is resolved and the matching `registry_credentials` entry, if any, is attached as `RegistryAuthB64`/`InsecureRegistries` — same `registry.BuildDockerAuthForHosts` rules as stacks: no match → anonymous pull, an undecryptable match fails the run.
 5. Worker runs `docker run --rm` asynchronously, then pushes `MsgJobCompleted` with exit code and output.
 6. Server marks the run as `success` or `error`, updates `last_run_at`. Stalled runs (> 1 hour) are swept every 5 minutes.
 
