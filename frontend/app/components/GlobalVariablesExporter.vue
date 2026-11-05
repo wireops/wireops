@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { ROW_ACTION_OUTLINE } from '../utils/rowActionStyle'
+
 type TargetType = 'stack' | 'job'
 
 const props = defineProps<{
@@ -26,12 +28,10 @@ const bindings = ref<any[]>([])
 const loading = ref(false)
 const savingId = ref('')
 const showAddModal = ref(false)
-const addSearch = ref('')
 const variableToDetach = ref<any | null>(null)
 
 const bindingCollection = computed(() => props.targetType === 'stack' ? 'stack_global_env_vars' : 'job_global_env_vars')
 const targetField = computed(() => props.targetType === 'stack' ? 'stack' : 'job')
-const localKeySet = computed(() => new Set((props.localKeys || []).filter(Boolean)))
 
 const bindingByGlobalId = computed(() => {
   const map: Record<string, any> = {}
@@ -43,12 +43,6 @@ const bindingByGlobalId = computed(() => {
 
 const selectedCount = computed(() => Object.keys(bindingByGlobalId.value).length)
 const attachedVariables = computed(() => globals.value.filter(variable => bindingByGlobalId.value[variable.id]))
-const availableVariables = computed(() => globals.value.filter(variable => !bindingByGlobalId.value[variable.id]))
-const filteredAvailableVariables = computed(() => {
-  const query = addSearch.value.trim().toLowerCase()
-  if (!query) return availableVariables.value
-  return availableVariables.value.filter(variable => variable.key?.toLowerCase().includes(query))
-})
 
 async function load() {
   if (!props.targetId) return
@@ -71,26 +65,9 @@ async function load() {
   }
 }
 
-async function attachGlobal(variable: any) {
-  if (!canOperate.value) return
-  savingId.value = variable.id
-  try {
-    await $pb.collection(bindingCollection.value).create({
-      [targetField.value]: props.targetId,
-      global_env_var: variable.id,
-    }, {
-      requestKey: null,
-    })
-    await load()
-    showAddModal.value = false
-    addSearch.value = ''
-    emit('changed')
-    toast.add({ title: 'Global variable attached', color: 'success' })
-  } catch (error: any) {
-    toast.add({ title: 'Failed to attach global variable', description: error?.message, color: 'error' })
-  } finally {
-    savingId.value = ''
-  }
+async function onManageChanged() {
+  await load()
+  emit('changed')
 }
 
 function openDetachModal(variable: any) {
@@ -144,10 +121,9 @@ onMounted(() => {
           <UButton to="/secrets" icon="i-lucide-key-round" label="Secrets" variant="outline" size="xs" />
           <UButton
             v-if="canOperate"
-            icon="i-lucide-plus"
-            label="Add"
+            icon="i-lucide-list-plus"
+            label="Manage"
             size="xs"
-            :disabled="availableVariables.length === 0"
             @click="showAddModal = true"
           />
         </div>
@@ -172,7 +148,7 @@ onMounted(() => {
           <div class="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-2 sm:contents">
             <div
               class="flex h-8 w-full items-center justify-center rounded-md bg-gray-100 text-gray-500 sm:w-8 sm:bg-transparent dark:bg-carbon-800 dark:text-gray-400 sm:dark:bg-transparent"
-              :class="variable.secret ? 'bg-amber-400/15 text-amber-500 dark:bg-amber-400/10 dark:text-amber-400' : ''"
+              :class="[ROW_ACTION_OUTLINE, variable.secret ? 'bg-amber-400/15 text-amber-500 dark:bg-amber-400/10 dark:text-amber-400' : '']"
             >
               <UIcon
                 :name="variable.secret ? 'i-lucide-lock' : 'i-lucide-variable'"
@@ -185,7 +161,8 @@ onMounted(() => {
               variant="ghost"
               color="warning"
               size="xs"
-              class="h-8 w-full justify-center !bg-amber-500/10 p-0 !text-amber-600 hover:!bg-amber-500/15 sm:w-8 sm:!bg-transparent sm:!text-inherit sm:hover:!bg-transparent dark:!text-amber-400"
+              class="h-8 w-full justify-center !bg-amber-500/10 p-0 !text-amber-600 hover:!bg-amber-500/15 sm:w-8 sm:!bg-transparent sm:!text-inherit sm:hover:!bg-amber-500/10 dark:!text-amber-400"
+              :class="ROW_ACTION_OUTLINE"
               :disabled="!canOperate"
               :loading="savingId === variable.id"
               :aria-label="`Detach ${variable.key}`"
@@ -198,54 +175,27 @@ onMounted(() => {
     <div v-else class="py-6 text-center">
       <UIcon name="i-lucide-key-round" class="mx-auto h-6 w-6 text-gray-400" />
       <p class="mt-2 text-sm text-gray-500">No global variables attached</p>
+      <UButton
+        v-if="canOperate"
+        icon="i-lucide-list-plus"
+        label="Attach or create"
+        size="xs"
+        variant="outline"
+        color="neutral"
+        class="mt-3"
+        @click="showAddModal = true"
+      />
     </div>
 
-    <UModal v-model:open="showAddModal">
-      <template #content>
-        <AppPanelCard>
-          <template #header>
-            <div class="flex items-center justify-between gap-3">
-              <div>
-                <h3 class="font-semibold">Add Global Variable</h3>
-                <p class="text-xs text-gray-500 mt-0.5">Select a global variable to attach.</p>
-              </div>
-              <CloseButton size="xs" @click="showAddModal = false" />
-            </div>
-          </template>
-
-          <div class="w-full space-y-4">
-            <AppTextInput v-model="addSearch" icon="i-lucide-search" placeholder="Search global variables..." />
-
-            <div v-if="filteredAvailableVariables.length" class="max-h-80 divide-y divide-gray-200 overflow-y-auto dark:divide-carbon-800">
-              <div v-for="variable in filteredAvailableVariables" :key="variable.id" class="grid grid-cols-1 gap-2 py-3 sm:grid-cols-[minmax(0,1fr)_2rem_auto] sm:items-center">
-                <AppTextInput :model-value="variable.key" disabled class="font-mono" />
-                <div class="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-2 sm:contents">
-                  <div
-                    class="flex h-8 w-full items-center justify-center rounded-md bg-gray-100 text-gray-500 sm:w-8 sm:bg-transparent dark:bg-carbon-800 dark:text-gray-400 sm:dark:bg-transparent"
-                    :class="variable.secret ? 'bg-amber-400/15 text-amber-500 dark:bg-amber-400/10 dark:text-amber-400' : ''"
-                  >
-                    <UIcon
-                      :name="variable.secret ? 'i-lucide-lock' : 'i-lucide-variable'"
-                      class="h-4 w-4"
-                      :title="variable.secret ? 'Secret' : 'Plain text'"
-                    />
-                  </div>
-                  <UButton
-                    icon="i-lucide-link"
-                    label="Attach"
-                    size="xs"
-                    class="h-8 w-full justify-center !bg-green-500/10 !text-green-600 hover:!bg-green-500/15 sm:w-auto sm:!bg-transparent sm:!text-inherit sm:hover:!bg-transparent dark:!text-green-400"
-                    :loading="savingId === variable.id"
-                    @click="attachGlobal(variable)"
-                  />
-                </div>
-              </div>
-            </div>
-            <p v-else class="py-6 text-center text-sm text-gray-500">No available global variables</p>
-          </div>
-        </AppPanelCard>
-      </template>
-    </UModal>
+    <GlobalVariablesManageModal
+      v-model:open="showAddModal"
+      :target-type="targetType"
+      :target-id="targetId"
+      :globals="globals"
+      :bindings="bindings"
+      :local-keys="localKeys"
+      @changed="onManageChanged"
+    />
 
     <UModal :open="!!variableToDetach" @update:open="value => { if (!value) cancelDetach() }">
       <template #content>
