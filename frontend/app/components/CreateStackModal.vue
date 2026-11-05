@@ -95,14 +95,22 @@ function normalizeTag(t: unknown): string {
   return String(t ?? '').trim().toLowerCase()
 }
 
+// A worker must carry *every* tag the x-wireops block requires — the same rule
+// the server applies when routing jobs (workerMatchesJobTags in
+// internal/routes/worker.go) — so a worker with only some of the tags is not a
+// valid target.
+const requiredWorkerTags = computed(() => {
+  const rawTags = wireopsDefinition.value?.worker?.tags
+  return Array.isArray(rawTags) ? rawTags.map(normalizeTag).filter(Boolean) : []
+})
+
 const matchedWorkers = computed(() => {
   const list = workers.value || []
-  const rawTags = wireopsDefinition.value?.worker?.tags
-  const wantedTags = Array.isArray(rawTags) ? rawTags.map(normalizeTag).filter(Boolean) : []
+  const wantedTags = requiredWorkerTags.value
   if (!wantedTags.length) return list
   return list.filter((w: any) => {
     const workerTags = Array.isArray(w.tags) ? w.tags.map(normalizeTag) : []
-    return wantedTags.some(t => workerTags.includes(t))
+    return wantedTags.every(t => workerTags.includes(t))
   })
 })
 
@@ -117,6 +125,23 @@ const workerOptions = computed(() => {
 const workerTagsFilterEmpty = computed(() => {
   const tags = wireopsDefinition.value?.worker?.tags
   return !!(Array.isArray(tags) && tags.length && matchedWorkers.value.length === 0)
+})
+
+// The worker to pre-select: only when the x-wireops tags single out exactly one
+// worker. With several candidates (or the no-match fallback) picking one for the
+// user would be a silent guess, so the choice is left to them.
+const autoWorkerId = computed(() => {
+  if (!requiredWorkerTags.value.length || workerTagsFilterEmpty.value) return ''
+  return matchedWorkers.value.length === 1 ? String(matchedWorkers.value[0].id) : ''
+})
+
+watch([autoWorkerId, workerOptions], ([autoId, options]) => {
+  // Drop a selection that the (new) tag filter no longer allows, e.g. after
+  // switching to a compose file with different worker.tags.
+  if (form.value.worker && !options.some((o: any) => o.value === form.value.worker)) {
+    form.value.worker = ''
+  }
+  if (autoId && !form.value.worker) form.value.worker = autoId
 })
 
 const fileOptions = computed(() =>
@@ -780,7 +805,12 @@ async function handleSubmit() {
             </div>
 
             <div v-show="currentStep === 3" class="space-y-4">
-              <UFormField label="Worker" :error="createErrors.worker" required>
+              <UFormField
+                label="Worker"
+                :error="createErrors.worker"
+                :help="requiredWorkerTags.length && !workerTagsFilterEmpty ? `Showing workers with all tags: ${requiredWorkerTags.join(', ')}` : undefined"
+                required
+              >
                 <AppSelectInput v-model="form.worker" :items="workerOptions" placeholder="Select a worker" class="w-full" />
               </UFormField>
               <UAlert

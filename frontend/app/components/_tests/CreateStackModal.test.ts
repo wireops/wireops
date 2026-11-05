@@ -924,4 +924,77 @@ describe('CreateStackModal', () => {
     // Creating the stack itself still succeeds — only the env vars failed.
     expect(wrapper.emitted('created')).toBeTruthy()
   })
+  describe('worker pre-selection from x-wireops worker.tags', () => {
+    async function reachWorkerStep(tags: string[], workers: Array<{ id: string, hostname: string, tags: string[] }>) {
+      const { getComposeDefinitionFromFile, getWorkers } = setupGlobals()
+      getWorkers.mockResolvedValue(workers.map(w => ({ ...w, status: 'ACTIVE' })))
+      getComposeDefinitionFromFile.mockResolvedValue({
+        version: 'wireops.v1',
+        name: 'api',
+        worker: { tags },
+        resolved_compose_path: '.',
+        resolved_compose_file: 'docker-compose.yml',
+      })
+
+      const wrapper = await openCreateModal()
+      await selectMode(wrapper, 'compose_embedded')
+      await wrapper.findAll('select')[0]!.setValue('repo-1')
+      await flushPromises()
+      const fileSelect = wrapper.findAll('select').find(s => s.findAll('option').some(o => o.text() === 'docker-compose.yml'))
+      await fileSelect!.setValue('docker-compose.yml')
+      await flushPromises()
+      await wrapper.findAll('button').find(b => b.text() === 'Next')!.trigger('click')
+      await flushPromises()
+
+      const workerSelect = wrapper.findAll('select').find(s => s.findAll('option').some(o => o.text() === workers[0]!.hostname))!
+      const optionLabels = workerSelect.findAll('option').map(o => o.text())
+      return { workerSelect, optionLabels }
+    }
+
+    it('pre-selects the only worker carrying every required tag', async () => {
+      const { workerSelect, optionLabels } = await reachWorkerStep(['prod', 'amd64'], [
+        { id: 'worker-1', hostname: 'worker-a', tags: ['prod', 'amd64'] },
+        { id: 'worker-2', hostname: 'worker-b', tags: ['prod'] },
+        { id: 'worker-3', hostname: 'worker-c', tags: [] },
+      ])
+
+      // worker-b has only some of the tags, so it is not a valid target
+      expect(optionLabels).toEqual(expect.arrayContaining(['worker-a']))
+      expect(optionLabels).not.toContain('worker-b')
+      expect(optionLabels).not.toContain('worker-c')
+      expect((workerSelect.element as HTMLSelectElement).value).toBe('worker-1')
+    })
+
+    it('matches tags case-insensitively', async () => {
+      const { workerSelect } = await reachWorkerStep(['Prod'], [
+        { id: 'worker-1', hostname: 'worker-a', tags: ['prod'] },
+        { id: 'worker-2', hostname: 'worker-b', tags: [] },
+      ])
+      expect((workerSelect.element as HTMLSelectElement).value).toBe('worker-1')
+    })
+
+    it('leaves the worker empty when several workers match', async () => {
+      const { workerSelect, optionLabels } = await reachWorkerStep(['prod'], [
+        { id: 'worker-1', hostname: 'worker-a', tags: ['prod'] },
+        { id: 'worker-2', hostname: 'worker-b', tags: ['prod', 'eu'] },
+      ])
+      expect(optionLabels).toEqual(expect.arrayContaining(['worker-a', 'worker-b']))
+      expect((workerSelect.element as HTMLSelectElement).value).toBe('')
+    })
+
+    it('does not pre-select anything on the no-match fallback', async () => {
+      const { workerSelect } = await reachWorkerStep(['prod'], [
+        { id: 'worker-1', hostname: 'worker-a', tags: ['staging'] },
+        { id: 'worker-2', hostname: 'worker-b', tags: [] },
+      ])
+      expect((workerSelect.element as HTMLSelectElement).value).toBe('')
+    })
+
+    it('does not pre-select when the block declares no worker tags', async () => {
+      const { workerSelect } = await reachWorkerStep([], [
+        { id: 'worker-1', hostname: 'worker-a', tags: ['prod'] },
+      ])
+      expect((workerSelect.element as HTMLSelectElement).value).toBe('')
+    })
+  })
 })
