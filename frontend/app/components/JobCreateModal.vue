@@ -55,11 +55,22 @@ const fileItems = computed(() =>
   repoFiles.value.map(f => ({ label: f, value: f }))
 )
 
+// With a single repository there is nothing to disambiguate, so skip the pick.
+// Also runs when the repo list arrives after the modal is already open.
+function autoSelectSingleRepo() {
+  if (props.open && !form.value.repository && props.repos.length === 1) {
+    form.value.repository = props.repos[0].id
+  }
+}
+
+watch(() => props.repos, autoSelectSingleRepo)
+
 watch(() => props.open, (val) => {
   if (val) {
     if (!route.query.job_step) {
       router.replace({ query: { ...route.query, job_step: '1' } })
     }
+    autoSelectSingleRepo()
   } else {
     form.value = {
       repository: '',

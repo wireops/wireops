@@ -87,8 +87,19 @@ function reset() {
   activeTab.value = 'values'
 }
 
+// With a single repository there is nothing to disambiguate, so skip the pick.
+// Also runs when the repo list arrives after the modal is already open.
+function autoSelectSingleRepo() {
+  if (props.open && !repositoryId.value && repos.value?.length === 1) {
+    repositoryId.value = repos.value[0].id
+  }
+}
+
+watch(repos, autoSelectSingleRepo)
+
 watch(() => props.open, (open) => {
   if (!open) reset()
+  else autoSelectSingleRepo()
 })
 </script>
 

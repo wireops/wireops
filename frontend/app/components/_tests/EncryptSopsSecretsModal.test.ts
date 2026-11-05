@@ -75,4 +75,12 @@ describe('EncryptSopsSecretsModal encrypt flow', () => {
     expect((wrapper.vm as any).activeTab).toBe('values')
     expect((wrapper.vm as any).encrypting).toBe(false)
   })
+  it('pre-selects the only repository when the modal opens', async () => {
+    setupGlobals()
+
+    const wrapper = mount(EncryptSopsSecretsModal, { props: { open: true }, shallow: true })
+    await flushPromises()
+
+    expect((wrapper.vm as any).repositoryId).toBe('repo-1')
+  })
 })
