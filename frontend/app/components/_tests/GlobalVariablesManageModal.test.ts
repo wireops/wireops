@@ -141,6 +141,7 @@ describe('GlobalVariablesManageModal', () => {
     await nextTick()
 
     expect(createFn).toHaveBeenCalledWith('stack_global_env_vars', { stack: 'stack-1', global_env_var: 'g-a' }, expect.anything())
+    expect(toastAdd).toHaveBeenCalledWith({ title: 'A_KEY attached', color: 'success' })
     expect(wrapper.emitted('changed')).toHaveLength(1)
     expect(wrapper.emitted('update:open')).toBeUndefined()
   })
@@ -153,6 +154,7 @@ describe('GlobalVariablesManageModal', () => {
     await nextTick()
 
     expect(deleteFn).toHaveBeenCalledWith('bind-c', expect.anything())
+    expect(toastAdd).toHaveBeenCalledWith({ title: 'C_KEY detached', color: 'success' })
     expect(wrapper.emitted('changed')).toHaveLength(1)
   })
 

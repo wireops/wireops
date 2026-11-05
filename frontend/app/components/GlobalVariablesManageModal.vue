@@ -113,6 +113,7 @@ async function attach(variable: any) {
       global_env_var: variable.id,
     }, { requestKey: null })
     emit('changed')
+    toast.add({ title: `${variable.key} attached`, color: 'success' })
   } catch (error: any) {
     toast.add({ title: 'Failed to attach global variable', description: error?.message, color: 'error' })
   } finally {
@@ -128,6 +129,7 @@ async function detach(variable: any) {
   try {
     await $pb.collection(bindingCollection.value).delete(existing.id, { requestKey: null })
     emit('changed')
+    toast.add({ title: `${variable.key} detached`, color: 'success' })
   } catch (error: any) {
     toast.add({ title: 'Failed to detach global variable', description: error?.message, color: 'error' })
   } finally {
