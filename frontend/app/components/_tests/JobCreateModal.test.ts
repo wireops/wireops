@@ -291,4 +291,32 @@ describe('JobCreateModal', () => {
     }))
     expect(wrapper.emitted('created')).toBeTruthy()
   })
+  describe('single repository auto-select', () => {
+    const repo = (id: string) => ({ id, name: id, git_url: `git@x:${id}` })
+
+    it('pre-selects the only repository when the modal opens', async () => {
+      setupGlobals()
+      const wrapper = await openModal()
+      expect((wrapper.vm as any).form.repository).toBe('repo-1')
+    })
+
+    it('leaves the repository empty when several are available', async () => {
+      setupGlobals()
+      const wrapper = mount(JobCreateModal, { props: { repos: [repo('repo-1'), repo('repo-2')], open: false }, global: { stubs } })
+      await wrapper.setProps({ open: true })
+      await flushPromises()
+      expect((wrapper.vm as any).form.repository).toBe('')
+    })
+
+    it('selects it once the repository list arrives after the modal is open', async () => {
+      setupGlobals()
+      const wrapper = mount(JobCreateModal, { props: { repos: [], open: true }, global: { stubs } })
+      await flushPromises()
+      expect((wrapper.vm as any).form.repository).toBe('')
+
+      await wrapper.setProps({ repos: [repo('repo-9')] })
+      await flushPromises()
+      expect((wrapper.vm as any).form.repository).toBe('repo-9')
+    })
+  })
 })
