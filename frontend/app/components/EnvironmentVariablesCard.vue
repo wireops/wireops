@@ -4,6 +4,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { ENV_VAR_TEMPLATES } from '../utils/envVarTemplates'
 import { serializeEnvLines } from '../utils/envFileParser'
 import { isInternalSecret } from '../utils/envVarSecrets'
+import { ROW_ACTION_OUTLINE } from '../utils/rowActionStyle'
 
 type TargetType = 'stack' | 'job'
 
@@ -25,7 +26,7 @@ const { customGet } = useApi()
 const { subscribe } = useRealtime()
 const toast = useToast()
 const { load: loadProviderOptions, providerOptions, hasActiveBackends, iconFor, avatarFor, labelFor } = useSecretProviderOptions()
-const { isAdmin } = usePermissions()
+const { isAdmin, canOperate } = usePermissions()
 
 // SOPS-managed keys (decrypted from secrets.yaml, GitOps stacks only) are
 // read-only/immutable here: key names only, the server never sends values to
@@ -283,6 +284,53 @@ async function saveEditEnv(id: string) {
   }
 }
 
+// Plain → secret conversion. One-way: the server rejects secret → plain
+// (preventEnvSecretDowngrade), so the confirm modal spells that out.
+const envToConvert = ref<any | null>(null)
+const convertProvider = ref('internal')
+const convertValue = ref('')
+const converting = ref(false)
+const convertNeedsReference = computed(() => convertProvider.value !== 'internal')
+
+function openConvertModal(env: any) {
+  if (env.secret || !canOperate.value) return
+  envToConvert.value = env
+  convertProvider.value = 'internal'
+  convertValue.value = ''
+}
+
+function cancelConvertEnv() {
+  envToConvert.value = null
+  convertValue.value = ''
+}
+
+async function confirmConvertEnv() {
+  const env = envToConvert.value
+  if (!env) return
+  if (convertNeedsReference.value && !convertValue.value.trim()) return
+  converting.value = true
+  try {
+    const data: Record<string, any> = { secret: true, secret_provider: convertProvider.value }
+    // External providers store a reference locator in "value" rather than the
+    // secret itself, so the old plain value is replaced. The internal provider
+    // encrypts the value already stored, so it is left untouched.
+    if (convertNeedsReference.value) data.value = convertValue.value.trim()
+    await $pb.collection(collection.value).update(env.id, data, { requestKey: null })
+    // Only close the dialog this request belongs to — the user may have opened
+    // another conversion while this one was in flight.
+    if (envToConvert.value?.id === env.id) {
+      envToConvert.value = null
+      convertValue.value = ''
+    }
+    await load()
+    toast.add({ title: `${env.key} converted to secret`, color: 'success' })
+  } catch (error: any) {
+    toast.add({ title: 'Failed to convert env var', description: error?.message, color: 'error' })
+  } finally {
+    converting.value = false
+  }
+}
+
 function openDeleteEnvModal(env: any) {
   envToDelete.value = env
 }
@@ -411,14 +459,14 @@ watch(showCreateModal, (open) => {
               variant="soft"
               size="xs"
               class="h-8 w-full justify-center p-0 sm:w-8"
-              :class="newEnvSecret ? '!bg-amber-400/15 !text-amber-500 dark:!bg-amber-400/10 dark:!text-amber-400' : '!bg-gray-100 !text-gray-500 sm:!bg-transparent dark:!bg-carbon-800 dark:!text-gray-400 sm:dark:!bg-transparent'"
+              :class="[ROW_ACTION_OUTLINE, newEnvSecret ? '!bg-amber-400/15 !text-amber-500 dark:!bg-amber-400/10 dark:!text-amber-400' : '!bg-gray-100 !text-gray-500 sm:!bg-transparent dark:!bg-carbon-800 dark:!text-gray-400 sm:dark:!bg-transparent']"
               :aria-pressed="newEnvSecret"
               :aria-label="newEnvSecret ? 'Set as plain text' : 'Set as secret'"
               :title="newEnvSecret ? 'Secret' : 'Plain text'"
               @click="newEnvSecret = !newEnvSecret"
             />
-            <UButton type="submit" icon="i-lucide-check" variant="ghost" color="success" size="xs" class="h-8 w-full justify-center !bg-green-500/10 p-0 !text-green-600 hover:!bg-green-500/15 sm:w-8 sm:!bg-transparent sm:!text-inherit sm:hover:!bg-transparent dark:!text-green-400" :loading="saving" :disabled="!newEnvKey.trim()" aria-label="Add environment variable" />
-            <CloseButton size="xs" class="h-8 w-full justify-center !bg-gray-100 p-0 !text-gray-600 hover:!bg-gray-200 sm:w-8 sm:!bg-transparent sm:!text-inherit sm:hover:!bg-transparent dark:!bg-carbon-800 dark:!text-gray-400 dark:hover:!bg-carbon-700 sm:dark:!bg-transparent sm:dark:hover:!bg-transparent" aria-label="Cancel" @click="cancelCreateEnv" />
+            <UButton type="submit" icon="i-lucide-check" variant="ghost" color="success" size="xs" class="h-8 w-full justify-center !bg-green-500/10 p-0 !text-green-600 hover:!bg-green-500/15 sm:w-8 sm:!bg-transparent sm:!text-inherit sm:hover:!bg-green-500/10 dark:!text-green-400" :class="ROW_ACTION_OUTLINE" :loading="saving" :disabled="!newEnvKey.trim()" aria-label="Add environment variable" />
+            <CloseButton size="xs" :class="`h-8 w-full justify-center !bg-gray-100 p-0 !text-gray-600 hover:!bg-gray-200 sm:w-8 sm:!bg-transparent sm:!text-inherit sm:hover:!bg-transparent dark:!bg-carbon-800 dark:!text-gray-400 dark:hover:!bg-carbon-700 sm:dark:!bg-transparent sm:dark:hover:!bg-transparent ${ROW_ACTION_OUTLINE}`" aria-label="Cancel" @click="cancelCreateEnv" />
           </div>
         </form>
 
@@ -455,14 +503,15 @@ watch(showCreateModal, (open) => {
                 variant="soft"
                 size="xs"
                 class="h-8 w-8 justify-center p-0"
+                :class="ROW_ACTION_OUTLINE"
                 :disabled="env.secret"
                 :aria-pressed="editEnvSecret"
                 :aria-label="editEnvSecret ? 'Set as plain text' : 'Set as secret'"
                 :title="env.secret ? 'Secret cannot be converted to plain text' : editEnvSecret ? 'Secret' : 'Plain text'"
                 @click="editEnvSecret = !editEnvSecret"
               />
-              <UButton icon="i-lucide-check" variant="ghost" color="success" size="xs" class="h-8 w-8 justify-center p-0" :loading="saving" aria-label="Save environment variable" @click="saveEditEnv(env.id)" />
-              <CloseButton size="xs" class="h-8 w-8 justify-center p-0" aria-label="Cancel" @click="cancelEditEnv" />
+              <UButton icon="i-lucide-check" variant="ghost" color="success" size="xs" class="h-8 w-8 justify-center p-0" :class="ROW_ACTION_OUTLINE" :loading="saving" aria-label="Save environment variable" @click="saveEditEnv(env.id)" />
+              <CloseButton size="xs" :class="`h-8 w-8 justify-center p-0 ${ROW_ACTION_OUTLINE}`" aria-label="Cancel" @click="cancelEditEnv" />
             </div>
           </template>
 
@@ -496,17 +545,31 @@ watch(showCreateModal, (open) => {
               />
               <div class="grid grid-cols-3 gap-2 sm:contents">
                 <div
-                  class="flex h-8 w-full items-center justify-center rounded-md bg-gray-100 text-gray-500 sm:w-8 sm:bg-transparent dark:bg-carbon-800 dark:text-gray-400 sm:dark:bg-transparent"
-                  :class="env.secret ? 'bg-amber-400/15 text-amber-500 dark:bg-amber-400/10 dark:text-amber-400' : ''"
+                  v-if="env.secret"
+                  class="flex h-8 w-full items-center justify-center rounded-md bg-amber-400/15 text-amber-500 sm:w-8 dark:bg-amber-400/10 dark:text-amber-400"
+                  :class="ROW_ACTION_OUTLINE"
                 >
                   <UIcon
-                    :name="env.secret ? 'i-lucide-lock' : 'i-lucide-variable'"
+                    name="i-lucide-lock"
                     class="h-4 w-4"
-                    :title="env.secret ? (isInternalSecret(env) ? 'Secret' : `Secret (${env.secret_provider} reference)`) : 'Plain text'"
+                    :title="isInternalSecret(env) ? 'Secret — cannot be converted back to plain text' : `Secret (${env.secret_provider} reference)`"
                   />
                 </div>
-                <UButton icon="i-lucide-pencil" variant="ghost" size="xs" class="h-8 w-full justify-center bg-sky-500/10 p-0 text-sky-600 hover:bg-sky-500/15 sm:w-8 sm:bg-transparent sm:text-inherit sm:hover:bg-transparent dark:text-sky-400" aria-label="Edit environment variable" @click="startEditEnv(env)" />
-                <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="xs" class="h-8 w-full justify-center !bg-red-500/10 p-0 !text-red-600 hover:!bg-red-500/15 sm:w-8 sm:!bg-transparent sm:!text-inherit sm:hover:!bg-transparent dark:!text-red-400" :loading="deletingId === env.id" aria-label="Delete environment variable" @click="openDeleteEnvModal(env)" />
+                <UButton
+                  v-else
+                  icon="i-lucide-variable"
+                  variant="ghost"
+                  color="neutral"
+                  size="xs"
+                  class="h-8 w-full justify-center bg-gray-100 p-0 text-gray-500 hover:bg-gray-200 sm:w-8 sm:bg-transparent sm:hover:bg-gray-100 dark:bg-carbon-800 dark:text-gray-400 dark:hover:bg-carbon-700 sm:dark:bg-transparent sm:dark:hover:bg-carbon-800"
+                  :class="ROW_ACTION_OUTLINE"
+                  :disabled="!canOperate"
+                  title="Plain text — click to convert to secret"
+                  :aria-label="`Convert ${env.key} to secret`"
+                  @click="openConvertModal(env)"
+                />
+                <UButton icon="i-lucide-pencil" variant="ghost" size="xs" class="h-8 w-full justify-center bg-sky-500/10 p-0 text-sky-600 hover:bg-sky-500/15 sm:w-8 sm:bg-transparent sm:text-inherit sm:hover:bg-sky-500/10 dark:text-sky-400" :class="ROW_ACTION_OUTLINE" aria-label="Edit environment variable" @click="startEditEnv(env)" />
+                <UButton icon="i-lucide-trash-2" variant="ghost" color="error" size="xs" class="h-8 w-full justify-center !bg-red-500/10 p-0 !text-red-600 hover:!bg-red-500/15 sm:w-8 sm:!bg-transparent sm:!text-inherit sm:hover:!bg-red-500/10 dark:!text-red-400" :class="ROW_ACTION_OUTLINE" :loading="deletingId === env.id" aria-label="Delete environment variable" @click="openDeleteEnvModal(env)" />
               </div>
             </div>
             <p v-if="sopsKeys.includes(env.key)" class="mt-1 flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400">
@@ -528,7 +591,7 @@ watch(showCreateModal, (open) => {
               class="font-mono"
             />
             <div class="grid grid-cols-3 gap-2 sm:contents">
-              <div class="flex h-8 w-full items-center justify-center rounded-md bg-amber-400/15 text-amber-500 sm:w-8 dark:bg-amber-400/10 dark:text-amber-400">
+              <div class="flex h-8 w-full items-center justify-center rounded-md bg-amber-400/15 text-amber-500 sm:w-8 dark:bg-amber-400/10 dark:text-amber-400" :class="ROW_ACTION_OUTLINE">
                 <UIcon name="i-lucide-file-lock-2" class="h-4 w-4" :title="`Managed by SOPS (${sopsSourceFile || 'secrets.yaml'}) — immutable here`" />
               </div>
               <UBadge label="SOPS" color="warning" variant="subtle" size="sm" class="col-span-2 justify-center sm:col-span-2" />
@@ -590,6 +653,55 @@ watch(showCreateModal, (open) => {
               <UButton type="submit" label="Create" icon="i-lucide-check" color="success" block :loading="saving" :disabled="!newEnvKey.trim()" />
             </div>
           </form>
+        </AppPanelCard>
+      </template>
+    </UModal>
+
+    <UModal
+      :open="!!envToConvert"
+      title="Convert to secret"
+      description="Store this environment variable as an irreversible secret."
+      :ui="{ content: 'w-full sm:max-w-md' }"
+      @update:open="value => { if (!value) cancelConvertEnv() }"
+    >
+      <template #content>
+        <AppPanelCard>
+          <template #header>
+            <div class="flex items-center gap-2 text-amber-500">
+              <UIcon name="i-lucide-lock" class="h-5 w-5" />
+              <h3 class="font-semibold text-gray-900 dark:text-white">Convert to secret</h3>
+            </div>
+          </template>
+
+          <form class="space-y-4" @submit.prevent="confirmConvertEnv">
+            <p class="text-sm text-gray-500">
+              <span class="font-mono font-semibold text-gray-900 dark:text-gray-100">{{ envToConvert?.key }}</span>
+              will be stored as a secret and its value hidden. This cannot be undone.
+            </p>
+
+            <UFormField v-if="hasActiveBackends" label="Provider">
+              <AppSelectInput v-model="convertProvider" :items="providerOptions" :searchable="false" class="w-full" />
+            </UFormField>
+
+            <UFormField v-if="convertNeedsReference" label="Reference" required help="External providers store a reference; the current plain value will be replaced.">
+              <IntegrationsVaultReferencePicker v-if="convertProvider === 'vault'" v-model="convertValue" />
+              <IntegrationsInfisicalReferencePicker v-else-if="convertProvider === 'infisical'" v-model="convertValue" />
+            </UFormField>
+          </form>
+
+          <template #footer>
+            <div class="flex justify-end gap-2">
+              <CancelButton @click="cancelConvertEnv" />
+              <UButton
+                label="Convert"
+                icon="i-lucide-lock"
+                color="warning"
+                :loading="converting"
+                :disabled="convertNeedsReference && !convertValue.trim()"
+                @click="confirmConvertEnv"
+              />
+            </div>
+          </template>
         </AppPanelCard>
       </template>
     </UModal>

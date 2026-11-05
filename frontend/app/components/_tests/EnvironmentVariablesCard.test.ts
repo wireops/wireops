@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { h, ref } from 'vue'
 import EnvironmentVariablesCard from '../EnvironmentVariablesCard.vue'
 
@@ -26,7 +26,7 @@ describe('EnvironmentVariablesCard', () => {
     })
     ;(globalThis as any).useRealtime = () => ({ subscribe: vi.fn() })
     ;(globalThis as any).useToast = () => ({ add: vi.fn() })
-    ;(globalThis as any).usePermissions = () => ({ isAdmin: ref(false) })
+    ;(globalThis as any).usePermissions = () => ({ isAdmin: ref(false), canOperate: ref(true) })
     ;(globalThis as any).useSecretProviderOptions = () => ({
       load: vi.fn(),
       providerOptions: [{ label: 'Internal', value: 'internal' }, { label: 'Vault', value: 'vault' }],
@@ -40,7 +40,7 @@ describe('EnvironmentVariablesCard', () => {
   const stubs = {
     AppPanelCard: {
       setup(_props: unknown, { slots }: { slots: Slots }) {
-        return () => h('div', [slots.header?.(), slots.default?.()])
+        return () => h('div', [slots.header?.(), slots.default?.(), slots.footer?.()])
       },
     },
     UButton: {
@@ -245,7 +245,7 @@ describe('EnvironmentVariablesCard', () => {
   })
 
   it('shows the reveal control instead of a static mask for admins', async () => {
-    ;(globalThis as any).usePermissions = () => ({ isAdmin: ref(true) })
+    ;(globalThis as any).usePermissions = () => ({ isAdmin: ref(true), canOperate: ref(true) })
     ;(globalThis as any).useNuxtApp = () => ({
       $pb: {
         collection: () => ({
@@ -278,7 +278,7 @@ describe('EnvironmentVariablesCard', () => {
   })
 
   it('keeps the static mask for non-admins even though the row is an internal secret', async () => {
-    ;(globalThis as any).usePermissions = () => ({ isAdmin: ref(false) })
+    ;(globalThis as any).usePermissions = () => ({ isAdmin: ref(false), canOperate: ref(true) })
     ;(globalThis as any).useNuxtApp = () => ({
       $pb: {
         collection: () => ({
@@ -509,5 +509,116 @@ describe('EnvironmentVariablesCard', () => {
     const bulkEditorProps = (wrapper.findComponent('.bulk-editor-stub') as unknown as { props: () => { importContent?: string, defaultSecretKeys?: Set<string> } }).props()
     expect(bulkEditorProps.importContent).toContain('REDIS_PASSWORD=')
     expect(bulkEditorProps.defaultSecretKeys?.has('REDIS_PASSWORD')).toBe(true)
+  })
+  describe('plain to secret conversion', () => {
+    const updateFn = vi.fn().mockResolvedValue({})
+
+    function mountWithPlainVar() {
+      updateFn.mockReset()
+      const rows: Array<Record<string, unknown>> = [
+        { id: 'env-plain', key: 'SESSION_KEY', value: 'abc', secret: false, secret_provider: '' },
+        { id: 'env-plain-2', key: 'OTHER_KEY', value: 'def', secret: false, secret_provider: '' },
+        { id: 'env-secret', key: 'API_TOKEN', value: '', secret: true, secret_provider: 'internal' },
+      ]
+      // Reflect updates in later reloads, so a missing load() after a
+      // successful conversion leaves the Convert button on screen and fails.
+      updateFn.mockImplementation(async (id: string, data: Record<string, unknown>) => {
+        Object.assign(rows.find(row => row.id === id)!, data)
+        return {}
+      })
+      ;(globalThis as any).useNuxtApp = () => ({
+        $pb: {
+          collection: () => ({
+            getFullList: vi.fn(async () => rows.map(row => ({ ...row }))),
+            create: createFn,
+            update: updateFn,
+            delete: vi.fn().mockResolvedValue({}),
+          }),
+        },
+      })
+      return mount(EnvironmentVariablesCard, {
+        props: { targetType: 'stack', targetId: 'stack-1' },
+        global: { stubs },
+      })
+    }
+
+    it('only offers a convert button for plain rows', async () => {
+      const wrapper = mountWithPlainVar()
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(wrapper.find('button[aria-label="Convert SESSION_KEY to secret"]').exists()).toBe(true)
+      expect(wrapper.find('button[aria-label="Convert API_TOKEN to secret"]').exists()).toBe(false)
+    })
+
+    it('converts to the internal provider without sending a value', async () => {
+      const wrapper = mountWithPlainVar()
+      await Promise.resolve()
+      await Promise.resolve()
+
+      await wrapper.get('button[aria-label="Convert SESSION_KEY to secret"]').trigger('click')
+      expect(wrapper.text()).toContain('This cannot be undone')
+
+      await wrapper.findAll('button').find(b => b.text() === 'Convert')!.trigger('click')
+      await Promise.resolve()
+
+      expect(updateFn).toHaveBeenCalledWith('env-plain', { secret: true, secret_provider: 'internal' }, expect.anything())
+      await flushPromises()
+      expect(wrapper.find('button[aria-label="Convert SESSION_KEY to secret"]').exists()).toBe(false)
+    })
+
+    it('requires a reference for external providers and sends it as the value', async () => {
+      const wrapper = mountWithPlainVar()
+      await Promise.resolve()
+      await Promise.resolve()
+
+      await wrapper.get('button[aria-label="Convert SESSION_KEY to secret"]').trigger('click')
+      await wrapper.find('.u-select:not(.template-picker)').setValue('vault')
+
+      await wrapper.findAll('button').find(b => b.text() === 'Convert')!.trigger('click')
+      expect(updateFn).not.toHaveBeenCalled()
+
+      await wrapper.find('.vault-picker').trigger('click')
+      await wrapper.findAll('button').find(b => b.text() === 'Convert')!.trigger('click')
+      await Promise.resolve()
+
+      expect(updateFn).toHaveBeenCalledWith(
+        'env-plain',
+        { secret: true, secret_provider: 'vault', value: 'secret/data/myapp#DB_PASS' },
+        expect.anything(),
+      )
+      await flushPromises()
+      expect(wrapper.find('button[aria-label="Convert SESSION_KEY to secret"]').exists()).toBe(false)
+    })
+
+    it('does not open the convert dialog for users who cannot operate', async () => {
+      ;(globalThis as any).usePermissions = () => ({ isAdmin: ref(false), canOperate: ref(false) })
+      const wrapper = mountWithPlainVar()
+      await flushPromises()
+
+      await wrapper.get('button[aria-label="Convert SESSION_KEY to secret"]').trigger('click')
+
+      expect(wrapper.text()).not.toContain('This cannot be undone')
+    })
+
+    it('keeps a newer conversion dialog open when an earlier request finishes', async () => {
+      const wrapper = mountWithPlainVar()
+      await flushPromises()
+
+      let release: () => void = () => {}
+      updateFn.mockImplementationOnce(() => new Promise((resolve) => { release = () => resolve({}) }))
+
+      await wrapper.get('button[aria-label="Convert SESSION_KEY to secret"]').trigger('click')
+      await wrapper.findAll('button').find(b => b.text() === 'Convert')!.trigger('click')
+      // Dismiss the first dialog and open a different variable while the request is in flight.
+      await wrapper.findAll('button').find(b => b.text() === 'Cancel')!.trigger('click')
+      await wrapper.get('button[aria-label="Convert OTHER_KEY to secret"]').trigger('click')
+
+      release()
+      await flushPromises()
+
+      expect(wrapper.text()).toContain('OTHER_KEY')
+      expect(wrapper.text()).toContain('This cannot be undone')
+    })
   })
 })
