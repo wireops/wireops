@@ -26,6 +26,8 @@ const { load: loadProviderOptions, providerOptions, hasActiveBackends, iconFor, 
 
 const search = ref('')
 const savingId = ref('')
+// Attach/detach always go through a confirm step; this holds the pending one.
+const pending = ref<{ action: 'attach' | 'detach', variable: any } | null>(null)
 const showCreate = ref(false)
 const creating = ref(false)
 const newKey = ref('')
@@ -79,9 +81,28 @@ watch(() => props.open, (open) => {
     return
   }
   search.value = ''
+  pending.value = null
   showCreate.value = false
   resetCreateForm()
 })
+
+function requestAction(action: 'attach' | 'detach', variable: any) {
+  if (!canOperate.value || savingId.value) return
+  pending.value = { action, variable }
+}
+
+function cancelPending() {
+  if (savingId.value) return
+  pending.value = null
+}
+
+async function confirmPending() {
+  const current = pending.value
+  if (!current) return
+  if (current.action === 'attach') await attach(current.variable)
+  else await detach(current.variable)
+  pending.value = null
+}
 
 async function attach(variable: any) {
   if (!canOperate.value || savingId.value) return
@@ -201,7 +222,7 @@ async function createAndAttach() {
                   :loading="savingId === variable.id"
                   :disabled="!canOperate || (!!savingId && savingId !== variable.id)"
                   :aria-label="`Detach ${variable.key}`"
-                  @click="detach(variable)"
+                  @click="requestAction('detach', variable)"
                 />
                 <UButton
                   v-else
@@ -215,7 +236,7 @@ async function createAndAttach() {
                   :loading="savingId === variable.id"
                   :disabled="!canOperate || (!!savingId && savingId !== variable.id)"
                   :aria-label="`Attach ${variable.key}`"
-                  @click="attach(variable)"
+                  @click="requestAction('attach', variable)"
                 />
               </div>
             </div>
@@ -287,6 +308,57 @@ async function createAndAttach() {
             </form>
           </div>
         </div>
+
+        <UModal :open="!!pending" @update:open="value => { if (!value) cancelPending() }">
+          <template #content>
+            <AppPanelCard>
+              <template #header>
+                <div class="flex items-center gap-2" :class="pending?.action === 'detach' ? 'text-amber-600' : 'text-green-600'">
+                  <UIcon :name="pending?.action === 'detach' ? 'i-lucide-unlink' : 'i-lucide-link'" class="h-5 w-5" />
+                  <h3 class="font-semibold text-gray-900 dark:text-white">
+                    {{ pending?.action === 'detach' ? 'Detach Global Variable' : 'Attach Global Variable' }}
+                  </h3>
+                </div>
+              </template>
+
+              <p class="text-sm text-gray-500">
+                {{ pending?.action === 'detach' ? 'Detach' : 'Attach' }}
+                <span class="font-mono font-semibold text-gray-900 dark:text-gray-100">{{ pending?.variable.key }}</span>
+                {{ pending?.action === 'detach' ? 'from' : 'to' }} this {{ targetType }}?
+              </p>
+              <p
+                v-if="pending?.action === 'attach' && localKeySet.has(pending.variable.key)"
+                class="mt-2 text-xs text-amber-600 dark:text-amber-400"
+              >
+                A local variable with the same key exists and will override it.
+              </p>
+
+              <template #footer>
+                <div class="flex justify-end gap-2">
+                  <CancelButton @click="cancelPending" />
+                  <UButton
+                    v-if="pending?.action === 'detach'"
+                    label="Detach"
+                    icon="i-lucide-unlink"
+                    color="warning"
+                    :loading="!!savingId"
+                    :aria-label="`Confirm detach ${pending.variable.key}`"
+                    @click="confirmPending"
+                  />
+                  <UButton
+                    v-else
+                    label="Attach"
+                    icon="i-lucide-link"
+                    color="success"
+                    :loading="!!savingId"
+                    :aria-label="`Confirm attach ${pending?.variable.key}`"
+                    @click="confirmPending"
+                  />
+                </div>
+              </template>
+            </AppPanelCard>
+          </template>
+        </UModal>
 
         <template #footer>
           <div class="flex justify-end">

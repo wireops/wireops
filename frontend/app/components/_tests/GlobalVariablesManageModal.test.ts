@@ -136,6 +136,8 @@ describe('GlobalVariablesManageModal', () => {
   it('attaches without closing the modal and emits changed', async () => {
     const wrapper = mountModal()
     await wrapper.get('button[aria-label="Attach A_KEY"]').trigger('click')
+    expect(createFn).not.toHaveBeenCalled()
+    await wrapper.get('button[aria-label="Confirm attach A_KEY"]').trigger('click')
     await nextTick()
 
     expect(createFn).toHaveBeenCalledWith('stack_global_env_vars', { stack: 'stack-1', global_env_var: 'g-a' }, expect.anything())
@@ -146,15 +148,34 @@ describe('GlobalVariablesManageModal', () => {
   it('detaches an attached global by binding id', async () => {
     const wrapper = mountModal()
     await wrapper.get('button[aria-label="Detach C_KEY"]').trigger('click')
+    expect(deleteFn).not.toHaveBeenCalled()
+    await wrapper.get('button[aria-label="Confirm detach C_KEY"]').trigger('click')
     await nextTick()
 
     expect(deleteFn).toHaveBeenCalledWith('bind-c', expect.anything())
     expect(wrapper.emitted('changed')).toHaveLength(1)
   })
 
+  it('does nothing when the confirmation is cancelled', async () => {
+    const wrapper = mountModal()
+    await wrapper.get('button[aria-label="Attach A_KEY"]').trigger('click')
+    await wrapper.findAll('button').filter(b => b.text() === 'Cancel').at(-1)!.trigger('click')
+
+    expect(wrapper.find('button[aria-label="Confirm attach A_KEY"]').exists()).toBe(false)
+    expect(createFn).not.toHaveBeenCalled()
+    expect(wrapper.emitted('update:open')).toBeUndefined()
+  })
+
+  it('warns in the attach confirmation when a local key overrides the global', async () => {
+    const wrapper = mountModal({ localKeys: ['A_KEY'] })
+    await wrapper.get('button[aria-label="Attach A_KEY"]').trigger('click')
+    expect(wrapper.text()).toContain('will override it')
+  })
+
   it('uses job collections and field for job targets', async () => {
     const wrapper = mountModal({ targetType: 'job', targetId: 'job-1', bindings: [] })
     await wrapper.get('button[aria-label="Attach A_KEY"]').trigger('click')
+    await wrapper.get('button[aria-label="Confirm attach A_KEY"]').trigger('click')
     await nextTick()
 
     expect(createFn).toHaveBeenCalledWith('job_global_env_vars', { job: 'job-1', global_env_var: 'g-a' }, expect.anything())
@@ -164,6 +185,7 @@ describe('GlobalVariablesManageModal', () => {
     createFn.mockRejectedValueOnce(new Error('boom'))
     const wrapper = mountModal()
     await wrapper.get('button[aria-label="Attach A_KEY"]').trigger('click')
+    await wrapper.get('button[aria-label="Confirm attach A_KEY"]').trigger('click')
     await nextTick()
     await nextTick()
 
