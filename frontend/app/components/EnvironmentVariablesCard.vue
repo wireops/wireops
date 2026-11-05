@@ -26,7 +26,7 @@ const { customGet } = useApi()
 const { subscribe } = useRealtime()
 const toast = useToast()
 const { load: loadProviderOptions, providerOptions, hasActiveBackends, iconFor, avatarFor, labelFor } = useSecretProviderOptions()
-const { isAdmin } = usePermissions()
+const { isAdmin, canOperate } = usePermissions()
 
 // SOPS-managed keys (decrypted from secrets.yaml, GitOps stacks only) are
 // read-only/immutable here: key names only, the server never sends values to
@@ -293,7 +293,7 @@ const converting = ref(false)
 const convertNeedsReference = computed(() => convertProvider.value !== 'internal')
 
 function openConvertModal(env: any) {
-  if (env.secret) return
+  if (env.secret || !canOperate.value) return
   envToConvert.value = env
   convertProvider.value = 'internal'
   convertValue.value = ''
@@ -316,8 +316,12 @@ async function confirmConvertEnv() {
     // encrypts the value already stored, so it is left untouched.
     if (convertNeedsReference.value) data.value = convertValue.value.trim()
     await $pb.collection(collection.value).update(env.id, data, { requestKey: null })
-    envToConvert.value = null
-    convertValue.value = ''
+    // Only close the dialog this request belongs to — the user may have opened
+    // another conversion while this one was in flight.
+    if (envToConvert.value?.id === env.id) {
+      envToConvert.value = null
+      convertValue.value = ''
+    }
     await load()
     toast.add({ title: `${env.key} converted to secret`, color: 'success' })
   } catch (error: any) {
@@ -559,6 +563,7 @@ watch(showCreateModal, (open) => {
                   size="xs"
                   class="h-8 w-full justify-center bg-gray-100 p-0 text-gray-500 hover:bg-gray-200 sm:w-8 sm:bg-transparent sm:hover:bg-gray-100 dark:bg-carbon-800 dark:text-gray-400 dark:hover:bg-carbon-700 sm:dark:bg-transparent sm:dark:hover:bg-carbon-800"
                   :class="ROW_ACTION_OUTLINE"
+                  :disabled="!canOperate"
                   title="Plain text — click to convert to secret"
                   :aria-label="`Convert ${env.key} to secret`"
                   @click="openConvertModal(env)"
@@ -652,7 +657,13 @@ watch(showCreateModal, (open) => {
       </template>
     </UModal>
 
-    <UModal :open="!!envToConvert" :ui="{ content: 'w-full sm:max-w-md' }" @update:open="value => { if (!value) cancelConvertEnv() }">
+    <UModal
+      :open="!!envToConvert"
+      title="Convert to secret"
+      description="Store this environment variable as an irreversible secret."
+      :ui="{ content: 'w-full sm:max-w-md' }"
+      @update:open="value => { if (!value) cancelConvertEnv() }"
+    >
       <template #content>
         <AppPanelCard>
           <template #header>

@@ -133,6 +133,25 @@ describe('GlobalVariablesManageModal', () => {
     expect(keysInOrder(wrapper)).toEqual(['B_KEY'])
   })
 
+  it('shows the empty-catalog message when no globals exist', () => {
+    const wrapper = mountModal({ globals: [], bindings: [] })
+    expect(wrapper.text()).toContain('No global variables yet')
+  })
+
+  it('shows the no-match message when the search has no hits', async () => {
+    const wrapper = mountModal()
+    await wrapper.get('input[placeholder="Search global variables..."]').setValue('zzz')
+    expect(wrapper.text()).toContain('No variables match your search')
+    expect(keysInOrder(wrapper)).toEqual([])
+  })
+
+  it('does not start an attach while the parent is still reloading', async () => {
+    const wrapper = mountModal({ loading: true })
+    await wrapper.get('button[aria-label="Attach A_KEY"]').trigger('click')
+    expect(wrapper.find('button[aria-label="Confirm attach A_KEY"]').exists()).toBe(false)
+    expect(createFn).not.toHaveBeenCalled()
+  })
+
   it('attaches without closing the modal and emits changed', async () => {
     const wrapper = mountModal()
     await wrapper.get('button[aria-label="Attach A_KEY"]').trigger('click')
@@ -219,6 +238,46 @@ describe('GlobalVariablesManageModal', () => {
       expect(createFn).toHaveBeenNthCalledWith(2, 'stack_global_env_vars', { stack: 'stack-1', global_env_var: 'new-global' }, expect.anything())
       expect(wrapper.emitted('changed')).toHaveLength(1)
       expect(wrapper.emitted('update:open')).toBeUndefined()
+    })
+
+    it('toasts and skips the attach when creating the global fails', async () => {
+      createFn.mockRejectedValueOnce(new Error('duplicate key'))
+      const wrapper = mountModal()
+      await openForm(wrapper)
+      await wrapper.get('input[placeholder="KEY"]').setValue('A_KEY')
+      await wrapper.get('form').trigger('submit')
+      await nextTick()
+      await nextTick()
+
+      expect(createFn).toHaveBeenCalledTimes(1)
+      expect(toastAdd).toHaveBeenCalledWith(expect.objectContaining({ title: 'Failed to create global variable', color: 'error' }))
+      expect(wrapper.emitted('changed')).toBeUndefined()
+      // Form stays open so the draft isn't lost.
+      expect(wrapper.find('form').exists()).toBe(true)
+    })
+
+    it('keeps the form closed and unlocks again when a create finishes after the modal was reopened', async () => {
+      let resolveCreate: (v: unknown) => void = () => {}
+      createFn.mockImplementationOnce(() => new Promise((resolve) => { resolveCreate = resolve }))
+      const wrapper = mountModal()
+      await openForm(wrapper)
+      await wrapper.get('input[placeholder="KEY"]').setValue('FIRST_KEY')
+      await wrapper.get('form').trigger('submit')
+
+      await wrapper.setProps({ open: false })
+      await wrapper.setProps({ open: true })
+
+      // A new draft can't be started while the earlier request is still running.
+      const newButton = () => wrapper.findAll('button').find(b => b.text() === 'New global variable')!
+      expect(newButton().attributes('disabled')).toBeDefined()
+
+      resolveCreate({ id: 'first-global' })
+      await nextTick()
+      await nextTick()
+      await nextTick()
+
+      expect(wrapper.find('form').exists()).toBe(false)
+      expect(newButton().attributes('disabled')).toBeUndefined()
     })
 
     it('blocks submit while the key is empty', async () => {

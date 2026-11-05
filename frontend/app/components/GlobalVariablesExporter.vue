@@ -194,6 +194,7 @@ onMounted(() => {
       :globals="globals"
       :bindings="bindings"
       :local-keys="localKeys"
+      :loading="loading"
       @changed="onManageChanged"
     />
 

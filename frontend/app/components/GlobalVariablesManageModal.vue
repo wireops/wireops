@@ -12,6 +12,9 @@ const props = defineProps<{
   globals: any[]
   bindings: any[]
   localKeys?: string[]
+  // True while the parent is reloading globals/bindings after a change. Row
+  // actions stay locked until it settles so a stale list can't be acted on.
+  loading?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -30,6 +33,9 @@ const savingId = ref('')
 const pending = ref<{ action: 'attach' | 'detach', variable: any } | null>(null)
 const showCreate = ref(false)
 const creating = ref(false)
+// Bumped whenever the create form is reset, so a request that finishes after the
+// modal was closed/reopened can't wipe a draft the user has typed since.
+let formSession = 0
 const newKey = ref('')
 const newValue = ref('')
 const newSecret = ref(true)
@@ -46,6 +52,8 @@ const bindingByGlobalId = computed(() => {
   }
   return map
 })
+
+const actionsLocked = computed(() => !!savingId.value || creating.value || !!props.loading)
 
 const attachedCount = computed(() => Object.keys(bindingByGlobalId.value).length)
 
@@ -65,6 +73,7 @@ const visibleVariables = computed(() => {
 })
 
 function resetCreateForm() {
+  formSession++
   newKey.value = ''
   newValue.value = ''
   newSecret.value = true
@@ -87,7 +96,7 @@ watch(() => props.open, (open) => {
 })
 
 function requestAction(action: 'attach' | 'detach', variable: any) {
-  if (!canOperate.value || savingId.value) return
+  if (!canOperate.value || actionsLocked.value) return
   pending.value = { action, variable }
 }
 
@@ -105,7 +114,7 @@ async function confirmPending() {
 }
 
 async function attach(variable: any) {
-  if (!canOperate.value || savingId.value) return
+  if (!canOperate.value || savingId.value || creating.value) return
   savingId.value = variable.id
   try {
     await $pb.collection(bindingCollection.value).create({
@@ -122,7 +131,7 @@ async function attach(variable: any) {
 }
 
 async function detach(variable: any) {
-  if (!canOperate.value || savingId.value) return
+  if (!canOperate.value || savingId.value || creating.value) return
   const existing = bindingByGlobalId.value[variable.id]
   if (!existing) return
   savingId.value = variable.id
@@ -139,7 +148,8 @@ async function detach(variable: any) {
 
 async function createAndAttach() {
   const key = newKey.value.trim()
-  if (!key || !canOperate.value || creating.value) return
+  if (!key || !canOperate.value || creating.value || savingId.value) return
+  const session = formSession
   creating.value = true
   let created: any
   try {
@@ -164,8 +174,10 @@ async function createAndAttach() {
   } catch (error: any) {
     toast.add({ title: 'Created, but failed to attach', description: error?.message, color: 'warning' })
   } finally {
-    resetCreateForm()
-    showCreate.value = false
+    if (session === formSession) {
+      resetCreateForm()
+      showCreate.value = false
+    }
     creating.value = false
     emit('changed')
   }
@@ -173,7 +185,13 @@ async function createAndAttach() {
 </script>
 
 <template>
-  <UModal :open="open" :ui="{ content: 'w-full sm:max-w-lg' }" @update:open="value => emit('update:open', value)">
+  <UModal
+    :open="open"
+    title="Global Variables"
+    description="Attach, detach or create global variables for this target."
+    :ui="{ content: 'w-full sm:max-w-lg' }"
+    @update:open="value => emit('update:open', value)"
+  >
     <template #content>
       <AppPanelCard>
         <template #header>
@@ -222,7 +240,7 @@ async function createAndAttach() {
                   class="h-8 w-full justify-center !bg-amber-500/10 !text-amber-600 hover:!bg-amber-500/15 sm:!bg-transparent sm:hover:!bg-amber-500/10 dark:!text-amber-400"
                   :class="ROW_ACTION_OUTLINE"
                   :loading="savingId === variable.id"
-                  :disabled="!canOperate || (!!savingId && savingId !== variable.id)"
+                  :disabled="!canOperate || (actionsLocked && savingId !== variable.id)"
                   :aria-label="`Detach ${variable.key}`"
                   @click="requestAction('detach', variable)"
                 />
@@ -236,7 +254,7 @@ async function createAndAttach() {
                   class="h-8 w-full justify-center !bg-green-500/10 !text-green-600 hover:!bg-green-500/15 sm:!bg-transparent sm:hover:!bg-green-500/10 dark:!text-green-400"
                   :class="ROW_ACTION_OUTLINE"
                   :loading="savingId === variable.id"
-                  :disabled="!canOperate || (!!savingId && savingId !== variable.id)"
+                  :disabled="!canOperate || (actionsLocked && savingId !== variable.id)"
                   :aria-label="`Attach ${variable.key}`"
                   @click="requestAction('attach', variable)"
                 />
@@ -255,7 +273,7 @@ async function createAndAttach() {
               size="xs"
               variant="outline"
               color="neutral"
-              :disabled="!!savingId"
+              :disabled="actionsLocked"
               @click="showCreate = true"
             />
             <form v-else class="space-y-3" @submit.prevent="createAndAttach">
@@ -311,7 +329,12 @@ async function createAndAttach() {
           </div>
         </div>
 
-        <UModal :open="!!pending" @update:open="value => { if (!value) cancelPending() }">
+        <UModal
+          :open="!!pending"
+          :title="pending?.action === 'detach' ? 'Detach Global Variable' : 'Attach Global Variable'"
+          :description="`Confirm ${pending?.action === 'detach' ? 'detaching' : 'attaching'} this global variable.`"
+          @update:open="value => { if (!value) cancelPending() }"
+        >
           <template #content>
             <AppPanelCard>
               <template #header>
