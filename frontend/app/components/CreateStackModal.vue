@@ -127,13 +127,11 @@ const workerTagsFilterEmpty = computed(() => {
   return !!(Array.isArray(tags) && tags.length && matchedWorkers.value.length === 0)
 })
 
-// The worker to pre-select: only when the x-wireops tags single out exactly one
-// worker. With several candidates (or the no-match fallback) picking one for the
-// user would be a silent guess, so the choice is left to them.
-const autoWorkerId = computed(() => {
-  if (!requiredWorkerTags.value.length || workerTagsFilterEmpty.value) return ''
-  return matchedWorkers.value.length === 1 ? String(matchedWorkers.value[0].id) : ''
-})
+// The worker to pre-select: only when exactly one worker is on offer — either
+// the x-wireops tags single one out, or it is the only active worker at all.
+// With several candidates picking one for the user would be a silent guess, so
+// the choice is left to them.
+const autoWorkerId = computed(() => workerOptions.value.length === 1 ? String(workerOptions.value[0].value) : '')
 
 watch([autoWorkerId, workerOptions], ([autoId, options]) => {
   // Drop a selection that the (new) tag filter no longer allows, e.g. after

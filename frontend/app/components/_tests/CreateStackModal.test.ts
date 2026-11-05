@@ -990,9 +990,17 @@ describe('CreateStackModal', () => {
       expect((workerSelect.element as HTMLSelectElement).value).toBe('')
     })
 
-    it('does not pre-select when the block declares no worker tags', async () => {
+    it('pre-selects the only active worker even when the block declares no worker tags', async () => {
       const { workerSelect } = await reachWorkerStep([], [
         { id: 'worker-1', hostname: 'worker-a', tags: ['prod'] },
+      ])
+      expect((workerSelect.element as HTMLSelectElement).value).toBe('worker-1')
+    })
+
+    it('does not pre-select when several workers are available and no tags are declared', async () => {
+      const { workerSelect } = await reachWorkerStep([], [
+        { id: 'worker-1', hostname: 'worker-a', tags: ['prod'] },
+        { id: 'worker-2', hostname: 'worker-b', tags: [] },
       ])
       expect((workerSelect.element as HTMLSelectElement).value).toBe('')
     })
