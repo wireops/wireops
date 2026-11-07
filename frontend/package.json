@@ -27,13 +27,13 @@
   },
   "devDependencies": {
     "@iconify-json/lucide": "^1.2.147",
-    "@iconify-json/simple-icons": "^1.2.100",
+    "@iconify-json/simple-icons": "^1.2.101",
     "@nuxt/eslint": "^1.0.0",
     "@nuxt/kit": "^4.6.3",
     "@vitest/coverage-v8": "^5.0.5",
     "@vue/test-utils": "^2.4.6",
     "happy-dom": "^21.0.4",
-    "typescript": "^5.9.3",
+    "typescript": "^7.0.2",
     "vitest": "^5.0.4"
   },
   "overrides": {
