@@ -240,6 +240,14 @@ changes in a minor release.
   `mcp` CI job's `govulncheck` through `scripts/govulncheck.sh`, like the
   server and worker jobs, so it honours `.govulncheck-allowlist.txt` instead
   of failing on an advisory the other two jobs accept.
+- Build the server, worker, and MCP binaries with Go 1.27.4 and require it in
+  `go.mod`, which clears GO-2026-6859: in 1.27.3, an HTTP/1 server using
+  `http.MaxBytesReader` set `Connection: close` without synchronization when
+  the limit was exceeded, and could panic if a handler read the body while
+  writing response headers.
+- Update the indirect OpenTelemetry OTLP HTTP trace exporter to v1.45.0
+  (GHSA-8wmf-6v46-5gfg: older versions could include the exporter's endpoint
+  configuration in an internal Info-level diagnostic log).
 
 ### Changed
 
