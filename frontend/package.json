@@ -33,7 +33,7 @@
     "@vitest/coverage-v8": "^5.0.5",
     "@vue/test-utils": "^2.4.6",
     "happy-dom": "^21.0.4",
-    "typescript": "^7.0.2",
+    "typescript": "^5.9.3",
     "vitest": "^5.0.4"
   },
   "overrides": {
