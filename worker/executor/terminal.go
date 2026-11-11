@@ -8,8 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
+	"github.com/moby/moby/client"
 	"github.com/wireops/wireops/internal/docker"
 )
 
@@ -50,10 +49,11 @@ func mountExposesDockerSocket(src string) bool {
 // operator has otherwise opted out of the privileged/host-network policy
 // for deploys.
 func checkTerminalExecAllowed(ctx context.Context, cli *docker.Client, containerID string) error {
-	info, err := cli.Raw().ContainerInspect(ctx, containerID)
+	res, err := cli.Raw().ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 	if err != nil {
 		return err
 	}
+	info := res.Container
 	// info.Mounts is a top-level field independent of HostConfig — check it
 	// unconditionally, before the HostConfig nil-guard below, so a container
 	// somehow inspected without a populated HostConfig doesn't skip the
@@ -80,7 +80,7 @@ func checkTerminalExecAllowed(ctx context.Context, cli *docker.Client, container
 // can find it by SessionID.
 type terminalSession struct {
 	execID string
-	hj     types.HijackedResponse
+	hj     client.HijackedResponse
 	cancel context.CancelFunc
 	// cli is the Docker client used to create this session, reused by
 	// ResizeTerminal instead of dialing a fresh one per resize — a resize
@@ -122,9 +122,9 @@ func OpenTerminal(sessionID, containerID, projectName, stackID string, shell []s
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	execResp, err := cli.Raw().ContainerExecCreate(ctx, containerID, container.ExecOptions{
+	execResp, err := cli.Raw().ExecCreate(ctx, containerID, client.ExecCreateOptions{
 		Cmd:          shell,
-		Tty:          true,
+		TTY:          true,
 		AttachStdin:  true,
 		AttachStdout: true,
 		AttachStderr: true,
@@ -136,7 +136,7 @@ func OpenTerminal(sessionID, containerID, projectName, stackID string, shell []s
 		return
 	}
 
-	hj, err := cli.Raw().ContainerExecAttach(ctx, execResp.ID, container.ExecAttachOptions{Tty: true})
+	hj, err := cli.Raw().ExecAttach(ctx, execResp.ID, client.ExecAttachOptions{TTY: true})
 	if err != nil {
 		cli.Close()
 		cancel()
@@ -145,10 +145,10 @@ func OpenTerminal(sessionID, containerID, projectName, stackID string, shell []s
 	}
 
 	if rows > 0 && cols > 0 {
-		_ = cli.Raw().ContainerExecResize(ctx, execResp.ID, container.ResizeOptions{Height: rows, Width: cols})
+		_, _ = cli.Raw().ExecResize(ctx, execResp.ID, client.ExecResizeOptions{Height: rows, Width: cols})
 	}
 
-	sess := &terminalSession{execID: execResp.ID, hj: hj, cancel: cancel, cli: cli}
+	sess := &terminalSession{execID: execResp.ID, hj: hj.HijackedResponse, cancel: cancel, cli: cli}
 	// Swap, not Store: sessionID is a fresh UUID per open request and
 	// MsgTerminalOpen isn't a durable/redelivered command (see
 	// isDurableCommand in internal/worker/server.go), so this shouldn't
@@ -173,7 +173,7 @@ func OpenTerminal(sessionID, containerID, projectName, stackID string, shell []s
 			cancel()
 
 			exitCode := -1
-			if info, err := cli.Raw().ContainerExecInspect(context.Background(), execResp.ID); err == nil {
+			if info, err := cli.Raw().ExecInspect(context.Background(), execResp.ID, client.ExecInspectOptions{}); err == nil {
 				exitCode = info.ExitCode
 			}
 			cli.Close()
@@ -222,7 +222,7 @@ func ResizeTerminal(sessionID string, rows, cols uint) {
 		return
 	}
 	sess := v.(*terminalSession)
-	_ = sess.cli.Raw().ContainerExecResize(context.Background(), sess.execID, container.ResizeOptions{Height: rows, Width: cols})
+	_, _ = sess.cli.Raw().ExecResize(context.Background(), sess.execID, client.ExecResizeOptions{Height: rows, Width: cols})
 }
 
 // CloseTerminal tears down an open session's exec process. Safe to call on

@@ -228,6 +228,15 @@ changes in a minor release.
 - Update the Docker CLI embedded in the server and worker images to 29.x.
 - Fail the `govulncheck` CI gate when the scanner itself cannot run (crash or
   unreachable vulnerability database) instead of reporting a clean result.
+- Move the server and worker off the frozen `github.com/docker/docker` client
+  SDK onto `github.com/moby/moby/client` and `github.com/moby/moby/api`.
+  docker/docker v28 will not receive fixes for GO-2026-4883, GO-2026-4887,
+  GO-2026-5617, GO-2026-5668 and GO-2026-5746. Those flaws are in the daemon,
+  which wireops never runs, but the old module kept them on every scan and
+  in the govulncheck allowlist, which is now empty. Behaviour is unchanged,
+  and the new client still negotiates down to Docker API 1.40 (Engine 19.03).
+  `scripts/govulncheck.sh` now also accepts an allowlist with no entries,
+  where it used to exit 1 without printing anything.
 - Require Go 1.27.2 as the minimum toolchain in `go.mod`. CI and the release
   images already built on 1.27.2, but the module only asked for 1.27, so a
   local build could silently link the 1.27.0 standard library and its

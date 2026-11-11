@@ -4,14 +4,16 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/mount"
-	"github.com/docker/docker/errdefs"
+	"github.com/containerd/errdefs"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
+	dockerclient "github.com/moby/moby/client"
 
 	"github.com/wireops/wireops/internal/compose"
 	"github.com/wireops/wireops/internal/protocol"
@@ -25,9 +27,9 @@ type fakeProjectMigrationClient struct {
 	volumes    []string
 }
 
-func (f *fakeProjectMigrationClient) ContainerList(_ context.Context, opts container.ListOptions) ([]container.Summary, error) {
+func (f *fakeProjectMigrationClient) ContainerList(_ context.Context, opts dockerclient.ContainerListOptions) (dockerclient.ContainerListResult, error) {
 	stackID := ""
-	for _, label := range opts.Filters.Get("label") {
+	for label := range opts.Filters["label"] {
 		if strings.HasPrefix(label, "dev.wireops.stack_id=") {
 			stackID = strings.TrimPrefix(label, "dev.wireops.stack_id=")
 		}
@@ -38,29 +40,29 @@ func (f *fakeProjectMigrationClient) ContainerList(_ context.Context, opts conta
 			result = append(result, summary)
 		}
 	}
-	return result, nil
+	return dockerclient.ContainerListResult{Items: result}, nil
 }
 
-func (f *fakeProjectMigrationClient) ContainerInspect(_ context.Context, id string) (container.InspectResponse, error) {
+func (f *fakeProjectMigrationClient) ContainerInspect(_ context.Context, id string, _ dockerclient.ContainerInspectOptions) (dockerclient.ContainerInspectResult, error) {
 	if response, ok := f.inspects[id]; ok {
-		return response, nil
+		return dockerclient.ContainerInspectResult{Container: response}, nil
 	}
-	return container.InspectResponse{}, errdefs.NotFound(errors.New("not found"))
+	return dockerclient.ContainerInspectResult{}, fmt.Errorf("container %s: %w", id, errdefs.ErrNotFound)
 }
 
-func (f *fakeProjectMigrationClient) ContainerStop(_ context.Context, id string, _ container.StopOptions) error {
+func (f *fakeProjectMigrationClient) ContainerStop(_ context.Context, id string, _ dockerclient.ContainerStopOptions) (dockerclient.ContainerStopResult, error) {
 	f.stopped = append(f.stopped, id)
-	return nil
+	return dockerclient.ContainerStopResult{}, nil
 }
 
-func (f *fakeProjectMigrationClient) ContainerRemove(_ context.Context, id string, _ container.RemoveOptions) error {
+func (f *fakeProjectMigrationClient) ContainerRemove(_ context.Context, id string, _ dockerclient.ContainerRemoveOptions) (dockerclient.ContainerRemoveResult, error) {
 	f.removed = append(f.removed, id)
-	return nil
+	return dockerclient.ContainerRemoveResult{}, nil
 }
 
-func (f *fakeProjectMigrationClient) VolumeRemove(_ context.Context, name string, _ bool) error {
+func (f *fakeProjectMigrationClient) VolumeRemove(_ context.Context, name string, _ dockerclient.VolumeRemoveOptions) (dockerclient.VolumeRemoveResult, error) {
 	f.volumes = append(f.volumes, name)
-	return nil
+	return dockerclient.VolumeRemoveResult{}, nil
 }
 
 func (f *fakeProjectMigrationClient) Close() error { return nil }

@@ -6,42 +6,44 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/netip"
 	"reflect"
 	"strings"
 	"testing"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/mount"
-	dockernetwork "github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/volume"
-	dockerclient "github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
+	dockernetwork "github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/api/types/system"
+	"github.com/moby/moby/api/types/volume"
+	dockerclient "github.com/moby/moby/client"
 	"github.com/wireops/wireops/internal/protocol"
 )
 
 func TestMapDockerPorts(t *testing.T) {
 	tests := []struct {
 		name string
-		in   []container.Port
+		in   []container.PortSummary
 		want []protocol.PortInfo
 	}{
 		{
 			name: "ipv4 published",
-			in:   []container.Port{{IP: "127.0.0.1", PrivatePort: 80, PublicPort: 8080, Type: "tcp"}},
+			in:   []container.PortSummary{{IP: netip.MustParseAddr("127.0.0.1"), PrivatePort: 80, PublicPort: 8080, Type: "tcp"}},
 			want: []protocol.PortInfo{{ContainerPort: 80, Protocol: "tcp", HostIP: "127.0.0.1", HostPort: 8080}},
 		},
 		{
 			name: "ipv6 localhost published",
-			in:   []container.Port{{IP: "::1", PrivatePort: 80, PublicPort: 8443, Type: "tcp"}},
+			in:   []container.PortSummary{{IP: netip.MustParseAddr("::1"), PrivatePort: 80, PublicPort: 8443, Type: "tcp"}},
 			want: []protocol.PortInfo{{ContainerPort: 80, Protocol: "tcp", HostIP: "::1", HostPort: 8443}},
 		},
 		{
 			name: "udp published wildcard",
-			in:   []container.Port{{IP: "0.0.0.0", PrivatePort: 53, PublicPort: 53, Type: "udp"}},
+			in:   []container.PortSummary{{IP: netip.MustParseAddr("0.0.0.0"), PrivatePort: 53, PublicPort: 53, Type: "udp"}},
 			want: []protocol.PortInfo{{ContainerPort: 53, Protocol: "udp", HostIP: "0.0.0.0", HostPort: 53}},
 		},
 		{
 			name: "exposed but not published",
-			in:   []container.Port{{PrivatePort: 443, Type: "tcp"}},
+			in:   []container.PortSummary{{PrivatePort: 443, Type: "tcp"}},
 			want: []protocol.PortInfo{{ContainerPort: 443, Protocol: "tcp"}},
 		},
 		{
@@ -62,11 +64,10 @@ func TestMapDockerPorts(t *testing.T) {
 }
 
 func TestVolumeUsageSizes(t *testing.T) {
-	sizes := volumeUsageSizes([]*volume.Volume{
+	sizes := volumeUsageSizes([]volume.Volume{
 		{Name: "known", UsageData: &volume.UsageData{Size: 123}},
 		{Name: "unknown", UsageData: &volume.UsageData{Size: -1}},
 		{Name: "missing"},
-		nil,
 	})
 
 	if got := sizes["known"]; got != 123 {
@@ -80,9 +81,43 @@ func TestVolumeUsageSizes(t *testing.T) {
 	}
 }
 
+func TestBuildNetworkInfoIPAM(t *testing.T) {
+	n := dockernetwork.Network{
+		Name: "myproject_default",
+		IPAM: dockernetwork.IPAM{Config: []dockernetwork.IPAMConfig{
+			{
+				Subnet:     netip.MustParsePrefix("172.20.0.0/16"),
+				IPRange:    netip.MustParsePrefix("172.20.10.0/24"),
+				Gateway:    netip.MustParseAddr("172.20.0.1"),
+				AuxAddress: map[string]netip.Addr{"router": netip.MustParseAddr("172.20.0.2")},
+			},
+			// A pool the daemon reported without any addresses must map to
+			// empty strings, not "invalid Prefix" / "invalid IP".
+			{},
+		}},
+	}
+
+	got := buildNetworkInfo(n, false)
+	want := []protocol.NetworkIPAMConfig{
+		{
+			Subnet:       "172.20.0.0/16",
+			Gateway:      "172.20.0.1",
+			IPRange:      "172.20.10.0/24",
+			AuxAddresses: map[string]string{"router": "172.20.0.2"},
+		},
+		{},
+	}
+	if !reflect.DeepEqual(got.IPAMConfigs, want) {
+		t.Fatalf("IPAMConfigs = %+v, want %+v", got.IPAMConfigs, want)
+	}
+	if got.Subnet != "172.20.0.0/16" || got.Gateway != "172.20.0.1" {
+		t.Fatalf("Subnet/Gateway = %q/%q, want first pool's", got.Subnet, got.Gateway)
+	}
+}
+
 // roundTripFunc lets a fake Docker Engine API be expressed as a plain
 // function instead of standing up a real listener, mirroring the pattern
-// the docker/docker client itself uses in its own tests.
+// the moby client itself uses in its own tests.
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -113,7 +148,12 @@ func errorResponse(status int, message string) *http.Response {
 
 func newFakeDockerClient(t *testing.T, handler func(*http.Request) (*http.Response, error)) *dockerclient.Client {
 	t.Helper()
-	cli, err := dockerclient.NewClientWithOpts(dockerclient.WithHTTPClient(&http.Client{Transport: roundTripFunc(handler)}))
+	// A fixed API version skips the client's default version negotiation,
+	// which would otherwise send a /_ping the fake handlers don't expect.
+	cli, err := dockerclient.New(
+		dockerclient.WithHTTPClient(&http.Client{Transport: roundTripFunc(handler)}),
+		dockerclient.WithAPIVersion(dockerclient.MaxAPIVersion),
+	)
 	if err != nil {
 		t.Fatalf("build fake docker client: %v", err)
 	}
@@ -165,6 +205,43 @@ func TestGetStackBindMounts(t *testing.T) {
 	}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("getStackBindMounts() = %+v, want %+v", got, want)
+	}
+}
+
+func TestGetStackVolumesUsesDiskUsageSizes(t *testing.T) {
+	var dfQuery string
+	cli := newFakeDockerClient(t, func(req *http.Request) (*http.Response, error) {
+		switch {
+		case strings.HasSuffix(req.URL.Path, "/volumes"):
+			return jsonResponse(t, http.StatusOK, volume.ListResponse{Volumes: []volume.Volume{
+				{Name: "myproject_data", Driver: "local", Labels: map[string]string{"com.docker.compose.volume": "data"}},
+			}}), nil
+		case strings.HasSuffix(req.URL.Path, "/system/df"):
+			dfQuery = req.URL.RawQuery
+			return jsonResponse(t, http.StatusOK, system.DiskUsage{VolumeUsage: &volume.DiskUsage{
+				Items: []volume.Volume{{Name: "myproject_data", UsageData: &volume.UsageData{Size: 4096}}},
+			}}), nil
+		case strings.HasSuffix(req.URL.Path, "/containers/json"):
+			return jsonResponse(t, http.StatusOK, []container.Summary{}), nil
+		default:
+			// A per-volume inspect here would mean the disk-usage sizes were
+			// not picked up.
+			t.Fatalf("unexpected request: %s", req.URL.Path)
+			return nil, nil
+		}
+	})
+
+	got, err := GetStackVolumes(context.Background(), cli, "myproject")
+	if err != nil {
+		t.Fatalf("GetStackVolumes returned error: %v", err)
+	}
+	// Without verbose the daemon only returns totals, and every volume would
+	// fall back to a per-volume inspect.
+	if !strings.Contains(dfQuery, "type=volume") || !strings.Contains(dfQuery, "verbose=1") {
+		t.Fatalf("/system/df query = %q, want volume type and verbose", dfQuery)
+	}
+	if len(got) != 1 || got[0].Name != "data" || got[0].SizeBytes == nil || *got[0].SizeBytes != 4096 {
+		t.Fatalf("GetStackVolumes() = %+v, want one volume named data with 4096 bytes", got)
 	}
 }
 
@@ -223,12 +300,12 @@ func TestGetExternalStackNetworks(t *testing.T) {
 				},
 			}), nil
 		case strings.Contains(req.URL.Path, "/networks/ext-id"):
-			return jsonResponse(t, http.StatusOK, dockernetwork.Inspect{
+			return jsonResponse(t, http.StatusOK, dockernetwork.Inspect{Network: dockernetwork.Network{
 				ID:     "ext-id",
 				Name:   "legacy_ext",
 				Driver: "bridge",
 				Scope:  "local",
-			}), nil
+			}}), nil
 		case strings.Contains(req.URL.Path, "/networks/owned-id"):
 			t.Fatal("owned network must not be re-inspected - it was already seen by the caller")
 			return nil, nil

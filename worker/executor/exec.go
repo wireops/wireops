@@ -10,8 +10,8 @@ import (
 	"log"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/client"
 
 	"github.com/wireops/wireops/internal/protocol"
 )
@@ -70,11 +70,11 @@ func ExecOneShot(ctx context.Context, cmd protocol.ExecCommand) protocol.Command
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	created, err := cli.Raw().ContainerExecCreate(runCtx, cmd.ContainerID, container.ExecOptions{
+	created, err := cli.Raw().ExecCreate(runCtx, cmd.ContainerID, client.ExecCreateOptions{
 		Cmd: cmd.Cmd,
 		// No TTY: that is what keeps stdout and stderr apart on the wire, as
 		// a multiplexed stream stdcopy can demultiplex below.
-		Tty:          false,
+		TTY:          false,
 		AttachStdout: true,
 		AttachStderr: true,
 		WorkingDir:   cmd.WorkingDir,
@@ -85,7 +85,7 @@ func ExecOneShot(ctx context.Context, cmd protocol.ExecCommand) protocol.Command
 		return protocol.CommandResult{CommandID: cmd.CommandID, Error: fmt.Sprintf("creating exec: %v", err)}
 	}
 
-	attached, err := cli.Raw().ContainerExecAttach(runCtx, created.ID, container.ExecAttachOptions{})
+	attached, err := cli.Raw().ExecAttach(runCtx, created.ID, client.ExecAttachOptions{})
 	if err != nil {
 		return protocol.CommandResult{CommandID: cmd.CommandID, Error: fmt.Sprintf("attaching to exec: %v", err)}
 	}
@@ -126,7 +126,7 @@ func ExecOneShot(ctx context.Context, cmd protocol.ExecCommand) protocol.Command
 		// the exit code is the one thing worth one more call.
 		inspectCtx, inspectCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer inspectCancel()
-		if info, err := cli.Raw().ContainerExecInspect(inspectCtx, created.ID); err == nil {
+		if info, err := cli.Raw().ExecInspect(inspectCtx, created.ID, client.ExecInspectOptions{}); err == nil {
 			result.ExitCode = info.ExitCode
 		}
 	}

@@ -4,9 +4,8 @@ import (
 	"context"
 	"os"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 )
 
 type Client struct {
@@ -14,19 +13,20 @@ type Client struct {
 }
 
 func NewClient() (*Client, error) {
-	opts := []client.Opt{client.FromEnv, client.WithAPIVersionNegotiation()}
+	// The client negotiates the API version with the daemon on its own.
+	opts := []client.Opt{client.FromEnv}
 
 	if host := os.Getenv("DOCKER_HOST"); host != "" {
 		opts = append(opts, client.WithHost(host))
 	}
 
-	cli, err := client.NewClientWithOpts(opts...)
+	cli, err := client.New(opts...)
 	if err != nil {
 		return nil, err
 	}
 
 	ctx := context.Background()
-	if _, err := cli.Ping(ctx); err != nil {
+	if _, err := cli.Ping(ctx, client.PingOptions{}); err != nil {
 		cli.Close()
 		return nil, err
 	}
@@ -59,10 +59,10 @@ const commitSHALabel = "dev.wireops.repository.commit_sha"
 // deciding what the host is running must not settle that by whichever
 // container Docker happened to list first.
 func (c *Client) GetRunningStackCommits(ctx context.Context, stackID string) ([]string, error) {
-	f := filters.NewArgs()
+	f := client.Filters{}
 	f.Add("label", "dev.wireops.stack_id="+stackID)
 
-	containers, err := c.cli.ContainerList(ctx, container.ListOptions{
+	containers, err := c.cli.ContainerList(ctx, client.ContainerListOptions{
 		All:     true, // check all containers in case they are stopped
 		Filters: f,
 	})
@@ -70,7 +70,7 @@ func (c *Client) GetRunningStackCommits(ctx context.Context, stackID string) ([]
 		return nil, err
 	}
 
-	return distinctCommitSHAs(containers), nil
+	return distinctCommitSHAs(containers.Items), nil
 }
 
 // distinctCommitSHAs collects each container's commit label once, preserving

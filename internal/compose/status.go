@@ -6,18 +6,17 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/netip"
 	"path"
 	"strings"
 	"time"
 
 	"github.com/containerd/errdefs"
-	dockertypes "github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/mount"
-	dockernetwork "github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/volume"
-	dockerclient "github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
+	dockernetwork "github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/api/types/volume"
+	dockerclient "github.com/moby/moby/client"
 	"github.com/wireops/wireops/internal/protocol"
 )
 
@@ -71,13 +70,13 @@ func GetStackStatus(ctx context.Context, cli *dockerclient.Client, projectName s
 // label when available. This prevents legacy stacks that once shared a
 // Compose project name from seeing each other's containers.
 func GetStackStatusForStack(ctx context.Context, cli *dockerclient.Client, projectName, stackID string) ([]ServiceStatus, error) {
-	f := filters.NewArgs()
+	f := dockerclient.Filters{}
 	f.Add("label", "com.docker.compose.project="+projectName)
 	if stackID != "" {
 		f.Add("label", "dev.wireops.stack_id="+stackID)
 	}
 
-	containers, err := cli.ContainerList(ctx, container.ListOptions{
+	containers, err := cli.ContainerList(ctx, dockerclient.ContainerListOptions{
 		All:     true,
 		Filters: f,
 	})
@@ -85,8 +84,8 @@ func GetStackStatusForStack(ctx context.Context, cli *dockerclient.Client, proje
 		return nil, err
 	}
 
-	statuses := make([]ServiceStatus, 0, len(containers))
-	for _, c := range containers {
+	statuses := make([]ServiceStatus, 0, len(containers.Items))
+	for _, c := range containers.Items {
 		serviceName := c.Labels["com.docker.compose.service"]
 		name := ""
 		if len(c.Names) > 0 {
@@ -104,7 +103,7 @@ func GetStackStatusForStack(ctx context.Context, cli *dockerclient.Client, proje
 			ServiceName:   serviceName,
 			ContainerID:   cID,
 			ContainerName: name,
-			Status:        mapStatus(c.State),
+			Status:        mapStatus(string(c.State)),
 			Labels:        filterIntegrationLabels(c.Labels),
 			Health:        health,
 			RestartCount:  restartCount,
@@ -117,10 +116,10 @@ func GetStackStatusForStack(ctx context.Context, cli *dockerclient.Client, proje
 	return statuses, nil
 }
 
-// mapDockerPorts converts the Docker API's container.Port slice (from
+// mapDockerPorts converts the Docker API's container.PortSummary slice (from
 // container.Summary.Ports) into the wire-stable protocol.PortInfo slice.
 // Ports with PublicPort == 0 are exposed but not published to the host.
-func mapDockerPorts(ports []container.Port) []protocol.PortInfo {
+func mapDockerPorts(ports []container.PortSummary) []protocol.PortInfo {
 	if len(ports) == 0 {
 		return nil
 	}
@@ -129,11 +128,27 @@ func mapDockerPorts(ports []container.Port) []protocol.PortInfo {
 		infos = append(infos, protocol.PortInfo{
 			ContainerPort: p.PrivatePort,
 			Protocol:      p.Type,
-			HostIP:        p.IP,
+			HostIP:        addrString(p.IP),
 			HostPort:      p.PublicPort,
 		})
 	}
 	return infos
+}
+
+// addrString renders an address the way the pre-netip Docker API types carried
+// it: empty when the daemon didn't send one.
+func addrString(a netip.Addr) string {
+	if !a.IsValid() {
+		return ""
+	}
+	return a.String()
+}
+
+func prefixString(p netip.Prefix) string {
+	if !p.IsValid() {
+		return ""
+	}
+	return p.String()
 }
 
 // inspectHealthAndRestarts reads the structured healthcheck status and
@@ -141,22 +156,23 @@ func mapDockerPorts(ports []container.Port) []protocol.PortInfo {
 // zero values) since this augments best-effort status reporting and must
 // not fail the whole status listing if one container disappears mid-inspect.
 func inspectHealthAndRestarts(ctx context.Context, cli *dockerclient.Client, containerID string) (health string, restartCount int, startedAt string, exitCode int) {
-	inspect, err := cli.ContainerInspect(ctx, containerID)
-	if err != nil || inspect.State == nil {
+	res, err := cli.ContainerInspect(ctx, containerID, dockerclient.ContainerInspectOptions{})
+	if err != nil || res.Container.State == nil {
 		// -1: unknown, not a clean exit — see ServiceStatus.ExitCode.
 		return "none", 0, "", -1
 	}
 
+	inspect := res.Container
 	health = "none"
 	if inspect.State.Health != nil {
-		health = inspect.State.Health.Status
+		health = string(inspect.State.Health.Status)
 	}
 
 	return health, inspect.RestartCount, inspect.State.StartedAt, inspect.State.ExitCode
 }
 
 func GetContainerStats(ctx context.Context, cli *dockerclient.Client, containerID string) (*ContainerStats, error) {
-	resp, err := cli.ContainerStatsOneShot(ctx, containerID)
+	resp, err := cli.ContainerStats(ctx, containerID, dockerclient.ContainerStatsOptions{Stream: false})
 	if err != nil {
 		return nil, err
 	}
@@ -202,13 +218,13 @@ func GetContainerStats(ctx context.Context, cli *dockerclient.Client, containerI
 		cpuPercent = (cpuDelta / sysDelta) * float64(raw.CPUStats.OnlineCPUs) * 100.0
 	}
 
-	inspect, err := cli.ContainerInspect(ctx, containerID)
+	inspect, err := cli.ContainerInspect(ctx, containerID, dockerclient.ContainerInspectOptions{})
 	if err != nil {
 		log.Printf("failed to inspect container %s: %v", containerID, err)
 	}
 	var startedAt string
-	if err == nil && inspect.State != nil {
-		startedAt = inspect.State.StartedAt
+	if err == nil && inspect.Container.State != nil {
+		startedAt = inspect.Container.State.StartedAt
 	}
 
 	return &ContainerStats{
@@ -221,10 +237,10 @@ func GetContainerStats(ctx context.Context, cli *dockerclient.Client, containerI
 
 // GetStackVolumes returns Docker volumes associated with a compose project.
 func GetStackVolumes(ctx context.Context, cli *dockerclient.Client, projectName string) ([]protocol.VolumeInfo, error) {
-	f := filters.NewArgs()
+	f := dockerclient.Filters{}
 	f.Add("label", "com.docker.compose.project="+projectName)
 
-	resp, err := cli.VolumeList(ctx, volume.ListOptions{Filters: f})
+	resp, err := cli.VolumeList(ctx, dockerclient.VolumeListOptions{Filters: f})
 	if err != nil {
 		return nil, err
 	}
@@ -235,19 +251,21 @@ func GetStackVolumes(ctx context.Context, cli *dockerclient.Client, projectName 
 	// Scoped to volumes only so this doesn't also compute container/image/
 	// build-cache usage on every call.
 	diskUsageSizes := map[string]int64{}
-	diskUsageOpts := dockertypes.DiskUsageOptions{Types: []dockertypes.DiskUsageObject{dockertypes.VolumeObject}}
+	// Verbose is what makes the daemon return the per-volume items, not just
+	// the totals.
+	diskUsageOpts := dockerclient.DiskUsageOptions{Volumes: true, Verbose: true}
 	if diskUsage, diskUsageErr := cli.DiskUsage(ctx, diskUsageOpts); diskUsageErr == nil {
-		diskUsageSizes = volumeUsageSizes(diskUsage.Volumes)
+		diskUsageSizes = volumeUsageSizes(diskUsage.Volumes.Items)
 	}
 
-	infos := make([]protocol.VolumeInfo, 0, len(resp.Volumes))
-	for _, v := range resp.Volumes {
+	infos := make([]protocol.VolumeInfo, 0, len(resp.Items))
+	for _, v := range resp.Items {
 		// UsageData is not consistently returned by VolumeList. Only fall back to
 		// inspecting the individual volume when disk-usage didn't already report
 		// its size, since inspect is a per-volume daemon round trip.
 		if _, hasUsage := diskUsageSizes[v.Name]; v.UsageData == nil && !hasUsage {
-			if inspected, inspectErr := cli.VolumeInspect(ctx, v.Name); inspectErr == nil {
-				v = &inspected
+			if inspected, inspectErr := cli.VolumeInspect(ctx, v.Name, dockerclient.VolumeInspectOptions{}); inspectErr == nil {
+				v = inspected.Volume
 			} else {
 				log.Printf("failed to inspect volume %s: %v", v.Name, inspectErr)
 			}
@@ -289,25 +307,25 @@ func GetStackVolumes(ctx context.Context, cli *dockerclient.Client, projectName 
 // appear in `docker volume ls` - so the only way to find them is inspecting
 // each container's actual Mounts.
 func getStackBindMounts(ctx context.Context, cli *dockerclient.Client, projectName string) ([]protocol.VolumeInfo, error) {
-	f := filters.NewArgs()
+	f := dockerclient.Filters{}
 	f.Add("label", "com.docker.compose.project="+projectName)
 
-	containers, err := cli.ContainerList(ctx, container.ListOptions{All: true, Filters: f})
+	containers, err := cli.ContainerList(ctx, dockerclient.ContainerListOptions{All: true, Filters: f})
 	if err != nil {
 		return nil, err
 	}
 
 	seen := make(map[string]bool)
 	var infos []protocol.VolumeInfo
-	for _, c := range containers {
-		inspect, ierr := cli.ContainerInspect(ctx, c.ID)
+	for _, c := range containers.Items {
+		res, ierr := cli.ContainerInspect(ctx, c.ID, dockerclient.ContainerInspectOptions{})
 		if ierr != nil {
 			if errdefs.IsNotFound(ierr) {
 				continue
 			}
 			return infos, fmt.Errorf("inspect container %s for bind mounts: %w", c.ID, ierr)
 		}
-		for _, m := range inspect.Mounts {
+		for _, m := range res.Container.Mounts {
 			if m.Type != mount.TypeBind {
 				continue
 			}
@@ -330,10 +348,10 @@ func getStackBindMounts(ctx context.Context, cli *dockerclient.Client, projectNa
 	return infos, nil
 }
 
-func volumeUsageSizes(volumes []*volume.Volume) map[string]int64 {
+func volumeUsageSizes(volumes []volume.Volume) map[string]int64 {
 	sizes := make(map[string]int64, len(volumes))
 	for _, v := range volumes {
-		if v != nil && v.UsageData != nil && v.UsageData.Size >= 0 {
+		if v.UsageData != nil && v.UsageData.Size >= 0 {
 			sizes[v.Name] = v.UsageData.Size
 		}
 	}
@@ -342,18 +360,18 @@ func volumeUsageSizes(volumes []*volume.Volume) map[string]int64 {
 
 // GetStackNetworks returns Docker networks associated with a compose project.
 func GetStackNetworks(ctx context.Context, cli *dockerclient.Client, projectName string) ([]protocol.NetworkInfo, error) {
-	f := filters.NewArgs()
+	f := dockerclient.Filters{}
 	f.Add("label", "com.docker.compose.project="+projectName)
 
-	networks, err := cli.NetworkList(ctx, dockernetwork.ListOptions{Filters: f})
+	networks, err := cli.NetworkList(ctx, dockerclient.NetworkListOptions{Filters: f})
 	if err != nil {
 		return nil, err
 	}
 
-	infos := make([]protocol.NetworkInfo, 0, len(networks))
-	seenIDs := make(map[string]bool, len(networks))
-	for _, n := range networks {
-		infos = append(infos, buildNetworkInfo(n, false))
+	infos := make([]protocol.NetworkInfo, 0, len(networks.Items))
+	seenIDs := make(map[string]bool, len(networks.Items))
+	for _, n := range networks.Items {
+		infos = append(infos, buildNetworkInfo(n.Network, false))
 		seenIDs[n.ID] = true
 	}
 
@@ -366,7 +384,7 @@ func GetStackNetworks(ctx context.Context, cli *dockerclient.Client, projectName
 	return infos, nil
 }
 
-func buildNetworkInfo(n dockernetwork.Inspect, external bool) protocol.NetworkInfo {
+func buildNetworkInfo(n dockernetwork.Network, external bool) protocol.NetworkInfo {
 	info := protocol.NetworkInfo{
 		Name:       n.Labels["com.docker.compose.network"],
 		DockerName: n.Name,
@@ -389,11 +407,18 @@ func buildNetworkInfo(n dockernetwork.Inspect, external bool) protocol.NetworkIn
 		info.Name = n.Name
 	}
 	for _, config := range n.IPAM.Config {
+		var aux map[string]string
+		if len(config.AuxAddress) > 0 {
+			aux = make(map[string]string, len(config.AuxAddress))
+			for host, addr := range config.AuxAddress {
+				aux[host] = addrString(addr)
+			}
+		}
 		info.IPAMConfigs = append(info.IPAMConfigs, protocol.NetworkIPAMConfig{
-			Subnet:       config.Subnet,
-			Gateway:      config.Gateway,
-			IPRange:      config.IPRange,
-			AuxAddresses: config.AuxAddress,
+			Subnet:       prefixString(config.Subnet),
+			Gateway:      addrString(config.Gateway),
+			IPRange:      prefixString(config.IPRange),
+			AuxAddresses: aux,
 		})
 	}
 	if len(info.IPAMConfigs) > 0 {
@@ -410,24 +435,25 @@ func buildNetworkInfo(n dockernetwork.Inspect, external bool) protocol.NetworkIn
 // they can only be found by walking the containers' real network
 // attachments rather than filtering NetworkList by label.
 func getExternalStackNetworks(ctx context.Context, cli *dockerclient.Client, projectName string, seenNetworkIDs map[string]bool) ([]protocol.NetworkInfo, error) {
-	f := filters.NewArgs()
+	f := dockerclient.Filters{}
 	f.Add("label", "com.docker.compose.project="+projectName)
 
-	containers, err := cli.ContainerList(ctx, container.ListOptions{All: true, Filters: f})
+	containers, err := cli.ContainerList(ctx, dockerclient.ContainerListOptions{All: true, Filters: f})
 	if err != nil {
 		return nil, err
 	}
 
 	seenNames := make(map[string]bool)
 	var infos []protocol.NetworkInfo
-	for _, c := range containers {
-		inspect, ierr := cli.ContainerInspect(ctx, c.ID)
+	for _, c := range containers.Items {
+		res, ierr := cli.ContainerInspect(ctx, c.ID, dockerclient.ContainerInspectOptions{})
 		if ierr != nil {
 			if errdefs.IsNotFound(ierr) {
 				continue
 			}
 			return infos, fmt.Errorf("inspect container %s for networks: %w", c.ID, ierr)
 		}
+		inspect := res.Container
 		if inspect.NetworkSettings == nil {
 			return infos, fmt.Errorf("inspect container %s for networks: no network settings", c.ID)
 		}
@@ -444,13 +470,14 @@ func getExternalStackNetworks(ctx context.Context, cli *dockerclient.Client, pro
 				continue
 			}
 
-			netInspect, nerr := cli.NetworkInspect(ctx, networkID, dockernetwork.InspectOptions{})
+			netRes, nerr := cli.NetworkInspect(ctx, networkID, dockerclient.NetworkInspectOptions{})
 			if nerr != nil {
 				if errdefs.IsNotFound(nerr) {
 					continue
 				}
 				return infos, fmt.Errorf("inspect external network %s: %w", netName, nerr)
 			}
+			netInspect := netRes.Network.Network
 			if seenNetworkIDs[netInspect.ID] {
 				continue
 			}
@@ -481,28 +508,28 @@ func mapStatus(state string) string {
 
 // ContainerBelongsToProject checks if a container belongs to the specified compose project.
 func ContainerBelongsToProject(ctx context.Context, cli *dockerclient.Client, containerID string, projectName string) (bool, error) {
-	inspect, err := cli.ContainerInspect(ctx, containerID)
+	res, err := cli.ContainerInspect(ctx, containerID, dockerclient.ContainerInspectOptions{})
 	if err != nil {
 		return false, err
 	}
-	if inspect.Config == nil {
+	if res.Container.Config == nil {
 		return false, nil
 	}
-	return inspect.Config.Labels["com.docker.compose.project"] == projectName, nil
+	return res.Container.Config.Labels["com.docker.compose.project"] == projectName, nil
 }
 
 // ContainerBelongsToStack checks the immutable WireOps ownership label. It is
 // stronger than Compose project membership because old releases could assign
 // the same project name to multiple stacks.
 func ContainerBelongsToStack(ctx context.Context, cli *dockerclient.Client, containerID, stackID string) (bool, error) {
-	inspect, err := cli.ContainerInspect(ctx, containerID)
+	res, err := cli.ContainerInspect(ctx, containerID, dockerclient.ContainerInspectOptions{})
 	if err != nil {
 		return false, err
 	}
-	if inspect.Config == nil {
+	if res.Container.Config == nil {
 		return false, nil
 	}
-	return inspect.Config.Labels["dev.wireops.stack_id"] == stackID, nil
+	return res.Container.Config.Labels["dev.wireops.stack_id"] == stackID, nil
 }
 
 // filterIntegrationLabels restricts labels to only those relevant for integrations (e.g. traefik., dozzle.)

@@ -13,7 +13,9 @@ fi
 
 ALLOWED_IDS=""
 if [ -f "$ALLOWLIST" ]; then
-  ALLOWED_IDS=$(grep -vE '^\s*(#|$)' "$ALLOWLIST" | tr -d ' \t')
+  # grep exits 1 when every line is a comment; under pipefail that would end
+  # the script silently, so an empty allowlist has to be tolerated here.
+  ALLOWED_IDS=$(grep -vE '^\s*(#|$)' "$ALLOWLIST" | tr -d ' \t' || true)
 fi
 
 TMP_JSON="$(mktemp)"

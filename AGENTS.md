@@ -102,7 +102,7 @@ Self-hosted container management platform for AI agents and the humans who own t
 | HTTP routing | PocketBase router + Gin (worker server only) |
 | Database | SQLite via PocketBase |
 | Git operations | `go-git/go-git/v5` |
-| Docker client | `docker/docker` (Engine API v28) |
+| Docker client | `moby/moby/client` + `moby/moby/api` (negotiates down to Engine API 1.40) |
 | WebSocket | `gorilla/websocket` |
 | Encryption | AES-GCM via `golang.org/x/crypto` |
 | Scheduler | `robfig/cron/v3` |
