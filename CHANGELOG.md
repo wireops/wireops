@@ -222,6 +222,10 @@ changes in a minor release.
 
 ### Security
 
+- Pin the frontend build's transitive `node-forge` to 1.4.3 (pulled in by
+  Nitro's dev-server `listhen`), clearing four advisories (TLS client crashes,
+  a header-trimming ReDoS and Ed25519 small-order key acceptance). It runs
+  only at build time and is not part of the shipped SPA.
 - Rebuild the server, worker, and MCP images on Alpine 3.24; the previous
   Alpine 3.20 base reached end of support in April 2026 and no longer received
   security updates.

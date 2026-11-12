@@ -29,6 +29,14 @@ updates:
     commit-message:
       prefix: "build(deps)"
       prefix-development: "build(deps-dev)"
+    # TypeScript 7 (the native port) drops the JS compiler API that
+    # typescript-eslint loads, so eslint crashes with "Cannot read properties
+    # of undefined (reading 'Intrinsic')" in ts-api-utils. Every weekly group
+    # PR since #183 has bundled 5.x -> 7.x and failed the frontend job. Drop
+    # this once typescript-eslint supports TypeScript 7.
+    ignore:
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
     groups:
       npm-dependencies:
         patterns:
