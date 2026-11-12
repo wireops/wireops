@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/mount"
-	"github.com/docker/docker/errdefs"
+	"github.com/containerd/errdefs"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
+	dockerclient "github.com/moby/moby/client"
 	"gopkg.in/yaml.v3"
 
 	"github.com/wireops/wireops/internal/compose"
@@ -23,11 +23,11 @@ import (
 )
 
 type projectMigrationDocker interface {
-	ContainerList(context.Context, container.ListOptions) ([]container.Summary, error)
-	ContainerInspect(context.Context, string) (container.InspectResponse, error)
-	ContainerStop(context.Context, string, container.StopOptions) error
-	ContainerRemove(context.Context, string, container.RemoveOptions) error
-	VolumeRemove(context.Context, string, bool) error
+	ContainerList(context.Context, dockerclient.ContainerListOptions) (dockerclient.ContainerListResult, error)
+	ContainerInspect(context.Context, string, dockerclient.ContainerInspectOptions) (dockerclient.ContainerInspectResult, error)
+	ContainerStop(context.Context, string, dockerclient.ContainerStopOptions) (dockerclient.ContainerStopResult, error)
+	ContainerRemove(context.Context, string, dockerclient.ContainerRemoveOptions) (dockerclient.ContainerRemoveResult, error)
+	VolumeRemove(context.Context, string, dockerclient.VolumeRemoveOptions) (dockerclient.VolumeRemoveResult, error)
 }
 
 var (
@@ -125,9 +125,13 @@ func removableNamedVolumeNames(composeContent []byte) ([]string, error) {
 }
 
 func listStackContainers(ctx context.Context, cli projectMigrationDocker, stackID string) ([]container.Summary, error) {
-	f := filters.NewArgs()
+	f := dockerclient.Filters{}
 	f.Add("label", "dev.wireops.stack_id="+stackID)
-	return cli.ContainerList(ctx, container.ListOptions{All: true, Filters: f})
+	res, err := cli.ContainerList(ctx, dockerclient.ContainerListOptions{All: true, Filters: f})
+	if err != nil {
+		return nil, err
+	}
+	return res.Items, nil
 }
 
 func preflightProjectMigration(ctx context.Context, cli projectMigrationDocker, stackID, previousProject, targetProject string, targetCompose, previousCompose []byte, recreateVolumes bool) ([]container.Summary, error) {
@@ -136,7 +140,7 @@ func preflightProjectMigration(ctx context.Context, cli projectMigrationDocker, 
 		return nil, err
 	}
 	for _, name := range containerNames {
-		inspected, err := cli.ContainerInspect(ctx, name)
+		inspected, err := cli.ContainerInspect(ctx, name, dockerclient.ContainerInspectOptions{})
 		if errdefs.IsNotFound(err) {
 			continue
 		}
@@ -144,8 +148,8 @@ func preflightProjectMigration(ctx context.Context, cli projectMigrationDocker, 
 			return nil, fmt.Errorf("inspect target container name %q: %w", name, err)
 		}
 		owner := ""
-		if inspected.Config != nil {
-			owner = inspected.Config.Labels["dev.wireops.stack_id"]
+		if inspected.Container.Config != nil {
+			owner = inspected.Container.Config.Labels["dev.wireops.stack_id"]
 		}
 		if owner != stackID {
 			return nil, fmt.Errorf("container name %q is owned by another workload; refusing project migration", name)
@@ -168,11 +172,11 @@ func preflightProjectMigration(ctx context.Context, cli projectMigrationDocker, 
 		if recreateVolumes {
 			continue
 		}
-		inspected, err := cli.ContainerInspect(ctx, summary.ID)
+		inspected, err := cli.ContainerInspect(ctx, summary.ID, dockerclient.ContainerInspectOptions{})
 		if err != nil {
 			return nil, fmt.Errorf("inspect stack container %.12s: %w", summary.ID, err)
 		}
-		for _, point := range inspected.Mounts {
+		for _, point := range inspected.Container.Mounts {
 			if point.Type != mount.TypeVolume {
 				continue
 			}
@@ -187,11 +191,11 @@ func preflightProjectMigration(ctx context.Context, cli projectMigrationDocker, 
 func removeStackContainers(ctx context.Context, cli projectMigrationDocker, containers []container.Summary) error {
 	var failures []string
 	for _, summary := range containers {
-		if err := cli.ContainerStop(ctx, summary.ID, container.StopOptions{}); err != nil && !errdefs.IsNotFound(err) {
+		if _, err := cli.ContainerStop(ctx, summary.ID, dockerclient.ContainerStopOptions{}); err != nil && !errdefs.IsNotFound(err) {
 			failures = append(failures, fmt.Sprintf("stop %.12s: %v", summary.ID, err))
 			continue
 		}
-		if err := cli.ContainerRemove(ctx, summary.ID, container.RemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
+		if _, err := cli.ContainerRemove(ctx, summary.ID, dockerclient.ContainerRemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
 			failures = append(failures, fmt.Sprintf("remove %.12s: %v", summary.ID, err))
 		}
 	}
@@ -207,7 +211,7 @@ func removeNamedVolumes(ctx context.Context, cli projectMigrationDocker, previou
 		return err
 	}
 	for _, name := range names {
-		if err := cli.VolumeRemove(ctx, name, false); err != nil && !errdefs.IsNotFound(err) {
+		if _, err := cli.VolumeRemove(ctx, name, dockerclient.VolumeRemoveOptions{}); err != nil && !errdefs.IsNotFound(err) {
 			return fmt.Errorf("remove named volume %q: %w", name, err)
 		}
 	}

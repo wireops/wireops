@@ -18,9 +18,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/client"
 	"github.com/wireops/wireops/internal/compose"
 	"github.com/wireops/wireops/internal/docker"
 	"github.com/wireops/wireops/internal/protocol"
@@ -506,10 +505,10 @@ func executeContainerAction(ctx context.Context, cmd protocol.ContainerActionCom
 	var output string
 	switch action {
 	case "stop":
-		actionErr = cli.Raw().ContainerStop(ctx, cmd.ContainerID, container.StopOptions{Timeout: &timeout})
+		_, actionErr = cli.Raw().ContainerStop(ctx, cmd.ContainerID, client.ContainerStopOptions{Timeout: &timeout})
 		output = "stopped"
 	case "restart":
-		actionErr = cli.Raw().ContainerRestart(ctx, cmd.ContainerID, container.StopOptions{Timeout: &timeout})
+		_, actionErr = cli.Raw().ContainerRestart(ctx, cmd.ContainerID, client.ContainerRestartOptions{Timeout: &timeout})
 		output = "restarted"
 	default:
 		return protocol.CommandResult{CommandID: cmd.CommandID, Error: "invalid container action"}
@@ -534,10 +533,10 @@ func DiscoverProjects(ctx context.Context, cmd protocol.DiscoverProjectsCommand)
 	}
 	defer cli.Close()
 
-	f := filters.NewArgs()
+	f := client.Filters{}
 	f.Add("label", "com.docker.compose.project")
 
-	containers, err := cli.Raw().ContainerList(ctx, container.ListOptions{
+	containers, err := cli.Raw().ContainerList(ctx, client.ContainerListOptions{
 		All:     true,
 		Filters: f,
 	})
@@ -546,7 +545,7 @@ func DiscoverProjects(ctx context.Context, cmd protocol.DiscoverProjectsCommand)
 	}
 
 	projects := make(map[string]*protocol.DiscoveredProject)
-	for _, cnt := range containers {
+	for _, cnt := range containers.Items {
 		if cnt.Labels["dev.wireops.managed"] == "true" {
 			continue
 		}
@@ -1170,11 +1169,12 @@ func GetContainerLogs(ctx context.Context, cmd protocol.GetContainerLogsCommand)
 			return protocol.CommandResult{CommandID: cmd.CommandID, Error: "invalid log pattern: " + err.Error()}
 		}
 	}
-	inspect, err := cli.Raw().ContainerInspect(ctx, cmd.ContainerID)
+	inspected, err := cli.Raw().ContainerInspect(ctx, cmd.ContainerID, client.ContainerInspectOptions{})
 	if err != nil {
 		return protocol.CommandResult{CommandID: cmd.CommandID, Error: "inspecting container logs target: " + err.Error()}
 	}
-	reader, err := cli.Raw().ContainerLogs(ctx, cmd.ContainerID, container.LogsOptions{
+	inspect := inspected.Container
+	reader, err := cli.Raw().ContainerLogs(ctx, cmd.ContainerID, client.ContainerLogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 		Tail:       tail,
